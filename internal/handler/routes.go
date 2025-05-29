@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"github.com/florinel-chis/gocrm/internal/middleware"
-	"github.com/florinel-chis/gocrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/middleware"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/gin-gonic/gin"
 )
 

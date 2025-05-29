@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/repository/mocks"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"

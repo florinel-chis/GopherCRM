@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/florinel-chis/gocrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

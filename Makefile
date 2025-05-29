@@ -19,7 +19,7 @@ run:
 
 .PHONY: build
 build:
-	go build -o bin/gocrm cmd/main.go
+	go build -o bin/gophercrm cmd/main.go
 
 .PHONY: test
 test:

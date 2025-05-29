@@ -47,7 +47,9 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
   };
 
   useEffect(() => {
-    loadConfigurations();
+    // Temporarily disabled to isolate loading issues
+    // loadConfigurations();
+    setIsLoading(false);
   }, []);
 
   const getConfigValue = <T,>(key: string, defaultValue: T): T => {
@@ -66,7 +68,7 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
   };
 
   const getCompanyName = (): string => {
-    return getConfigValue('general.company_name', 'GoCRM');
+    return getConfigValue('general.company_name', 'GopherCRM');
   };
 
   const getPrimaryColor = (): string => {

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GoCRM is a Customer Relationship Management system built in Go. The project is currently in initial development phase with a comprehensive task list defined in `tasks.md`.
+GopherCRM is a Customer Relationship Management system built in Go. The project is currently in initial development phase with a comprehensive task list defined in `tasks.md`.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ make create-db
 mysql -u root < scripts/create_database.sql
 
 # Initialize Go module
-go mod init github.com/florinel-chis/gocrm
+go mod init github.com/florinel-chis/gophercrm
 
 # Install dependencies
 go get -u github.com/gin-gonic/gin
@@ -55,10 +55,10 @@ go test ./...
 go test -run TestName ./path/to/package
 
 # Build the application
-go build -o gocrm cmd/main.go
+go build -o gophercrm cmd/main.go
 
 # Run the application
-./gocrm
+./gophercrm
 ```
 
 ## Project Structure (Planned)

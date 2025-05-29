@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/gin-gonic/gin"
 )
 

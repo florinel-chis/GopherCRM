@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/florinel-chis/gocrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 )

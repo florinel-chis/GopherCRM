@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/service"
-	"github.com/florinel-chis/gocrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 )
 

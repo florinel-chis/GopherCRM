@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/florinel-chis/gocrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
 type AuthService interface {

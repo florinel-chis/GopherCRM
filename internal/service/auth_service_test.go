@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/florinel-chis/gocrm/internal/config"
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"

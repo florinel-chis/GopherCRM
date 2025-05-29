@@ -23,8 +23,8 @@ vi.mock('@/api/client', () => ({
     setRefreshToken: vi.fn(),
     clearTokens: vi.fn(),
   },
-  TOKEN_KEY: 'gocrm_token',
-  REFRESH_TOKEN_KEY: 'gocrm_refresh_token',
+  TOKEN_KEY: 'gophercrm_token',
+  REFRESH_TOKEN_KEY: 'gophercrm_refresh_token',
 }));
 
 const mockUser = {
@@ -104,7 +104,7 @@ describe('AuthContext', () => {
 
     await act(async () => {
       await result.current.login({
-        username: 'testuser',
+        email: 'test@example.com',
         password: 'password',
         remember_me: true,
       });
@@ -161,7 +161,7 @@ describe('AuthContext', () => {
 
     expect(authApi.register).toHaveBeenCalled();
     expect(authApi.login).toHaveBeenCalledWith({
-      username: 'newuser',
+      email: 'new@example.com',
       password: 'password',
     });
   });

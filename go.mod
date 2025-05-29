@@ -1,4 +1,4 @@
-module github.com/florinel-chis/gocrm
+module github.com/florinel-chis/gophercrm
 
 go 1.23.0
 

@@ -177,11 +177,11 @@ func DefaultConfigurations() []Configuration {
 		},
 		{
 			Key:          "general.company_name",
-			Value:        "GoCRM",
+			Value:        "GopherCRM",
 			Type:         ConfigTypeString,
 			Category:     CategoryGeneral,
 			Description:  "Company name displayed in the application",
-			DefaultValue: "GoCRM",
+			DefaultValue: "GopherCRM",
 			IsSystem:     false,
 			IsReadOnly:   false,
 		},

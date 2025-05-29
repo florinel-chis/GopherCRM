@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )

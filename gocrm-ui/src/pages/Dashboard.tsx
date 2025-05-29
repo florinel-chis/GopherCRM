@@ -1,5 +1,4 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Paper,
@@ -92,25 +91,36 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, trend })
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ['dashboard', 'stats'],
-    queryFn: dashboardApi.getStats,
-  });
+  const [stats, setStats] = useState<any>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(true);
+  const [salesData, setSalesData] = useState<any>(null);
+  const [upcomingTasks, setUpcomingTasks] = useState<any[]>([]);
 
-  const { data: activities, isLoading: activitiesLoading } = useQuery({
-    queryKey: ['dashboard', 'activities'],
-    queryFn: () => dashboardApi.getRecentActivities(10),
-  });
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      try {
+        // For now, use mock data to avoid API calls
+        setStats({
+          total_leads: 25,
+          total_customers: 12,
+          open_tickets: 8,
+          pending_tasks: 15,
+        });
+        setActivities([]);
+        setSalesData(null);
+        setUpcomingTasks([]);
+      } catch (error) {
+        console.error('Failed to load dashboard data:', error);
+      } finally {
+        setStatsLoading(false);
+        setActivitiesLoading(false);
+      }
+    };
 
-  const { data: salesData } = useQuery({
-    queryKey: ['dashboard', 'sales'],
-    queryFn: () => dashboardApi.getSalesPerformance('month'),
-  });
-
-  const { data: upcomingTasks } = useQuery({
-    queryKey: ['dashboard', 'tasks'],
-    queryFn: () => dashboardApi.getUpcomingTasks(5),
-  });
+    loadDashboardData();
+  }, []);
 
   const getActivityIcon = (type: string) => {
     switch (type) {

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/florinel-chis/gocrm/internal/config"
-	"github.com/florinel-chis/gocrm/internal/models"
-	"github.com/florinel-chis/gocrm/internal/repository"
-	"github.com/florinel-chis/gocrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"golang.org/x/term"
 )
 

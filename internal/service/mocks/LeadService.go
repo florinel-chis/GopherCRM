@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	models "github.com/florinel-chis/gocrm/internal/models"
+	models "github.com/florinel-chis/gophercrm/internal/models"
 	mock "github.com/stretchr/testify/mock"
 )
 

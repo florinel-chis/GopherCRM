@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/florinel-chis/gocrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/sirupsen/logrus"
 )
 

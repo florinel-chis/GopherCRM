@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"github.com/florinel-chis/gocrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
 )
 

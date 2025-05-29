@@ -5,8 +5,8 @@ import type { APIError } from '@/types';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
 const API_TIMEOUT = Number(import.meta.env.VITE_API_TIMEOUT) || 30000;
 
-export const TOKEN_KEY = 'gocrm_token';
-export const REFRESH_TOKEN_KEY = 'gocrm_refresh_token';
+export const TOKEN_KEY = 'gophercrm_token';
+export const REFRESH_TOKEN_KEY = 'gophercrm_refresh_token';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -95,8 +95,8 @@ class ApiClient {
         }
 
         // Unwrap error response if it's in the wrapped format
-        if (error.response?.data && 'success' in error.response.data && error.response.data.error) {
-          error.response.data = error.response.data.error;
+        if (error.response?.data && 'success' in error.response.data && 'error' in error.response.data) {
+          error.response.data = (error.response.data as any).error;
         }
         
         return Promise.reject(error);
