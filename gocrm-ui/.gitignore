@@ -1,0 +1,180 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Production builds
+/dist
+/build
+
+# Development
+.cache/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# ESLint cache
+.eslintcache
+
+# Stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+storybook-static
+
+# Temporary folders
+tmp/
+temp/
+
+# Vite
+dist-ssr
+*.local
+
+# Rollup
+.rollup.cache/
+
+# SvelteKit
+.svelte-kit
+
+# Auto-generated files
+src-tauri/
+
+# Testing
+/coverage
+
+# Turbo
+.turbo
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+
+# Local development certificates
+*.pem
+*.key
+*.crt
+
+# Backup files
+*.bak
+*.backup
+
+# Generated types
+types/generated/
+
+# Sentry
+.sentryclirc
+
+# Bundle analyzer
+bundle-analyzer-report.html
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# MSW
+public/mockServiceWorker.js
+
+# Chromatic
+build-storybook.log
+
+# Local Netlify folder
+.netlify
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Capacitor
+android/
+ios/
+.capacitor/
+
+# Project specific
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
