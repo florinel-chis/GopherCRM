@@ -15,6 +15,8 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
 - 🔌 **RESTful API**: Clean architecture with comprehensive endpoints
 
+![GopherCRM Dashboard](doc/img/gophercrm-dashboard.png)
+
 ## Tech Stack
 
 ### Backend
