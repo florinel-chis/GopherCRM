@@ -200,3 +200,7 @@ func (s *ticketService) List(offset, limit int) ([]models.Ticket, int64, error) 
 	logger.WithField("total", total).Info("Tickets listed successfully")
 	return tickets, total, nil
 }
+
+func (s *ticketService) GetOpenCount() (int64, error) {
+	return s.ticketRepo.CountOpen()
+}

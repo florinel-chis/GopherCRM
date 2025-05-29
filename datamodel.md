@@ -1,6 +1,6 @@
-# GoCRM Data Model Documentation
+# GopherCRM Data Model Documentation
 
-This document describes the complete data model for the GoCRM application based on the backend implementation.
+This document describes the complete data model for the GopherCRM application based on the backend implementation.
 
 ## Base Model
 
@@ -175,6 +175,49 @@ Represents API keys for programmatic access.
 | expires_at | timestamp | No | - | - | Expiration timestamp |
 | is_active | boolean | Yes | true | - | Active status |
 
+## Configuration Model
+
+Represents system configuration settings that control application behavior.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| config_key | string | Yes | - | unique, max 255 | Configuration key identifier |
+| value | string | Yes | - | - | Configuration value (JSON string) |
+| type | enum | Yes | 'string' | max 20 | Value type (see below) |
+| category | string | Yes | - | max 50 | Configuration category |
+| description | string | Yes | - | max 500 | Human-readable description |
+| default_value | string | Yes | - | - | Default value for reset operations |
+| is_system | boolean | Yes | false | - | Whether it's a system configuration |
+| is_read_only | boolean | Yes | false | - | Whether value can be modified |
+| valid_values | string | No | - | - | JSON array of valid values |
+
+### Configuration Types
+- `string` - Text value
+- `boolean` - True/false value
+- `integer` - Numeric value
+- `array` - JSON array
+
+### Configuration Categories
+- `general` - General application settings
+- `ui` - User interface settings
+- `security` - Security-related settings
+- `leads` - Lead management settings
+- `customers` - Customer management settings
+- `tickets` - Ticket system settings
+- `tasks` - Task management settings
+- `integration` - Third-party integrations
+
+### Key Configuration Settings
+- `general.company_name` - Company name displayed in the application
+- `ui.theme.primary_color` - Primary theme color
+- `security.session_timeout_hours` - Session timeout duration
+- `leads.conversion.allowed_statuses` - Lead statuses that allow conversion
+- `leads.conversion.require_notes` - Whether conversion notes are required
+- `leads.conversion.auto_assign_owner` - Auto-assign lead owner to customer
+- `tickets.auto_assign_support` - Auto-assign tickets to support users
+
 ## API Request/Response Format
 
 ### Frontend to Backend Field Mapping
@@ -208,6 +251,23 @@ All API responses are wrapped in a standard envelope:
     "per_page": number,       // For paginated responses
     "total": number,          // For paginated responses
     "total_pages": number     // For paginated responses
+  }
+}
+```
+
+### Dashboard Statistics Response
+
+The dashboard stats endpoint returns aggregated statistics:
+
+```json
+{
+  "success": true,
+  "data": {
+    "total_leads": 25,
+    "total_customers": 18,
+    "open_tickets": 3,
+    "pending_tasks": 7,
+    "conversion_rate": 72.0
   }
 }
 ```

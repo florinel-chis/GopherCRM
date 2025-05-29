@@ -93,3 +93,10 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 		configs.POST("/:key/reset", middleware.RequireRole(models.RoleAdmin), handler.Reset)
 	}
 }
+
+func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
+	dashboard := router.Group("/dashboard")
+	{
+		dashboard.GET("/stats", handler.GetStats)
+	}
+}

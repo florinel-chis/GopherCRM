@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Paper,
@@ -40,7 +41,6 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { ConfigurationOverview } from '@/components/ConfigurationOverview';
 
 interface StatCardProps {
   title: string;
@@ -91,36 +91,29 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, trend })
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState<any>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
-  const [activities, setActivities] = useState<any[]>([]);
-  const [activitiesLoading, setActivitiesLoading] = useState(true);
-  const [salesData, setSalesData] = useState<any>(null);
-  const [upcomingTasks, setUpcomingTasks] = useState<any[]>([]);
+  
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['dashboard', 'stats'],
+    queryFn: dashboardApi.getStats,
+  });
 
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        // For now, use mock data to avoid API calls
-        setStats({
-          total_leads: 25,
-          total_customers: 12,
-          open_tickets: 8,
-          pending_tasks: 15,
-        });
-        setActivities([]);
-        setSalesData(null);
-        setUpcomingTasks([]);
-      } catch (error) {
-        console.error('Failed to load dashboard data:', error);
-      } finally {
-        setStatsLoading(false);
-        setActivitiesLoading(false);
-      }
-    };
+  const { data: activities, isLoading: activitiesLoading } = useQuery({
+    queryKey: ['dashboard', 'activities'],
+    queryFn: () => dashboardApi.getRecentActivities(10),
+    enabled: false, // Disable for now since backend doesn't implement this yet
+  });
 
-    loadDashboardData();
-  }, []);
+  const { data: salesData } = useQuery({
+    queryKey: ['dashboard', 'sales'],
+    queryFn: () => dashboardApi.getSalesPerformance('month'),
+    enabled: false, // Disable for now since backend doesn't implement this yet
+  });
+
+  const { data: upcomingTasks } = useQuery({
+    queryKey: ['dashboard', 'tasks'],
+    queryFn: () => dashboardApi.getUpcomingTasks(5),
+    enabled: false, // Disable for now since backend doesn't implement this yet
+  });
 
   const getActivityIcon = (type: string) => {
     switch (type) {
@@ -159,9 +152,6 @@ export const Dashboard: React.FC = () => {
       <Typography variant="h4" gutterBottom>
         Dashboard
       </Typography>
-      
-      {/* Configuration Overview for Admin Users */}
-      <ConfigurationOverview />
       
       {/* Stats Cards */}
       <Box 
@@ -220,6 +210,18 @@ export const Dashboard: React.FC = () => {
               value={stats?.pending_tasks || 0}
               icon={<Task />}
               color="info.main"
+            />
+          )}
+        </Box>
+        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(25% - 18px)' } }}>
+          {statsLoading ? (
+            <Skeleton variant="rectangular" height={140} />
+          ) : (
+            <StatCard
+              title="Conversion Rate"
+              value={`${(stats?.conversion_rate || 0).toFixed(1)}%`}
+              icon={<TrendingUp />}
+              color="success.main"
             />
           )}
         </Box>
@@ -296,85 +298,17 @@ export const Dashboard: React.FC = () => {
             </Paper>
           </Box>
 
-          {/* Recent Activities */}
+          {/* Placeholder for future features */}
           <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 calc(33.333% - 12px)' } }}>
             <Paper sx={{ p: 2, height: '100%' }}>
-              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                <Typography variant="h6">
-                  Recent Activities
-                </Typography>
-                <IconButton size="small">
-                  <ArrowForward />
-                </IconButton>
-              </Box>
-              <List>
-                {activitiesLoading ? (
-                  Array.from({ length: 5 }).map((_, index) => (
-                    <ListItem key={index}>
-                      <Skeleton variant="circular" width={40} height={40} sx={{ mr: 2 }} />
-                      <Box flex={1}>
-                        <Skeleton variant="text" />
-                        <Skeleton variant="text" width="60%" />
-                      </Box>
-                    </ListItem>
-                  ))
-                ) : (
-                  activities?.map((activity) => (
-                    <ListItem key={activity.id} alignItems="flex-start">
-                      <ListItemAvatar>
-                        <Avatar sx={{ bgcolor: `${getActivityColor(activity.type)}.main` }}>
-                          {getActivityIcon(activity.type)}
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={activity.title}
-                        secondary={
-                          <>
-                            <Typography component="span" variant="body2" color="text.primary">
-                              {activity.user.first_name} {activity.user.last_name}
-                            </Typography>
-                            {' — '}
-                            {formatDistanceToNow(new Date(activity.created_at), { addSuffix: true })}
-                          </>
-                        }
-                      />
-                    </ListItem>
-                  ))
-                )}
-              </List>
+              <Typography variant="h6" gutterBottom>
+                Coming Soon
+              </Typography>
+              <Typography color="text.secondary">
+                Recent activities, sales charts, and task management will be available in future updates.
+              </Typography>
             </Paper>
           </Box>
-        </Box>
-
-        {/* Upcoming Tasks */}
-        <Box>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Upcoming Tasks
-            </Typography>
-            <List>
-              {upcomingTasks?.map((task) => (
-                <ListItem
-                  key={task.id}
-                  secondaryAction={
-                    <Chip
-                      label={task.priority}
-                      size="small"
-                      color={
-                        task.priority === 'high' ? 'error' :
-                        task.priority === 'medium' ? 'warning' : 'default'
-                      }
-                    />
-                  }
-                >
-                  <ListItemText
-                    primary={task.title}
-                    secondary={`Due: ${new Date(task.due_date).toLocaleDateString()} - Assigned to: ${task.assignee?.first_name} ${task.assignee?.last_name}`}
-                  />
-                </ListItem>
-              ))}
-            </List>
-          </Paper>
         </Box>
       </Stack>
     </Box>

@@ -274,3 +274,7 @@ func (s *taskService) List(offset, limit int) ([]models.Task, int64, error) {
 
 	return tasks, total, nil
 }
+
+func (s *taskService) GetPendingCount() (int64, error) {
+	return s.taskRepo.CountPending()
+}

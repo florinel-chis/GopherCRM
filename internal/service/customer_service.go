@@ -113,3 +113,7 @@ func (s *customerService) List(offset, limit int) ([]models.Customer, int64, err
 	logger.WithField("total", total).Info("Customers listed successfully")
 	return customers, total, nil
 }
+
+func (s *customerService) GetCount() (int64, error) {
+	return s.customerRepo.Count()
+}

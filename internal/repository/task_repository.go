@@ -57,3 +57,9 @@ func (r *taskRepository) CountByAssignedToID(assignedToID uint) (int64, error) {
 	err := r.db.Model(&models.Task{}).Where("assigned_to_id = ?", assignedToID).Count(&count).Error
 	return count, err
 }
+
+func (r *taskRepository) CountPending() (int64, error) {
+	var count int64
+	err := r.db.Model(&models.Task{}).Where("status IN ?", []string{"pending", "in_progress"}).Count(&count).Error
+	return count, err
+}

@@ -28,6 +28,7 @@ type LeadService interface {
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Lead, int64, error)
 	ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error)
+	GetCount() (int64, error)
 }
 
 type CustomerService interface {
@@ -36,6 +37,7 @@ type CustomerService interface {
 	Update(customer *models.Customer) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Customer, int64, error)
+	GetCount() (int64, error)
 }
 
 type TicketService interface {
@@ -46,6 +48,7 @@ type TicketService interface {
 	Update(ticket *models.Ticket) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Ticket, int64, error)
+	GetOpenCount() (int64, error)
 }
 
 type TaskService interface {
@@ -55,6 +58,7 @@ type TaskService interface {
 	Update(task *models.Task) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Task, int64, error)
+	GetPendingCount() (int64, error)
 }
 
 type APIKeyService interface {

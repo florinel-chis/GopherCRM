@@ -180,3 +180,7 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 	
 	return customerData, nil
 }
+
+func (s *leadService) GetCount() (int64, error) {
+	return s.leadRepo.Count()
+}

@@ -47,6 +47,7 @@ type TicketRepository interface {
 	Count() (int64, error)
 	CountByCustomerID(customerID uint) (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
+	CountOpen() (int64, error)
 }
 
 type TaskRepository interface {
@@ -58,6 +59,7 @@ type TaskRepository interface {
 	List(offset, limit int) ([]models.Task, error)
 	Count() (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
+	CountPending() (int64, error)
 }
 
 type APIKeyRepository interface {

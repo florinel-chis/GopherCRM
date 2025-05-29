@@ -280,6 +280,9 @@ The API follows RESTful conventions with the following structure:
 - `PUT /api/configurations/:key` - Update configuration value
 - `POST /api/configurations/:key/reset` - Reset configuration to default
 
+### Dashboard
+- `GET /api/dashboard/stats` - Get dashboard statistics (total leads, customers, open tickets, pending tasks, conversion rate)
+
 ## Project Structure
 
 ```

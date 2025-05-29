@@ -69,3 +69,9 @@ func (r *ticketRepository) CountByAssignedToID(assignedToID uint) (int64, error)
 	err := r.db.Model(&models.Ticket{}).Where("assigned_to_id = ?", assignedToID).Count(&count).Error
 	return count, err
 }
+
+func (r *ticketRepository) CountOpen() (int64, error) {
+	var count int64
+	err := r.db.Model(&models.Ticket{}).Where("status IN ?", []string{"open", "in_progress"}).Count(&count).Error
+	return count, err
+}

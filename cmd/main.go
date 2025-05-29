@@ -128,6 +128,7 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	taskHandler := handler.NewTaskHandler(taskService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
+	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
 
 	public := router.Group("")
 	{
@@ -145,5 +146,6 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 		handler.SetupTaskRoutes(protected, taskHandler)
 		handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
 		handler.SetupConfigurationRoutes(protected, configHandler)
+		handler.SetupDashboardRoutes(protected, dashboardHandler)
 	}
 }
