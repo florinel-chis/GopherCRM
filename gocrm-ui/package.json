@@ -13,7 +13,18 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:debug": "playwright test --debug",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:cleanup": "./cleanup-test-users.sh",
+    "test:e2e:slow": "playwright test --config=playwright.config.slow.ts --headed",
+    "test:e2e:admin": "playwright test e2e/tests/admin-*.spec.ts --config=playwright.config.slow.ts",
+    "test:e2e:admin:headed": "playwright test e2e/tests/admin-*.spec.ts --config=playwright.config.slow.ts --headed",
+    "test:e2e:admin:suite": "playwright test e2e/tests/admin-entity-suite.spec.ts --config=playwright.config.slow.ts --headed",
+    "test:e2e:admin:cleanup": "./e2e/scripts/cleanup-admin-test-data.sh"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -34,6 +45,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
+    "@faker-js/faker": "^9.8.0",
+    "@playwright/test": "^1.52.0",
     "@tanstack/react-query-devtools": "^5.79.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
