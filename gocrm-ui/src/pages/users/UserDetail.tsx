@@ -230,8 +230,8 @@ export const Component: React.FC = () => {
                       <PersonIcon />
                     </ListItemIcon>
                     <ListItemText
-                      primary="Username"
-                      secondary={user.username}
+                      primary="Email"
+                      secondary={user.email}
                     />
                   </ListItem>
                   <ListItem sx={{ px: 0 }}>
@@ -390,7 +390,7 @@ export const Component: React.FC = () => {
       <ConfirmDialog
         open={deleteDialog}
         title="Delete User"
-        message={`Are you sure you want to delete "${user.username}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete "${user.first_name} ${user.last_name}"? This action cannot be undone.`}
         severity="error"
         confirmText="Delete"
         onConfirm={() => deleteMutation.mutate()}

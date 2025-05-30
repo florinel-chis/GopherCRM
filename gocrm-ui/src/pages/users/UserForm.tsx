@@ -21,7 +21,6 @@ import { usersApi, type CreateUserData, type UpdateUserData } from '@/api/endpoi
 import { useAuth } from '@/contexts/AuthContext';
 
 const createUserSchema = z.object({
-  username: z.string().min(3, 'Username must be at least 3 characters').max(50),
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string(),
@@ -62,7 +61,6 @@ export const Component: React.FC = () => {
   const createMethods = useForm<CreateUserFormData>({
     resolver: zodResolver(createUserSchema),
     defaultValues: {
-      username: '',
       email: '',
       password: '',
       confirmPassword: '',
@@ -141,7 +139,6 @@ export const Component: React.FC = () => {
       updateMutation.mutate({ id: Number(id), data: updateData });
     } else {
       const createData: CreateUserData = {
-        username: data.username,
         email: data.email,
         password: data.password,
         first_name: data.first_name,
@@ -180,14 +177,6 @@ export const Component: React.FC = () => {
             <Stack spacing={3}>
               <Typography variant="h6">Account Information</Typography>
               
-              {!isEditMode && (
-                <FormTextField
-                  name="username"
-                  label="Username"
-                  required
-                  disabled={!isAdmin}
-                />
-              )}
 
               <FormTextField
                 name="email"

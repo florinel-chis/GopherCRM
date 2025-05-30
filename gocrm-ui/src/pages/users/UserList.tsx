@@ -334,7 +334,7 @@ export const Component: React.FC = () => {
       <ConfirmDialog
         open={deleteDialog.open}
         title="Delete User"
-        message={`Are you sure you want to delete the user "${deleteDialog.user?.username}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete the user "${deleteDialog.user?.first_name} ${deleteDialog.user?.last_name}"? This action cannot be undone.`}
         severity="error"
         confirmText="Delete"
         onConfirm={() => {

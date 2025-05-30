@@ -29,7 +29,6 @@ vi.mock('@/api/client', () => ({
 
 const mockUser = {
   id: 1,
-  username: 'testuser',
   email: 'test@example.com',
   first_name: 'Test',
   last_name: 'User',
@@ -139,7 +138,10 @@ describe('AuthContext', () => {
   });
 
   it('handles registration', async () => {
-    vi.mocked(authApi.register).mockResolvedValue(mockUser);
+    vi.mocked(authApi.register).mockResolvedValue({
+      token: 'test-token',
+      user: mockUser,
+    });
     vi.mocked(authApi.login).mockResolvedValue({
       token: 'test-token',
       user: mockUser,
@@ -151,7 +153,6 @@ describe('AuthContext', () => {
 
     await act(async () => {
       await result.current.register({
-        username: 'newuser',
         email: 'new@example.com',
         password: 'password',
         first_name: 'New',
@@ -160,10 +161,7 @@ describe('AuthContext', () => {
     });
 
     expect(authApi.register).toHaveBeenCalled();
-    expect(authApi.login).toHaveBeenCalledWith({
-      email: 'new@example.com',
-      password: 'password',
-    });
+    expect(apiClient.setToken).toHaveBeenCalledWith('test-token');
   });
 
   it('throws error when useAuth is used outside AuthProvider', () => {

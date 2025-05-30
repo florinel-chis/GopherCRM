@@ -140,7 +140,7 @@ export const Component: React.FC = () => {
       id: 2,
       type: 'status_change',
       description: `Status changed to ${lead.status}`,
-      user: lead.owner?.username || 'Unknown',
+      user: lead.owner?.email || 'Unknown',
       timestamp: lead.updated_at,
     },
   ];

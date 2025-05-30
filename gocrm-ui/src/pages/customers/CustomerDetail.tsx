@@ -110,7 +110,7 @@ export const Component: React.FC = () => {
       id: 2,
       type: 'updated',
       description: 'Customer information updated',
-      user: customer.owner?.username || 'Unknown',
+      user: customer.owner?.email || 'Unknown',
       timestamp: customer.updated_at,
     },
   ];

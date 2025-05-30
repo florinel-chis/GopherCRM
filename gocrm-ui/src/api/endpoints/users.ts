@@ -27,8 +27,6 @@ export interface UpdateUserData {
 const transformUserFromBackend = (backendUser: any): User => {
   return {
     ...backendUser,
-    // Frontend expects username but backend only has email
-    username: backendUser.email,
     // Ensure last_login_at is included if available
     last_login_at: backendUser.last_login_at,
   };

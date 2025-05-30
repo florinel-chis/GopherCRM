@@ -20,10 +20,6 @@ import { useAuth } from '@/hooks/useAuth';
 import type { RegisterRequest } from '@/types';
 
 const registerSchema = z.object({
-  username: z.string()
-    .min(3, 'Username must be at least 3 characters')
-    .max(20, 'Username must be at most 20 characters')
-    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
   email: z.string().email('Invalid email address'),
   password: z.string()
     .min(8, 'Password must be at least 8 characters')
@@ -116,17 +112,6 @@ export const Register: React.FC = () => {
                   helperText={errors.last_name?.message}
                 />
               </Box>
-              <TextField
-                {...register('username')}
-                required
-                fullWidth
-                id="username"
-                label="Username"
-                name="username"
-                autoComplete="username"
-                error={!!errors.username}
-                helperText={errors.username?.message}
-              />
               <TextField
                 {...register('email')}
                 required

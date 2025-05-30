@@ -2,7 +2,6 @@ import type { User, Lead, Customer, Ticket, Task, Comment } from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
   id: 1,
-  username: 'testuser',
   email: 'test@example.com',
   first_name: 'Test',
   last_name: 'User',
@@ -62,7 +61,7 @@ export const createMockTicket = (overrides?: Partial<Ticket>): Ticket => ({
   priority: 'medium',
   customer_id: 1,
   customer: createMockCustomer(),
-  assigned_to: createMockUser({ id: 2, username: 'agent' }),
+  assigned_to: createMockUser({ id: 2, email: 'agent@example.com' }),
   assigned_to_id: 2,
   created_by: createMockUser(),
   created_by_id: 1,
