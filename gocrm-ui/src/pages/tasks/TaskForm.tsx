@@ -126,6 +126,7 @@ export const Component: React.FC = () => {
 
   const onSubmit = (data: TaskFormData) => {
     console.log('Form submitted with data:', data);
+    console.log('Form errors:', methods.formState.errors);
     const submitData = {
       ...data,
       due_date: data.due_date.toISOString(),
@@ -144,6 +145,10 @@ export const Component: React.FC = () => {
     }
   };
 
+  const onError = (errors: any) => {
+    console.error('Form validation errors:', errors);
+  };
+
   if (taskLoading) {
     return <Loading />;
   }
@@ -160,7 +165,7 @@ export const Component: React.FC = () => {
 
       <Paper sx={{ p: 3 }}>
         <FormProvider {...methods}>
-          <form onSubmit={methods.handleSubmit(onSubmit)}>
+          <form onSubmit={methods.handleSubmit(onSubmit, onError)}>
             <Stack spacing={3}>
               <Typography variant="h6">Task Information</Typography>
               
@@ -234,6 +239,7 @@ export const Component: React.FC = () => {
                   variant="contained"
                   startIcon={<SaveIcon />}
                   disabled={createMutation.isPending || updateMutation.isPending}
+                  onClick={() => console.log('Submit button clicked')}
                 >
                   {isEditMode ? 'Update' : 'Create'} Task
                 </Button>
