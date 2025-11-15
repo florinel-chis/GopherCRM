@@ -130,14 +130,23 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
 
+	// Public routes with strict rate limiting for auth endpoints
 	public := router.Group("")
 	{
-		public.POST("/auth/register", authHandler.Register)
-		public.POST("/auth/login", authHandler.Login)
+		// Apply strict rate limiting to authentication endpoints
+		// 5 requests per minute with burst of 2 to prevent brute force attacks
+		authRoutes := public.Group("/auth")
+		authRoutes.Use(middleware.RateLimitStrict())
+		{
+			authRoutes.POST("/register", authHandler.Register)
+			authRoutes.POST("/login", authHandler.Login)
+		}
 	}
 
+	// Protected routes with moderate rate limiting
 	protected := router.Group("")
 	protected.Use(middleware.Auth(authService))
+	protected.Use(middleware.RateLimitModerate()) // 60 req/min for authenticated users
 	{
 		handler.SetupUserRoutes(protected, userHandler)
 		handler.SetupLeadRoutes(protected, leadHandler)
