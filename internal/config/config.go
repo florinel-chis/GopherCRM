@@ -51,6 +51,18 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Validate JWT secret - CRITICAL SECURITY REQUIREMENT
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET environment variable must be set")
+	}
+	if jwtSecret == "default-secret-change-this" {
+		return nil, fmt.Errorf("JWT_SECRET cannot be the default value 'default-secret-change-this' - please set a secure secret")
+	}
+	if len(jwtSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters long for security (current length: %d)", len(jwtSecret))
+	}
+
 	config := &Config{
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -65,7 +77,7 @@ func Load() (*Config, error) {
 			Mode: getEnv("SERVER_MODE", "development"),
 		},
 		JWT: JWTConfig{
-			Secret:      getEnv("JWT_SECRET", "default-secret-change-this"),
+			Secret:      jwtSecret,
 			ExpiryHours: getEnvAsInt("JWT_EXPIRY_HOURS", 24),
 		},
 		Logging: LoggingConfig{
