@@ -28,38 +28,61 @@ func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.AP
 
 func (s *authService) Login(email, password string) (string, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("email", email), "AuthService", "Login")
-	
+
+	// Pre-computed dummy hash for timing attack prevention
+	// This is a bcrypt hash of "dummy-password-for-timing-attack-prevention"
+	const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
 	user, err := s.userRepo.GetByEmail(email)
+
+	// Always perform bcrypt comparison to maintain constant timing
+	// If user doesn't exist, compare against dummy hash
+	var passwordHash string
+	if err != nil {
+		// User not found - use dummy hash to prevent timing attack
+		passwordHash = dummyHash
+	} else {
+		passwordHash = user.Password
+	}
+
+	// Perform password comparison (always happens regardless of whether user exists)
+	bcryptErr := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+
+	// Now check if user lookup failed
 	if err != nil {
 		logger.WithError(err).Warn("Login failed - user not found")
 		return "", errors.New("invalid credentials")
 	}
 
-	if !user.IsActive {
-		logger.WithField("user_id", user.ID).Warn("Login failed - account disabled")
-		return "", errors.New("account is disabled")
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+	// Check password result
+	if bcryptErr != nil {
 		logger.WithField("user_id", user.ID).Warn("Login failed - invalid password")
 		return "", errors.New("invalid credentials")
 	}
 
+	// Check if account is active (after password verification to prevent account enumeration)
+	if !user.IsActive {
+		logger.WithField("user_id", user.ID).Warn("Login failed - account disabled")
+		return "", errors.New("invalid credentials") // Use same error message
+	}
+
+	// Update last login timestamp
 	if err := s.userRepo.UpdateLastLogin(user.ID); err != nil {
 		logger.WithError(err).Warn("Failed to update last login time")
 	}
 
+	// Generate JWT token
 	token, err := s.GenerateJWT(user)
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return "", err
 	}
-	
+
 	logger.WithFields(map[string]interface{}{
 		"user_id": user.ID,
 		"role":    user.Role,
 	}).Info("User logged in successfully")
-	
+
 	return token, nil
 }
 
@@ -76,7 +99,13 @@ func (s *authService) ValidateToken(tokenString string) (*models.User, error) {
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		userID := uint(claims["user_id"].(float64))
+		// Safe type assertion with validation
+		userIDFloat, ok := claims["user_id"].(float64)
+		if !ok {
+			return nil, errors.New("invalid user_id in token claims")
+		}
+
+		userID := uint(userIDFloat)
 		return s.userRepo.GetByID(userID)
 	}
 
@@ -90,12 +119,20 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 		return nil, errors.New("invalid API key")
 	}
 
+	// Check if API key is active (not revoked)
+	if !apiKey.IsActive {
+		return nil, errors.New("API key has been revoked")
+	}
+
+	// Check expiration
 	if apiKey.ExpiresAt != nil && apiKey.ExpiresAt.Before(time.Now()) {
 		return nil, errors.New("API key expired")
 	}
 
+	// Update last used timestamp (best effort - don't fail validation if this fails)
 	if err := s.apiKeyRepo.UpdateLastUsed(apiKey.ID); err != nil {
 		// Log error but don't fail validation
+		utils.Logger.WithError(err).WithField("api_key_id", apiKey.ID).Warn("Failed to update API key last used timestamp")
 	}
 
 	return &apiKey.User, nil
