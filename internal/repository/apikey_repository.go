@@ -55,3 +55,7 @@ func (r *apiKeyRepository) UpdateLastUsed(id uint) error {
 	now := time.Now()
 	return r.db.Model(&models.APIKey{}).Where("id = ?", id).Update("last_used_at", &now).Error
 }
+
+func (r *apiKeyRepository) WithTx(tx *gorm.DB) APIKeyRepository {
+	return &apiKeyRepository{db: tx}
+}

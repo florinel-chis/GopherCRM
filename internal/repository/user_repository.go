@@ -61,3 +61,42 @@ func (r *userRepository) UpdateLastLogin(id uint) error {
 	now := time.Now()
 	return r.db.Model(&models.User{}).Where("id = ?", id).Update("last_login_at", &now).Error
 }
+
+func (r *userRepository) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	var users []models.User
+	query := r.db
+	if sortBy != "" {
+		query = query.Order(sortBy + " " + sortOrder)
+	}
+	err := query.Offset(offset).Limit(limit).Find(&users).Error
+	return users, err
+}
+
+func (r *userRepository) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	var users []models.User
+	db := r.db
+	searchPattern := "%" + query + "%"
+	db = db.Where(
+		"email LIKE ? OR first_name LIKE ? OR last_name LIKE ?",
+		searchPattern, searchPattern, searchPattern,
+	)
+	if sortBy != "" {
+		db = db.Order(sortBy + " " + sortOrder)
+	}
+	err := db.Offset(offset).Limit(limit).Find(&users).Error
+	return users, err
+}
+
+func (r *userRepository) CountSearch(query string) (int64, error) {
+	var count int64
+	searchPattern := "%" + query + "%"
+	err := r.db.Model(&models.User{}).Where(
+		"email LIKE ? OR first_name LIKE ? OR last_name LIKE ?",
+		searchPattern, searchPattern, searchPattern,
+	).Count(&count).Error
+	return count, err
+}
+
+func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
+	return &userRepository{db: tx}
+}

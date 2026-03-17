@@ -133,6 +133,108 @@ func (_m *CustomerService) Update(customer *models.Customer) error {
 	return r0
 }
 
+// GetCount provides a mock function with no fields
+func (_m *CustomerService) GetCount() (int64, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCount")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (int64, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() int64); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder
+func (_m *CustomerService) ListSorted(offset int, limit int, sortBy string, sortOrder string) ([]models.Customer, int64, error) {
+	ret := _m.Called(offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListSorted")
+	}
+
+	var r0 []models.Customer
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(int, int, string, string) ([]models.Customer, int64, error)); ok {
+		return rf(offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(int, int, string, string) []models.Customer); ok {
+		r0 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(int, int, string, string) int64); ok {
+		r1 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(int, int, string, string) error); ok {
+		r2 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// Search provides a mock function with given fields: query, offset, limit, sortBy, sortOrder
+func (_m *CustomerService) Search(query string, offset int, limit int, sortBy string, sortOrder string) ([]models.Customer, int64, error) {
+	ret := _m.Called(query, offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Search")
+	}
+
+	var r0 []models.Customer
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) ([]models.Customer, int64, error)); ok {
+		return rf(query, offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) []models.Customer); ok {
+		r0 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string, int, int, string, string) int64); ok {
+		r1 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(string, int, int, string, string) error); ok {
+		r2 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
 // NewCustomerService creates a new instance of CustomerService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewCustomerService(t interface {

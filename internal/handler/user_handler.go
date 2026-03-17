@@ -74,15 +74,55 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 func (h *UserHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.List")
-	
+
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if limit > 100 {
 		limit = 100
 	}
 
-	users, total, err := h.userService.List(offset, limit)
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
+
+	// Parse and validate sort parameters
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	allowedSortColumns := map[string]bool{
+		"created_at": true,
+		"updated_at": true,
+		"email":      true,
+		"first_name": true,
+		"last_name":  true,
+		"role":       true,
+	}
+
+	if !allowedSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	search := c.Query("search")
+
+	var users []models.User
+	var total int64
+	var err error
+
+	if search != "" {
+		users, total, err = h.userService.Search(search, offset, limit, sortBy, sortOrder)
+	} else if sortBy != "" {
+		users, total, err = h.userService.ListSorted(offset, limit, sortBy, sortOrder)
+	} else {
+		users, total, err = h.userService.List(offset, limit)
+	}
+
 	if err != nil {
 		logger.WithError(err).Error("Failed to list users")
 		utils.RespondInternalError(c)
