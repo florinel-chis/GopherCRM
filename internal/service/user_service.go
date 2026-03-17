@@ -95,11 +95,39 @@ func (s *userService) List(offset, limit int) ([]models.User, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	
+
 	total, err := s.userRepo.Count()
 	if err != nil {
 		return nil, 0, err
 	}
-	
+
+	return users, total, nil
+}
+
+func (s *userService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error) {
+	users, err := s.userRepo.ListSorted(offset, limit, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.userRepo.Count()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+func (s *userService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error) {
+	users, err := s.userRepo.Search(query, offset, limit, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.userRepo.CountSearch(query)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	return users, total, nil
 }

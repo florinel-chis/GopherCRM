@@ -114,6 +114,53 @@ func (s *customerService) List(offset, limit int) ([]models.Customer, int64, err
 	return customers, total, nil
 }
 
+func (s *customerService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"offset":     offset,
+		"limit":      limit,
+		"sort_by":    sortBy,
+		"sort_order": sortOrder,
+	}), "CustomerService", "ListSorted")
+
+	customers, err := s.customerRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder)
+	if err != nil {
+		logger.WithError(err).Error("Failed to list customers sorted")
+		return nil, 0, err
+	}
+
+	total, err := s.customerRepo.Count()
+	if err != nil {
+		logger.WithError(err).Error("Failed to count customers")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Customers listed sorted successfully")
+	return customers, total, nil
+}
+
+func (s *customerService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"query":  query,
+		"offset": offset,
+		"limit":  limit,
+	}), "CustomerService", "Search")
+
+	customers, err := s.customerRepo.Search(query, offset, limit, sortBy, sortOrder)
+	if err != nil {
+		logger.WithError(err).Error("Failed to search customers")
+		return nil, 0, err
+	}
+
+	total, err := s.customerRepo.CountSearch(query)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count search results")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Customer search completed")
+	return customers, total, nil
+}
+
 func (s *customerService) GetCount() (int64, error) {
 	return s.customerRepo.Count()
 }

@@ -175,6 +175,80 @@ func (_m *UserService) Update(id uint, updates map[string]interface{}) (*models.
 	return r0, r1
 }
 
+// ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder
+func (_m *UserService) ListSorted(offset int, limit int, sortBy string, sortOrder string) ([]models.User, int64, error) {
+	ret := _m.Called(offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListSorted")
+	}
+
+	var r0 []models.User
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(int, int, string, string) ([]models.User, int64, error)); ok {
+		return rf(offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(int, int, string, string) []models.User); ok {
+		r0 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.User)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(int, int, string, string) int64); ok {
+		r1 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(int, int, string, string) error); ok {
+		r2 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// Search provides a mock function with given fields: query, offset, limit, sortBy, sortOrder
+func (_m *UserService) Search(query string, offset int, limit int, sortBy string, sortOrder string) ([]models.User, int64, error) {
+	ret := _m.Called(query, offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Search")
+	}
+
+	var r0 []models.User
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) ([]models.User, int64, error)); ok {
+		return rf(query, offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) []models.User); ok {
+		r0 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.User)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string, int, int, string, string) int64); ok {
+		r1 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(string, int, int, string, string) error); ok {
+		r2 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
 // NewUserService creates a new instance of UserService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewUserService(t interface {

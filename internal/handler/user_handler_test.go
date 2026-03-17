@@ -316,6 +316,88 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	assert.True(suite.T(), response.Success)
 }
 
+func (suite *UserHandlerTestSuite) TestList_SortByCreatedAtDesc() {
+	suite.router.GET("/users", suite.handler.List)
+
+	expectedUsers := []models.User{
+		{BaseModel: models.BaseModel{ID: 2}, Email: "user2@example.com"},
+		{BaseModel: models.BaseModel{ID: 1}, Email: "user1@example.com"},
+	}
+
+	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedUsers, int64(2), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/users?sort_by=created_at&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(2), response.Meta.Total)
+}
+
+func (suite *UserHandlerTestSuite) TestList_SortByInvalidColumn() {
+	suite.router.GET("/users", suite.handler.List)
+
+	expectedUsers := []models.User{
+		{BaseModel: models.BaseModel{ID: 1}, Email: "user1@example.com"},
+	}
+
+	// Invalid sort_by should fall through to unsorted List
+	suite.mockService.On("List", 0, 20).Return(expectedUsers, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/users?sort_by=invalid_column&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *UserHandlerTestSuite) TestList_SearchByEmail() {
+	suite.router.GET("/users", suite.handler.List)
+
+	expectedUsers := []models.User{
+		{BaseModel: models.BaseModel{ID: 1}, Email: "admin@test.com"},
+	}
+
+	suite.mockService.On("Search", "admin@test.com", 0, 20, "", "asc").Return(expectedUsers, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/users?search=admin%40test.com", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(1), response.Meta.Total)
+}
+
+func (suite *UserHandlerTestSuite) TestList_SearchWithSort() {
+	suite.router.GET("/users", suite.handler.List)
+
+	expectedUsers := []models.User{
+		{BaseModel: models.BaseModel{ID: 1}, Email: "admin@test.com"},
+	}
+
+	suite.mockService.On("Search", "admin", 0, 20, "email", "asc").Return(expectedUsers, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/users?search=admin&sort_by=email&sort_order=asc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
 func TestUserHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(UserHandlerTestSuite))
 }
