@@ -40,6 +40,15 @@ const statusOptions = [
   { value: 'lost', label: 'Lost' },
 ];
 
+const classificationOptions = [
+  { value: '', label: 'All Classifications' },
+  { value: 'hot_lead', label: 'Hot Lead' },
+  { value: 'lead', label: 'Lead' },
+  { value: 'unclassified', label: 'Unclassified' },
+  { value: 'spam', label: 'Spam' },
+  { value: 'test', label: 'Test' },
+];
+
 const getStatusColor = (status: Lead['status']) => {
   switch (status) {
     case 'new':
@@ -57,6 +66,22 @@ const getStatusColor = (status: Lead['status']) => {
   }
 };
 
+const getClassificationColor = (classification: string) => {
+  switch (classification) {
+    case 'hot_lead':
+      return 'error';
+    case 'lead':
+      return 'success';
+    case 'spam':
+      return 'default';
+    case 'test':
+      return 'warning';
+    case 'unclassified':
+    default:
+      return 'info';
+  }
+};
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -67,6 +92,7 @@ export const Component: React.FC = () => {
     page: 1,
     limit: 10,
     status: '',
+    classification: '',
     search: '',
   });
   
@@ -147,6 +173,19 @@ export const Component: React.FC = () => {
       ),
     },
     {
+      id: 'classification',
+      label: 'Classification',
+      minWidth: 130,
+      format: (value: string) => (
+        <Chip
+          label={value ? value.replace('_', ' ').charAt(0).toUpperCase() + value.replace('_', ' ').slice(1) : 'Unclassified'}
+          color={getClassificationColor(value || 'unclassified')}
+          size="small"
+          variant="outlined"
+        />
+      ),
+    },
+    {
       id: 'source',
       label: 'Source',
       minWidth: 120,
@@ -195,6 +234,26 @@ export const Component: React.FC = () => {
 
   const handleStatusChange = (status: string) => {
     setFilters({ ...filters, status, page: 1 });
+  };
+
+  const handleClassificationChange = (classification: string) => {
+    setFilters({ ...filters, classification, page: 1 });
+  };
+
+  const handleSort = (field: string, order: 'asc' | 'desc') => {
+    // Map frontend column IDs to backend field names
+    const fieldMap: Record<string, string> = {
+      company_name: 'company',
+      contact_name: 'first_name',
+      email: 'email',
+      phone: 'phone',
+      status: 'status',
+      classification: 'classification',
+      source: 'source',
+      created_at: 'created_at',
+    };
+    const sortBy = fieldMap[field] || field;
+    setFilters({ ...filters, sort_by: sortBy, sort_order: order, page: 1 });
   };
 
   const handlePageChange = (page: number) => {
@@ -253,6 +312,21 @@ export const Component: React.FC = () => {
               ))}
             </Select>
           </FormControl>
+
+          <FormControl size="small" sx={{ minWidth: 170 }}>
+            <InputLabel>Classification</InputLabel>
+            <Select
+              value={filters.classification || ''}
+              onChange={(e) => handleClassificationChange(e.target.value)}
+              label="Classification"
+            >
+              {classificationOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
       </Paper>
 
@@ -263,6 +337,7 @@ export const Component: React.FC = () => {
         page={(filters.page || 1) - 1}
         rowsPerPage={filters.limit || 10}
         loading={isLoading}
+        onSort={handleSort}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(lead) => navigate(`/leads/${lead.id}`)}

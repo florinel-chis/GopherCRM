@@ -441,6 +441,142 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_SalesUserForbidden() {
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
+func (suite *LeadHandlerTestSuite) TestList_SortByCreatedAtDesc() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+	}
+
+	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedLeads, int64(2), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(2), response.Meta.Total)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SortByCreatedAtAsc() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
+	}
+
+	suite.mockService.On("ListSorted", 0, 20, "created_at", "asc").Return(expectedLeads, int64(2), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=asc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SortByInvalidColumn() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+	}
+
+	// Invalid sort_by should fall through to unsorted List
+	suite.mockService.On("List", 0, 20).Return(expectedLeads, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=invalid_column&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SortByInvalidOrder() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+	}
+
+	// Invalid sort_order should default to "asc"
+	suite.mockService.On("ListSorted", 0, 20, "email", "asc").Return(expectedLeads, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=email&sort_order=invalid", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SortWithPagination() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 3}, FirstName: "Bob", Email: "bob@example.com"},
+	}
+
+	// page=2, limit=10 → offset=10
+	suite.mockService.On("ListSorted", 10, 10, "created_at", "desc").Return(expectedLeads, int64(15), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc&page=2&limit=10", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SearchByEmail() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Anders", Email: "anders.t@conversio.dk"},
+	}
+
+	suite.mockService.On("Search", "anders.t@conversio.dk", 0, 20, "", "asc").Return(expectedLeads, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?search=anders.t%40conversio.dk", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(1), response.Meta.Total)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SearchWithSort() {
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Anders", Email: "anders.t@conversio.dk"},
+	}
+
+	suite.mockService.On("Search", "conversio", 0, 20, "created_at", "desc").Return(expectedLeads, int64(1), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?search=conversio&sort_by=created_at&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
 func TestLeadHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(LeadHandlerTestSuite))
 }
