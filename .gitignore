@@ -120,3 +120,27 @@ profile.cov
 
 # Goreleaser
 dist/
+
+# Compiled binaries (project-specific)
+/gophercrm
+/main
+
+# Claude Code
+.claude/
+
+# LSP configuration (local)
+.lsp.json
+
+# Cookies / session files
+cookies.txt
+gocrm-ui/cookies.txt
+
+# Generated reports (ephemeral)
+API_DOCUMENTATION.md
+FINAL_STATUS_REPORT.md
+FIXES_PROGRESS.md
+SWAGGER_USAGE_GUIDE.md
+task-form-validation-demo.md
+
+# Agent artifacts
+agents/
