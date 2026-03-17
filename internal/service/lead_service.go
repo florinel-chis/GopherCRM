@@ -1,8 +1,9 @@
 package service
 
 import (
-	"errors"
+	"context"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -11,12 +12,14 @@ import (
 type leadService struct {
 	leadRepo     repository.LeadRepository
 	customerRepo repository.CustomerRepository
+	txManager    *utils.TransactionManager
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository) LeadService {
+func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, txManager *utils.TransactionManager) LeadService {
 	return &leadService{
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
+		txManager:    txManager,
 	}
 }
 
@@ -39,11 +42,40 @@ func (s *leadService) Create(lead *models.Lead) error {
 }
 
 func (s *leadService) GetByID(id uint) (*models.Lead, error) {
-	return s.leadRepo.GetByID(id)
+	// For individual lead retrieval, preload Owner for display purposes
+	return s.leadRepo.GetByIDWithPreloads(id, "Owner")
+}
+
+func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
+	return s.leadRepo.GetByExternalID(externalID)
 }
 
 func (s *leadService) GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, error) {
+	// For owner-filtered lists, no need to preload Owner since we already know it
 	return s.leadRepo.GetByOwnerID(ownerID, offset, limit)
+}
+
+func (s *leadService) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"classification": classification,
+		"offset":         offset,
+		"limit":          limit,
+	}), "LeadService", "GetByClassification")
+
+	leads, err := s.leadRepo.GetByClassification(classification, offset, limit)
+	if err != nil {
+		logger.WithError(err).Error("Failed to list leads by classification")
+		return nil, 0, err
+	}
+
+	total, err := s.leadRepo.CountByClassification(classification)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count leads by classification")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Leads listed by classification successfully")
+	return leads, total, nil
 }
 
 func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.Lead, error) {
@@ -80,6 +112,12 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	if status, ok := updates["status"].(models.LeadStatus); ok {
 		lead.Status = status
 	}
+	if classification, ok := updates["classification"].(models.LeadClassification); ok {
+		lead.Classification = classification
+	}
+	if externalID, ok := updates["external_id"].(string); ok {
+		lead.ExternalID = externalID
+	}
 	if notes, ok := updates["notes"].(string); ok {
 		lead.Notes = notes
 	}
@@ -115,7 +153,8 @@ func (s *leadService) List(offset, limit int) ([]models.Lead, int64, error) {
 		"limit":  limit,
 	}), "LeadService", "List")
 	
-	leads, err := s.leadRepo.List(offset, limit)
+	// For general lists, preload Owner for display purposes
+	leads, err := s.leadRepo.ListWithPreloads(offset, limit, "Owner")
 	if err != nil {
 		logger.WithError(err).Error("Failed to list leads")
 		return nil, 0, err
@@ -131,9 +170,57 @@ func (s *leadService) List(offset, limit int) ([]models.Lead, int64, error) {
 	return leads, total, nil
 }
 
+func (s *leadService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"offset":     offset,
+		"limit":      limit,
+		"sort_by":    sortBy,
+		"sort_order": sortOrder,
+	}), "LeadService", "ListSorted")
+
+	leads, err := s.leadRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "Owner")
+	if err != nil {
+		logger.WithError(err).Error("Failed to list leads sorted")
+		return nil, 0, err
+	}
+
+	total, err := s.leadRepo.Count()
+	if err != nil {
+		logger.WithError(err).Error("Failed to count leads")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Leads listed sorted successfully")
+	return leads, total, nil
+}
+
+func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"query":  query,
+		"offset": offset,
+		"limit":  limit,
+	}), "LeadService", "Search")
+
+	leads, err := s.leadRepo.Search(query, offset, limit, sortBy, sortOrder, "Owner")
+	if err != nil {
+		logger.WithError(err).Error("Failed to search leads")
+		return nil, 0, err
+	}
+
+	total, err := s.leadRepo.CountSearch(query)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count search results")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Lead search completed")
+	return leads, total, nil
+}
+
 func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", leadID), "LeadService", "ConvertToCustomer")
 	
+	// First, validate the lead outside of transaction
 	lead, err := s.leadRepo.GetByID(leadID)
 	if err != nil {
 		logger.WithError(err).Error("Lead not found")
@@ -142,45 +229,84 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 
 	if lead.Status == models.LeadStatusConverted {
 		logger.Warn("Attempted to convert already converted lead")
-		return nil, errors.New("lead already converted")
+		return nil, apperrors.NewLeadAlreadyConverted(leadID)
 	}
 
-	// Create customer from lead data
-	if customerData.Email == "" {
-		customerData.Email = lead.Email
-	}
-	if customerData.FirstName == "" {
-		customerData.FirstName = lead.FirstName
-	}
-	if customerData.LastName == "" {
-		customerData.LastName = lead.LastName
-	}
-	if customerData.Phone == "" {
-		customerData.Phone = lead.Phone
-	}
-	if customerData.Company == "" {
-		customerData.Company = lead.Company
-	}
+	// Execute conversion within a transaction with retry logic
+	ctx := context.Background()
+	var convertedCustomer *models.Customer
+	
+	err = s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
+		// Get transaction from context
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
 
-	if err := s.customerRepo.Create(customerData); err != nil {
-		logger.WithError(err).Error("Failed to create customer")
-		return nil, err
-	}
+		// Use transaction-aware repositories
+		txLeadRepo := s.leadRepo.WithTx(tx)
+		txCustomerRepo := s.customerRepo.WithTx(tx)
 
-	// Update lead status
-	if err := s.leadRepo.ConvertToCustomer(leadID, customerData.ID); err != nil {
-		logger.WithError(err).Error("Failed to update lead status")
+		// Re-check lead status within transaction to prevent race conditions
+		txLead, err := txLeadRepo.GetByID(leadID)
+		if err != nil {
+			return err
+		}
+
+		if txLead.Status == models.LeadStatusConverted {
+			return apperrors.NewLeadAlreadyConverted(leadID)
+		}
+
+		// Prepare customer data from lead data
+		if customerData.Email == "" {
+			customerData.Email = txLead.Email
+		}
+		if customerData.FirstName == "" {
+			customerData.FirstName = txLead.FirstName
+		}
+		if customerData.LastName == "" {
+			customerData.LastName = txLead.LastName
+		}
+		if customerData.Phone == "" {
+			customerData.Phone = txLead.Phone
+		}
+		if customerData.Company == "" {
+			customerData.Company = txLead.Company
+		}
+
+		// Create customer within transaction
+		if err := txCustomerRepo.Create(customerData); err != nil {
+			logger.WithError(err).Error("Failed to create customer within transaction")
+			return err
+		}
+
+		// Update lead status within transaction
+		if err := txLeadRepo.ConvertToCustomer(leadID, customerData.ID); err != nil {
+			logger.WithError(err).Error("Failed to update lead status within transaction")
+			return err
+		}
+
+		convertedCustomer = customerData
+		return nil
+	}, 3) // Retry up to 3 times for deadlocks
+
+	if err != nil {
+		logger.WithError(err).Error("Lead conversion transaction failed")
 		return nil, err
 	}
 
 	logger.WithFields(map[string]interface{}{
-		"customer_id": customerData.ID,
+		"customer_id": convertedCustomer.ID,
 		"lead_email":  lead.Email,
 	}).Info("Lead converted to customer successfully")
 	
-	return customerData, nil
+	return convertedCustomer, nil
 }
 
 func (s *leadService) GetCount() (int64, error) {
 	return s.leadRepo.Count()
+}
+
+func (s *leadService) GetCountByClassification(classification models.LeadClassification) (int64, error) {
+	return s.leadRepo.CountByClassification(classification)
 }

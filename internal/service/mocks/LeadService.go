@@ -60,6 +60,101 @@ func (_m *LeadService) Create(lead *models.Lead) error {
 	return r0
 }
 
+// GetByClassification provides a mock function with given fields: classification, offset, limit
+func (_m *LeadService) GetByClassification(classification models.LeadClassification, offset int, limit int) ([]models.Lead, int64, error) {
+	ret := _m.Called(classification, offset, limit)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByClassification")
+	}
+
+	var r0 []models.Lead
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(models.LeadClassification, int, int) ([]models.Lead, int64, error)); ok {
+		return rf(classification, offset, limit)
+	}
+	if rf, ok := ret.Get(0).(func(models.LeadClassification, int, int) []models.Lead); ok {
+		r0 = rf(classification, offset, limit)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(models.LeadClassification, int, int) int64); ok {
+		r1 = rf(classification, offset, limit)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(models.LeadClassification, int, int) error); ok {
+		r2 = rf(classification, offset, limit)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// GetByExternalID provides a mock function with given fields: externalID
+func (_m *LeadService) GetByExternalID(externalID string) (*models.Lead, error) {
+	ret := _m.Called(externalID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByExternalID")
+	}
+
+	var r0 *models.Lead
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (*models.Lead, error)); ok {
+		return rf(externalID)
+	}
+	if rf, ok := ret.Get(0).(func(string) *models.Lead); ok {
+		r0 = rf(externalID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(externalID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetCountByClassification provides a mock function with given fields: classification
+func (_m *LeadService) GetCountByClassification(classification models.LeadClassification) (int64, error) {
+	ret := _m.Called(classification)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCountByClassification")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(models.LeadClassification) (int64, error)); ok {
+		return rf(classification)
+	}
+	if rf, ok := ret.Get(0).(func(models.LeadClassification) int64); ok {
+		r0 = rf(classification)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(models.LeadClassification) error); ok {
+		r1 = rf(classification)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Delete provides a mock function with given fields: id
 func (_m *LeadService) Delete(id uint) error {
 	ret := _m.Called(id)
@@ -138,6 +233,34 @@ func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models
 	return r0, r1
 }
 
+// GetCount provides a mock function with no fields
+func (_m *LeadService) GetCount() (int64, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCount")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (int64, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() int64); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // List provides a mock function with given fields: offset, limit
 func (_m *LeadService) List(offset int, limit int) ([]models.Lead, int64, error) {
 	ret := _m.Called(offset, limit)
@@ -168,6 +291,80 @@ func (_m *LeadService) List(offset int, limit int) ([]models.Lead, int64, error)
 
 	if rf, ok := ret.Get(2).(func(int, int) error); ok {
 		r2 = rf(offset, limit)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder
+func (_m *LeadService) ListSorted(offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
+	ret := _m.Called(offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListSorted")
+	}
+
+	var r0 []models.Lead
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(int, int, string, string) ([]models.Lead, int64, error)); ok {
+		return rf(offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(int, int, string, string) []models.Lead); ok {
+		r0 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(int, int, string, string) int64); ok {
+		r1 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(int, int, string, string) error); ok {
+		r2 = rf(offset, limit, sortBy, sortOrder)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// Search provides a mock function with given fields: query, offset, limit, sortBy, sortOrder
+func (_m *LeadService) Search(query string, offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
+	ret := _m.Called(query, offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Search")
+	}
+
+	var r0 []models.Lead
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) ([]models.Lead, int64, error)); ok {
+		return rf(query, offset, limit, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(string, int, int, string, string) []models.Lead); ok {
+		r0 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string, int, int, string, string) int64); ok {
+		r1 = rf(query, offset, limit, sortBy, sortOrder)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	if rf, ok := ret.Get(2).(func(string, int, int, string, string) error); ok {
+		r2 = rf(query, offset, limit, sortBy, sortOrder)
 	} else {
 		r2 = ret.Error(2)
 	}
