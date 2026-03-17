@@ -96,21 +96,65 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 
 func (h *CustomerHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.List")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin, sales, and support users can list customers
-	if currentUserRole != string(models.RoleAdmin) && 
-	   currentUserRole != string(models.RoleSales) && 
-	   currentUserRole != string(models.RoleSupport) {
+	if currentUserRole != string(models.RoleAdmin) &&
+		currentUserRole != string(models.RoleSales) &&
+		currentUserRole != string(models.RoleSupport) {
 		utils.RespondForbidden(c, "Insufficient permissions to list customers")
 		return
 	}
 
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 
-	customers, total, err := h.customerService.List(offset, limit)
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
+
+	// Parse and validate sort parameters
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	allowedSortColumns := map[string]bool{
+		"created_at": true,
+		"updated_at": true,
+		"first_name": true,
+		"last_name":  true,
+		"email":      true,
+		"company":    true,
+	}
+
+	if !allowedSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	search := c.Query("search")
+
+	var customers []models.Customer
+	var total int64
+	var err error
+
+	if search != "" {
+		customers, total, err = h.customerService.Search(search, offset, limit, sortBy, sortOrder)
+	} else if sortBy != "" {
+		customers, total, err = h.customerService.ListSorted(offset, limit, sortBy, sortOrder)
+	} else {
+		customers, total, err = h.customerService.List(offset, limit)
+	}
+
 	if err != nil {
 		logger.WithError(err).Error("Failed to list customers")
 		utils.RespondInternalError(c)

@@ -113,7 +113,8 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 
 	authService := service.NewAuthService(userRepo, apiKeyRepo, cfg.JWT)
 	userService := service.NewUserService(userRepo)
-	leadService := service.NewLeadService(leadRepo, customerRepo)
+	txManager := utils.NewTransactionManager(models.DB)
+	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo)

@@ -490,6 +490,100 @@ func uintPtr(u uint) *uint {
 	return &u
 }
 
+func (suite *TicketHandlerTestSuite) TestList_SortByCreatedAtDesc() {
+	suite.router.GET("/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.List(c)
+	})
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 2}, Title: "Ticket 2"},
+		{BaseModel: models.BaseModel{ID: 1}, Title: "Ticket 1"},
+	}
+
+	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedTickets, int64(2), nil)
+
+	req := httptest.NewRequest("GET", "/tickets?sort_by=created_at&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(2), response.Meta.Total)
+}
+
+func (suite *TicketHandlerTestSuite) TestList_SortByInvalidColumn() {
+	suite.router.GET("/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.List(c)
+	})
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 1}, Title: "Ticket 1"},
+	}
+
+	// Invalid sort_by should fall through to unsorted List
+	suite.mockService.On("List", 0, 20).Return(expectedTickets, int64(1), nil)
+
+	req := httptest.NewRequest("GET", "/tickets?sort_by=invalid_column&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestList_SearchByTitle() {
+	suite.router.GET("/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.List(c)
+	})
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 1}, Title: "Login issue"},
+	}
+
+	suite.mockService.On("Search", "login", 0, 20, "", "asc").Return(expectedTickets, int64(1), nil)
+
+	req := httptest.NewRequest("GET", "/tickets?search=login", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(1), response.Meta.Total)
+}
+
+func (suite *TicketHandlerTestSuite) TestList_SearchWithSort() {
+	suite.router.GET("/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.List(c)
+	})
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 1}, Title: "Login issue"},
+	}
+
+	suite.mockService.On("Search", "login", 0, 20, "priority", "desc").Return(expectedTickets, int64(1), nil)
+
+	req := httptest.NewRequest("GET", "/tickets?search=login&sort_by=priority&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
 func TestTicketHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(TicketHandlerTestSuite))
 }

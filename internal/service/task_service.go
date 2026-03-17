@@ -275,6 +275,53 @@ func (s *taskService) List(offset, limit int) ([]models.Task, int64, error) {
 	return tasks, total, nil
 }
 
+func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"offset":     offset,
+		"limit":      limit,
+		"sort_by":    sortBy,
+		"sort_order": sortOrder,
+	}), "TaskService", "ListSorted")
+
+	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "AssignedTo")
+	if err != nil {
+		logger.WithError(err).Error("Failed to list tasks sorted")
+		return nil, 0, err
+	}
+
+	total, err := s.taskRepo.Count()
+	if err != nil {
+		logger.WithError(err).Error("Failed to count tasks")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Tasks listed sorted successfully")
+	return tasks, total, nil
+}
+
+func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"query":  query,
+		"offset": offset,
+		"limit":  limit,
+	}), "TaskService", "Search")
+
+	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, "AssignedTo")
+	if err != nil {
+		logger.WithError(err).Error("Failed to search tasks")
+		return nil, 0, err
+	}
+
+	total, err := s.taskRepo.CountSearch(query)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count search results")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Task search completed")
+	return tasks, total, nil
+}
+
 func (s *taskService) GetPendingCount() (int64, error) {
 	return s.taskRepo.CountPending()
 }

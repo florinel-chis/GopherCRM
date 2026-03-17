@@ -63,3 +63,81 @@ func (r *taskRepository) CountPending() (int64, error) {
 	err := r.db.Model(&models.Task{}).Where("status IN ?", []string{"pending", "in_progress"}).Count(&count).Error
 	return count, err
 }
+
+func (r *taskRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Task, error) {
+	var task models.Task
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	err := query.First(&task, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (r *taskRepository) GetByAssignedToIDWithPreloads(assignedToID uint, offset, limit int, preloads ...string) ([]models.Task, error) {
+	var tasks []models.Task
+	query := r.db.Where("assigned_to_id = ?", assignedToID)
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *taskRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Task, error) {
+	var tasks []models.Task
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *taskRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
+	var tasks []models.Task
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	if sortBy != "" {
+		query = query.Order(sortBy + " " + sortOrder)
+	}
+	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *taskRepository) Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
+	var tasks []models.Task
+	db := r.db
+	for _, preload := range preloads {
+		db = db.Preload(preload)
+	}
+	searchPattern := "%" + query + "%"
+	db = db.Where(
+		"title LIKE ? OR description LIKE ?",
+		searchPattern, searchPattern,
+	)
+	if sortBy != "" {
+		db = db.Order(sortBy + " " + sortOrder)
+	}
+	err := db.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *taskRepository) CountSearch(query string) (int64, error) {
+	var count int64
+	searchPattern := "%" + query + "%"
+	err := r.db.Model(&models.Task{}).Where(
+		"title LIKE ? OR description LIKE ?",
+		searchPattern, searchPattern,
+	).Count(&count).Error
+	return count, err
+}
+
+func (r *taskRepository) WithTx(tx *gorm.DB) TaskRepository {
+	return &taskRepository{db: tx}
+}

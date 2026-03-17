@@ -10,19 +10,31 @@ const (
 	LeadStatusConverted   LeadStatus = "converted"
 )
 
+type LeadClassification string
+
+const (
+	LeadClassificationUnclassified LeadClassification = "unclassified"
+	LeadClassificationTest         LeadClassification = "test"
+	LeadClassificationSpam         LeadClassification = "spam"
+	LeadClassificationLead         LeadClassification = "lead"
+	LeadClassificationHotLead      LeadClassification = "hot_lead"
+)
+
 type Lead struct {
 	BaseModel
-	FirstName   string     `gorm:"not null;type:varchar(100)" json:"first_name"`
-	LastName    string     `gorm:"not null;type:varchar(100)" json:"last_name"`
-	Email       string     `gorm:"not null;type:varchar(255)" json:"email"`
-	Phone       string     `gorm:"type:varchar(50)" json:"phone"`
-	Company     string     `gorm:"type:varchar(200)" json:"company"`
-	Position    string     `gorm:"type:varchar(100)" json:"position"`
-	Source      string     `gorm:"type:varchar(100)" json:"source"`
-	Status      LeadStatus `gorm:"not null;default:'new';type:varchar(20)" json:"status"`
-	Notes       string     `gorm:"type:text" json:"notes"`
-	OwnerID     uint       `json:"owner_id"`
-	Owner       User       `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
-	CustomerID  *uint      `json:"customer_id,omitempty"`
-	Customer    *Customer  `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+	FirstName      string             `gorm:"not null;type:varchar(100)" json:"first_name"`
+	LastName       string             `gorm:"not null;type:varchar(100)" json:"last_name"`
+	Email          string             `gorm:"not null;type:varchar(255)" json:"email"`
+	Phone          string             `gorm:"type:varchar(50)" json:"phone"`
+	Company        string             `gorm:"type:varchar(200)" json:"company"`
+	Position       string             `gorm:"type:varchar(100)" json:"position"`
+	Source         string             `gorm:"type:varchar(100)" json:"source"`
+	Status         LeadStatus         `gorm:"not null;default:'new';type:varchar(20)" json:"status"`
+	Classification LeadClassification `gorm:"type:varchar(20);default:'unclassified'" json:"classification"`
+	ExternalID     string             `gorm:"type:varchar(255)" json:"external_id,omitempty"`
+	Notes          string             `gorm:"type:text" json:"notes"`
+	OwnerID        uint               `json:"owner_id"`
+	Owner          User               `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
+	CustomerID     *uint              `json:"customer_id,omitempty"`
+	Customer       *Customer          `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
 }
