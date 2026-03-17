@@ -1,13 +1,27 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
+)
+
+// RateLimitType represents the type of rate limit to apply
+type RateLimitType int
+
+const (
+	RateLimitPublic RateLimitType = iota
+	RateLimitAuthenticated
+	RateLimitAdmin
 )
 
 // visitor tracks rate limiting for a specific IP
@@ -123,4 +137,160 @@ func RateLimitModerate() gin.HandlerFunc {
 func RateLimitGenerous() gin.HandlerFunc {
 	// 120 requests per minute with burst of 20
 	return RateLimit(2.0, 20)
+}
+
+// RateLimiter is a config-driven, role-aware rate limiter
+type RateLimiter struct {
+	cfg      *config.RateLimitConfig
+	buckets  map[string]*tokenBucket
+	mu       sync.RWMutex
+}
+
+type tokenBucket struct {
+	tokens    int
+	limit     int
+	lastReset time.Time
+	window    time.Duration
+}
+
+// NewRateLimiter creates a new config-driven RateLimiter
+func NewRateLimiter(cfg *config.RateLimitConfig) *RateLimiter {
+	return &RateLimiter{
+		cfg:     cfg,
+		buckets: make(map[string]*tokenBucket),
+	}
+}
+
+// getKey generates a rate limit key based on the request context and limit type
+func (rl *RateLimiter) getKey(c *gin.Context, limitType RateLimitType) string {
+	// Check for user_id in context (authenticated user)
+	if userID, exists := c.Get("user_id"); exists && userID != nil && userID != "" {
+		return fmt.Sprintf("user:%v", userID)
+	}
+
+	// Check for API key
+	authHeader := c.GetHeader("Authorization")
+	if strings.HasPrefix(authHeader, "ApiKey ") {
+		key := strings.TrimPrefix(authHeader, "ApiKey ")
+		if len(key) > 8 {
+			key = key[:8]
+		}
+		return fmt.Sprintf("apikey:%s", key)
+	}
+
+	// Fall back to IP
+	return rl.getClientIP(c)
+}
+
+func (rl *RateLimiter) getClientIP(c *gin.Context) string {
+	// Check X-Forwarded-For
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	// Check X-Real-IP
+	if xri := c.GetHeader("X-Real-IP"); xri != "" {
+		return xri
+	}
+	// Fall back to RemoteAddr
+	ip := c.Request.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	return ip
+}
+
+func (rl *RateLimiter) getLimitForType(limitType RateLimitType) int {
+	switch limitType {
+	case RateLimitAdmin:
+		return rl.cfg.AdminEndpoints
+	case RateLimitAuthenticated:
+		return rl.cfg.AuthenticatedAPI
+	default:
+		return rl.cfg.PublicEndpoints
+	}
+}
+
+func (rl *RateLimiter) allow(key string, limit int) (remaining int, allowed bool) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	window := time.Duration(rl.cfg.WindowDuration) * time.Minute
+	bucket, exists := rl.buckets[key]
+	if !exists || time.Since(bucket.lastReset) > window {
+		rl.buckets[key] = &tokenBucket{
+			tokens:    limit - 1,
+			limit:     limit,
+			lastReset: time.Now(),
+			window:    window,
+		}
+		return limit - 1, true
+	}
+
+	if bucket.tokens <= 0 {
+		return 0, false
+	}
+
+	bucket.tokens--
+	return bucket.tokens, true
+}
+
+func (rl *RateLimiter) applyRateLimit(c *gin.Context, limitType RateLimitType) {
+	if !rl.cfg.Enabled {
+		c.Next()
+		return
+	}
+
+	limit := rl.getLimitForType(limitType)
+	key := rl.getKey(c, limitType)
+	remaining, allowed := rl.allow(key, limit)
+
+	window := time.Duration(rl.cfg.WindowDuration) * time.Minute
+
+	// Set rate limit headers
+	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+	c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(window).Unix(), 10))
+	c.Header("X-RateLimit-Window", fmt.Sprintf("%dm", rl.cfg.WindowDuration))
+
+	if !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"success": false,
+			"error": gin.H{
+				"code":        "RATE_LIMIT_EXCEEDED",
+				"message":     "Rate limit exceeded",
+				"retry_after": fmt.Sprintf("%ds", int(window.Seconds())),
+			},
+		})
+		c.Abort()
+		return
+	}
+
+	c.Next()
+}
+
+// PublicRateLimit applies rate limiting for public endpoints
+func PublicRateLimit(rl *RateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rl.applyRateLimit(c, RateLimitPublic)
+	}
+}
+
+// SmartRateLimit applies rate limiting based on the user's role
+func SmartRateLimit(rl *RateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limitType := RateLimitPublic
+
+		// Determine rate limit type based on user role
+		if role, exists := c.Get("user_role"); exists {
+			roleStr, _ := role.(string)
+			if roleStr == string(models.RoleAdmin) {
+				limitType = RateLimitAdmin
+			} else if roleStr != "" {
+				limitType = RateLimitAuthenticated
+			}
+		}
+
+		rl.applyRateLimit(c, limitType)
+	}
 }
