@@ -7,7 +7,9 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"gorm.io/gorm"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -66,6 +68,25 @@ func (m *MockUserRepository) UpdateLastLogin(id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	args := m.Called(offset, limit, sortBy, sortOrder)
+	return args.Get(0).([]models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	args := m.Called(query, offset, limit, sortBy, sortOrder)
+	return args.Get(0).([]models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) CountSearch(query string) (int64, error) {
+	args := m.Called(query)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockUserRepository) WithTx(tx *gorm.DB) repository.UserRepository {
+	return m
+}
+
 type MockAPIKeyRepository struct {
 	mock.Mock
 }
@@ -109,6 +130,10 @@ func (m *MockAPIKeyRepository) Delete(id uint) error {
 func (m *MockAPIKeyRepository) UpdateLastUsed(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)
+}
+
+func (m *MockAPIKeyRepository) WithTx(tx *gorm.DB) repository.APIKeyRepository {
+	return m
 }
 
 func init() {

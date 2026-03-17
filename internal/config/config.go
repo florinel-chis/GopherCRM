@@ -31,8 +31,20 @@ type ServerConfig struct {
 }
 
 type JWTConfig struct {
-	Secret      string
-	ExpiryHours int
+	Secret             string
+	ExpiryHours        int
+	AccessTokenMinutes int
+	RefreshTokenDays   int
+	CookieSameSite     string
+	CookieDomain       string
+	CookieSecure       bool
+}
+
+type CSRFConfig struct {
+	Enabled    bool
+	HeaderName string
+	CookieName string
+	Secret     string
 }
 
 type LoggingConfig struct {
@@ -42,6 +54,15 @@ type LoggingConfig struct {
 
 type APIConfig struct {
 	Prefix string
+}
+
+type RateLimitConfig struct {
+	PublicEndpoints  int
+	AuthenticatedAPI int
+	AdminEndpoints   int
+	WindowDuration   int // in minutes
+	BurstMultiplier  int
+	Enabled          bool
 }
 
 func Load() (*Config, error) {
@@ -77,8 +98,13 @@ func Load() (*Config, error) {
 			Mode: getEnv("SERVER_MODE", "development"),
 		},
 		JWT: JWTConfig{
-			Secret:      jwtSecret,
-			ExpiryHours: getEnvAsInt("JWT_EXPIRY_HOURS", 24),
+			Secret:             jwtSecret,
+			ExpiryHours:        getEnvAsInt("JWT_EXPIRY_HOURS", 24),
+			AccessTokenMinutes: getEnvAsInt("JWT_ACCESS_TOKEN_MINUTES", 15),
+			RefreshTokenDays:   getEnvAsInt("JWT_REFRESH_TOKEN_DAYS", 7),
+			CookieSameSite:     getEnv("JWT_COOKIE_SAMESITE", "Lax"),
+			CookieDomain:       getEnv("JWT_COOKIE_DOMAIN", ""),
+			CookieSecure:       getEnv("JWT_COOKIE_SECURE", "false") == "true",
 		},
 		Logging: LoggingConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
