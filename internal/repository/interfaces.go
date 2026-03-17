@@ -127,3 +127,59 @@ type APIKeyRepository interface {
 }
 
 // Note: ConfigurationRepository is defined in configuration_repository.go
+
+type RefreshTokenRepository interface {
+	Create(token *models.RefreshToken) error
+	GetByTokenHash(tokenHash string) (*models.RefreshToken, error)
+	GetByUserID(userID uint) ([]models.RefreshToken, error)
+	RevokeByTokenHash(tokenHash string) error
+	RevokeAllByUserID(userID uint) error
+	RevokeAllForUser(userID uint) error
+	DeleteExpired() error
+	DeleteByTokenHash(tokenHash string) error
+	WithTx(tx *gorm.DB) RefreshTokenRepository
+}
+
+type BulkOperationRepository interface {
+	Create(operation *models.BulkOperation) error
+	GetByID(id uint) (*models.BulkOperation, error)
+	GetByIDWithItems(id uint) (*models.BulkOperation, error)
+	GetByUserID(userID uint, offset, limit int) ([]models.BulkOperation, error)
+	Update(operation *models.BulkOperation) error
+	UpdateStatus(id uint, status models.BulkOperationStatus) error
+	Delete(id uint) error
+	List(offset, limit int) ([]models.BulkOperation, error)
+	CreateItem(item *models.BulkOperationItem) error
+	UpdateItem(item *models.BulkOperationItem) error
+	GetItemsByOperationID(operationID uint) ([]models.BulkOperationItem, error)
+	WithTx(tx *gorm.DB) BulkOperationRepository
+}
+
+type BulkRepository interface {
+	// User bulk operations
+	BulkCreateUsers(users []models.User) ([]models.User, []error)
+	BulkUpdateUsers(updates []models.BulkUpdateItem) ([]models.User, []error)
+	BulkDeleteUsers(ids []uint) []error
+
+	// Lead bulk operations
+	BulkCreateLeads(leads []models.Lead) ([]models.Lead, []error)
+	BulkUpdateLeads(updates []models.BulkUpdateItem) ([]models.Lead, []error)
+	BulkDeleteLeads(ids []uint) []error
+
+	// Customer bulk operations
+	BulkCreateCustomers(customers []models.Customer) ([]models.Customer, []error)
+	BulkUpdateCustomers(updates []models.BulkUpdateItem) ([]models.Customer, []error)
+	BulkDeleteCustomers(ids []uint) []error
+
+	// Task bulk operations
+	BulkCreateTasks(tasks []models.Task) ([]models.Task, []error)
+	BulkUpdateTasks(updates []models.BulkUpdateItem) ([]models.Task, []error)
+	BulkDeleteTasks(ids []uint) []error
+
+	// Ticket bulk operations
+	BulkCreateTickets(tickets []models.Ticket) ([]models.Ticket, []error)
+	BulkUpdateTickets(updates []models.BulkUpdateItem) ([]models.Ticket, []error)
+	BulkDeleteTickets(ids []uint) []error
+
+	WithTx(tx *gorm.DB) BulkRepository
+}
