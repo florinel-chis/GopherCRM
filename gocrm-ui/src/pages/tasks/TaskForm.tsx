@@ -81,11 +81,13 @@ export const Component: React.FC = () => {
   const createMutation = useMutation({
     mutationFn: (data: CreateTaskData) => tasksApi.createTask(data),
     onSuccess: () => {
+      console.log('Task created successfully');
       showSuccess('Task created successfully');
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       navigate('/tasks');
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Failed to create task:', error);
       showError('Failed to create task');
     },
   });
@@ -94,12 +96,14 @@ export const Component: React.FC = () => {
     mutationFn: ({ id, data }: { id: number; data: UpdateTaskData }) =>
       tasksApi.updateTask(id, data),
     onSuccess: () => {
+      console.log('Task updated successfully');
       showSuccess('Task updated successfully');
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['task', id] });
       navigate('/tasks');
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Failed to update task:', error);
       showError('Failed to update task');
     },
   });
@@ -121,16 +125,28 @@ export const Component: React.FC = () => {
   }, [task, methods]);
 
   const onSubmit = (data: TaskFormData) => {
+    console.log('Form submitted with data:', data);
+    console.log('Form errors:', methods.formState.errors);
     const submitData = {
       ...data,
       due_date: data.due_date.toISOString(),
+      // Ensure description is never undefined for API consistency
+      description: data.description || '',
     };
+    
+    console.log('Transformed submit data:', submitData);
 
     if (isEditMode) {
+      console.log('Updating task with ID:', id);
       updateMutation.mutate({ id: Number(id), data: submitData });
     } else {
+      console.log('Creating new task');
       createMutation.mutate(submitData as CreateTaskData);
     }
+  };
+
+  const onError = (errors: any) => {
+    console.error('Form validation errors:', errors);
   };
 
   if (taskLoading) {
@@ -149,7 +165,7 @@ export const Component: React.FC = () => {
 
       <Paper sx={{ p: 3 }}>
         <FormProvider {...methods}>
-          <form onSubmit={methods.handleSubmit(onSubmit)}>
+          <form onSubmit={methods.handleSubmit(onSubmit, onError)}>
             <Stack spacing={3}>
               <Typography variant="h6">Task Information</Typography>
               
@@ -223,6 +239,7 @@ export const Component: React.FC = () => {
                   variant="contained"
                   startIcon={<SaveIcon />}
                   disabled={createMutation.isPending || updateMutation.isPending}
+                  onClick={() => console.log('Submit button clicked')}
                 >
                   {isEditMode ? 'Update' : 'Create'} Task
                 </Button>

@@ -32,7 +32,7 @@ func (suite *LeadServiceTestSuite) SetupSuite() {
 func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
-	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo)
+	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, nil)
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {
@@ -177,13 +177,66 @@ func (suite *LeadServiceTestSuite) TestList_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
 
-	suite.mockLeadRepo.On("List", 0, 10).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("ListWithPreloads", 0, 10, "Owner").Return(expectedLeads, nil)
 	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
 
 	leads, total, err := suite.leadService.List(0, 10)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)
+}
+
+func (suite *LeadServiceTestSuite) TestListSorted_Success() {
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+	}
+
+	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "created_at", "desc", "Owner").Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
+
+	leads, total, err := suite.leadService.ListSorted(0, 10, "created_at", "desc")
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expectedLeads, leads)
+	assert.Equal(suite.T(), int64(2), total)
+}
+
+func (suite *LeadServiceTestSuite) TestListSorted_Ascending() {
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
+	}
+
+	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "created_at", "asc", "Owner").Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
+
+	leads, total, err := suite.leadService.ListSorted(0, 10, "created_at", "asc")
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expectedLeads, leads)
+	assert.Equal(suite.T(), int64(2), total)
+}
+
+func (suite *LeadServiceTestSuite) TestListSorted_RepoError() {
+	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "email", "asc", "Owner").Return([]models.Lead(nil), errors.New("database error"))
+
+	leads, total, err := suite.leadService.ListSorted(0, 10, "email", "asc")
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), leads)
+	assert.Equal(suite.T(), int64(0), total)
+}
+
+func (suite *LeadServiceTestSuite) TestListSorted_CountError() {
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
+	}
+
+	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "status", "desc", "Owner").Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("Count").Return(int64(0), errors.New("count error"))
+
+	leads, total, err := suite.leadService.ListSorted(0, 10, "status", "desc")
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), leads)
+	assert.Equal(suite.T(), int64(0), total)
 }
 
 func (suite *LeadServiceTestSuite) TestConvertToCustomer_Success() {

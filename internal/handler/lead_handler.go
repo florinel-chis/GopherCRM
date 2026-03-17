@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
@@ -19,29 +20,34 @@ func NewLeadHandler(leadService service.LeadService) *LeadHandler {
 }
 
 type CreateLeadRequest struct {
-	FirstName string           `json:"first_name" binding:"required"`
-	LastName  string           `json:"last_name" binding:"required"`
-	Email     string           `json:"email" binding:"required,email"`
-	Phone     string           `json:"phone,omitempty"`
-	Company   string           `json:"company,omitempty"`
-	Position  string           `json:"position,omitempty"`
-	Source    string           `json:"source,omitempty"`
-	Status    models.LeadStatus `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
-	Notes     string           `json:"notes,omitempty"`
-	OwnerID   *uint            `json:"owner_id,omitempty"`
+	FirstName      string                    `json:"first_name" binding:"required"`
+	LastName       string                    `json:"last_name" binding:"required"`
+	Email          string                    `json:"email" binding:"required,email"`
+	Phone          string                    `json:"phone,omitempty"`
+	Company        string                    `json:"company,omitempty"`
+	Position       string                    `json:"position,omitempty"`
+	Source         string                    `json:"source,omitempty"`
+	Status         models.LeadStatus         `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
+	Classification models.LeadClassification `json:"classification,omitempty" binding:"omitempty,oneof=unclassified test spam lead hot_lead"`
+	ExternalID     string                    `json:"external_id,omitempty"`
+	Notes          string                    `json:"notes,omitempty"`
+	OwnerID        *uint                     `json:"owner_id,omitempty"`
+	CreatedAt      *string                   `json:"created_at,omitempty"` // ISO8601 timestamp for import
 }
 
 type UpdateLeadRequest struct {
-	FirstName string           `json:"first_name,omitempty"`
-	LastName  string           `json:"last_name,omitempty"`
-	Email     string           `json:"email,omitempty" binding:"omitempty,email"`
-	Phone     string           `json:"phone,omitempty"`
-	Company   string           `json:"company,omitempty"`
-	Position  string           `json:"position,omitempty"`
-	Source    string           `json:"source,omitempty"`
-	Status    models.LeadStatus `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
-	Notes     string           `json:"notes,omitempty"`
-	OwnerID   *uint            `json:"owner_id,omitempty"`
+	FirstName      string                   `json:"first_name,omitempty"`
+	LastName       string                   `json:"last_name,omitempty"`
+	Email          string                   `json:"email,omitempty" binding:"omitempty,email"`
+	Phone          string                   `json:"phone,omitempty"`
+	Company        string                   `json:"company,omitempty"`
+	Position       string                   `json:"position,omitempty"`
+	Source         string                   `json:"source,omitempty"`
+	Status         models.LeadStatus        `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
+	Classification models.LeadClassification `json:"classification,omitempty" binding:"omitempty,oneof=unclassified test spam lead hot_lead"`
+	ExternalID     string                   `json:"external_id,omitempty"`
+	Notes          string                   `json:"notes,omitempty"`
+	OwnerID        *uint                    `json:"owner_id,omitempty"`
 }
 
 type ConvertLeadRequest struct {
@@ -51,6 +57,19 @@ type ConvertLeadRequest struct {
 	Notes       string `json:"notes,omitempty"`
 }
 
+// Create godoc
+// @Summary Create a new lead
+// @Description Create a new lead (sales and admin roles only)
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body CreateLeadRequest true "Lead creation request"
+// @Success 201 {object} utils.APIResponse{data=models.Lead} "Lead created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Sales or Admin role required"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /leads [post]
 func (h *LeadHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Create")
 	
@@ -64,15 +83,37 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	currentUserRole := c.GetString("user_role")
 
 	lead := &models.Lead{
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Email:     req.Email,
-		Phone:     req.Phone,
-		Company:   req.Company,
-		Position:  req.Position,
-		Source:    req.Source,
-		Status:    req.Status,
-		Notes:     req.Notes,
+		FirstName:      req.FirstName,
+		LastName:       req.LastName,
+		Email:          req.Email,
+		Phone:          req.Phone,
+		Company:        req.Company,
+		Position:       req.Position,
+		Source:         req.Source,
+		Status:         req.Status,
+		Classification: req.Classification,
+		ExternalID:     req.ExternalID,
+		Notes:          req.Notes,
+	}
+
+	// Set custom created_at for imports (preserves original submission date)
+	if req.CreatedAt != nil && *req.CreatedAt != "" {
+		// Try multiple timestamp formats
+		formats := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05Z",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+		}
+		var parsedTime time.Time
+		var parseErr error
+		for _, format := range formats {
+			parsedTime, parseErr = time.Parse(format, *req.CreatedAt)
+			if parseErr == nil {
+				lead.CreatedAt = parsedTime
+				break
+			}
+		}
 	}
 
 	// Set owner - if not specified, assign to current user (for sales), or require for admin
@@ -104,13 +145,46 @@ func (h *LeadHandler) Create(c *gin.Context) {
 
 func (h *LeadHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.List")
-	
+
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+	classification := c.Query("classification")
+
 	if limit > 100 {
 		limit = 100
 	}
+
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
+
+	// Parse and validate sort parameters
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	allowedSortColumns := map[string]bool{
+		"created_at":     true,
+		"updated_at":     true,
+		"first_name":     true,
+		"last_name":      true,
+		"email":          true,
+		"company":        true,
+		"status":         true,
+		"classification": true,
+		"source":         true,
+	}
+
+	if !allowedSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	search := c.Query("search")
 
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
@@ -125,6 +199,15 @@ func (h *LeadHandler) List(c *gin.Context) {
 		leads, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 		// Note: We'll need to add a CountByOwner method for accurate pagination
 		total = int64(len(leads)) // Temporary approximation
+	} else if search != "" {
+		// Search across lead fields
+		leads, total, err = h.leadService.Search(search, offset, limit, sortBy, sortOrder)
+	} else if classification != "" {
+		// Filter by classification
+		leads, total, err = h.leadService.GetByClassification(models.LeadClassification(classification), offset, limit)
+	} else if sortBy != "" {
+		// Sorted list
+		leads, total, err = h.leadService.ListSorted(offset, limit, sortBy, sortOrder)
 	} else {
 		// Admin users can see all leads
 		leads, total, err = h.leadService.List(offset, limit)
@@ -236,6 +319,12 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	if req.Status != "" {
 		updates["status"] = req.Status
 	}
+	if req.Classification != "" {
+		updates["classification"] = req.Classification
+	}
+	if req.ExternalID != "" {
+		updates["external_id"] = req.ExternalID
+	}
 	if req.Notes != "" {
 		updates["notes"] = req.Notes
 	}
@@ -296,6 +385,22 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ConvertToCustomer godoc
+// @Summary Convert lead to customer
+// @Description Convert a lead to a customer with additional customer information
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Lead ID"
+// @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Sales or Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Lead already converted"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /leads/{id}/convert [post]
 func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.ConvertToCustomer")
 	

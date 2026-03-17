@@ -29,8 +29,15 @@ export const FormDatePicker: React.FC<FormDatePickerProps> = ({
           {...props}
           type="date"
           label={label}
-          value={value ? format(new Date(value), 'yyyy-MM-dd') : ''}
-          onChange={(e) => onChange(e.target.value)}
+          value={value ? format(value instanceof Date ? value : new Date(value), 'yyyy-MM-dd') : ''}
+          onChange={(e) => {
+            const dateValue = e.target.value;
+            if (dateValue) {
+              onChange(new Date(dateValue));
+            } else {
+              onChange(null);
+            }
+          }}
           error={!!error}
           helperText={error?.message || props.helperText}
           fullWidth={props.fullWidth ?? true}
