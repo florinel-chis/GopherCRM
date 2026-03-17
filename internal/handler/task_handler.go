@@ -139,15 +139,41 @@ func (h *TaskHandler) List(c *gin.Context) {
 	page, perPage := utils.ParsePaginationParams(c)
 	offset := utils.CalculateOffset(page, perPage)
 
+	// Parse and validate sort parameters
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	allowedSortColumns := map[string]bool{
+		"created_at": true,
+		"updated_at": true,
+		"title":      true,
+		"status":     true,
+		"priority":   true,
+		"due_date":   true,
+	}
+
+	if !allowedSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	search := c.Query("search")
+
 	var tasks []models.Task
 	var total int64
 	var err error
 
 	// Admin can list all tasks, non-admin users can only list their own tasks
-	if currentUserRole == string(models.RoleAdmin) {
-		tasks, total, err = h.taskService.List(offset, perPage)
-	} else {
+	if currentUserRole != string(models.RoleAdmin) {
 		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, perPage)
+	} else if search != "" {
+		tasks, total, err = h.taskService.Search(search, offset, perPage, sortBy, sortOrder)
+	} else if sortBy != "" {
+		tasks, total, err = h.taskService.ListSorted(offset, perPage, sortBy, sortOrder)
+	} else {
+		tasks, total, err = h.taskService.List(offset, perPage)
 	}
 
 	if err != nil {

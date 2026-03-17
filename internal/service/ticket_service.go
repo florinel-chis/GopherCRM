@@ -201,6 +201,53 @@ func (s *ticketService) List(offset, limit int) ([]models.Ticket, int64, error) 
 	return tickets, total, nil
 }
 
+func (s *ticketService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"offset":     offset,
+		"limit":      limit,
+		"sort_by":    sortBy,
+		"sort_order": sortOrder,
+	}), "TicketService", "ListSorted")
+
+	tickets, err := s.ticketRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
+	if err != nil {
+		logger.WithError(err).Error("Failed to list tickets sorted")
+		return nil, 0, err
+	}
+
+	total, err := s.ticketRepo.Count()
+	if err != nil {
+		logger.WithError(err).Error("Failed to count tickets")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Tickets listed sorted successfully")
+	return tickets, total, nil
+}
+
+func (s *ticketService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"query":  query,
+		"offset": offset,
+		"limit":  limit,
+	}), "TicketService", "Search")
+
+	tickets, err := s.ticketRepo.Search(query, offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
+	if err != nil {
+		logger.WithError(err).Error("Failed to search tickets")
+		return nil, 0, err
+	}
+
+	total, err := s.ticketRepo.CountSearch(query)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count search results")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Ticket search completed")
+	return tickets, total, nil
+}
+
 func (s *ticketService) GetOpenCount() (int64, error) {
 	return s.ticketRepo.CountOpen()
 }

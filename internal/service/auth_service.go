@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -148,5 +150,41 @@ func (s *authService) GenerateJWT(user *models.User) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtConfig.Secret))
+}
+
+func (s *authService) LoginWithTokens(email, password string) (*AuthTokens, error) {
+	accessToken, err := s.Login(email, password)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthTokens{AccessToken: accessToken}, nil
+}
+
+func (s *authService) GenerateTokens(user *models.User) (*AuthTokens, error) {
+	accessToken, err := s.GenerateJWT(user)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthTokens{AccessToken: accessToken}, nil
+}
+
+func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, error) {
+	return nil, errors.New("refresh tokens not implemented")
+}
+
+func (s *authService) InvalidateRefreshToken(refreshToken string) error {
+	return errors.New("refresh tokens not implemented")
+}
+
+func (s *authService) GenerateCSRFToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func (s *authService) ValidateCSRFToken(token string) bool {
+	return token != ""
 }
 

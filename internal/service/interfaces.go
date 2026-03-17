@@ -29,6 +29,8 @@ type UserService interface {
 	Update(id uint, updates map[string]interface{}) (*models.User, error)
 	Delete(id uint) error
 	List(offset, limit int) ([]models.User, int64, error)
+	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
+	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
 }
 
 type LeadService interface {
@@ -53,6 +55,8 @@ type CustomerService interface {
 	Update(customer *models.Customer) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Customer, int64, error)
+	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)
+	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)
 	GetCount() (int64, error)
 }
 
@@ -64,6 +68,8 @@ type TicketService interface {
 	Update(ticket *models.Ticket) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Ticket, int64, error)
+	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
+	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	GetOpenCount() (int64, error)
 }
 
@@ -74,6 +80,8 @@ type TaskService interface {
 	Update(task *models.Task) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Task, int64, error)
+	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
+	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	GetPendingCount() (int64, error)
 }
 

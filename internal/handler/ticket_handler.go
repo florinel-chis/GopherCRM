@@ -85,19 +85,62 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 func (h *TicketHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.List")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Customer users cannot list all tickets
 	if currentUserRole == string(models.RoleCustomer) {
 		utils.RespondForbidden(c, "Customers cannot list all tickets")
 		return
 	}
 
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 
-	tickets, total, err := h.ticketService.List(offset, limit)
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
+
+	// Parse and validate sort parameters
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	allowedSortColumns := map[string]bool{
+		"created_at": true,
+		"updated_at": true,
+		"title":      true,
+		"status":     true,
+		"priority":   true,
+	}
+
+	if !allowedSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	search := c.Query("search")
+
+	var tickets []models.Ticket
+	var total int64
+	var err error
+
+	if search != "" {
+		tickets, total, err = h.ticketService.Search(search, offset, limit, sortBy, sortOrder)
+	} else if sortBy != "" {
+		tickets, total, err = h.ticketService.ListSorted(offset, limit, sortBy, sortOrder)
+	} else {
+		tickets, total, err = h.ticketService.List(offset, limit)
+	}
+
 	if err != nil {
 		logger.WithError(err).Error("Failed to list tickets")
 		utils.RespondInternalError(c)

@@ -126,6 +126,19 @@ export const Component: React.FC = () => {
     }
   };
 
+  const handleSort = (field: string, order: 'asc' | 'desc') => {
+    const fieldMap: Record<string, string> = {
+      company_name: 'company',
+      contact_name: 'first_name',
+      email: 'email',
+      phone: 'phone',
+      is_active: 'is_active',
+      created_at: 'created_at',
+    };
+    const sortBy = fieldMap[field] || field;
+    setFilters({ ...filters, sort_by: sortBy, sort_order: order, page: 1 });
+  };
+
   const handleSearch = (value: string) => {
     setFilters({ ...filters, search: value, page: 1 });
   };
@@ -181,6 +194,7 @@ export const Component: React.FC = () => {
         page={(filters.page || 1) - 1}
         rowsPerPage={filters.limit || 10}
         loading={isLoading}
+        onSort={handleSort}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(customer) => navigate(`/customers/${customer.id}`)}

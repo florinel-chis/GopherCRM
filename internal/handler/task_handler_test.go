@@ -61,6 +61,27 @@ func (m *MockTaskService) List(offset, limit int) ([]models.Task, int64, error) 
 	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockTaskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockTaskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(query, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockTaskService) GetPendingCount() (int64, error) {
+	args := m.Called()
+	return args.Get(0).(int64), args.Error(1)
+}
+
 type TaskHandlerTestSuite struct {
 	suite.Suite
 	handler     *TaskHandler
@@ -492,6 +513,77 @@ func (suite *TaskHandlerTestSuite) TestMyTasks_ParsePaginationSuccess() {
 	suite.mockService.On("GetByAssignee", uint(1), 0, 10).Return(expectedTasks, totalCount, nil)
 
 	req, _ := http.NewRequest("GET", "/tasks/my?per_page=10", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_SortByCreatedAtDesc() {
+	task1 := models.Task{Title: "Task 1", AssignedToID: 1}
+	task1.ID = 2
+	task2 := models.Task{Title: "Task 2", AssignedToID: 2}
+	task2.ID = 1
+	expectedTasks := []models.Task{task1, task2}
+
+	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedTasks, int64(2), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?sort_by=created_at&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(2), response.Meta.Total)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_SortByInvalidColumn() {
+	task1 := models.Task{Title: "Task 1", AssignedToID: 1}
+	task1.ID = 1
+	expectedTasks := []models.Task{task1}
+
+	// Invalid sort_by should fall through to unsorted List
+	suite.mockService.On("List", 0, 20).Return(expectedTasks, int64(1), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?sort_by=invalid_column&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_SearchByTitle() {
+	task1 := models.Task{Title: "Follow up with client", AssignedToID: 1}
+	task1.ID = 1
+	expectedTasks := []models.Task{task1}
+
+	suite.mockService.On("Search", "follow up", 0, 20, "", "asc").Return(expectedTasks, int64(1), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?search=follow+up", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	assert.Equal(suite.T(), int64(1), response.Meta.Total)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_SearchWithSort() {
+	task1 := models.Task{Title: "Follow up with client", AssignedToID: 1}
+	task1.ID = 1
+	expectedTasks := []models.Task{task1}
+
+	suite.mockService.On("Search", "follow", 0, 20, "due_date", "asc").Return(expectedTasks, int64(1), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?search=follow&sort_by=due_date&sort_order=asc", nil)
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
