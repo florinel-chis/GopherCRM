@@ -2,6 +2,7 @@ package repository
 
 import (
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -79,7 +80,13 @@ func (r *customerRepository) ListSortedWithPreloads(offset, limit int, sortBy, s
 		query = query.Preload(preload)
 	}
 	if sortBy != "" {
-		query = query.Order(sortBy + " " + sortOrder)
+		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
+		if err != nil {
+			return nil, err
+		}
+		if orderClause != "" {
+			query = query.Order(orderClause)
+		}
 	}
 	err := query.Offset(offset).Limit(limit).Find(&customers).Error
 	return customers, err
@@ -97,7 +104,13 @@ func (r *customerRepository) Search(query string, offset, limit int, sortBy, sor
 		searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
 	)
 	if sortBy != "" {
-		db = db.Order(sortBy + " " + sortOrder)
+		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
+		if err != nil {
+			return nil, err
+		}
+		if orderClause != "" {
+			db = db.Order(orderClause)
+		}
 	}
 	err := db.Offset(offset).Limit(limit).Find(&customers).Error
 	return customers, err
