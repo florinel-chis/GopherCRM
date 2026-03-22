@@ -11,11 +11,12 @@ import (
 )
 
 type apiKeyService struct {
-	apiKeyRepo repository.APIKeyRepository
+	apiKeyRepo   repository.APIKeyRepository
+	apiKeySecret string
 }
 
-func NewAPIKeyService(apiKeyRepo repository.APIKeyRepository) APIKeyService {
-	return &apiKeyService{apiKeyRepo: apiKeyRepo}
+func NewAPIKeyService(apiKeyRepo repository.APIKeyRepository, apiKeySecret string) APIKeyService {
+	return &apiKeyService{apiKeyRepo: apiKeyRepo, apiKeySecret: apiKeySecret}
 }
 
 func (s *apiKeyService) Generate(userID uint, name string) (string, *models.APIKey, error) {
@@ -30,7 +31,7 @@ func (s *apiKeyService) Generate(userID uint, name string) (string, *models.APIK
 	
 	apiKey := &models.APIKey{
 		Name:    name,
-		KeyHash: utils.HashAPIKey(key),
+		KeyHash: utils.HashAPIKeyHMAC(key, s.apiKeySecret),
 		Prefix:  prefix,
 		UserID:  userID,
 	}
