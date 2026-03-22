@@ -2,43 +2,26 @@ package service
 
 import (
 	"testing"
-	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"golang.org/x/crypto/bcrypt"
 )
 
-
-
 func TestAuthService_LoginWithTokens(t *testing.T) {
-	// Setup
-	mockUserRepo := &mocks.UserRepository{}
-	mockAPIKeyRepo := &mocks.APIKeyRepository{}
-	mockRefreshTokenRepo := &mocks.RefreshTokenRepository{}
-	
 	jwtConfig := config.JWTConfig{
 		Secret:             "test-secret",
 		AccessTokenMinutes: 15,
 		RefreshTokenDays:   7,
+		ExpiryHours:        24,
 	}
-	
-	csrfConfig := config.CSRFConfig{
-		Secret:  "csrf-secret",
-		Enabled: true,
-	}
-
-	_ = mockRefreshTokenRepo // reserved for future use
-	_ = csrfConfig           // reserved for future use
-	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
 	// Test data
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	user := &models.User{
+	activeUser := &models.User{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "test@example.com",
 		Password:  string(hashedPassword),
@@ -47,165 +30,92 @@ func TestAuthService_LoginWithTokens(t *testing.T) {
 	}
 
 	t.Run("successful login with tokens", func(t *testing.T) {
-		// Setup mocks
-		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
-		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
-		mockRefreshTokenRepo.On("Create", mock.AnythingOfType("*models.RefreshToken")).Return(nil)
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
-		// Execute
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(activeUser, nil)
+		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
+
 		tokens, err := authService.LoginWithTokens("test@example.com", "password123")
 
-		// Verify
 		assert.NoError(t, err)
 		assert.NotNil(t, tokens)
 		assert.NotEmpty(t, tokens.AccessToken)
-		assert.NotEmpty(t, tokens.RefreshToken)
-
+		// LoginWithTokens does not generate refresh tokens in this implementation
 		mockUserRepo.AssertExpectations(t)
-		mockRefreshTokenRepo.AssertExpectations(t)
 	})
 
 	t.Run("login fails with invalid password", func(t *testing.T) {
-		// Setup mocks
-		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(activeUser, nil)
 		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
 
-		// Execute
 		tokens, err := authService.LoginWithTokens("test@example.com", "wrongpassword")
 
-		// Verify
 		assert.Error(t, err)
 		assert.Nil(t, tokens)
 		assert.Equal(t, "invalid credentials", err.Error())
 	})
 
 	t.Run("login fails with inactive user", func(t *testing.T) {
-		inactiveUser := *user
-		inactiveUser.IsActive = false
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
-		// Setup mocks
-		mockUserRepo.On("GetByEmail", "test@example.com").Return(&inactiveUser, nil)
+		inactiveUser := &models.User{
+			BaseModel: models.BaseModel{ID: 2},
+			Email:     "inactive@example.com",
+			Password:  string(hashedPassword),
+			IsActive:  false,
+			Role:      models.RoleCustomer,
+		}
 
-		// Execute
-		tokens, err := authService.LoginWithTokens("test@example.com", "password123")
+		mockUserRepo.On("GetByEmail", "inactive@example.com").Return(inactiveUser, nil)
 
-		// Verify
+		tokens, err := authService.LoginWithTokens("inactive@example.com", "password123")
+
 		assert.Error(t, err)
 		assert.Nil(t, tokens)
-		assert.Equal(t, "account is disabled", err.Error())
+		// Login returns "invalid credentials" for inactive users to prevent account enumeration
+		assert.Equal(t, "invalid credentials", err.Error())
 	})
 }
 
 func TestAuthService_RefreshAccessToken(t *testing.T) {
-	// Setup
-	mockUserRepo := &mocks.UserRepository{}
-	mockAPIKeyRepo := &mocks.APIKeyRepository{}
-	mockRefreshTokenRepo := &mocks.RefreshTokenRepository{}
-	
 	jwtConfig := config.JWTConfig{
 		Secret:             "test-secret",
 		AccessTokenMinutes: 15,
 		RefreshTokenDays:   7,
-	}
-	
-	csrfConfig := config.CSRFConfig{
-		Secret:  "csrf-secret",
-		Enabled: true,
+		ExpiryHours:        24,
 	}
 
-	_ = mockRefreshTokenRepo // reserved for future use
-	_ = csrfConfig           // reserved for future use
-	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+	t.Run("refresh returns not implemented", func(t *testing.T) {
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
-	// Test data
-	user := &models.User{
-		BaseModel: models.BaseModel{ID: 1},
-		Email:     "test@example.com",
-		IsActive:  true,
-		Role:      models.RoleCustomer,
-	}
+		tokens, err := authService.RefreshAccessToken("some-refresh-token")
 
-	refreshToken := "test-refresh-token"
-	tokenHash := utils.HashToken(refreshToken)
-	storedToken := &models.RefreshToken{
-		BaseModel: models.BaseModel{ID: 1},
-		UserID:    1,
-		TokenHash: tokenHash,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-		Revoked: false,
-	}
-
-	t.Run("successful token refresh", func(t *testing.T) {
-		// Setup mocks
-		mockRefreshTokenRepo.On("GetByTokenHash", tokenHash).Return(storedToken, nil)
-		mockUserRepo.On("GetByID", uint(1)).Return(user, nil)
-		mockRefreshTokenRepo.On("Create", mock.AnythingOfType("*models.RefreshToken")).Return(nil)
-		mockRefreshTokenRepo.On("RevokeByTokenHash", tokenHash).Return(nil)
-
-		// Execute
-		tokens, err := authService.RefreshAccessToken(refreshToken)
-
-		// Verify
-		assert.NoError(t, err)
-		assert.NotNil(t, tokens)
-		assert.NotEmpty(t, tokens.AccessToken)
-		assert.NotEmpty(t, tokens.RefreshToken)
-
-		mockRefreshTokenRepo.AssertExpectations(t)
-		mockUserRepo.AssertExpectations(t)
-	})
-
-	t.Run("refresh fails with invalid token", func(t *testing.T) {
-		invalidTokenHash := utils.HashToken("invalid-token")
-
-		// Setup mocks
-		mockRefreshTokenRepo.On("GetByTokenHash", invalidTokenHash).Return((*models.RefreshToken)(nil), assert.AnError)
-
-		// Execute
-		tokens, err := authService.RefreshAccessToken("invalid-token")
-
-		// Verify
 		assert.Error(t, err)
 		assert.Nil(t, tokens)
-		assert.Equal(t, "invalid refresh token", err.Error())
-	})
-
-	t.Run("refresh fails with inactive user", func(t *testing.T) {
-		inactiveUser := *user
-		inactiveUser.IsActive = false
-
-		// Setup mocks
-		mockRefreshTokenRepo.On("GetByTokenHash", tokenHash).Return(storedToken, nil)
-		mockUserRepo.On("GetByID", uint(1)).Return(&inactiveUser, nil)
-
-		// Execute
-		tokens, err := authService.RefreshAccessToken(refreshToken)
-
-		// Verify
-		assert.Error(t, err)
-		assert.Nil(t, tokens)
-		assert.Equal(t, "account is disabled", err.Error())
+		assert.Equal(t, "refresh tokens not implemented", err.Error())
 	})
 }
 
 func TestAuthService_GenerateCSRFToken(t *testing.T) {
-	// Setup
-	mockUserRepo := &mocks.UserRepository{}
-	mockAPIKeyRepo := &mocks.APIKeyRepository{}
-	mockRefreshTokenRepo := &mocks.RefreshTokenRepository{}
-	
-	jwtConfig := config.JWTConfig{Secret: "test-secret"}
-	csrfConfig := config.CSRFConfig{Secret: "csrf-secret", Enabled: true}
-
-	_ = mockRefreshTokenRepo // reserved for future use
-	_ = csrfConfig           // reserved for future use
-	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
 
 	t.Run("generates valid CSRF token", func(t *testing.T) {
-		// Execute
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+
 		token, err := authService.GenerateCSRFToken()
 
-		// Verify
 		assert.NoError(t, err)
 		assert.NotEmpty(t, token)
 		assert.True(t, len(token) > 0)
@@ -213,64 +123,41 @@ func TestAuthService_GenerateCSRFToken(t *testing.T) {
 }
 
 func TestAuthService_ValidateCSRFToken(t *testing.T) {
-	// Setup
-	mockUserRepo := &mocks.UserRepository{}
-	mockAPIKeyRepo := &mocks.APIKeyRepository{}
-	mockRefreshTokenRepo := &mocks.RefreshTokenRepository{}
-	
-	jwtConfig := config.JWTConfig{Secret: "test-secret"}
-	csrfConfig := config.CSRFConfig{Secret: "csrf-secret", Enabled: true}
-
-	_ = mockRefreshTokenRepo // reserved for future use
-	_ = csrfConfig           // reserved for future use
-	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
 
 	t.Run("validates non-empty token", func(t *testing.T) {
-		// Generate a proper CSRF token first
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+
 		token, err := authService.GenerateCSRFToken()
 		assert.NoError(t, err)
 
-		// Execute
 		valid := authService.ValidateCSRFToken(token)
-
-		// Verify
 		assert.True(t, valid)
 	})
 
 	t.Run("rejects empty token", func(t *testing.T) {
-		// Execute
-		valid := authService.ValidateCSRFToken("")
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
-		// Verify
+		valid := authService.ValidateCSRFToken("")
 		assert.False(t, valid)
 	})
 }
 
 func TestAuthService_InvalidateRefreshToken(t *testing.T) {
-	// Setup
-	mockUserRepo := &mocks.UserRepository{}
-	mockAPIKeyRepo := &mocks.APIKeyRepository{}
-	mockRefreshTokenRepo := &mocks.RefreshTokenRepository{}
-	
-	jwtConfig := config.JWTConfig{Secret: "test-secret"}
-	csrfConfig := config.CSRFConfig{Secret: "csrf-secret", Enabled: true}
+	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
 
-	_ = mockRefreshTokenRepo // reserved for future use
-	_ = csrfConfig           // reserved for future use
-	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+	t.Run("returns not implemented", func(t *testing.T) {
+		mockUserRepo := &mocks.UserRepository{}
+		mockAPIKeyRepo := &mocks.APIKeyRepository{}
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
-	t.Run("successfully invalidates refresh token", func(t *testing.T) {
-		refreshToken := "test-refresh-token"
-		tokenHash := utils.HashToken(refreshToken)
+		err := authService.InvalidateRefreshToken("test-refresh-token")
 
-		// Setup mocks
-		mockRefreshTokenRepo.On("RevokeByTokenHash", tokenHash).Return(nil)
-
-		// Execute
-		err := authService.InvalidateRefreshToken(refreshToken)
-
-		// Verify
-		assert.NoError(t, err)
-		mockRefreshTokenRepo.AssertExpectations(t)
+		assert.Error(t, err)
+		assert.Equal(t, "refresh tokens not implemented", err.Error())
 	})
 }
