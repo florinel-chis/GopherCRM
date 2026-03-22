@@ -207,7 +207,10 @@ func (s *bulkOperationService) BulkCreateUsers(request *models.BulkCreateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkCreateUsers(users)
 		return nil
@@ -254,7 +257,10 @@ func (s *bulkOperationService) BulkUpdateUsers(request *models.BulkUpdateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateUsers(request.Items)
 		return nil
@@ -308,7 +314,10 @@ func (s *bulkOperationService) BulkDeleteUsers(request *models.BulkDeleteRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		operationErrors = txRepo.BulkDeleteUsers(filteredIDs)
 		return nil
@@ -379,7 +388,10 @@ func (s *bulkOperationService) bulkActivateUsers(operationID uint, userIDs []uin
 	var operationErrors []error
 
 	err := s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateUsers(updates)
 		return nil
@@ -426,7 +438,10 @@ func (s *bulkOperationService) bulkChangeUserRole(operationID uint, userIDs []ui
 	var operationErrors []error
 
 	err := s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateUsers(updates)
 		return nil
@@ -512,7 +527,10 @@ func (s *bulkOperationService) BulkCreateLeads(request *models.BulkCreateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkCreateLeads(leads)
 		return nil
@@ -559,7 +577,10 @@ func (s *bulkOperationService) BulkUpdateLeads(request *models.BulkUpdateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateLeads(request.Items)
 		return nil
@@ -605,7 +626,10 @@ func (s *bulkOperationService) BulkDeleteLeads(request *models.BulkDeleteRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		operationErrors = txRepo.BulkDeleteLeads(request.IDs)
 		return nil
@@ -715,7 +739,10 @@ func (s *bulkOperationService) BulkCreateCustomers(request *models.BulkCreateReq
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkCreateCustomers(customers)
 		return nil
@@ -762,7 +789,10 @@ func (s *bulkOperationService) BulkUpdateCustomers(request *models.BulkUpdateReq
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateCustomers(request.Items)
 		return nil
@@ -808,7 +838,10 @@ func (s *bulkOperationService) BulkDeleteCustomers(request *models.BulkDeleteReq
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		operationErrors = txRepo.BulkDeleteCustomers(request.IDs)
 		return nil
@@ -927,7 +960,10 @@ func (s *bulkOperationService) BulkCreateTasks(request *models.BulkCreateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkCreateTasks(tasks)
 		return nil
@@ -974,7 +1010,10 @@ func (s *bulkOperationService) BulkUpdateTasks(request *models.BulkUpdateRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateTasks(request.Items)
 		return nil
@@ -1020,7 +1059,10 @@ func (s *bulkOperationService) BulkDeleteTasks(request *models.BulkDeleteRequest
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		operationErrors = txRepo.BulkDeleteTasks(request.IDs)
 		return nil
@@ -1140,7 +1182,10 @@ func (s *bulkOperationService) BulkCreateTickets(request *models.BulkCreateReque
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkCreateTickets(tickets)
 		return nil
@@ -1187,7 +1232,10 @@ func (s *bulkOperationService) BulkUpdateTickets(request *models.BulkUpdateReque
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		results, operationErrors = txRepo.BulkUpdateTickets(request.Items)
 		return nil
@@ -1233,7 +1281,10 @@ func (s *bulkOperationService) BulkDeleteTickets(request *models.BulkDeleteReque
 	var operationErrors []error
 
 	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		operationErrors = txRepo.BulkDeleteTickets(request.IDs)
 		return nil
@@ -1632,7 +1683,10 @@ func (s *bulkOperationService) performBulkUpdateAction(operationID uint, resourc
 	var operationErrors []error
 
 	err := s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, _ := utils.GetTxFromContext(ctx)
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
 		txRepo := s.bulkRepo.WithTx(tx)
 		
 		switch resourceType {
