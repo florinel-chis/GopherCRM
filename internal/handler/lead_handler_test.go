@@ -577,6 +577,91 @@ func (suite *LeadHandlerTestSuite) TestList_SearchWithSort() {
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
 }
 
+func (suite *LeadHandlerTestSuite) TestList_SupportUserSeesOnlyOwnLeads() {
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_role", "support")
+		c.Set("user_id", uint(3))
+	})
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Support Lead", OwnerID: 3},
+	}
+
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSearchSeesOnlyOwnLeads() {
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_role", "support")
+		c.Set("user_id", uint(3))
+	})
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Support Lead", OwnerID: 3},
+	}
+
+	// Even with search param, non-admin/non-sales should only see own leads
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?search=test", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSortSeesOnlyOwnLeads() {
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_role", "support")
+		c.Set("user_id", uint(3))
+	})
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Support Lead", OwnerID: 3},
+	}
+
+	// Even with sort params, non-admin/non-sales should only see own leads
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_CustomerUserWithClassificationSeesOnlyOwnLeads() {
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_role", "customer")
+		c.Set("user_id", uint(4))
+	})
+	suite.router.GET("/leads", suite.handler.List)
+
+	expectedLeads := []models.Lead{}
+
+	// Even with classification param, customer should only see own leads
+	suite.mockService.On("GetByOwner", uint(4), 0, 20).Return(expectedLeads, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/leads?classification=hot_lead", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
 func TestLeadHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(LeadHandlerTestSuite))
 }

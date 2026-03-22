@@ -125,7 +125,7 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	userHandler := handler.NewUserHandler(userService)
 	leadHandler := handler.NewLeadHandler(leadService)
 	customerHandler := handler.NewCustomerHandler(customerService)
-	ticketHandler := handler.NewTicketHandler(ticketService)
+	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	taskHandler := handler.NewTaskHandler(taskService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
