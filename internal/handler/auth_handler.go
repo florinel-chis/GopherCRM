@@ -48,6 +48,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+		utils.RespondBadRequest(c, err.Error())
+		return
+	}
+
 	role := req.Role
 	if role == "" {
 		role = models.RoleCustomer // Default to customer if not specified
