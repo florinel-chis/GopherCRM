@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { render, screen, waitFor } from '@/test/test-utils';
 import { Component as TicketForm } from './TicketForm';
 import { ticketsApi, customersApi, usersApi } from '@/api/endpoints';
 import { createMockTicket, createMockCustomer, createMockUser } from '@/test/factories';
@@ -100,12 +100,8 @@ describe('TicketForm', () => {
       // Check that the form hasn't submitted (createTicket not called)
       expect(ticketsApi.createTicket).not.toHaveBeenCalled();
       
-      // Check for error states on inputs
+      // Check that we're still on the form (validation prevented submission)
       await waitFor(() => {
-        const subjectInput = screen.getByLabelText(/subject/i);
-        const descriptionInput = screen.getByLabelText(/description/i);
-        
-        // Check that we're still on the form
         expect(screen.getByText('Create New Ticket')).toBeInTheDocument();
         expect(mockNavigate).not.toHaveBeenCalled();
       });
