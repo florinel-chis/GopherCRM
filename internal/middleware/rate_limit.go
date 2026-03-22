@@ -89,6 +89,13 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	go rl.cleanupVisitors()
 
 	return func(c *gin.Context) {
+		// Skip rate limiting for CORS preflight requests — these are
+		// browser-generated and should not consume rate limit tokens.
+		if c.Request.Method == "OPTIONS" {
+			c.Next()
+			return
+		}
+
 		ip := c.ClientIP()
 		limiter := rl.getVisitor(ip)
 
@@ -109,11 +116,11 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	}
 }
 
-// RateLimitStrict returns a stricter rate limit middleware for sensitive endpoints
-// This uses a more restrictive limit suitable for authentication endpoints
+// RateLimitStrict returns a stricter rate limit middleware for sensitive endpoints.
+// 10 requests per minute with burst of 5 — prevents brute force while allowing
+// normal browser login attempts (which include preflight OPTIONS + POST pairs).
 func RateLimitStrict() gin.HandlerFunc {
-	// 5 requests per minute with burst of 2
-	return RateLimit(5.0/60.0, 2)
+	return RateLimit(10.0/60.0, 5)
 }
 
 // RateLimitModerate returns a moderate rate limit middleware for general API endpoints.
