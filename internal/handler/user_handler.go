@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -65,8 +67,8 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 	if err := h.userService.Register(user, req.Password); err != nil {
 		logger.WithError(err).Warn("Failed to create user")
-		if err.Error() == "user with this email already exists" {
-			utils.RespondConflict(c, err.Error())
+		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			utils.RespondConflict(c, "user with this email already exists")
 		} else {
 			utils.RespondBadRequest(c, err.Error())
 		}
@@ -224,8 +226,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 	user, err := h.userService.Update(uint(id), updates)
 	if err != nil {
 		logger.WithError(err).Error("Failed to update user")
-		if err.Error() == "user with this email already exists" {
-			utils.RespondConflict(c, err.Error())
+		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			utils.RespondConflict(c, "user with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}
@@ -321,8 +323,8 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	user, err := h.userService.Update(userID, updates)
 	if err != nil {
 		logger.WithError(err).Error("Failed to update user")
-		if err.Error() == "user with this email already exists" {
-			utils.RespondConflict(c, err.Error())
+		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			utils.RespondConflict(c, "user with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}

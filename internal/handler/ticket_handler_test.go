@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"gorm.io/gorm"
 )
 
 type TicketHandlerTestSuite struct {
@@ -202,7 +201,7 @@ func (suite *TicketHandlerTestSuite) TestGet_NotFound() {
 		suite.handler.Get(c)
 	})
 
-	suite.mockService.On("GetByID", uint(999)).Return(nil, gorm.ErrRecordNotFound)
+	suite.mockService.On("GetByID", uint(999)).Return(nil, errors.New("not found"))
 
 	req := httptest.NewRequest("GET", "/tickets/999", nil)
 	w := httptest.NewRecorder()

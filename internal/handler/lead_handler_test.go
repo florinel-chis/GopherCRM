@@ -3,12 +3,13 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -400,7 +401,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 	
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).
-		Return(nil, errors.New("lead already converted"))
+		Return(nil, fmt.Errorf("lead already converted: %w", apperrors.ErrLeadConverted))
 	
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -76,7 +77,7 @@ func (suite *CustomerServiceTestSuite) TestCreate_DuplicateEmail() {
 
 	err := suite.service.Create(customer)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "customer with this email already exists", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 }
 
 func (suite *CustomerServiceTestSuite) TestCreate_RepoError() {
@@ -152,7 +153,7 @@ func (suite *CustomerServiceTestSuite) TestUpdate_DuplicateEmail() {
 
 	err := suite.service.Update(customer)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "customer with this email already exists", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 }
 
 func (suite *CustomerServiceTestSuite) TestUpdate_SameEmail() {
