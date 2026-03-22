@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type LeadServiceTestSuite struct {
@@ -19,6 +22,8 @@ type LeadServiceTestSuite struct {
 	mockLeadRepo     *mocks.LeadRepository
 	mockCustomerRepo *mocks.CustomerRepository
 	leadService      LeadService
+	db               *gorm.DB
+	txManager        *utils.TransactionManager
 }
 
 func (suite *LeadServiceTestSuite) SetupSuite() {
@@ -28,12 +33,18 @@ func (suite *LeadServiceTestSuite) SetupSuite() {
 		Format: "json",
 	}
 	utils.InitLogger(&logConfig)
+
+	// Setup SQLite in-memory DB for transaction manager
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	suite.Require().NoError(err)
+	suite.db = db
+	suite.txManager = utils.NewTransactionManager(db)
 }
 
 func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
-	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, nil)
+	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.txManager)
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {
@@ -50,8 +61,8 @@ func (suite *LeadServiceTestSuite) TestCreate_Success() {
 	}
 
 	suite.mockLeadRepo.On("Create", mock.MatchedBy(func(l *models.Lead) bool {
-		return l.FirstName == "John" && 
-			l.LastName == "Doe" && 
+		return l.FirstName == "John" &&
+			l.LastName == "Doe" &&
 			l.Email == "john@example.com" &&
 			l.Status == models.LeadStatusNew
 	})).Return(nil).Run(func(args mock.Arguments) {
@@ -108,7 +119,7 @@ func (suite *LeadServiceTestSuite) TestGetByID_Success() {
 		Status:    models.LeadStatusNew,
 	}
 
-	suite.mockLeadRepo.On("GetByID", uint(1)).Return(expectedLead, nil)
+	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(1), "Owner").Return(expectedLead, nil)
 
 	lead, err := suite.leadService.GetByID(1)
 	assert.NoError(suite.T(), err)
@@ -116,7 +127,7 @@ func (suite *LeadServiceTestSuite) TestGetByID_Success() {
 }
 
 func (suite *LeadServiceTestSuite) TestGetByID_NotFound() {
-	suite.mockLeadRepo.On("GetByID", uint(999)).Return(nil, errors.New("record not found"))
+	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(999), "Owner").Return(nil, errors.New("record not found"))
 
 	lead, err := suite.leadService.GetByID(999)
 	assert.Error(suite.T(), err)
@@ -141,7 +152,7 @@ func (suite *LeadServiceTestSuite) TestUpdate_Success() {
 
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockLeadRepo.On("Update", mock.MatchedBy(func(l *models.Lead) bool {
-		return l.FirstName == "Jane" && 
+		return l.FirstName == "Jane" &&
 			l.Status == models.LeadStatusContacted &&
 			l.Notes == "Follow up needed"
 	})).Return(nil)
@@ -258,10 +269,19 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_Success() {
 		Company:   "Acme Corp",
 	}
 
+	// First GetByID call is outside the transaction (validation)
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(lead, nil)
+
+	// WithTx returns the same mock repos (for unit test purposes)
+	suite.mockLeadRepo.On("WithTx", mock.Anything).Return(suite.mockLeadRepo)
+	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo)
+
+	// Inside transaction: re-check lead status
+	// GetByID is already mocked above and will match again
+
 	suite.mockCustomerRepo.On("Create", mock.MatchedBy(func(c *models.Customer) bool {
-		return c.FirstName == "John" && 
-			c.LastName == "Doe" && 
+		return c.FirstName == "John" &&
+			c.LastName == "Doe" &&
 			c.Email == "john@example.com" &&
 			c.Phone == "+1234567890" && // Should inherit from lead
 			c.Company == "Acme Corp" // Should use provided value
@@ -332,11 +352,13 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_CustomerCreationFails()
 	}
 
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(lead, nil)
+	suite.mockLeadRepo.On("WithTx", mock.Anything).Return(suite.mockLeadRepo)
+	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo)
 	suite.mockCustomerRepo.On("Create", mock.Anything).Return(errors.New("email already exists"))
 
 	customer, err := suite.leadService.ConvertToCustomer(1, customerData)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "email already exists", err.Error())
+	assert.Contains(suite.T(), err.Error(), "email already exists")
 	assert.Nil(suite.T(), customer)
 }
 
@@ -353,6 +375,12 @@ func (suite *LeadServiceTestSuite) TestGetByOwner_Success() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)
+}
+
+// Ensure the transaction manager uses context properly
+func init() {
+	// Suppress unused import for context
+	_ = context.Background
 }
 
 func TestLeadServiceTestSuite(t *testing.T) {

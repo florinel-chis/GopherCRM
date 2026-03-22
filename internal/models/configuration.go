@@ -100,12 +100,47 @@ func (c *Configuration) IsValidValue(value interface{}) bool {
 	if c.ValidValues == "" {
 		return true
 	}
-	
+
 	var validValues []interface{}
 	if err := json.Unmarshal([]byte(c.ValidValues), &validValues); err != nil {
 		return true // If we can't parse valid values, allow anything
 	}
-	
+
+	// For array/JSON types, check each element against valid values
+	if c.Type == ConfigTypeArray {
+		var elements []interface{}
+		switch v := value.(type) {
+		case []interface{}:
+			elements = v
+		case []string:
+			for _, s := range v {
+				elements = append(elements, s)
+			}
+		default:
+			// Try to marshal and unmarshal to get a slice
+			bytes, err := json.Marshal(value)
+			if err != nil {
+				return false
+			}
+			if err := json.Unmarshal(bytes, &elements); err != nil {
+				return false
+			}
+		}
+
+		for _, elem := range elements {
+			if !isValueInList(elem, validValues) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// For scalar types, check the value directly
+	return isValueInList(value, validValues)
+}
+
+// isValueInList checks if a value matches any element in the list
+func isValueInList(value interface{}, validValues []interface{}) bool {
 	valueStr := ""
 	if str, ok := value.(string); ok {
 		valueStr = str
@@ -113,7 +148,7 @@ func (c *Configuration) IsValidValue(value interface{}) bool {
 		bytes, _ := json.Marshal(value)
 		valueStr = string(bytes)
 	}
-	
+
 	for _, valid := range validValues {
 		validStr := ""
 		if str, ok := valid.(string); ok {
@@ -122,12 +157,12 @@ func (c *Configuration) IsValidValue(value interface{}) bool {
 			bytes, _ := json.Marshal(valid)
 			validStr = string(bytes)
 		}
-		
+
 		if valueStr == validStr {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
