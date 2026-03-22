@@ -50,6 +50,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+		utils.RespondBadRequest(c, err.Error())
+		return
+	}
+
 	user := &models.User{
 		Email:     req.Email,
 		FirstName: req.FirstName,
@@ -289,6 +294,13 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
 		return
+	}
+
+	if req.Password != "" {
+		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+			utils.RespondBadRequest(c, err.Error())
+			return
+		}
 	}
 
 	// Build updates map
