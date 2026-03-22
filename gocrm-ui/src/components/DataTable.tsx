@@ -289,8 +289,7 @@ export function DataTable<T extends { id?: string | number }>({
   const isSelected = (id: string | number) => internalSelected.indexOf(id) !== -1;
 
   const handleDeleteSelected = () => {
-    // Handle bulk delete
-    console.log('Delete selected:', internalSelected);
+    // TODO: Implement bulk delete functionality
   };
 
   return (

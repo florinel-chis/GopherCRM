@@ -16,7 +16,6 @@ import {
   ListItemText,
   ListItemIcon,
   IconButton,
-  Tooltip,
 } from '@mui/material';
 import {
   Edit as EditIcon,

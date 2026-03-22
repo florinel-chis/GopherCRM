@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { Component as LeadList } from './LeadList';
 import { leadsApi } from '@/api/endpoints';
 import { createMockLead } from '@/test/factories';
 import { useNavigate } from 'react-router-dom';
-import userEvent from '@testing-library/user-event';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
