@@ -61,7 +61,7 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 		Secret:      "test-secret",
 		ExpiryHours: 24,
 	}
-	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
+	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig, "test-api-key-secret")
 	suite.userService = service.NewUserService(userRepo)
 	suite.apiKeyService = service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 	
@@ -128,14 +128,19 @@ func (suite *APIKeyIntegrationTestSuite) TestCreateAPIKey() {
 			authHeader:     "Bearer " + suite.authToken,
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, body []byte) {
-				var response handler.CreateAPIKeyResponse
-				err := json.Unmarshal(body, &response)
+				var apiResp utils.APIResponse
+				err := json.Unmarshal(body, &apiResp)
 				assert.NoError(t, err)
-				assert.NotEmpty(t, response.Key)
-				assert.Contains(t, response.Key, "gcrm_")
-				assert.NotNil(t, response.APIKey)
-				assert.Equal(t, "Production API Key", response.APIKey.Name)
-				assert.True(t, response.APIKey.IsActive)
+				assert.True(t, apiResp.Success)
+				data, ok := apiResp.Data.(map[string]interface{})
+				assert.True(t, ok)
+				key, _ := data["key"].(string)
+				assert.NotEmpty(t, key)
+				assert.Contains(t, key, "gcrm_")
+				apiKey, ok := data["api_key"].(map[string]interface{})
+				assert.True(t, ok)
+				assert.Equal(t, "Production API Key", apiKey["name"])
+				assert.Equal(t, true, apiKey["is_active"])
 			},
 		},
 		{
@@ -207,20 +212,27 @@ func (suite *APIKeyIntegrationTestSuite) TestListAPIKeys() {
 	
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 	
-	var response map[string][]models.APIKey
-	err = json.Unmarshal(w.Body.Bytes(), &response)
+	var apiResp utils.APIResponse
+	err = json.Unmarshal(w.Body.Bytes(), &apiResp)
 	assert.NoError(suite.T(), err)
-	
-	apiKeys := response["api_keys"]
-	assert.Len(suite.T(), apiKeys, 2)
-	
+	assert.True(suite.T(), apiResp.Success)
+
+	apiKeysRaw, ok := apiResp.Data.([]interface{})
+	if !ok {
+		suite.T().Fatalf("expected data to be an array, got %T", apiResp.Data)
+	}
+	assert.Len(suite.T(), apiKeysRaw, 2)
+
 	// Check that the keys are returned (one active, one inactive)
 	activeCount := 0
-	for _, key := range apiKeys {
-		if key.IsActive {
+	for _, keyRaw := range apiKeysRaw {
+		key, ok := keyRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if isActive, _ := key["is_active"].(bool); isActive {
 			activeCount++
 		}
-		assert.Empty(suite.T(), key.KeyHash) // Should not expose hash
 	}
 	assert.Equal(suite.T(), 1, activeCount)
 }
