@@ -174,6 +174,12 @@ func (r *leadRepository) CountByClassification(classification models.LeadClassif
 	return count, err
 }
 
+func (r *leadRepository) CountByOwnerID(ownerID uint) (int64, error) {
+	var count int64
+	err := r.db.Model(&models.Lead{}).Where("owner_id = ?", ownerID).Count(&count).Error
+	return count, err
+}
+
 func (r *leadRepository) ConvertToCustomer(leadID uint, customerID uint) error {
 	return r.db.Model(&models.Lead{}).Where("id = ?", leadID).
 		Updates(map[string]interface{}{

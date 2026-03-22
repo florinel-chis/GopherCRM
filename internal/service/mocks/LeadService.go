@@ -204,7 +204,7 @@ func (_m *LeadService) GetByID(id uint) (*models.Lead, error) {
 }
 
 // GetByOwner provides a mock function with given fields: ownerID, offset, limit
-func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models.Lead, error) {
+func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models.Lead, int64, error) {
 	ret := _m.Called(ownerID, offset, limit)
 
 	if len(ret) == 0 {
@@ -212,8 +212,9 @@ func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models
 	}
 
 	var r0 []models.Lead
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, int, int) ([]models.Lead, error)); ok {
+	var r1 int64
+	var r2 error
+	if rf, ok := ret.Get(0).(func(uint, int, int) ([]models.Lead, int64, error)); ok {
 		return rf(ownerID, offset, limit)
 	}
 	if rf, ok := ret.Get(0).(func(uint, int, int) []models.Lead); ok {
@@ -224,13 +225,19 @@ func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(uint, int, int) error); ok {
+	if rf, ok := ret.Get(1).(func(uint, int, int) int64); ok {
 		r1 = rf(ownerID, offset, limit)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(int64)
 	}
 
-	return r0, r1
+	if rf, ok := ret.Get(2).(func(uint, int, int) error); ok {
+		r2 = rf(ownerID, offset, limit)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // GetCount provides a mock function with no fields
