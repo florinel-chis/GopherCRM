@@ -1,15 +1,16 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type TaskHandler struct {
@@ -80,14 +81,12 @@ func (h *TaskHandler) Create(c *gin.Context) {
 
 	if err := h.taskService.Create(task); err != nil {
 		logger.WithError(err).Error("Failed to create task")
-		if err.Error() == "assignee not found" {
+		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
+			errors.Is(err, apperrors.ErrLeadNotFound) ||
+			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
-		} else if err.Error() == "lead not found" {
-			utils.RespondNotFound(c, err.Error())
-		} else if err.Error() == "customer not found" {
-			utils.RespondNotFound(c, err.Error())
-		} else if err.Error() == "cannot assign task to inactive user" ||
-			err.Error() == "task cannot be linked to both lead and customer" {
+		} else if errors.Is(err, apperrors.ErrInactiveUser) ||
+			errors.Is(err, apperrors.ErrTaskLeadCustomerConflict) {
 			utils.RespondBadRequest(c, err.Error())
 		} else {
 			utils.RespondInternalError(c)
@@ -244,11 +243,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	task, err := h.taskService.GetByID(uint(id))
 	if err != nil {
 		logger.WithError(err).Warn("Task not found")
-		if err == gorm.ErrRecordNotFound {
-			utils.RespondNotFound(c, "Task not found")
-		} else {
-			utils.RespondInternalError(c)
-		}
+		utils.RespondNotFound(c, "Task not found")
 		return
 	}
 
@@ -293,13 +288,13 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 	if err := h.taskService.Update(task); err != nil {
 		logger.WithError(err).Error("Failed to update task")
-		if err.Error() == "assignee not found" ||
-			err.Error() == "lead not found" ||
-			err.Error() == "customer not found" {
+		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
+			errors.Is(err, apperrors.ErrLeadNotFound) ||
+			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
-		} else if err.Error() == "cannot assign task to inactive user" ||
-			err.Error() == "task cannot be linked to both lead and customer" ||
-			err.Error() == "cannot change status of completed task" {
+		} else if errors.Is(err, apperrors.ErrInactiveUser) ||
+			errors.Is(err, apperrors.ErrTaskLeadCustomerConflict) ||
+			errors.Is(err, apperrors.ErrCompletedTaskModify) {
 			utils.RespondBadRequest(c, err.Error())
 		} else {
 			utils.RespondInternalError(c)
@@ -330,11 +325,7 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 
 	if err := h.taskService.Delete(uint(id)); err != nil {
 		logger.WithError(err).Error("Failed to delete task")
-		if err == gorm.ErrRecordNotFound {
-			utils.RespondNotFound(c, "Task not found")
-		} else {
-			utils.RespondInternalError(c)
-		}
+		utils.RespondNotFound(c, "Task not found")
 		return
 	}
 

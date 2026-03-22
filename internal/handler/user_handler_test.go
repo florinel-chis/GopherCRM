@@ -3,12 +3,13 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -103,7 +104,7 @@ func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 	}
 	
 	suite.mockService.On("Register", mock.Anything, payload.Password).
-		Return(errors.New("user with this email already exists"))
+		Return(fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail))
 	
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBuffer(body))

@@ -1,8 +1,9 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"golang.org/x/crypto/bcrypt"
@@ -20,7 +21,7 @@ func (s *userService) Register(user *models.User, password string) error {
 	// Check if user already exists
 	existing, _ := s.userRepo.GetByEmail(user.Email)
 	if existing != nil {
-		return errors.New("user with this email already exists")
+		return fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail)
 	}
 
 	// Hash password
@@ -51,7 +52,7 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 	if newEmail, ok := updates["email"].(string); ok && newEmail != user.Email {
 		existing, _ := s.userRepo.GetByEmail(newEmail)
 		if existing != nil {
-			return nil, errors.New("user with this email already exists")
+			return nil, fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
 		user.Email = newEmail
 	}

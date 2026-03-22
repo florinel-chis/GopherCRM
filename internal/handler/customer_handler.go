@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -82,8 +84,8 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 
 	if err := h.customerService.Create(customer); err != nil {
 		logger.WithError(err).Error("Failed to create customer")
-		if err.Error() == "customer with this email already exists" {
-			utils.RespondBadRequest(c, err.Error())
+		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			utils.RespondBadRequest(c, "customer with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}
@@ -275,8 +277,8 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 
 	if err := h.customerService.Update(customer); err != nil {
 		logger.WithError(err).Error("Failed to update customer")
-		if err.Error() == "customer with this email already exists" {
-			utils.RespondBadRequest(c, err.Error())
+		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			utils.RespondBadRequest(c, "customer with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}

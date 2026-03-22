@@ -1,12 +1,12 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"gorm.io/gorm"
 )
 
 type taskService struct {
@@ -39,29 +39,21 @@ func (s *taskService) Create(task *models.Task) error {
 	// Validate assignee exists and is active
 	assignee, err := s.userRepo.GetByID(task.AssignedToID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WithError(err).Warn("Assignee not found")
-			return errors.New("assignee not found")
-		}
-		utils.LogServiceResponse(logger, err)
-		return err
+		logger.WithError(err).Warn("Assignee not found")
+		return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 	}
 
 	if !assignee.IsActive {
 		logger.WithField("assignee_id", task.AssignedToID).Warn("Cannot assign task to inactive user")
-		return errors.New("cannot assign task to inactive user")
+		return fmt.Errorf("cannot assign task to inactive user: %w", apperrors.ErrInactiveUser)
 	}
 
 	// Validate lead if provided
 	if task.LeadID != nil {
 		_, err := s.leadRepo.GetByID(*task.LeadID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.WithError(err).Warn("Lead not found")
-				return errors.New("lead not found")
-			}
-			utils.LogServiceResponse(logger, err)
-			return err
+			logger.WithError(err).Warn("Lead not found")
+			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
 		}
 	}
 
@@ -69,19 +61,15 @@ func (s *taskService) Create(task *models.Task) error {
 	if task.CustomerID != nil {
 		_, err := s.customerRepo.GetByID(*task.CustomerID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.WithError(err).Warn("Customer not found")
-				return errors.New("customer not found")
-			}
-			utils.LogServiceResponse(logger, err)
-			return err
+			logger.WithError(err).Warn("Customer not found")
+			return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 		}
 	}
 
 	// Task cannot be linked to both lead and customer
 	if task.LeadID != nil && task.CustomerID != nil {
 		logger.Warn("Task cannot be linked to both lead and customer")
-		return errors.New("task cannot be linked to both lead and customer")
+		return fmt.Errorf("task cannot be linked to both lead and customer: %w", apperrors.ErrTaskLeadCustomerConflict)
 	}
 
 	if err := s.taskRepo.Create(task); err != nil {
@@ -102,11 +90,7 @@ func (s *taskService) GetByID(id uint) (*models.Task, error) {
 
 	task, err := s.taskRepo.GetByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WithError(err).Warn("Task not found")
-		} else {
-			logger.WithError(err).Error("Failed to get task")
-		}
+		logger.WithError(err).Warn("Task not found")
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
@@ -150,11 +134,7 @@ func (s *taskService) Update(task *models.Task) error {
 	// Get existing task to validate the update
 	existingTask, err := s.taskRepo.GetByID(task.ID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WithError(err).Warn("Task not found")
-		} else {
-			logger.WithError(err).Error("Failed to get existing task")
-		}
+		logger.WithError(err).Warn("Task not found")
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
@@ -163,17 +143,13 @@ func (s *taskService) Update(task *models.Task) error {
 	if task.AssignedToID != existingTask.AssignedToID {
 		assignee, err := s.userRepo.GetByID(task.AssignedToID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.WithError(err).Warn("Assignee not found")
-				return errors.New("assignee not found")
-			}
-			utils.LogServiceResponse(logger, err)
-			return err
+			logger.WithError(err).Warn("Assignee not found")
+			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 
 		if !assignee.IsActive {
 			logger.WithField("assignee_id", task.AssignedToID).Warn("Cannot assign task to inactive user")
-			return errors.New("cannot assign task to inactive user")
+			return fmt.Errorf("cannot assign task to inactive user: %w", apperrors.ErrInactiveUser)
 		}
 	}
 
@@ -181,12 +157,8 @@ func (s *taskService) Update(task *models.Task) error {
 	if task.LeadID != existingTask.LeadID && task.LeadID != nil {
 		_, err := s.leadRepo.GetByID(*task.LeadID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.WithError(err).Warn("Lead not found")
-				return errors.New("lead not found")
-			}
-			utils.LogServiceResponse(logger, err)
-			return err
+			logger.WithError(err).Warn("Lead not found")
+			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
 		}
 	}
 
@@ -194,25 +166,21 @@ func (s *taskService) Update(task *models.Task) error {
 	if task.CustomerID != existingTask.CustomerID && task.CustomerID != nil {
 		_, err := s.customerRepo.GetByID(*task.CustomerID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.WithError(err).Warn("Customer not found")
-				return errors.New("customer not found")
-			}
-			utils.LogServiceResponse(logger, err)
-			return err
+			logger.WithError(err).Warn("Customer not found")
+			return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 		}
 	}
 
 	// Task cannot be linked to both lead and customer
 	if task.LeadID != nil && task.CustomerID != nil {
 		logger.Warn("Task cannot be linked to both lead and customer")
-		return errors.New("task cannot be linked to both lead and customer")
+		return fmt.Errorf("task cannot be linked to both lead and customer: %w", apperrors.ErrTaskLeadCustomerConflict)
 	}
 
 	// Cannot change status from completed to anything else
 	if existingTask.Status == models.TaskStatusCompleted && task.Status != models.TaskStatusCompleted {
 		logger.Warn("Cannot change status of completed task")
-		return errors.New("cannot change status of completed task")
+		return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
 	}
 
 	if err := s.taskRepo.Update(task); err != nil {
@@ -230,11 +198,7 @@ func (s *taskService) Delete(id uint) error {
 	// Check if task exists
 	_, err := s.taskRepo.GetByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WithError(err).Warn("Task not found")
-		} else {
-			logger.WithError(err).Error("Failed to get task")
-		}
+		logger.WithError(err).Warn("Task not found")
 		utils.LogServiceResponse(logger, err)
 		return err
 	}

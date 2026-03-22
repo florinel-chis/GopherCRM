@@ -1,8 +1,9 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -37,20 +38,20 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 	_, err := s.customerRepo.GetByID(ticket.CustomerID)
 	if err != nil {
 		logger.WithError(err).Warn("Customer not found")
-		return errors.New("customer not found")
+		return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 	}
-	
+
 	// Verify assignee exists if specified
 	if ticket.AssignedToID != nil {
 		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
 		if err != nil {
 			logger.WithError(err).Warn("Assignee not found")
-			return errors.New("assignee not found")
+			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 		// Only support and admin users can be assigned tickets
 		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
 			logger.Warn("Invalid assignee role")
-			return errors.New("tickets can only be assigned to support or admin users")
+			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
 	}
 	
@@ -135,19 +136,19 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 	// Validate status transitions
 	if existing.Status == models.TicketStatusClosed && ticket.Status != models.TicketStatusClosed {
 		logger.Warn("Cannot reopen closed ticket")
-		return errors.New("cannot reopen closed ticket")
+		return fmt.Errorf("cannot reopen closed ticket: %w", apperrors.ErrClosedTicketReopen)
 	}
-	
+
 	// Verify assignee if changed
 	if ticket.AssignedToID != nil && (existing.AssignedToID == nil || *ticket.AssignedToID != *existing.AssignedToID) {
 		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
 		if err != nil {
 			logger.WithError(err).Warn("Assignee not found")
-			return errors.New("assignee not found")
+			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
 			logger.Warn("Invalid assignee role")
-			return errors.New("tickets can only be assigned to support or admin users")
+			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
 	}
 	
