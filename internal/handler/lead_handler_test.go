@@ -177,7 +177,7 @@ func (suite *LeadHandlerTestSuite) TestList_SalesViewsOwn() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", OwnerID: 2},
 	}
 	
-	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, int64(1), nil)
 	
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
@@ -588,7 +588,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserSeesOnlyOwnLeads() {
 		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Support Lead", OwnerID: 3},
 	}
 
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
@@ -610,7 +610,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSearchSeesOnlyOwnLead
 	}
 
 	// Even with search param, non-admin/non-sales should only see own leads
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?search=test", nil)
 	rec := httptest.NewRecorder()
@@ -632,7 +632,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSortSeesOnlyOwnLeads(
 	}
 
 	// Even with sort params, non-admin/non-sales should only see own leads
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc", nil)
 	rec := httptest.NewRecorder()
@@ -652,7 +652,7 @@ func (suite *LeadHandlerTestSuite) TestList_CustomerUserWithClassificationSeesOn
 	expectedLeads := []models.Lead{}
 
 	// Even with classification param, customer should only see own leads
-	suite.mockService.On("GetByOwner", uint(4), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(4), 0, 20).Return(expectedLeads, int64(0), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?classification=hot_lead", nil)
 	rec := httptest.NewRecorder()

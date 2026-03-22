@@ -199,13 +199,10 @@ func (h *LeadHandler) List(c *gin.Context) {
 
 	if currentUserRole == string(models.RoleSales) {
 		// For sales users, only show their own leads
-		leads, err = h.leadService.GetByOwner(currentUserID, offset, limit)
-		// Note: We'll need to add a CountByOwner method for accurate pagination
-		total = int64(len(leads)) // Temporary approximation
+		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 	} else if !isAdminOrSales {
 		// Non-admin, non-sales users can only see their own leads
-		leads, err = h.leadService.GetByOwner(currentUserID, offset, limit)
-		total = int64(len(leads))
+		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 	} else if search != "" {
 		// Search across lead fields
 		leads, total, err = h.leadService.Search(search, offset, limit, sortBy, sortOrder)

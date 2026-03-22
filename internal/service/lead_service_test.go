@@ -346,10 +346,12 @@ func (suite *LeadServiceTestSuite) TestGetByOwner_Success() {
 	}
 
 	suite.mockLeadRepo.On("GetByOwnerID", uint(1), 0, 10).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByOwnerID", uint(1)).Return(int64(2), nil)
 
-	leads, err := suite.leadService.GetByOwner(1, 0, 10)
+	leads, total, err := suite.leadService.GetByOwner(1, 0, 10)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
+	assert.Equal(suite.T(), int64(2), total)
 }
 
 func TestLeadServiceTestSuite(t *testing.T) {
