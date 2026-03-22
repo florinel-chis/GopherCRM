@@ -14,6 +14,54 @@ type BulkOperationRepository struct {
 	mock.Mock
 }
 
+// Count provides a mock function with no fields
+func (_m *BulkOperationRepository) Count() (int64, error) {
+	ret := _m.Called()
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (int64, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() int64); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// CountByUserID provides a mock function with given fields: userID
+func (_m *BulkOperationRepository) CountByUserID(userID uint) (int64, error) {
+	ret := _m.Called(userID)
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint) (int64, error)); ok {
+		return rf(userID)
+	}
+	if rf, ok := ret.Get(0).(func(uint) int64); ok {
+		r0 = rf(userID)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(uint) error); ok {
+		r1 = rf(userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Create provides a mock function with given fields: operation
 func (_m *BulkOperationRepository) Create(operation *models.BulkOperation) error {
 	ret := _m.Called(operation)

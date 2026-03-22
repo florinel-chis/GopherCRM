@@ -54,6 +54,7 @@ type LeadRepository interface {
 	CountSearch(query string) (int64, error)
 	Count() (int64, error)
 	CountByClassification(classification models.LeadClassification) (int64, error)
+	CountByOwnerID(ownerID uint) (int64, error)
 	ConvertToCustomer(leadID uint, customerID uint) error
 	WithTx(tx *gorm.DB) LeadRepository
 }
@@ -148,6 +149,8 @@ type BulkOperationRepository interface {
 	Update(operation *models.BulkOperation) error
 	UpdateStatus(id uint, status models.BulkOperationStatus) error
 	Delete(id uint) error
+	Count() (int64, error)
+	CountByUserID(userID uint) (int64, error)
 	List(offset, limit int) ([]models.BulkOperation, error)
 	CreateItem(item *models.BulkOperationItem) error
 	UpdateItem(item *models.BulkOperationItem) error

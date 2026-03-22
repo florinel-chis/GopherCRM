@@ -63,6 +63,18 @@ func (r *bulkOperationRepository) Delete(id uint) error {
 	return r.db.Delete(&models.BulkOperation{}, id).Error
 }
 
+func (r *bulkOperationRepository) Count() (int64, error) {
+	var count int64
+	err := r.db.Model(&models.BulkOperation{}).Count(&count).Error
+	return count, err
+}
+
+func (r *bulkOperationRepository) CountByUserID(userID uint) (int64, error) {
+	var count int64
+	err := r.db.Model(&models.BulkOperation{}).Where("user_id = ?", userID).Count(&count).Error
+	return count, err
+}
+
 func (r *bulkOperationRepository) List(offset, limit int) ([]models.BulkOperation, error) {
 	var operations []models.BulkOperation
 	err := r.db.Order("created_at DESC").

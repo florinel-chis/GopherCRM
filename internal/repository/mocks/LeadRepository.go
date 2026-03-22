@@ -184,6 +184,34 @@ func (_m *LeadRepository) List(offset int, limit int) ([]models.Lead, error) {
 	return r0, r1
 }
 
+// CountByOwnerID provides a mock function with given fields: ownerID
+func (_m *LeadRepository) CountByOwnerID(ownerID uint) (int64, error) {
+	ret := _m.Called(ownerID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CountByOwnerID")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint) (int64, error)); ok {
+		return rf(ownerID)
+	}
+	if rf, ok := ret.Get(0).(func(uint) int64); ok {
+		r0 = rf(ownerID)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(uint) error); ok {
+		r1 = rf(ownerID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Update provides a mock function with given fields: lead
 func (_m *LeadRepository) Update(lead *models.Lead) error {
 	ret := _m.Called(lead)

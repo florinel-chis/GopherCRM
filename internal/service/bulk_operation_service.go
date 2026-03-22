@@ -74,8 +74,18 @@ func (s *bulkOperationService) GetBulkOperationWithItems(id uint) (*models.BulkO
 	return s.bulkOperationRepo.GetByIDWithItems(id)
 }
 
-func (s *bulkOperationService) GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, error) {
-	return s.bulkOperationRepo.GetByUserID(userID, offset, limit)
+func (s *bulkOperationService) GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, int64, error) {
+	operations, err := s.bulkOperationRepo.GetByUserID(userID, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.bulkOperationRepo.CountByUserID(userID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return operations, total, nil
 }
 
 func (s *bulkOperationService) UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error {
