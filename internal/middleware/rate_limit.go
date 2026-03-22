@@ -39,20 +39,6 @@ type rateLimiter struct {
 	cleanup  time.Duration // cleanup interval for old visitors
 }
 
-var globalRateLimiter *rateLimiter
-
-// initRateLimiter initializes the global rate limiter
-func initRateLimiter(rps float64, burst int) {
-	globalRateLimiter = &rateLimiter{
-		visitors: make(map[string]*visitor),
-		limit:    rate.Limit(rps),
-		burst:    burst,
-		cleanup:  time.Minute * 5, // cleanup visitors not seen for 5 minutes
-	}
-
-	// Start cleanup goroutine
-	go globalRateLimiter.cleanupVisitors()
-}
 
 // getVisitor retrieves or creates a visitor for the given IP
 func (rl *rateLimiter) getVisitor(ip string) *rate.Limiter {
@@ -90,18 +76,21 @@ func (rl *rateLimiter) cleanupVisitors() {
 	}
 }
 
-// RateLimit returns a middleware that implements rate limiting per IP address
-// rps: requests per second allowed
-// burst: maximum burst size
+// RateLimit returns a middleware that implements rate limiting per IP address.
+// Each call creates its own independent rate limiter so that different tiers
+// (strict, moderate, generous) do not share state.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
-	// Initialize global rate limiter on first call
-	if globalRateLimiter == nil {
-		initRateLimiter(rps, burst)
+	rl := &rateLimiter{
+		visitors: make(map[string]*visitor),
+		limit:    rate.Limit(rps),
+		burst:    burst,
+		cleanup:  time.Minute * 5,
 	}
+	go rl.cleanupVisitors()
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
-		limiter := globalRateLimiter.getVisitor(ip)
+		limiter := rl.getVisitor(ip)
 
 		if !limiter.Allow() {
 			utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit exceeded")
@@ -127,16 +116,17 @@ func RateLimitStrict() gin.HandlerFunc {
 	return RateLimit(5.0/60.0, 2)
 }
 
-// RateLimitModerate returns a moderate rate limit middleware for general API endpoints
+// RateLimitModerate returns a moderate rate limit middleware for general API endpoints.
+// 120 requests per minute with burst of 30 — suitable for SPAs that make
+// multiple concurrent requests on page load.
 func RateLimitModerate() gin.HandlerFunc {
-	// 60 requests per minute with burst of 10
-	return RateLimit(1.0, 10)
+	return RateLimit(2.0, 30)
 }
 
-// RateLimitGenerous returns a generous rate limit for read-heavy endpoints
+// RateLimitGenerous returns a generous rate limit for read-heavy endpoints.
+// 240 requests per minute with burst of 40.
 func RateLimitGenerous() gin.HandlerFunc {
-	// 120 requests per minute with burst of 20
-	return RateLimit(2.0, 20)
+	return RateLimit(4.0, 40)
 }
 
 // RateLimiter is a config-driven, role-aware rate limiter
