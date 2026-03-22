@@ -9,5 +9,5 @@ type RefreshToken struct {
 	User      User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	TokenHash string    `gorm:"not null;uniqueIndex;type:varchar(255)" json:"-"`
 	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
-	Revoked   bool      `gorm:"default:false" json:"revoked"`
+	Revoked   bool      `gorm:"column:is_revoked;default:false" json:"revoked"`
 }
