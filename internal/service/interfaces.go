@@ -52,6 +52,7 @@ type LeadService interface {
 type CustomerService interface {
 	Create(customer *models.Customer) error
 	GetByID(id uint) (*models.Customer, error)
+	GetByUserID(userID uint) (*models.Customer, error)
 	Update(customer *models.Customer) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Customer, int64, error)
@@ -98,6 +99,7 @@ type BulkOperationService interface {
 	GetBulkOperation(id uint) (*models.BulkOperation, error)
 	GetBulkOperationWithItems(id uint) (*models.BulkOperation, error)
 	GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, error)
+	ListAllBulkOperations(offset, limit int) ([]models.BulkOperation, error)
 	UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error
 	
 	// Generic bulk operations
