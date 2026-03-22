@@ -111,14 +111,14 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)
 	configRepo := repository.NewConfigurationRepository(models.DB)
 
-	authService := service.NewAuthService(userRepo, apiKeyRepo, cfg.JWT)
+	authService := service.NewAuthService(userRepo, apiKeyRepo, cfg.JWT, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(models.DB)
 	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo)
-	apiKeyService := service.NewAPIKeyService(apiKeyRepo)
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	configService := service.NewConfigurationService(configRepo)
 
 	authHandler := handler.NewAuthHandler(authService, userService)

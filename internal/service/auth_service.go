@@ -15,16 +15,22 @@ import (
 )
 
 type authService struct {
-	userRepo   repository.UserRepository
-	apiKeyRepo repository.APIKeyRepository
-	jwtConfig  config.JWTConfig
+	userRepo     repository.UserRepository
+	apiKeyRepo   repository.APIKeyRepository
+	jwtConfig    config.JWTConfig
+	apiKeySecret string
 }
 
-func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig) AuthService {
+func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig, apiKeySecret ...string) AuthService {
+	secret := ""
+	if len(apiKeySecret) > 0 {
+		secret = apiKeySecret[0]
+	}
 	return &authService{
-		userRepo:   userRepo,
-		apiKeyRepo: apiKeyRepo,
-		jwtConfig:  jwtConfig,
+		userRepo:     userRepo,
+		apiKeyRepo:   apiKeyRepo,
+		jwtConfig:    jwtConfig,
+		apiKeySecret: secret,
 	}
 }
 
@@ -115,10 +121,16 @@ func (s *authService) ValidateToken(tokenString string) (*models.User, error) {
 }
 
 func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
-	hashedKey := utils.HashAPIKey(key)
-	apiKey, err := s.apiKeyRepo.GetByKeyHash(hashedKey)
+	// Try HMAC-SHA256 hash first (new format)
+	hmacHash := utils.HashAPIKeyHMAC(key, s.apiKeySecret)
+	apiKey, err := s.apiKeyRepo.GetByKeyHash(hmacHash)
 	if err != nil {
-		return nil, errors.New("invalid API key")
+		// Fall back to legacy plain SHA256 hash for migration
+		legacyHash := utils.HashAPIKey(key)
+		apiKey, err = s.apiKeyRepo.GetByKeyHash(legacyHash)
+		if err != nil {
+			return nil, errors.New("invalid API key")
+		}
 	}
 
 	// Check if API key is active (not revoked)

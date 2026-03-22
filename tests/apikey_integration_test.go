@@ -63,7 +63,7 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 	}
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
-	suite.apiKeyService = service.NewAPIKeyService(apiKeyRepo)
+	suite.apiKeyService = service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 	
 	// Create test user
 	suite.testUser = &models.User{
