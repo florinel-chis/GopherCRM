@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -108,7 +109,7 @@ func Load() (*Config, error) {
 			RefreshTokenDays:   getEnvAsInt("JWT_REFRESH_TOKEN_DAYS", 7),
 			CookieSameSite:     getEnv("JWT_COOKIE_SAMESITE", "Lax"),
 			CookieDomain:       getEnv("JWT_COOKIE_DOMAIN", ""),
-			CookieSecure:       getEnv("JWT_COOKIE_SECURE", "false") == "true",
+			CookieSecure:       resolveCookieSecure(getEnv("SERVER_MODE", "development")),
 		},
 		Logging: LoggingConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
@@ -118,6 +119,10 @@ func Load() (*Config, error) {
 			Prefix:       getEnv("API_PREFIX", "/api/v1"),
 			APIKeySecret: getEnv("API_KEY_SECRET", jwtSecret),
 		},
+	}
+
+	if config.Server.Mode == "production" && !config.JWT.CookieSecure {
+		log.Warn("CookieSecure is false while running in production mode; cookies will be sent over insecure connections")
 	}
 
 	return config, nil
@@ -142,6 +147,16 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return value
 	}
 	return defaultValue
+}
+
+// resolveCookieSecure determines the CookieSecure value.
+// If JWT_COOKIE_SECURE is explicitly set, that value is used.
+// Otherwise, it defaults to true in production mode and false otherwise.
+func resolveCookieSecure(serverMode string) bool {
+	if v, ok := os.LookupEnv("JWT_COOKIE_SECURE"); ok {
+		return v == "true"
+	}
+	return serverMode == "production"
 }
 
 // parseTrustedProxies parses a comma-separated list of CIDRs/IPs.

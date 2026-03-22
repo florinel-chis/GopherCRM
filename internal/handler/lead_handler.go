@@ -193,9 +193,15 @@ func (h *LeadHandler) List(c *gin.Context) {
 	var total int64
 	var err error
 
-	// Role-based filtering: sales users can only see their own leads
+	// Role-based filtering: only admin and sales users can see all leads
+	// Other roles can only see their own leads
+	isAdminOrSales := currentUserRole == string(models.RoleAdmin) || currentUserRole == string(models.RoleSales)
+
 	if currentUserRole == string(models.RoleSales) {
 		// For sales users, only show their own leads
+		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
+	} else if !isAdminOrSales {
+		// Non-admin, non-sales users can only see their own leads
 		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 	} else if search != "" {
 		// Search across lead fields

@@ -217,9 +217,7 @@ func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 
 	// Admin can see all operations, others only their own
 	if currentUserRole == string(models.RoleAdmin) {
-		// For admin, we would need to add a method to list all operations
-		// For now, list user operations
-		operations, total, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
+		operations, total, err = h.bulkService.ListAllBulkOperations(offset, limit)
 	} else {
 		operations, total, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
 	}

@@ -12,6 +12,34 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// getFloatParam safely extracts a float64 parameter from a map, returning a
+// descriptive error instead of panicking on type mismatch or missing key.
+func getFloatParam(params map[string]interface{}, key string) (float64, error) {
+	v, ok := params[key]
+	if !ok {
+		return 0, fmt.Errorf("missing required parameter: %s", key)
+	}
+	f, ok := v.(float64)
+	if !ok {
+		return 0, fmt.Errorf("parameter %s must be a number, got %T", key, v)
+	}
+	return f, nil
+}
+
+// getStringParam safely extracts a string parameter from a map, returning a
+// descriptive error instead of panicking on type mismatch or missing key.
+func getStringParam(params map[string]interface{}, key string) (string, error) {
+	v, ok := params[key]
+	if !ok {
+		return "", fmt.Errorf("missing required parameter: %s", key)
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("parameter %s must be a string, got %T", key, v)
+	}
+	return s, nil
+}
+
 type bulkOperationService struct {
 	bulkOperationRepo repository.BulkOperationRepository
 	bulkRepo          repository.BulkRepository
@@ -81,6 +109,20 @@ func (s *bulkOperationService) GetUserBulkOperations(userID uint, offset, limit 
 	}
 
 	total, err := s.bulkOperationRepo.CountByUserID(userID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return operations, total, nil
+}
+
+func (s *bulkOperationService) ListAllBulkOperations(offset, limit int) ([]models.BulkOperation, int64, error) {
+	operations, err := s.bulkOperationRepo.List(offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.bulkOperationRepo.Count()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -430,9 +472,9 @@ func (s *bulkOperationService) bulkActivateUsers(operationID uint, userIDs []uin
 }
 
 func (s *bulkOperationService) bulkChangeUserRole(operationID uint, userIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newRole, ok := parameters["role"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'role' parameter")
+	newRole, err := getStringParam(parameters, "role")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(userIDs))
@@ -447,7 +489,7 @@ func (s *bulkOperationService) bulkChangeUserRole(operationID uint, userIDs []ui
 	var results []models.User
 	var operationErrors []error
 
-	err := s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok || tx == nil {
 			return fmt.Errorf("transaction not found in context")
@@ -1439,9 +1481,9 @@ func (s *bulkOperationService) buildBulkDeleteResponse(operationID uint, totalIt
 
 // Lead bulk action helpers
 func (s *bulkOperationService) bulkUpdateLeadStatus(operationID uint, leadIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newStatus, ok := parameters["status"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'status' parameter")
+	newStatus, err := getStringParam(parameters, "status")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(leadIDs))
@@ -1456,9 +1498,9 @@ func (s *bulkOperationService) bulkUpdateLeadStatus(operationID uint, leadIDs []
 }
 
 func (s *bulkOperationService) bulkAssignLeads(operationID uint, leadIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	assigneeID, ok := parameters["owner_id"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'owner_id' parameter")
+	assigneeID, err := getFloatParam(parameters, "owner_id")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(leadIDs))
@@ -1486,9 +1528,9 @@ func (s *bulkOperationService) bulkConvertLeads(operationID uint, leadIDs []uint
 }
 
 func (s *bulkOperationService) bulkUpdateLeadSource(operationID uint, leadIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newSource, ok := parameters["source"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'source' parameter")
+	newSource, err := getStringParam(parameters, "source")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(leadIDs))
@@ -1516,9 +1558,9 @@ func (s *bulkOperationService) bulkActivateCustomers(operationID uint, customerI
 }
 
 func (s *bulkOperationService) bulkUpdateCustomerType(operationID uint, customerIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newType, ok := parameters["type"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'type' parameter")
+	newType, err := getStringParam(parameters, "type")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(customerIDs))
@@ -1533,9 +1575,9 @@ func (s *bulkOperationService) bulkUpdateCustomerType(operationID uint, customer
 }
 
 func (s *bulkOperationService) bulkAssignCustomers(operationID uint, customerIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	assigneeID, ok := parameters["assigned_to_id"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'assigned_to_id' parameter")
+	assigneeID, err := getFloatParam(parameters, "assigned_to_id")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(customerIDs))
@@ -1551,9 +1593,9 @@ func (s *bulkOperationService) bulkAssignCustomers(operationID uint, customerIDs
 
 // Task bulk action helpers
 func (s *bulkOperationService) bulkUpdateTaskStatus(operationID uint, taskIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newStatus, ok := parameters["status"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'status' parameter")
+	newStatus, err := getStringParam(parameters, "status")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(taskIDs))
@@ -1568,9 +1610,9 @@ func (s *bulkOperationService) bulkUpdateTaskStatus(operationID uint, taskIDs []
 }
 
 func (s *bulkOperationService) bulkAssignTasks(operationID uint, taskIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	assigneeID, ok := parameters["assigned_to_id"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'assigned_to_id' parameter")
+	assigneeID, err := getFloatParam(parameters, "assigned_to_id")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(taskIDs))
@@ -1585,9 +1627,9 @@ func (s *bulkOperationService) bulkAssignTasks(operationID uint, taskIDs []uint,
 }
 
 func (s *bulkOperationService) bulkUpdateTaskPriority(operationID uint, taskIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newPriority, ok := parameters["priority"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'priority' parameter")
+	newPriority, err := getStringParam(parameters, "priority")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(taskIDs))
@@ -1602,9 +1644,9 @@ func (s *bulkOperationService) bulkUpdateTaskPriority(operationID uint, taskIDs 
 }
 
 func (s *bulkOperationService) bulkSetTaskDueDate(operationID uint, taskIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	dueDateStr, ok := parameters["due_date"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'due_date' parameter")
+	dueDateStr, err := getStringParam(parameters, "due_date")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(taskIDs))
@@ -1620,9 +1662,9 @@ func (s *bulkOperationService) bulkSetTaskDueDate(operationID uint, taskIDs []ui
 
 // Ticket bulk action helpers
 func (s *bulkOperationService) bulkUpdateTicketStatus(operationID uint, ticketIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newStatus, ok := parameters["status"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'status' parameter")
+	newStatus, err := getStringParam(parameters, "status")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(ticketIDs))
@@ -1637,9 +1679,9 @@ func (s *bulkOperationService) bulkUpdateTicketStatus(operationID uint, ticketID
 }
 
 func (s *bulkOperationService) bulkAssignTickets(operationID uint, ticketIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	assigneeID, ok := parameters["assigned_to_id"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'assigned_to_id' parameter")
+	assigneeID, err := getFloatParam(parameters, "assigned_to_id")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(ticketIDs))
@@ -1654,9 +1696,9 @@ func (s *bulkOperationService) bulkAssignTickets(operationID uint, ticketIDs []u
 }
 
 func (s *bulkOperationService) bulkUpdateTicketPriority(operationID uint, ticketIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newPriority, ok := parameters["priority"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'priority' parameter")
+	newPriority, err := getStringParam(parameters, "priority")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(ticketIDs))
@@ -1671,9 +1713,9 @@ func (s *bulkOperationService) bulkUpdateTicketPriority(operationID uint, ticket
 }
 
 func (s *bulkOperationService) bulkUpdateTicketCategory(operationID uint, ticketIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newCategory, ok := parameters["category"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid 'category' parameter")
+	newCategory, err := getStringParam(parameters, "category")
+	if err != nil {
+		return nil, err
 	}
 
 	updates := make([]models.BulkUpdateItem, len(ticketIDs))

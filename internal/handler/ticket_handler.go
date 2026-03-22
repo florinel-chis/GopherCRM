@@ -11,11 +11,16 @@ import (
 )
 
 type TicketHandler struct {
-	ticketService service.TicketService
+	ticketService   service.TicketService
+	customerService service.CustomerService
 }
 
-func NewTicketHandler(ticketService service.TicketService) *TicketHandler {
-	return &TicketHandler{ticketService: ticketService}
+func NewTicketHandler(ticketService service.TicketService, customerService ...service.CustomerService) *TicketHandler {
+	h := &TicketHandler{ticketService: ticketService}
+	if len(customerService) > 0 {
+		h.customerService = customerService[0]
+	}
+	return h
 }
 
 type CreateTicketRequest struct {
@@ -247,11 +252,24 @@ func (h *TicketHandler) Get(c *gin.Context) {
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
 	
-	// Customer users can only view their own tickets
+	// Customer users can only view tickets for their associated customer record
 	if currentUserRole == string(models.RoleCustomer) {
-		// In a real implementation, we'd check if the current user is the customer
-		// For now, we'll reject all customer access
-		utils.RespondForbidden(c, "Customers can only view their own tickets")
+		if h.customerService == nil {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		customer, err := h.customerService.GetByUserID(currentUserID)
+		if err != nil || customer == nil {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		if ticket.CustomerID != customer.ID {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		// Customer is associated with this ticket - allow access
+		utils.LogHandlerResponse(logger, http.StatusOK, ticket)
+		utils.RespondSuccess(c, http.StatusOK, ticket)
 		return
 	}
 	

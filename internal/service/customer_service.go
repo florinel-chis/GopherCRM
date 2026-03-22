@@ -52,6 +52,19 @@ func (s *customerService) GetByID(id uint) (*models.Customer, error) {
 	return customer, nil
 }
 
+func (s *customerService) GetByUserID(userID uint) (*models.Customer, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithField("user_id", userID), "CustomerService", "GetByUserID")
+
+	customer, err := s.customerRepo.GetByUserID(userID)
+	if err != nil {
+		logger.WithError(err).Warn("Customer not found for user")
+		return nil, err
+	}
+
+	logger.Debug("Customer retrieved by user ID successfully")
+	return customer, nil
+}
+
 func (s *customerService) Update(customer *models.Customer) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", customer.ID), "CustomerService", "Update")
 	
