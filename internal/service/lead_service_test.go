@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
-	"github.com/florinel-chis/gophercrm/internal/models"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -311,7 +312,7 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_AlreadyConverted() {
 
 	customer, err := suite.leadService.ConvertToCustomer(1, customerData)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "lead already converted", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadConverted))
 	assert.Nil(suite.T(), customer)
 }
 

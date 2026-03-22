@@ -1,8 +1,9 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -27,7 +28,7 @@ func (s *customerService) Create(customer *models.Customer) error {
 	existing, err := s.customerRepo.GetByEmail(customer.Email)
 	if err == nil && existing != nil {
 		logger.Warn("Attempted to create customer with duplicate email")
-		return errors.New("customer with this email already exists")
+		return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
 	}
 	
 	if err := s.customerRepo.Create(customer); err != nil {
@@ -60,7 +61,7 @@ func (s *customerService) Update(customer *models.Customer) error {
 		existing, err := s.customerRepo.GetByEmail(customer.Email)
 		if err == nil && existing != nil && existing.ID != customer.ID {
 			logger.Warn("Attempted to update customer with duplicate email")
-			return errors.New("customer with this email already exists")
+			return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
 	}
 	

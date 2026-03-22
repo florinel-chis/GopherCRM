@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -91,7 +93,7 @@ func (suite *TicketServiceTestSuite) TestCreate_CustomerNotFound() {
 
 	err := suite.service.Create(ticket)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "customer not found", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrCustomerNotFound))
 }
 
 func (suite *TicketServiceTestSuite) TestCreate_AssigneeNotFound() {
@@ -111,7 +113,7 @@ func (suite *TicketServiceTestSuite) TestCreate_AssigneeNotFound() {
 
 	err := suite.service.Create(ticket)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "assignee not found", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrAssigneeNotFound))
 }
 
 func (suite *TicketServiceTestSuite) TestCreate_InvalidAssigneeRole() {
@@ -136,7 +138,7 @@ func (suite *TicketServiceTestSuite) TestCreate_InvalidAssigneeRole() {
 
 	err := suite.service.Create(ticket)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "tickets can only be assigned to support or admin users", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInvalidAssigneeRole))
 }
 
 func (suite *TicketServiceTestSuite) TestGetByID_Success() {
@@ -236,7 +238,7 @@ func (suite *TicketServiceTestSuite) TestUpdate_CannotReopenClosed() {
 
 	err := suite.service.Update(updatedTicket)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "cannot reopen closed ticket", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrClosedTicketReopen))
 }
 
 func (suite *TicketServiceTestSuite) TestUpdate_InvalidAssigneeRole() {
@@ -262,7 +264,7 @@ func (suite *TicketServiceTestSuite) TestUpdate_InvalidAssigneeRole() {
 
 	err := suite.service.Update(updatedTicket)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "tickets can only be assigned to support or admin users", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInvalidAssigneeRole))
 }
 
 func (suite *TicketServiceTestSuite) TestDelete_Success() {

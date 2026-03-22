@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -112,7 +114,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmail() {
 		Email:     "john@example.com",
 	}
 	
-	suite.mockService.On("Create", mock.Anything).Return(errors.New("customer with this email already exists"))
+	suite.mockService.On("Create", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
 	
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
@@ -314,7 +316,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmail() {
 	}
 	
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
-	suite.mockService.On("Update", mock.Anything).Return(errors.New("customer with this email already exists"))
+	suite.mockService.On("Update", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
 	
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
