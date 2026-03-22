@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -118,7 +118,7 @@ export const Component: React.FC = () => {
     },
   });
 
-  const columns: Column<User>[] = [
+  const columns: Column<User>[] = useMemo(() => [
     {
       id: 'username',
       label: 'Username',
@@ -166,26 +166,26 @@ export const Component: React.FC = () => {
       minWidth: 120,
       format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
     },
-  ];
+  ], []);
 
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, user: User) => {
+  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, user: User) => {
     setAnchorEl(event.currentTarget);
     setSelectedUser(user);
-  };
+  }, []);
 
-  const handleMenuClose = () => {
+  const handleMenuClose = useCallback(() => {
     setAnchorEl(null);
     setSelectedUser(null);
-  };
+  }, []);
 
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     if (selectedUser) {
       setDeleteDialog({ open: true, user: selectedUser });
       handleMenuClose();
     }
-  };
+  }, [selectedUser, handleMenuClose]);
 
-  const handleActivationToggle = () => {
+  const handleActivationToggle = useCallback(() => {
     if (selectedUser) {
       if (selectedUser.is_active) {
         deactivateMutation.mutate(selectedUser.id);
@@ -194,9 +194,9 @@ export const Component: React.FC = () => {
       }
       handleMenuClose();
     }
-  };
+  }, [selectedUser, activateMutation, deactivateMutation, handleMenuClose]);
 
-  const handleSort = (field: string, order: 'asc' | 'desc') => {
+  const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
       username: 'email',
       email: 'email',
@@ -205,33 +205,33 @@ export const Component: React.FC = () => {
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
-    setFilters({ ...filters, sort_by: sortBy, sort_order: order, page: 1 });
-  };
+    setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
+  }, []);
 
-  const handleSearch = (value: string) => {
-    setFilters({ ...filters, search: value, page: 1 });
-  };
+  const handleSearch = useCallback((value: string) => {
+    setFilters(prev => ({ ...prev, search: value, page: 1 }));
+  }, []);
 
-  const handleRoleChange = (role: string) => {
-    setFilters({ ...filters, role, page: 1 });
-  };
+  const handleRoleChange = useCallback((role: string) => {
+    setFilters(prev => ({ ...prev, role, page: 1 }));
+  }, []);
 
-  const handleStatusChange = (_event: React.MouseEvent<HTMLElement>, value: string | null) => {
+  const handleStatusChange = useCallback((_event: React.MouseEvent<HTMLElement>, value: string | null) => {
     if (value === null) return;
-    setFilters({ 
-      ...filters, 
+    setFilters(prev => ({
+      ...prev,
       is_active: value === 'all' ? undefined : value === 'active',
-      page: 1 
-    });
-  };
+      page: 1
+    }));
+  }, []);
 
-  const handlePageChange = (page: number) => {
-    setFilters({ ...filters, page: page + 1 });
-  };
+  const handlePageChange = useCallback((page: number) => {
+    setFilters(prev => ({ ...prev, page: page + 1 }));
+  }, []);
 
-  const handleRowsPerPageChange = (rowsPerPage: number) => {
-    setFilters({ ...filters, limit: rowsPerPage, page: 1 });
-  };
+  const handleRowsPerPageChange = useCallback((rowsPerPage: number) => {
+    setFilters(prev => ({ ...prev, limit: rowsPerPage, page: 1 }));
+  }, []);
 
   if (isLoading && !data) {
     return <Loading />;
