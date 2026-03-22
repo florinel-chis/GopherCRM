@@ -76,7 +76,8 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	// Setup services
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, suite.cfg.JWT)
 	userService := service.NewUserService(userRepo)
-	leadService := service.NewLeadService(leadRepo, customerRepo)
+	txManager := utils.NewTransactionManager(suite.db)
+	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")

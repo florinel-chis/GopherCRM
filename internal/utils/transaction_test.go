@@ -139,7 +139,7 @@ func TestTransactionManager_WithTransactionAndRetry(t *testing.T) {
 func TestGetTxFromContext(t *testing.T) {
 	t.Run("valid transaction in context", func(t *testing.T) {
 		db := setupTestDB(t)
-		ctx := context.WithValue(context.Background(), "tx", db)
+		ctx := context.WithValue(context.Background(), contextKey("tx"), db)
 
 		tx, ok := GetTxFromContext(ctx)
 		assert.True(t, ok)

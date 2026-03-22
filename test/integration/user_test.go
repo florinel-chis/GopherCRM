@@ -136,7 +136,7 @@ func (suite *UserIntegrationTestSuite) TestUserRegistration() {
 	// Test registration through public endpoint
 	payload := map[string]interface{}{
 		"email":      "newuser@example.com",
-		"password":   "password123",
+		"password":   "Password123!",
 		"first_name": "New",
 		"last_name":  "User",
 	}
@@ -170,14 +170,14 @@ func (suite *UserIntegrationTestSuite) TestUserLogin() {
 		Role:      models.RoleCustomer,
 		IsActive:  true,
 	}
-	err := user.SetPassword("password123")
+	err := user.SetPassword("Password123!")
 	suite.Require().NoError(err)
 	suite.db.Create(user)
 
 	// Test login
 	payload := map[string]string{
 		"email":    "logintest@example.com",
-		"password": "password123",
+		"password": "Password123!",
 	}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
@@ -222,7 +222,7 @@ func (suite *UserIntegrationTestSuite) TestUserCRUD() {
 	// Create user (as admin)
 	payload := map[string]interface{}{
 		"email":      "cruduser@example.com",
-		"password":   "password123",
+		"password":   "Password123!",
 		"first_name": "CRUD",
 		"last_name":  "User",
 		"role":       "sales",
@@ -304,7 +304,7 @@ func (suite *UserIntegrationTestSuite) TestPermissionEnforcement() {
 		Role:      models.RoleCustomer,
 		IsActive:  true,
 	}
-	err := regularUser.SetPassword("password123")
+	err := regularUser.SetPassword("Password123!")
 	suite.Require().NoError(err)
 	suite.db.Create(regularUser)
 
@@ -323,7 +323,7 @@ func (suite *UserIntegrationTestSuite) TestPermissionEnforcement() {
 	// Test that regular user cannot create users
 	payload := map[string]interface{}{
 		"email":      "shouldfail@example.com",
-		"password":   "password123",
+		"password":   "Password123!",
 		"first_name": "Should",
 		"last_name":  "Fail",
 		"role":       "admin",
@@ -390,7 +390,7 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 		Role:      models.RoleCustomer,
 		IsActive:  true,
 	}
-	err := testUser.SetPassword("password123")
+	err := testUser.SetPassword("Password123!")
 	suite.Require().NoError(err)
 	suite.db.Create(testUser)
 
@@ -416,7 +416,7 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 	// Test PUT /users/me
 	updatePayload := map[string]interface{}{
 		"first_name": "UpdatedMe",
-		"password":   "newpassword123",
+		"password":   "NewPassword123!",
 	}
 	body, _ := json.Marshal(updatePayload)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewBuffer(body))
@@ -431,14 +431,14 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 	var updateResponse utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &updateResponse)
 	assert.NoError(suite.T(), err)
-	
+
 	updatedData := updateResponse.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "UpdatedMe", updatedData["first_name"])
 
 	// Verify password was changed by attempting login with new password
 	loginPayload := map[string]string{
 		"email":    "metest@example.com",
-		"password": "newpassword123",
+		"password": "NewPassword123!",
 	}
 	body, _ = json.Marshal(loginPayload)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
@@ -459,14 +459,14 @@ func (suite *UserIntegrationTestSuite) TestEmailUniqueness() {
 		Role:      models.RoleCustomer,
 		IsActive:  true,
 	}
-	err := user1.SetPassword("password123")
+	err := user1.SetPassword("Password123!")
 	suite.Require().NoError(err)
 	suite.db.Create(user1)
 
 	// Try to create user with same email via admin endpoint
 	payload := map[string]interface{}{
 		"email":      "unique@example.com",
-		"password":   "password123",
+		"password":   "Password123!",
 		"first_name": "Second",
 		"last_name":  "User",
 		"role":       "customer",
@@ -484,7 +484,7 @@ func (suite *UserIntegrationTestSuite) TestEmailUniqueness() {
 	// Try to register with same email
 	registerPayload := map[string]interface{}{
 		"email":      "unique@example.com",
-		"password":   "password123",
+		"password":   "Password123!",
 		"first_name": "Third",
 		"last_name":  "User",
 	}
@@ -508,7 +508,7 @@ func (suite *UserIntegrationTestSuite) TestEmailUniqueness() {
 		Role:      models.RoleCustomer,
 		IsActive:  true,
 	}
-	err = user2.SetPassword("password123")
+	err = user2.SetPassword("Password123!")
 	suite.Require().NoError(err)
 	suite.db.Create(user2)
 

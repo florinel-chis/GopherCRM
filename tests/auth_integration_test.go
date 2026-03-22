@@ -106,7 +106,7 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 			name: "successful registration",
 			payload: map[string]interface{}{
 				"email":      "newuser@example.com",
-				"password":   "password123",
+				"password":   "Password123!",
 				"first_name": "New",
 				"last_name":  "User",
 			},
@@ -116,7 +116,7 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 			name: "duplicate email",
 			payload: map[string]interface{}{
 				"email":      "duplicate@example.com",
-				"password":   "password123",
+				"password":   "Password123!",
 				"first_name": "Duplicate",
 				"last_name":  "User",
 			},
@@ -126,7 +126,7 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 			name: "duplicate email second attempt",
 			payload: map[string]interface{}{
 				"email":      "duplicate@example.com",
-				"password":   "password123",
+				"password":   "Password123!",
 				"first_name": "Duplicate",
 				"last_name":  "User",
 			},
@@ -144,7 +144,7 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 			name: "invalid email format",
 			payload: map[string]interface{}{
 				"email":      "invalid-email",
-				"password":   "password123",
+				"password":   "Password123!",
 				"first_name": "Invalid",
 				"last_name":  "Email",
 			},
@@ -203,7 +203,7 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 		LastName:  "User",
 		Role:      models.RoleCustomer,
 	}
-	err := suite.userService.Register(user, "password123")
+	err := suite.userService.Register(user, "Password123!")
 	suite.NoError(err)
 
 	tests := []struct {
@@ -216,7 +216,7 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 			name: "successful login",
 			payload: map[string]interface{}{
 				"email":    "login@example.com",
-				"password": "password123",
+				"password": "Password123!",
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -233,7 +233,7 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 			name: "non-existent user",
 			payload: map[string]interface{}{
 				"email":    "nonexistent@example.com",
-				"password": "password123",
+				"password": "Password123!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  "Invalid email or password",
@@ -241,7 +241,7 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 		{
 			name: "missing email",
 			payload: map[string]interface{}{
-				"password": "password123",
+				"password": "Password123!",
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -295,10 +295,10 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 		LastName:  "User",
 		Role:      models.RoleCustomer,
 	}
-	err := suite.userService.Register(user, "password123")
+	err := suite.userService.Register(user, "Password123!")
 	suite.NoError(err)
 	
-	token, err := suite.authService.Login("protected@example.com", "password123")
+	token, err := suite.authService.Login("protected@example.com", "Password123!")
 	suite.NoError(err)
 
 	tests := []struct {
