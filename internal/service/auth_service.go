@@ -40,6 +40,12 @@ func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.AP
 	}
 }
 
+// MaxFailedLoginAttempts is the number of failed attempts before an account is locked.
+const MaxFailedLoginAttempts = 5
+
+// AccountLockDuration is how long an account stays locked after too many failed attempts.
+const AccountLockDuration = 15 * time.Minute
+
 func (s *authService) Login(email, password string) (string, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("email", email), "AuthService", "Login")
 
@@ -68,9 +74,25 @@ func (s *authService) Login(email, password string) (string, error) {
 		return "", errors.New("invalid credentials")
 	}
 
+	// Check if account is locked
+	if user.LockedUntil != nil && user.LockedUntil.After(time.Now()) {
+		logger.WithField("user_id", user.ID).Warn("Login failed - account locked")
+		return "", errors.New("account is locked due to too many failed login attempts, please try again later")
+	}
+
 	// Check password result
 	if bcryptErr != nil {
 		logger.WithField("user_id", user.ID).Warn("Login failed - invalid password")
+		// Increment failed login attempts
+		user.FailedLoginAttempts++
+		if user.FailedLoginAttempts >= MaxFailedLoginAttempts {
+			lockUntil := time.Now().Add(AccountLockDuration)
+			user.LockedUntil = &lockUntil
+			logger.WithField("user_id", user.ID).Warn("Account locked due to too many failed login attempts")
+		}
+		if updateErr := s.userRepo.Update(user); updateErr != nil {
+			logger.WithError(updateErr).Warn("Failed to update failed login attempts")
+		}
 		return "", errors.New("invalid credentials")
 	}
 
@@ -78,6 +100,15 @@ func (s *authService) Login(email, password string) (string, error) {
 	if !user.IsActive {
 		logger.WithField("user_id", user.ID).Warn("Login failed - account disabled")
 		return "", errors.New("invalid credentials") // Use same error message
+	}
+
+	// Reset failed login attempts on successful login
+	if user.FailedLoginAttempts > 0 || user.LockedUntil != nil {
+		user.FailedLoginAttempts = 0
+		user.LockedUntil = nil
+		if updateErr := s.userRepo.Update(user); updateErr != nil {
+			logger.WithError(updateErr).Warn("Failed to reset failed login attempts")
+		}
 	}
 
 	// Update last login timestamp

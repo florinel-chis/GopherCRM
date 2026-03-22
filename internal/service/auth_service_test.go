@@ -199,10 +199,10 @@ func TestAuthService_Login(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.DefaultCost)
-		
+
 		user := &models.User{
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
@@ -211,9 +211,10 @@ func TestAuthService_Login(t *testing.T) {
 		}
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
 
 		token, err := authService.Login("test@example.com", "wrong-password")
-		
+
 		assert.Error(t, err)
 		assert.Equal(t, "invalid credentials", err.Error())
 		assert.Empty(t, token)
@@ -227,11 +228,11 @@ func TestAuthService_Login(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		password := "password123"
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		
+
 		user := &models.User{
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
@@ -242,10 +243,142 @@ func TestAuthService_Login(t *testing.T) {
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
 
 		token, err := authService.Login("test@example.com", password)
-		
+
 		assert.Error(t, err)
-		assert.Equal(t, "account is disabled", err.Error())
+		assert.Equal(t, "invalid credentials", err.Error())
 		assert.Empty(t, token)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("account locked", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{
+			Secret:      "test-secret",
+			ExpiryHours: 24,
+		}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		password := "password123"
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+		lockUntil := time.Now().Add(15 * time.Minute)
+		user := &models.User{
+			BaseModel:           models.BaseModel{ID: 1},
+			Email:               "test@example.com",
+			Password:            string(hashedPassword),
+			IsActive:            true,
+			FailedLoginAttempts: 5,
+			LockedUntil:         &lockUntil,
+		}
+
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+
+		token, err := authService.Login("test@example.com", password)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "account is locked")
+		assert.Empty(t, token)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("lock expired allows login", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{
+			Secret:      "test-secret",
+			ExpiryHours: 24,
+		}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		password := "password123"
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+		lockUntil := time.Now().Add(-1 * time.Minute) // Lock expired
+		user := &models.User{
+			BaseModel:           models.BaseModel{ID: 1},
+			Email:               "test@example.com",
+			Password:            string(hashedPassword),
+			IsActive:            true,
+			Role:                models.RoleCustomer,
+			FailedLoginAttempts: 5,
+			LockedUntil:         &lockUntil,
+		}
+
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
+
+		token, err := authService.Login("test@example.com", password)
+
+		assert.NoError(t, err)
+		assert.NotEmpty(t, token)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("failed attempts increment and lock after 5", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{
+			Secret:      "test-secret",
+			ExpiryHours: 24,
+		}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.DefaultCost)
+
+		user := &models.User{
+			BaseModel:           models.BaseModel{ID: 1},
+			Email:               "test@example.com",
+			Password:            string(hashedPassword),
+			IsActive:            true,
+			FailedLoginAttempts: 4, // One more will trigger lockout
+		}
+
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
+			return u.FailedLoginAttempts == 5 && u.LockedUntil != nil
+		})).Return(nil)
+
+		token, err := authService.Login("test@example.com", "wrong-password")
+
+		assert.Error(t, err)
+		assert.Equal(t, "invalid credentials", err.Error())
+		assert.Empty(t, token)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("successful login resets failed attempts", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{
+			Secret:      "test-secret",
+			ExpiryHours: 24,
+		}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		password := "password123"
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+		user := &models.User{
+			BaseModel:           models.BaseModel{ID: 1},
+			Email:               "test@example.com",
+			Password:            string(hashedPassword),
+			IsActive:            true,
+			Role:                models.RoleCustomer,
+			FailedLoginAttempts: 3,
+		}
+
+		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
+			return u.FailedLoginAttempts == 0 && u.LockedUntil == nil
+		})).Return(nil)
+		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
+
+		token, err := authService.Login("test@example.com", password)
+
+		assert.NoError(t, err)
+		assert.NotEmpty(t, token)
 		mockUserRepo.AssertExpectations(t)
 	})
 }

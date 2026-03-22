@@ -22,8 +22,10 @@ type User struct {
 	FirstName    string   `gorm:"not null;type:varchar(100)" json:"first_name"`
 	LastName     string   `gorm:"not null;type:varchar(100)" json:"last_name"`
 	Role         UserRole `gorm:"not null;default:'customer';type:varchar(20)" json:"role"`
-	IsActive     bool     `gorm:"default:true" json:"is_active"`
-	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	IsActive            bool       `gorm:"default:true" json:"is_active"`
+	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	FailedLoginAttempts int        `gorm:"default:0" json:"-"`
+	LockedUntil         *time.Time `json:"locked_until,omitempty"`
 	
 	Leads     []Lead     `gorm:"foreignKey:OwnerID" json:"-"`
 	Tasks     []Task     `gorm:"foreignKey:AssignedToID" json:"-"`
