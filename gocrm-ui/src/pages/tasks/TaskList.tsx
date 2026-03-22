@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -131,7 +131,7 @@ export const Component: React.FC = () => {
     },
   });
 
-  const columns: Column<Task>[] = [
+  const columns: Column<Task>[] = useMemo(() => [
     {
       id: 'title',
       label: 'Title',
@@ -184,33 +184,33 @@ export const Component: React.FC = () => {
       minWidth: 100,
       format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
     },
-  ];
+  ], []);
 
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, task: Task) => {
+  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, task: Task) => {
     setAnchorEl(event.currentTarget);
     setSelectedTask(task);
-  };
+  }, []);
 
-  const handleMenuClose = () => {
+  const handleMenuClose = useCallback(() => {
     setAnchorEl(null);
     setSelectedTask(null);
-  };
+  }, []);
 
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     if (selectedTask) {
       setDeleteDialog({ open: true, task: selectedTask });
       handleMenuClose();
     }
-  };
+  }, [selectedTask, handleMenuClose]);
 
-  const handleComplete = () => {
+  const handleComplete = useCallback(() => {
     if (selectedTask && selectedTask.status !== 'completed') {
       completeMutation.mutate(selectedTask.id);
       handleMenuClose();
     }
-  };
+  }, [selectedTask, completeMutation, handleMenuClose]);
 
-  const handleSort = (field: string, order: 'asc' | 'desc') => {
+  const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
       title: 'title',
       status: 'status',
@@ -219,28 +219,28 @@ export const Component: React.FC = () => {
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
-    setFilters({ ...filters, sort_by: sortBy, sort_order: order, page: 1 });
-  };
+    setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
+  }, []);
 
-  const handleSearch = (value: string) => {
-    setFilters({ ...filters, search: value, page: 1 });
-  };
+  const handleSearch = useCallback((value: string) => {
+    setFilters(prev => ({ ...prev, search: value, page: 1 }));
+  }, []);
 
-  const handleStatusChange = (status: string) => {
-    setFilters({ ...filters, status, page: 1 });
-  };
+  const handleStatusChange = useCallback((status: string) => {
+    setFilters(prev => ({ ...prev, status, page: 1 }));
+  }, []);
 
-  const handlePriorityChange = (priority: string) => {
-    setFilters({ ...filters, priority, page: 1 });
-  };
+  const handlePriorityChange = useCallback((priority: string) => {
+    setFilters(prev => ({ ...prev, priority, page: 1 }));
+  }, []);
 
-  const handlePageChange = (page: number) => {
-    setFilters({ ...filters, page: page + 1 });
-  };
+  const handlePageChange = useCallback((page: number) => {
+    setFilters(prev => ({ ...prev, page: page + 1 }));
+  }, []);
 
-  const handleRowsPerPageChange = (rowsPerPage: number) => {
-    setFilters({ ...filters, limit: rowsPerPage, page: 1 });
-  };
+  const handleRowsPerPageChange = useCallback((rowsPerPage: number) => {
+    setFilters(prev => ({ ...prev, limit: rowsPerPage, page: 1 }));
+  }, []);
 
   const renderCalendarView = () => {
     const monthStart = startOfMonth(selectedMonth);
