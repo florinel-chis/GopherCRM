@@ -4,7 +4,8 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 
 ## Features
 
-- 🔐 **Authentication**: JWT tokens and API Keys with role-based access control
+- 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control
+- 🛡️ **Security**: CSRF protection, account lockout, password complexity, SQL injection prevention, rate limiting with IP spoofing protection
 - 👥 **Lead Management**: Lead tracking with conversion to customers
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🎫 **Ticket System**: Support ticket management with assignments
@@ -20,7 +21,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 ## Tech Stack
 
 ### Backend
-- **Go 1.23+** - Main backend language
+- **Go 1.24+** - Main backend language
 - **Gin** - HTTP web framework
 - **GORM** - ORM for database operations
 - **MySQL 8.0+** - Primary database
@@ -38,7 +39,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 ## Prerequisites
 
 ### Backend
-- Go 1.23 or higher
+- Go 1.24 or higher
 - MySQL 8.0 or higher
 - Make (optional, for using Makefile commands)
 
@@ -188,9 +189,6 @@ go test ./tests
 ```bash
 # Create database
 make create-db
-
-# Reset database (drops and recreates)
-make reset-db
 ```
 
 ### Frontend Development
@@ -302,8 +300,8 @@ gophercrm/
 ├── tests/                       # Integration tests
 ├── scripts/                     # Database and utility scripts
 ├── migrations/                  # Database migrations (future)
-├── doc/                         # Documentation and images
-├── gophercrm-ui/                # React TypeScript frontend
+├── doc/                         # Documentation (FEATURES.md, SETUP.md, datamodel.md, etc.)
+├── gocrm-ui/                    # React TypeScript frontend
 │   ├── src/
 │   │   ├── components/          # Reusable UI components
 │   │   ├── pages/               # Application pages

@@ -1,6 +1,6 @@
 # GopherCRM Feature Documentation & Test Coverage
 
-> **Last updated:** 2026-03-17 (updated after PR #9)
+> **Last updated:** 2026-03-22 (updated after security review PRs #29-#43)
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
 
@@ -30,10 +30,12 @@ Status meanings:
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 1.1 | **User Registration** | User fills form (name, email, password), account created, redirected to dashboard | `registration.spec.ts`: 15 tests (valid registration, validation errors, email format, password strength, duplicate email, network error, Enter key submit, loading state, visibility toggle) | `auth_service_test.go`: Login tests only | `AuthContext.test.tsx`: handles registration | `auth_integration_test.go`: TestRegisterEndpoint; `auth_cookie_integration_test.go`: TestRegisterWithCookies | **covered** | -- |
 | 1.2 | **User Login** | User enters email/password, gets JWT cookie, redirected to dashboard | `registration.spec.ts`: can navigate to login page | `auth_service_test.go`: TestLogin (success, invalid email, wrong password, inactive user) | `AuthContext.test.tsx`: handles login successfully | `auth_integration_test.go`: TestLoginEndpoint; `auth_cookie_integration_test.go`: TestLoginWithCookies | **covered** | -- |
-| 1.3 | **Session Refresh** | Access token auto-refreshes via refresh token cookie | -- | `auth_service_cookie_test.go`: TestRefreshAccessToken (success, invalid token, inactive user) | -- | `auth_cookie_integration_test.go`: TestRefreshToken | **partial** | No E2E test for token expiry/refresh flow |
-| 1.4 | **Logout** | User clicks logout, cookies cleared, redirected to login | -- | `auth_service_cookie_test.go`: TestInvalidateRefreshToken | `AuthContext.test.tsx`: handles logout | `auth_cookie_integration_test.go`: TestLogout | **partial** | No E2E logout test |
-| 1.5 | **CSRF Protection** | State-changing requests require CSRF token | -- | `auth_service_cookie_test.go`: TestGenerateCSRFToken, TestValidateCSRFToken | -- | `auth_cookie_integration_test.go`: TestCSRFTokenEndpoint | **partial** | No E2E test verifying CSRF rejection |
-| 1.6 | **API Key Auth** | CLI tools authenticate via `Authorization: ApiKey gcrm_xxx` header | -- | `auth_service_test.go`: TestValidateAPIKey (valid, invalid, expired) | -- | `apikey_integration_test.go`: TestAPIKeyAuthentication | **covered** | -- |
+| 1.3 | **Session Refresh** | Access token auto-refreshes via refresh token cookie | -- | `auth_service_cookie_test.go`: returns "not implemented" | -- | -- | **gap** | Refresh tokens not yet implemented (stub returns error) |
+| 1.4 | **Logout** | User clicks logout, cookies cleared, redirected to login | -- | `auth_service_cookie_test.go`: returns "not implemented" | `AuthContext.test.tsx`: handles logout | -- | **gap** | Depends on refresh token implementation |
+| 1.5 | **CSRF Protection** | State-changing requests require CSRF token (HMAC-SHA256 signed, 24h expiry) | -- | `csrf_test.go`: 6 tests (valid roundtrip, expired, tampered, empty, malformed, cross-secret) | -- | -- | **covered** | Proper HMAC validation implemented |
+| 1.6 | **API Key Auth** | CLI tools authenticate via `Authorization: ApiKey gcrm_xxx` header. Keys hashed with HMAC-SHA256 (legacy SHA256 fallback) | -- | `auth_service_test.go`: TestValidateAPIKey; `crypto_test.go`: 16 HMAC tests | -- | `apikey_integration_test.go`: TestAPIKeyAuthentication | **covered** | -- |
+| 1.7 | **Account Lockout** | Account locked for 15min after 5 failed login attempts | -- | `auth_service_test.go`: 5 lockout tests (lock, unlock, reset) | -- | -- | **covered** | -- |
+| 1.8 | **Password Complexity** | Passwords require min 10 chars, uppercase, lowercase, digit, special char | -- | `password_test.go`: 8 tests | -- | -- | **covered** | Enforced in Register and Create handlers |
 
 ---
 
