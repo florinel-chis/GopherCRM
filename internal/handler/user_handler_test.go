@@ -57,7 +57,7 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 	
 	payload := CreateUserRequest{
 		Email:     "new@example.com",
-		Password:  "password123",
+		Password:  "Str0ng!Pass",
 		FirstName: "New",
 		LastName:  "User",
 		Role:      models.RoleCustomer,
@@ -96,7 +96,7 @@ func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 	
 	payload := CreateUserRequest{
 		Email:     "existing@example.com",
-		Password:  "password123",
+		Password:  "Str0ng!Pass",
 		FirstName: "New",
 		LastName:  "User",
 		Role:      models.RoleCustomer,
@@ -287,18 +287,18 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	
 	payload := UpdateMeRequest{
 		FirstName: "Updated",
-		Password:  "newpassword123",
+		Password:  "NewStr0ng!Pass",
 	}
-	
+
 	expectedUser := &models.User{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "user@example.com",
 		FirstName: "Updated",
 		LastName:  "User",
 	}
-	
+
 	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		return updates["first_name"] == "Updated" && updates["password"] == "newpassword123"
+		return updates["first_name"] == "Updated" && updates["password"] == "NewStr0ng!Pass"
 	})).Return(expectedUser, nil)
 	
 	body, _ := json.Marshal(payload)

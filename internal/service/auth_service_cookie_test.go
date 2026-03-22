@@ -68,6 +68,7 @@ func TestAuthService_LoginWithTokens(t *testing.T) {
 	t.Run("login fails with invalid password", func(t *testing.T) {
 		// Setup mocks
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
+		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
 
 		// Execute
 		tokens, err := authService.LoginWithTokens("test@example.com", "wrongpassword")
