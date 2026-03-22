@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -8,13 +8,7 @@ import {
   Box,
   Card,
   CardContent,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemAvatar,
   Avatar,
-  Chip,
-  IconButton,
   Skeleton,
 } from '@mui/material';
 import {
@@ -22,16 +16,13 @@ import {
   Assignment,
   Task,
   TrendingUp,
-  ArrowForward,
   ContactPhone,
-  AssignmentTurnedIn,
   NoteAdd as NoteAddIcon,
   PersonAdd as PersonAddIcon,
   ConfirmationNumber as TicketIcon,
 } from '@mui/icons-material';
 import { dashboardApi } from '@/api/endpoints';
 import { Button } from '@mui/material';
-import { formatDistanceToNow } from 'date-fns';
 import { 
   AreaChart, 
   Area, 
@@ -97,7 +88,7 @@ export const Dashboard: React.FC = () => {
     queryFn: dashboardApi.getStats,
   });
 
-  const { data: activities, isLoading: activitiesLoading } = useQuery({
+  useQuery({
     queryKey: ['dashboard', 'activities'],
     queryFn: () => dashboardApi.getRecentActivities(10),
     enabled: false, // Disable for now since backend doesn't implement this yet
@@ -109,43 +100,11 @@ export const Dashboard: React.FC = () => {
     enabled: false, // Disable for now since backend doesn't implement this yet
   });
 
-  const { data: upcomingTasks } = useQuery({
+  useQuery({
     queryKey: ['dashboard', 'tasks'],
     queryFn: () => dashboardApi.getUpcomingTasks(5),
     enabled: false, // Disable for now since backend doesn't implement this yet
   });
-
-  const getActivityIcon = (type: string) => {
-    switch (type) {
-      case 'lead_created':
-        return <ContactPhone />;
-      case 'lead_converted':
-        return <Business />;
-      case 'ticket_created':
-        return <Assignment />;
-      case 'ticket_resolved':
-        return <AssignmentTurnedIn />;
-      case 'task_completed':
-        return <Task />;
-      default:
-        return <Assignment />;
-    }
-  };
-
-  const getActivityColor = (type: string) => {
-    switch (type) {
-      case 'lead_created':
-      case 'lead_converted':
-        return 'primary';
-      case 'ticket_created':
-      case 'ticket_resolved':
-        return 'secondary';
-      case 'task_completed':
-        return 'success';
-      default:
-        return 'default';
-    }
-  };
 
   return (
     <Box>

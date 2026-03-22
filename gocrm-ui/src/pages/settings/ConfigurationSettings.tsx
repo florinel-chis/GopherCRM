@@ -78,7 +78,7 @@ const ConfigurationSettings: React.FC = () => {
   const [editingConfig, setEditingConfig] = useState<Configuration | null>(null);
   const [editValue, setEditValue] = useState<any>('');
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const { showSnackbar } = useSnackbar();
+  const { showSuccess, showError } = useSnackbar();
 
   useEffect(() => {
     loadConfigurations();
@@ -90,13 +90,13 @@ const ConfigurationSettings: React.FC = () => {
       const configs = await configurationsApi.getAll();
       setConfigurations(configs);
     } catch (error) {
-      showSnackbar('Failed to load configurations', 'error');
+      showError('Failed to load configurations');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
   };
 
@@ -111,22 +111,22 @@ const ConfigurationSettings: React.FC = () => {
 
     try {
       await configurationsApi.set(editingConfig.key, { value: editValue });
-      showSnackbar('Configuration updated successfully', 'success');
+      showSuccess('Configuration updated successfully');
       await loadConfigurations();
       setShowEditDialog(false);
       setEditingConfig(null);
     } catch (error) {
-      showSnackbar('Failed to update configuration', 'error');
+      showError('Failed to update configuration');
     }
   };
 
   const handleReset = async (config: Configuration) => {
     try {
       await configurationsApi.reset(config.key);
-      showSnackbar('Configuration reset to default', 'success');
+      showSuccess('Configuration reset to default');
       await loadConfigurations();
     } catch (error) {
-      showSnackbar('Failed to reset configuration', 'error');
+      showError('Failed to reset configuration');
     }
   };
 
@@ -381,9 +381,9 @@ const ConfigurationSettings: React.FC = () => {
 
       <Paper sx={{ width: '100%' }}>
         <Tabs value={activeTab} onChange={handleTabChange} variant="scrollable" scrollButtons="auto">
-          {CATEGORIES.map((category, index) => (
-            <Tab 
-              key={category.value} 
+          {CATEGORIES.map((category) => (
+            <Tab
+              key={category.value}
               label={`${category.label} (${getConfigurationsByCategory(category.value).length})`}
             />
           ))}

@@ -6,8 +6,6 @@ import {
   Typography,
   Grid,
   Chip,
-  IconButton,
-  Tooltip,
 } from '@mui/material';
 import {
   Settings as SettingsIcon,
@@ -93,7 +91,7 @@ export const ConfigurationOverview: React.FC = () => {
       
       <Grid container spacing={2}>
         {/* Summary Cards */}
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom variant="body2">
@@ -105,8 +103,8 @@ export const ConfigurationOverview: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
-        
-        <Grid item xs={12} sm={6} md={3}>
+
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom variant="body2">
@@ -118,8 +116,8 @@ export const ConfigurationOverview: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
-        
-        <Grid item xs={12} sm={6} md={3}>
+
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom variant="body2">
@@ -131,8 +129,8 @@ export const ConfigurationOverview: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
-        
-        <Grid item xs={12} sm={6} md={3}>
+
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom variant="body2">
@@ -144,10 +142,10 @@ export const ConfigurationOverview: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
-        
+
         {/* Category Breakdown */}
         {summary.filter(s => s.count > 0).map((categorySum) => (
-          <Grid item xs={12} sm={6} md={4} key={categorySum.category}>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={categorySum.category}>
             <Card>
               <CardContent>
                 <Box display="flex" alignItems="center" justifyContent="space-between">
