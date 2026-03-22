@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -69,9 +71,9 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 	if err := h.ticketService.Create(ticket); err != nil {
 		logger.WithError(err).Error("Failed to create ticket")
-		if err.Error() == "customer not found" {
-			utils.RespondNotFound(c, err.Error())
-		} else if err.Error() == "assignee not found" || err.Error() == "tickets can only be assigned to support or admin users" {
+		if errors.Is(err, apperrors.ErrCustomerNotFound) {
+			utils.RespondNotFound(c, "customer not found")
+		} else if errors.Is(err, apperrors.ErrAssigneeNotFound) || errors.Is(err, apperrors.ErrInvalidAssigneeRole) {
 			utils.RespondBadRequest(c, err.Error())
 		} else {
 			utils.RespondInternalError(c)
@@ -327,9 +329,9 @@ func (h *TicketHandler) Update(c *gin.Context) {
 
 	if err := h.ticketService.Update(ticket); err != nil {
 		logger.WithError(err).Error("Failed to update ticket")
-		if err.Error() == "cannot reopen closed ticket" ||
-		   err.Error() == "assignee not found" ||
-		   err.Error() == "tickets can only be assigned to support or admin users" {
+		if errors.Is(err, apperrors.ErrClosedTicketReopen) ||
+			errors.Is(err, apperrors.ErrAssigneeNotFound) ||
+			errors.Is(err, apperrors.ErrInvalidAssigneeRole) {
 			utils.RespondBadRequest(c, err.Error())
 		} else {
 			utils.RespondInternalError(c)

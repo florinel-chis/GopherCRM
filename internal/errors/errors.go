@@ -1,8 +1,29 @@
 package errors
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+)
+
+// Sentinel errors for use with errors.Is() across service/handler boundaries.
+// Services return these (wrapped with context via fmt.Errorf) instead of raw strings.
+// Handlers check them with errors.Is() instead of string comparison.
+var (
+	// Business logic sentinel errors
+	ErrDuplicateEmail          = errors.New("duplicate email")
+	ErrNotFound                = errors.New("not found")
+	ErrRecordNotFound          = errors.New("record not found")
+	ErrLeadConverted           = errors.New("lead already converted")
+	ErrAssigneeNotFound        = errors.New("assignee not found")
+	ErrCustomerNotFound        = errors.New("customer not found")
+	ErrLeadNotFound            = errors.New("lead not found")
+	ErrForbidden               = errors.New("forbidden")
+	ErrInvalidAssigneeRole     = errors.New("tickets can only be assigned to support or admin users")
+	ErrInactiveUser            = errors.New("cannot assign task to inactive user")
+	ErrClosedTicketReopen      = errors.New("cannot reopen closed ticket")
+	ErrCompletedTaskModify     = errors.New("cannot change status of completed task")
+	ErrTaskLeadCustomerConflict = errors.New("task cannot be linked to both lead and customer")
 )
 
 // Error codes
@@ -136,12 +157,23 @@ func AsAppError(err error) (*AppError, bool) {
 	return nil, false
 }
 
-// LeadAlreadyConvertedError is a simple error type for backward compatibility
-// with string-based error checks in handlers (err.Error() == "lead already converted")
+// LeadAlreadyConvertedError is a typed error for lead conversion conflicts.
+// It implements Is(ErrLeadConverted) so callers can use errors.Is().
 type LeadAlreadyConvertedError struct {
 	LeadID uint
 }
 
 func (e *LeadAlreadyConvertedError) Error() string {
 	return "lead already converted"
+}
+
+func (e *LeadAlreadyConvertedError) Is(target error) bool {
+	return target == ErrLeadConverted
+}
+
+// IsNotFound checks whether an error represents a "not found" condition,
+// whether it is one of our sentinel errors or a gorm.ErrRecordNotFound that
+// leaked through. This helper lets callers avoid importing gorm directly.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrRecordNotFound)
 }

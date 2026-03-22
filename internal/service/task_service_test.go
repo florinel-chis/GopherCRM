@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -86,7 +88,7 @@ func (suite *TaskServiceTestSuite) TestCreate_AssigneeNotFound() {
 
 	err := suite.service.Create(task)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "assignee not found", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrAssigneeNotFound))
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_InactiveAssignee() {
@@ -105,7 +107,7 @@ func (suite *TaskServiceTestSuite) TestCreate_InactiveAssignee() {
 
 	err := suite.service.Create(task)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "cannot assign task to inactive user", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInactiveUser))
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_WithLead_Success() {
@@ -152,7 +154,7 @@ func (suite *TaskServiceTestSuite) TestCreate_LeadNotFound() {
 
 	err := suite.service.Create(task)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "lead not found", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound))
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_WithCustomer_Success() {
@@ -199,7 +201,7 @@ func (suite *TaskServiceTestSuite) TestCreate_CustomerNotFound() {
 
 	err := suite.service.Create(task)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "customer not found", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrCustomerNotFound))
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_BothLeadAndCustomer() {
@@ -231,7 +233,7 @@ func (suite *TaskServiceTestSuite) TestCreate_BothLeadAndCustomer() {
 
 	err := suite.service.Create(task)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "task cannot be linked to both lead and customer", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrTaskLeadCustomerConflict))
 }
 
 func (suite *TaskServiceTestSuite) TestGetByID_Success() {
@@ -323,7 +325,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_CannotChangeCompletedTask() {
 
 	err := suite.service.Update(updatedTask)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "cannot change status of completed task", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrCompletedTaskModify))
 }
 
 func (suite *TaskServiceTestSuite) TestUpdate_NewAssignee_Success() {
@@ -373,7 +375,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_NewAssigneeInactive() {
 
 	err := suite.service.Update(updatedTask)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "cannot assign task to inactive user", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInactiveUser))
 }
 
 func (suite *TaskServiceTestSuite) TestDelete_Success() {

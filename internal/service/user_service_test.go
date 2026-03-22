@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository/mocks"
 	"github.com/stretchr/testify/assert"
@@ -61,7 +62,7 @@ func (suite *UserServiceTestSuite) TestRegister_UserExists() {
 
 	err := suite.userService.Register(newUser, "password123")
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "user with this email already exists", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 }
 
 func (suite *UserServiceTestSuite) TestGetByID_Success() {
@@ -149,7 +150,7 @@ func (suite *UserServiceTestSuite) TestUpdate_EmailConflict() {
 
 	user, err := suite.userService.Update(1, updates)
 	assert.Error(suite.T(), err)
-	assert.Equal(suite.T(), "user with this email already exists", err.Error())
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 	assert.Nil(suite.T(), user)
 }
 

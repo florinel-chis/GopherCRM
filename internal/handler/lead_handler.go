@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -447,8 +449,8 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to convert lead")
-		if err.Error() == "lead already converted" {
-			utils.RespondBadRequest(c, err.Error())
+		if errors.Is(err, apperrors.ErrLeadConverted) {
+			utils.RespondBadRequest(c, "lead already converted")
 		} else {
 			utils.RespondInternalError(c)
 		}
