@@ -86,7 +86,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	userHandler := handler.NewUserHandler(userService)
 	leadHandler := handler.NewLeadHandler(leadService)
 	customerHandler := handler.NewCustomerHandler(customerService)
-	ticketHandler := handler.NewTicketHandler(ticketService)
+	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
 	// Setup router with middleware

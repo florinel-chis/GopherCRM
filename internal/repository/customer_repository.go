@@ -36,6 +36,15 @@ func (r *customerRepository) GetByEmail(email string) (*models.Customer, error) 
 	return &customer, nil
 }
 
+func (r *customerRepository) GetByUserID(userID uint) (*models.Customer, error) {
+	var customer models.Customer
+	err := r.db.Where("user_id = ?", userID).First(&customer).Error
+	if err != nil {
+		return nil, err
+	}
+	return &customer, nil
+}
+
 func (r *customerRepository) Update(customer *models.Customer) error {
 	return r.db.Save(customer).Error
 }

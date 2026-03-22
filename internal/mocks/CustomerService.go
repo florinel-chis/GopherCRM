@@ -78,6 +78,36 @@ func (_m *CustomerService) GetByID(id uint) (*models.Customer, error) {
 	return r0, r1
 }
 
+// GetByUserID provides a mock function with given fields: userID
+func (_m *CustomerService) GetByUserID(userID uint) (*models.Customer, error) {
+	ret := _m.Called(userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByUserID")
+	}
+
+	var r0 *models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint) (*models.Customer, error)); ok {
+		return rf(userID)
+	}
+	if rf, ok := ret.Get(0).(func(uint) *models.Customer); ok {
+		r0 = rf(userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(uint) error); ok {
+		r1 = rf(userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // List provides a mock function with given fields: offset, limit
 func (_m *CustomerService) List(offset int, limit int) ([]models.Customer, int64, error) {
 	ret := _m.Called(offset, limit)
