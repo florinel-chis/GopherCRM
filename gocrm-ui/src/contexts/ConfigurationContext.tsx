@@ -47,8 +47,7 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
   };
 
   useEffect(() => {
-    // Temporarily disabled to isolate loading issues
-    // loadConfigurations();
+    // TODO: Re-enable once backend configuration endpoint is stable
     setIsLoading(false);
   }, []);
 

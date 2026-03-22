@@ -3,6 +3,7 @@ import type { Lead, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface LeadFilters extends PaginationParams {
   status?: string;
+  classification?: string;
   source?: string;
   owner_id?: number;
   search?: string;
