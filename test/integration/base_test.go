@@ -79,7 +79,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	leadService := service.NewLeadService(leadRepo, customerRepo)
 	customerService := service.NewCustomerService(customerRepo, userRepo)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
-	apiKeyService := service.NewAPIKeyService(apiKeyRepo)
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 
 	// Setup handlers
 	authHandler := handler.NewAuthHandler(suite.authService, userService)

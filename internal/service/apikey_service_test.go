@@ -12,7 +12,7 @@ import (
 
 func TestAPIKeyService_Generate(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 	userID := uint(1)
 	name := "Test API Key"
@@ -36,7 +36,7 @@ func TestAPIKeyService_Generate(t *testing.T) {
 
 func TestAPIKeyService_Generate_CreateError(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 	userID := uint(1)
 	name := "Test API Key"
@@ -54,7 +54,7 @@ func TestAPIKeyService_Generate_CreateError(t *testing.T) {
 
 func TestAPIKeyService_GetByUser(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 	userID := uint(1)
 	expectedKeys := []models.APIKey{
@@ -86,7 +86,7 @@ func TestAPIKeyService_GetByUser(t *testing.T) {
 func TestAPIKeyService_Revoke(t *testing.T) {
 	t.Run("successful revocation", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(1)
@@ -110,7 +110,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 
 	t.Run("unauthorized revocation", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(2) // Different user
@@ -132,7 +132,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 
 	t.Run("api key not found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(1)
@@ -148,7 +148,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 
 func TestAPIKeyService_List(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo)
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
 
 	userID := uint(1)
 	now := time.Now()
