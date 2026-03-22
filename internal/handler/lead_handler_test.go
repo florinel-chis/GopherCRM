@@ -177,7 +177,7 @@ func (suite *LeadHandlerTestSuite) TestList_SalesViewsOwn() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", OwnerID: 2},
 	}
 	
-	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, nil)
+	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, int64(1), nil)
 	
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()

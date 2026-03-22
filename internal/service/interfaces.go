@@ -37,7 +37,7 @@ type LeadService interface {
 	Create(lead *models.Lead) error
 	GetByID(id uint) (*models.Lead, error)
 	GetByExternalID(externalID string) (*models.Lead, error)
-	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, error)
+	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)
 	Update(id uint, updates map[string]interface{}) (*models.Lead, error)
 	Delete(id uint) error
@@ -97,7 +97,7 @@ type BulkOperationService interface {
 	CreateBulkOperation(userID uint, resourceType string, operationType models.BulkOperationType, totalItems int) (*models.BulkOperation, error)
 	GetBulkOperation(id uint) (*models.BulkOperation, error)
 	GetBulkOperationWithItems(id uint) (*models.BulkOperation, error)
-	GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, error)
+	GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, int64, error)
 	UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error
 	
 	// Generic bulk operations

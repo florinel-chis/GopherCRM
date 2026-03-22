@@ -50,9 +50,19 @@ func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
 	return s.leadRepo.GetByExternalID(externalID)
 }
 
-func (s *leadService) GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, error) {
+func (s *leadService) GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error) {
 	// For owner-filtered lists, no need to preload Owner since we already know it
-	return s.leadRepo.GetByOwnerID(ownerID, offset, limit)
+	leads, err := s.leadRepo.GetByOwnerID(ownerID, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.leadRepo.CountByOwnerID(ownerID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return leads, total, nil
 }
 
 func (s *leadService) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error) {

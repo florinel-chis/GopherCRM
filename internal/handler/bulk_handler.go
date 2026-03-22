@@ -212,15 +212,16 @@ func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 	currentUserRole := c.GetString("user_role")
 
 	var operations []models.BulkOperation
+	var total int64
 	var err error
 
 	// Admin can see all operations, others only their own
 	if currentUserRole == string(models.RoleAdmin) {
 		// For admin, we would need to add a method to list all operations
 		// For now, list user operations
-		operations, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
+		operations, total, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
 	} else {
-		operations, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
+		operations, total, err = h.bulkService.GetUserBulkOperations(currentUserID, offset, limit)
 	}
 
 	if err != nil {
@@ -233,7 +234,7 @@ func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 		RequestID: c.GetString("request_id"),
 		Page:      (offset / limit) + 1,
 		PerPage:   limit,
-		Total:     int64(len(operations)), // This should be actual count from service
+		Total:     total,
 	}
 
 	utils.LogHandlerResponse(logger, http.StatusOK, gin.H{"operations": operations})
