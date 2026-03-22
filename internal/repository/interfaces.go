@@ -63,6 +63,7 @@ type CustomerRepository interface {
 	GetByID(id uint) (*models.Customer, error)
 	GetByIDWithPreloads(id uint, preloads ...string) (*models.Customer, error)
 	GetByEmail(email string) (*models.Customer, error)
+	GetByUserID(userID uint) (*models.Customer, error)
 	Update(customer *models.Customer) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Customer, error)

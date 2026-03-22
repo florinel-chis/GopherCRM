@@ -11,6 +11,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -21,9 +22,10 @@ import (
 
 type TicketHandlerTestSuite struct {
 	suite.Suite
-	mockService *mocks.TicketService
-	handler     *TicketHandler
-	router      *gin.Engine
+	mockService         *mocks.TicketService
+	mockCustomerService *mocks.CustomerService
+	handler             *TicketHandler
+	router              *gin.Engine
 }
 
 func (suite *TicketHandlerTestSuite) SetupSuite() {
@@ -38,7 +40,8 @@ func (suite *TicketHandlerTestSuite) SetupSuite() {
 
 func (suite *TicketHandlerTestSuite) SetupTest() {
 	suite.mockService = new(mocks.TicketService)
-	suite.handler = NewTicketHandler(suite.mockService)
+	suite.mockCustomerService = new(mocks.CustomerService)
+	suite.handler = NewTicketHandler(suite.mockService, suite.mockCustomerService)
 	suite.router = gin.New()
 	// Add error handler middleware to handle validation errors
 	suite.router.Use(func(c *gin.Context) {
@@ -55,6 +58,7 @@ func (suite *TicketHandlerTestSuite) SetupTest() {
 
 func (suite *TicketHandlerTestSuite) TearDownTest() {
 	suite.mockService.AssertExpectations(suite.T())
+	suite.mockCustomerService.AssertExpectations(suite.T())
 }
 
 // Helper function to set auth context
@@ -583,6 +587,125 @@ func (suite *TicketHandlerTestSuite) TestList_SearchWithSort() {
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 }
+
+func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_OwnTicket_Success() {
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.Get(c)
+	})
+
+	expectedTicket := &models.Ticket{
+		BaseModel:   models.BaseModel{ID: 1},
+		Title:       "Customer Ticket",
+		Description: "My issue",
+		Status:      models.TicketStatusOpen,
+		CustomerID:  5,
+	}
+
+	expectedCustomer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 5},
+		FirstName: "Customer",
+		UserID:    uintPtr(10),
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(expectedCustomer, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_OtherTicket_Forbidden() {
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.Get(c)
+	})
+
+	expectedTicket := &models.Ticket{
+		BaseModel:   models.BaseModel{ID: 1},
+		Title:       "Other Customer Ticket",
+		Description: "Not my issue",
+		Status:      models.TicketStatusOpen,
+		CustomerID:  99, // Different customer
+	}
+
+	expectedCustomer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 5},
+		FirstName: "Customer",
+		UserID:    uintPtr(10),
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(expectedCustomer, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_NoCustomerRecord_Forbidden() {
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.Get(c)
+	})
+
+	expectedTicket := &models.Ticket{
+		BaseModel:   models.BaseModel{ID: 1},
+		Title:       "Some Ticket",
+		Status:      models.TicketStatusOpen,
+		CustomerID:  5,
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(nil, errors.New("not found"))
+
+	req := httptest.NewRequest("GET", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_NoCustomerService_Forbidden() {
+	// Create handler without customer service
+	handlerNoCS := NewTicketHandler(suite.mockService)
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		handlerNoCS.Get(c)
+	})
+
+	expectedTicket := &models.Ticket{
+		BaseModel:   models.BaseModel{ID: 1},
+		Title:       "Some Ticket",
+		Status:      models.TicketStatusOpen,
+		CustomerID:  5,
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+}
+
+// Ensure the service import is used by verifying the interface
+var _ service.CustomerService = (*mocks.CustomerService)(nil)
 
 func TestTicketHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(TicketHandlerTestSuite))
