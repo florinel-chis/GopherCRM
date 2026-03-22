@@ -53,7 +53,8 @@ type LoggingConfig struct {
 }
 
 type APIConfig struct {
-	Prefix string
+	Prefix       string
+	APIKeySecret string
 }
 
 type RateLimitConfig struct {
@@ -111,7 +112,8 @@ func Load() (*Config, error) {
 			Format: getEnv("LOG_FORMAT", "json"),
 		},
 		API: APIConfig{
-			Prefix: getEnv("API_PREFIX", "/api/v1"),
+			Prefix:       getEnv("API_PREFIX", "/api/v1"),
+			APIKeySecret: getEnv("API_KEY_SECRET", jwtSecret),
 		},
 	}
 
