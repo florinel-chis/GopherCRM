@@ -28,6 +28,7 @@ func setupTestRateLimiter() *RateLimiter {
 func setupTestRouter(rateLimiter *RateLimiter) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	router.SetTrustedProxies(nil) // Trust no proxies by default to prevent IP spoofing
 
 	// Public endpoint
 	router.GET("/public", PublicRateLimit(rateLimiter), func(c *gin.Context) {
@@ -223,27 +224,73 @@ func TestRateLimitByAPIKey(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
-func TestRateLimitWithForwardedIP(t *testing.T) {
+func TestRateLimitIgnoresSpoofedForwardedIP(t *testing.T) {
 	rateLimiter := setupTestRateLimiter()
-	router := setupTestRouter(rateLimiter)
 
-	// Test X-Forwarded-For header
-	req, _ := http.NewRequest("GET", "/public", nil)
-	req.Header.Set("X-Forwarded-For", "203.0.113.1, 192.168.1.1")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	// Create router with NO trusted proxies (the safe default)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.SetTrustedProxies(nil)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "1", w.Header().Get("X-RateLimit-Remaining"))
+	router.GET("/public", PublicRateLimit(rateLimiter), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "public"})
+	})
 
-	// Test X-Real-IP header
+	// Send two requests with different spoofed X-Forwarded-For headers
+	// but the same RemoteAddr. With no trusted proxies, Gin should ignore
+	// the header and rate-limit based on the real connection IP.
+	req1, _ := http.NewRequest("GET", "/public", nil)
+	req1.RemoteAddr = "192.168.1.100:12345"
+	req1.Header.Set("X-Forwarded-For", "10.0.0.1")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusOK, w1.Code)
+	assert.Equal(t, "1", w1.Header().Get("X-RateLimit-Remaining"))
+
 	req2, _ := http.NewRequest("GET", "/public", nil)
-	req2.Header.Set("X-Real-IP", "203.0.113.2")
+	req2.RemoteAddr = "192.168.1.100:12345"
+	req2.Header.Set("X-Forwarded-For", "10.0.0.2") // different spoofed IP
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
-
 	assert.Equal(t, http.StatusOK, w2.Code)
-	assert.Equal(t, "1", w2.Header().Get("X-RateLimit-Remaining"))
+	assert.Equal(t, "0", w2.Header().Get("X-RateLimit-Remaining")) // same bucket
+
+	// Third request should be rate limited despite yet another spoofed IP
+	req3, _ := http.NewRequest("GET", "/public", nil)
+	req3.RemoteAddr = "192.168.1.100:12345"
+	req3.Header.Set("X-Forwarded-For", "10.0.0.3")
+	w3 := httptest.NewRecorder()
+	router.ServeHTTP(w3, req3)
+	assert.Equal(t, http.StatusTooManyRequests, w3.Code)
+}
+
+func TestRateLimitIgnoresSpoofedXRealIP(t *testing.T) {
+	rateLimiter := setupTestRateLimiter()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.SetTrustedProxies(nil)
+
+	router.GET("/public", PublicRateLimit(rateLimiter), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "public"})
+	})
+
+	// X-Real-IP should also be ignored when no proxies are trusted
+	req1, _ := http.NewRequest("GET", "/public", nil)
+	req1.RemoteAddr = "192.168.1.200:12345"
+	req1.Header.Set("X-Real-IP", "10.0.0.50")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusOK, w1.Code)
+	assert.Equal(t, "1", w1.Header().Get("X-RateLimit-Remaining"))
+
+	req2, _ := http.NewRequest("GET", "/public", nil)
+	req2.RemoteAddr = "192.168.1.200:12345"
+	req2.Header.Set("X-Real-IP", "10.0.0.99") // different spoofed IP
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Equal(t, "0", w2.Header().Get("X-RateLimit-Remaining")) // same bucket, not fooled
 }
 
 func TestRateLimitDisabled(t *testing.T) {

@@ -80,7 +80,16 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	router := gin.New()
-	
+
+	// Configure trusted proxies to prevent IP spoofing via X-Forwarded-For.
+	// By default (TRUSTED_PROXIES=""), no proxies are trusted and Gin's
+	// c.ClientIP() returns the direct connection IP only.
+	// To trust specific proxies, set TRUSTED_PROXIES to a comma-separated
+	// list of CIDRs, e.g. "10.0.0.0/8,172.16.0.0/12".
+	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
+		log.Fatalf("Failed to set trusted proxies: %v", err)
+	}
+
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
