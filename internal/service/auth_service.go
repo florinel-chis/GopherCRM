@@ -1,9 +1,15 @@
 package service
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -188,15 +194,78 @@ func (s *authService) InvalidateRefreshToken(refreshToken string) error {
 	return errors.New("refresh tokens not implemented")
 }
 
-func (s *authService) GenerateCSRFToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
+// csrfTokenMaxAge is the maximum age of a CSRF token (24 hours).
+const csrfTokenMaxAge = 24 * time.Hour
+
+// generateCSRFHMAC computes HMAC-SHA256 of the given message using the JWT secret.
+func (s *authService) generateCSRFHMAC(message string) string {
+	mac := hmac.New(sha256.New, []byte(s.jwtConfig.Secret))
+	mac.Write([]byte(message))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// GenerateCSRFToken creates an HMAC-SHA256 signed CSRF token encoding a nonce and timestamp.
+// The token format is base64url(nonce:timestamp.hmac_hex).
+func (s *authService) GenerateCSRFToken() (string, error) {
+	// Generate a random nonce
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return "", fmt.Errorf("failed to generate CSRF nonce: %w", err)
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	message := nonce + ":" + timestamp
+	sig := s.generateCSRFHMAC(message)
+
+	raw := message + "." + sig
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
+	return encoded, nil
+}
+
+// ValidateCSRFToken decodes the token, verifies the HMAC signature, and checks
+// that the token is not older than 24 hours.
 func (s *authService) ValidateCSRFToken(token string) bool {
-	return token != ""
+	if token == "" {
+		return false
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+
+	// Split into message and signature: "nonce:timestamp.hmac_hex"
+	parts := strings.SplitN(string(decoded), ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	message := parts[0]
+	providedSig := parts[1]
+
+	// Verify HMAC signature using constant-time comparison
+	expectedSig := s.generateCSRFHMAC(message)
+	if !hmac.Equal([]byte(expectedSig), []byte(providedSig)) {
+		return false
+	}
+
+	// Extract timestamp from message ("nonce:timestamp")
+	msgParts := strings.SplitN(message, ":", 2)
+	if len(msgParts) != 2 {
+		return false
+	}
+
+	tsUnix, err := strconv.ParseInt(msgParts[1], 10, 64)
+	if err != nil {
+		return false
+	}
+
+	// Check token age
+	tokenTime := time.Unix(tsUnix, 0)
+	if time.Since(tokenTime) > csrfTokenMaxAge {
+		return false
+	}
+
+	return true
 }
 
