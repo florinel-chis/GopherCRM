@@ -106,6 +106,10 @@ func (s *bulkOperationService) GetUserBulkOperations(userID uint, offset, limit 
 	return s.bulkOperationRepo.GetByUserID(userID, offset, limit)
 }
 
+func (s *bulkOperationService) ListAllBulkOperations(offset, limit int) ([]models.BulkOperation, error) {
+	return s.bulkOperationRepo.List(offset, limit)
+}
+
 func (s *bulkOperationService) UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error {
 	return s.bulkOperationRepo.UpdateStatus(id, status)
 }

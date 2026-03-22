@@ -78,6 +78,36 @@ func (_m *CustomerRepository) GetByEmail(email string) (*models.Customer, error)
 	return r0, r1
 }
 
+// GetByUserID provides a mock function with given fields: userID
+func (_m *CustomerRepository) GetByUserID(userID uint) (*models.Customer, error) {
+	ret := _m.Called(userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByUserID")
+	}
+
+	var r0 *models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint) (*models.Customer, error)); ok {
+		return rf(userID)
+	}
+	if rf, ok := ret.Get(0).(func(uint) *models.Customer); ok {
+		r0 = rf(userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(uint) error); ok {
+		r1 = rf(userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetByID provides a mock function with given fields: id
 func (_m *CustomerRepository) GetByID(id uint) (*models.Customer, error) {
 	ret := _m.Called(id)
