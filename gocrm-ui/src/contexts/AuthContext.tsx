@@ -42,9 +42,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const userData = await authApi.getCurrentUser();
       setUser(userData);
-    } catch (error) {
-      console.error('Failed to load user:', error);
-      apiClient.clearTokens();
+    } catch (error: any) {
+      // Only clear tokens on auth errors (401). Other errors (429 rate limit,
+      // network issues) should not log the user out.
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        apiClient.clearTokens();
+      }
     } finally {
       setIsLoading(false);
     }
