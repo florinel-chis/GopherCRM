@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -66,7 +67,13 @@ func (r *userRepository) ListSorted(offset, limit int, sortBy, sortOrder string)
 	var users []models.User
 	query := r.db
 	if sortBy != "" {
-		query = query.Order(sortBy + " " + sortOrder)
+		orderClause, err := utils.SafeOrderClause("users", sortBy, sortOrder)
+		if err != nil {
+			return nil, err
+		}
+		if orderClause != "" {
+			query = query.Order(orderClause)
+		}
 	}
 	err := query.Offset(offset).Limit(limit).Find(&users).Error
 	return users, err
@@ -81,7 +88,13 @@ func (r *userRepository) Search(query string, offset, limit int, sortBy, sortOrd
 		searchPattern, searchPattern, searchPattern,
 	)
 	if sortBy != "" {
-		db = db.Order(sortBy + " " + sortOrder)
+		orderClause, err := utils.SafeOrderClause("users", sortBy, sortOrder)
+		if err != nil {
+			return nil, err
+		}
+		if orderClause != "" {
+			db = db.Order(orderClause)
+		}
 	}
 	err := db.Offset(offset).Limit(limit).Find(&users).Error
 	return users, err
