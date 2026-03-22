@@ -4,103 +4,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GopherCRM is a Customer Relationship Management system built in Go. The project is currently in initial development phase with a comprehensive task list defined in `tasks.md`.
-
-## Architecture
-
-The project follows clean architecture principles with the following layers:
-- **Models**: Domain entities (User, Lead, Customer, Ticket, Task, APIKey)
-- **Repository**: Data access layer with interfaces
-- **Service**: Business logic layer
-- **Handler**: HTTP handlers using Gin framework
-- **Middleware**: Authentication (JWT & API Key), logging, error handling
-
-## Key Technologies
-
-- **Web Framework**: Gin
-- **Database**: MySQL
-- **ORM**: GORM
-- **Authentication**: JWT tokens and API Keys
-- **Logging**: Structured JSON logging (Logrus)
-- **Testing**: testify
+GopherCRM is a CRM system built in Go with a React TypeScript frontend (`gocrm-ui/`). It manages Users, Leads, Customers, Tickets, Tasks, and API Keys with role-based access control (admin, sales, support, customer).
 
 ## Development Commands
 
-Since the project is not yet initialized, the first steps are:
-
 ```bash
-# Create MySQL database
-make create-db
-# or
-mysql -u root < scripts/create_database.sql
+make build          # Build binary to bin/gophercrm
+make run            # Run the app (go run cmd/main.go)
+make test           # Run all tests (go test ./...)
+make create-db      # Create MySQL database from scripts/create_database.sql
+make deps           # Download and tidy Go modules
+make clean          # Remove bin/
+make create-admin   # Run admin creation tool (must build-tools first)
+make build-tools    # Build CLI tools to bin/
 
-# Initialize Go module
-go mod init github.com/florinel-chis/gophercrm
+# Run a single test
+go test -run TestFunctionName ./internal/service/
 
-# Install dependencies
-go get -u github.com/gin-gonic/gin
-go get -u gorm.io/gorm
-go get -u gorm.io/driver/mysql
-go get -u github.com/golang-jwt/jwt/v5
-go get -u github.com/sirupsen/logrus
-go get -u github.com/stretchr/testify
-go get -u github.com/joho/godotenv
-go get -u github.com/google/uuid
-go get -u golang.org/x/crypto/bcrypt
-
-# Run tests (once implemented)
-go test ./...
-
-# Run specific test
-go test -run TestName ./path/to/package
-
-# Build the application
-go build -o gophercrm cmd/main.go
-
-# Run the application
-./gophercrm
+# Run tests for a specific package
+go test ./internal/handler/
 ```
 
-## Project Structure (Planned)
+## Architecture
+
+Clean architecture with four layers, all behind interfaces for testability:
 
 ```
-├── cmd/
-│   └── main.go              # Application entry point
-├── internal/
-│   ├── config/              # Configuration management
-│   ├── models/              # Domain models
-│   ├── repository/          # Data access interfaces and implementations
-│   ├── service/             # Business logic
-│   ├── handler/             # HTTP handlers
-│   ├── middleware/          # Auth, logging, error handling
-│   └── utils/               # Utility functions
-├── migrations/              # Database migrations
-├── tests/                   # Integration tests
-└── .env.example            # Environment variables template
+Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access) → Models (domain entities)
 ```
 
-## Implementation Priorities
+- **Dependency injection** is manual, wired in `cmd/main.go` via `setupDependencies()`
+- **All layers use interfaces** defined in `internal/repository/interfaces.go` and `internal/service/interfaces.go`
+- **Repositories** accept `*gorm.DB` and implement `WithTx()` for transaction support
+- **Handlers** parse requests, call services, and return unified responses via `utils.RespondSuccess`/`RespondError`
 
-Refer to `tasks.md` for the complete task list. High priority items that should be completed first:
-1. General Setup - Project structure and dependencies
-2. Authentication & Authorization - JWT and API Key implementation
-3. Logging & Observability - Structured logging setup
-4. Error Handling & Validation - Unified response format
-5. User Entity - Core user management functionality
+## Key Patterns
 
-## Database Schema Considerations
+**Unified API response** — all endpoints return `utils.APIResponse{Success, Data, Error, Meta}`. Use `utils.RespondSuccess()`, `utils.RespondError()`, `utils.RespondNotFound()`, etc.
 
-Key relationships to implement:
-- Users can have multiple Leads, Customers, Tasks
-- Leads can be converted to Customers
-- Customers can have multiple Tickets
-- Tickets have status tracking and assignment
-- API Keys belong to Users with revocation capability
+**Error types** — domain-specific errors in `internal/errors/` (auth, business, repository, validation, configuration). The error handler middleware maps these to HTTP status codes.
 
-## API Design Patterns
+**Transaction management** — use `utils.NewTransactionManager(models.DB).WithTransaction()` for multi-step operations. Repositories have `WithTx()` to participate in transactions.
 
-- RESTful endpoints with consistent naming
-- Unified response envelope for all endpoints
-- Role-based access control (admin, sales, support, customer)
-- Owner-based filtering for user-specific resources
-- Consistent error codes and messages
+**Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). Middleware sets user context. Use `middleware.RequireRole()` for RBAC on routes.
+
+**Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth → RateLimit.
+
+**Rate limiting** — three tiers: Strict (5/min for auth), Moderate (60/min for writes), Generous (120/min for reads).
+
+## Testing
+
+- **Unit tests**: Colocated `*_test.go` files using testify suites and mocks from `internal/mocks/`
+- **Integration tests**: `test/integration/` — use SQLite in-memory DB via `base_test.go` setup
+- Tests use `testify/suite` and `testify/mock`
+
+## Configuration
+
+Environment-based via `.env` file (loaded by godotenv). See `.env.example` for all variables. Key settings:
+- `DB_*` for MySQL connection
+- `JWT_SECRET` (required, min 32 chars)
+- `SERVER_PORT` (default 8080), `SERVER_MODE` (development/production)
+- `LOG_LEVEL`, `LOG_FORMAT` (json/text)
+
+## Database
+
+MySQL 8.0+ with GORM. Migrations in `migrations/`. Auto-migration runs on startup via `models.MigrateDatabase()`. Global DB handle at `models.DB`.
