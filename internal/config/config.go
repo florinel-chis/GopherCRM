@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -26,8 +27,9 @@ type DatabaseConfig struct {
 }
 
 type ServerConfig struct {
-	Port int
-	Mode string
+	Port           int
+	Mode           string
+	TrustedProxies []string // Comma-separated CIDRs from TRUSTED_PROXIES env var; empty means trust no proxies
 }
 
 type JWTConfig struct {
@@ -95,8 +97,9 @@ func Load() (*Config, error) {
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
 		Server: ServerConfig{
-			Port: getEnvAsInt("SERVER_PORT", 8080),
-			Mode: getEnv("SERVER_MODE", "development"),
+			Port:           getEnvAsInt("SERVER_PORT", 8080),
+			Mode:           getEnv("SERVER_MODE", "development"),
+			TrustedProxies: parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 		},
 		JWT: JWTConfig{
 			Secret:             jwtSecret,
@@ -139,4 +142,26 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return value
 	}
 	return defaultValue
+}
+
+// parseTrustedProxies parses a comma-separated list of CIDRs/IPs.
+// Returns nil (not an empty slice) when input is empty, which signals
+// "trust no proxies" to Gin's SetTrustedProxies.
+func parseTrustedProxies(val string) []string {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	proxies := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			proxies = append(proxies, p)
+		}
+	}
+	if len(proxies) == 0 {
+		return nil
+	}
+	return proxies
 }

@@ -182,22 +182,11 @@ func (rl *RateLimiter) getKey(c *gin.Context, limitType RateLimitType) string {
 	return rl.getClientIP(c)
 }
 
+// getClientIP uses Gin's built-in ClientIP() which respects the trusted proxy
+// configuration set on the router. When no proxies are trusted, X-Forwarded-For
+// and X-Real-IP headers are ignored, preventing IP spoofing attacks.
 func (rl *RateLimiter) getClientIP(c *gin.Context) string {
-	// Check X-Forwarded-For
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
-	}
-	// Check X-Real-IP
-	if xri := c.GetHeader("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Fall back to RemoteAddr
-	ip := c.Request.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
-	return ip
+	return c.ClientIP()
 }
 
 func (rl *RateLimiter) getLimitForType(limitType RateLimitType) int {
