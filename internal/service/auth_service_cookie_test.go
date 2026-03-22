@@ -225,8 +225,12 @@ func TestAuthService_ValidateCSRFToken(t *testing.T) {
 	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
 	t.Run("validates non-empty token", func(t *testing.T) {
+		// Generate a proper CSRF token first
+		token, err := authService.GenerateCSRFToken()
+		assert.NoError(t, err)
+
 		// Execute
-		valid := authService.ValidateCSRFToken("valid-token")
+		valid := authService.ValidateCSRFToken(token)
 
 		// Verify
 		assert.True(t, valid)
