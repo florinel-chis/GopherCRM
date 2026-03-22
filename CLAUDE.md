@@ -42,28 +42,35 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
 
 **Unified API response** — all endpoints return `utils.APIResponse{Success, Data, Error, Meta}`. Use `utils.RespondSuccess()`, `utils.RespondError()`, `utils.RespondNotFound()`, etc.
 
-**Error types** — domain-specific errors in `internal/errors/` (auth, business, repository, validation, configuration). The error handler middleware maps these to HTTP status codes.
+**Error types** — sentinel errors in `internal/errors/errors.go` (e.g., `ErrDuplicateEmail`, `ErrNotFound`, `ErrLeadConverted`). Handlers use `errors.Is()` to classify errors — never string comparison. The error handler middleware maps error types to HTTP status codes.
 
 **Transaction management** — use `utils.NewTransactionManager(models.DB).WithTransaction()` for multi-step operations. Repositories have `WithTx()` to participate in transactions.
 
-**Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). Middleware sets user context. Use `middleware.RequireRole()` for RBAC on routes.
+**Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256 hashing (with legacy SHA256 fallback for migration). CSRF tokens use HMAC-SHA256 with 24h expiry. Middleware sets user context. Use `middleware.RequireRole()` for RBAC on routes.
+
+**Account security** — account lockout after 5 failed login attempts (15min), password complexity validation (min 10 chars, upper+lower+digit+special), cookie Secure flag defaults to true in production.
+
+**Sort validation** — all repository sort queries validate `sortBy` against per-entity column allowlists via `utils.ValidateSort()` to prevent SQL injection.
 
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth → RateLimit.
 
-**Rate limiting** — three tiers: Strict (5/min for auth), Moderate (60/min for writes), Generous (120/min for reads).
+**Rate limiting** — three tiers: Strict (5/min for auth), Moderate (60/min for writes), Generous (120/min for reads). Uses `c.ClientIP()` with trusted proxy configuration to prevent IP spoofing.
 
 ## Testing
 
 - **Unit tests**: Colocated `*_test.go` files using testify suites and mocks from `internal/mocks/`
-- **Integration tests**: `test/integration/` — use SQLite in-memory DB via `base_test.go` setup
+- **Integration tests**: `test/integration/` and `tests/` — use SQLite in-memory DB
 - Tests use `testify/suite` and `testify/mock`
+- Coverage includes: handlers, services, middleware (auth, rate limit, error handler, recovery, request ID), utils (sort, password, response, crypto, context, transaction), config, and models
 
 ## Configuration
 
 Environment-based via `.env` file (loaded by godotenv). See `.env.example` for all variables. Key settings:
 - `DB_*` for MySQL connection
 - `JWT_SECRET` (required, min 32 chars)
+- `API_KEY_SECRET` (optional, falls back to JWT_SECRET)
 - `SERVER_PORT` (default 8080), `SERVER_MODE` (development/production)
+- `TRUSTED_PROXIES` (comma-separated CIDRs, empty = trust none)
 - `LOG_LEVEL`, `LOG_FORMAT` (json/text)
 
 ## Database
