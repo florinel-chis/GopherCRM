@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -63,7 +63,7 @@ export interface DataTableProps<T> {
 type Order = 'asc' | 'desc';
 
 
-function DataTableHead<T>({
+const DataTableHead = React.memo(function DataTableHead<T>({
   columns,
   order,
   orderBy,
@@ -128,9 +128,9 @@ function DataTableHead<T>({
       </TableRow>
     </TableHead>
   );
-}
+}) as (props: any) => React.ReactElement;
 
-function DataTableToolbar({
+const DataTableToolbar = React.memo(function DataTableToolbar({
   numSelected,
   title,
   onSearch,
@@ -210,7 +210,7 @@ function DataTableToolbar({
       )}
     </Toolbar>
   );
-}
+});
 
 export function DataTable<T extends { id?: string | number }>({
   columns,
@@ -237,15 +237,15 @@ export function DataTable<T extends { id?: string | number }>({
   const [orderBy, setOrderBy] = useState<string>('');
   const [internalSelected, setInternalSelected] = useState<(string | number)[]>(selected);
 
-  const handleRequestSort = (property: string) => {
+  const handleRequestSort = useCallback((property: string) => {
     const isAsc = orderBy === property && order === 'asc';
     const newOrder = isAsc ? 'desc' : 'asc';
     setOrder(newOrder);
     setOrderBy(property);
     onSort?.(property, newOrder);
-  };
+  }, [orderBy, order, onSort]);
 
-  const handleSelectAllClick = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelectAllClick = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {
       const newSelected = data.map((row) => getRowId(row));
       setInternalSelected(newSelected);
@@ -254,7 +254,7 @@ export function DataTable<T extends { id?: string | number }>({
     }
     setInternalSelected([]);
     onSelectionChange?.([]);
-  };
+  }, [data, getRowId, onSelectionChange]);
 
   const handleClick = (row: T) => {
     const id = getRowId(row);
@@ -278,19 +278,19 @@ export function DataTable<T extends { id?: string | number }>({
     onSelectionChange?.(newSelected);
   };
 
-  const handleChangePage = (_: unknown, newPage: number) => {
+  const handleChangePage = useCallback((_: unknown, newPage: number) => {
     onPageChange?.(newPage);
-  };
+  }, [onPageChange]);
 
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChangeRowsPerPage = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     onRowsPerPageChange?.(parseInt(event.target.value, 10));
-  };
+  }, [onRowsPerPageChange]);
 
-  const isSelected = (id: string | number) => internalSelected.indexOf(id) !== -1;
+  const isSelected = useCallback((id: string | number) => internalSelected.indexOf(id) !== -1, [internalSelected]);
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = useCallback(() => {
     // TODO: Implement bulk delete functionality
-  };
+  }, []);
 
   return (
     <Paper sx={{ width: '100%', overflow: 'hidden' }}>
