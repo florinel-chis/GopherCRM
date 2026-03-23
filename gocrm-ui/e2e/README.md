@@ -1,147 +1,52 @@
-# GopherCRM E2E Tests
+# E2E Test Suite — GopherCRM
 
-End-to-end browser automation tests for the GopherCRM registration flow using Playwright.
+69 end-to-end tests using Playwright against the running frontend (port 5173) and backend (port 8090).
 
-## Prerequisites
-
-- Backend server running on http://localhost:8080
-- Frontend dev server will auto-start on http://localhost:5173
-- MySQL database running with gophercrm database
-
-## Quick Start
+## Running Tests
 
 ```bash
-# Run all tests (headless)
-npm run test:e2e
+# Prerequisites: backend and frontend must be running
+cd /path/to/gophercrm && go run cmd/main.go          # Terminal 1
+cd /path/to/gophercrm/gocrm-ui && npm run dev         # Terminal 2
 
-# Run tests with browser visible
-npm run test:e2e:headed
+# Run all tests
+npx playwright test
 
-# Interactive UI mode (recommended for development)
-npm run test:e2e:ui
+# Run a specific file
+npx playwright test e2e/tests/login.spec.ts
 
-# Debug mode (step through tests)
-npm run test:e2e:debug
+# Run headed (see browser)
+npx playwright test --headed
 
-# View test report after running tests
-npm run test:e2e:report
-
-# Clean up test users from database
-npm run test:e2e:cleanup
+# Debug mode
+npx playwright test --debug
 ```
 
-## Test Coverage
+## Test Admin Account
 
-The registration tests cover:
+`test-admin@gocrm.test` / `AdminPass123!` — auto-created by `AdminAuthHelper` if missing.
 
-✅ **Happy Path**
-- Successful registration with valid data
-- Automatic redirect to dashboard
-- Token storage in localStorage
-- User display in UI
+## Test Coverage (69 tests)
 
-✅ **Validation**
-- Required field validation
-- Email format validation
-- Password strength requirements
-- Password confirmation matching
-- Error message display and clearing
+| File | Tests | Entity | Scenarios |
+|------|-------|--------|-----------|
+| login.spec.ts | 11 | Auth | Render, success, wrong password, missing user, empty, invalid email, visibility toggle, register link, Enter key, protected routes, unauth redirect |
+| registration.spec.ts | 15 | Auth | Success+redirect, validation (empty/email/password complexity/mismatch), duplicate email, visibility, Enter key, loading state, preservation, nav, network error |
+| admin-customers.spec.ts | 10 | Customers | List, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
+| admin-leads.spec.ts | 8 | Leads | List, create, edit, view, delete, status filter, search, minimal data |
+| admin-users.spec.ts | 7 | Users | List, create, edit, view, delete, search, role filter |
+| admin-tasks.spec.ts | 8 | Tasks | List, create, edit, view, delete, status filter, priority filter, minimal data |
+| admin-tickets.spec.ts | 5 | Tickets | List, create, view, status filter, priority filter |
+| admin-entity-suite.spec.ts | 5 | Cross-entity | Navigation, CRM workflow, data isolation, quick creation, sidebar |
 
-✅ **User Experience**
-- Password visibility toggle
-- Form submission with Enter key
-- Loading states during submission
-- Form data preservation on errors
-- Navigation to login page
-
-✅ **Error Handling**
-- Duplicate email registration
-- Network errors
-- Server errors
-
-## Test Structure
+## Architecture
 
 ```
 e2e/
-├── fixtures/
-│   └── test-data.ts      # Test user data generation
-├── pages/
-│   ├── register.page.ts  # Registration page object model
-│   └── dashboard.page.ts # Dashboard page object model
-├── tests/
-│   └── registration.spec.ts # Registration test suite
-└── README.md            # This file
+├── fixtures/           # Test data generators (unique emails with timestamps)
+├── helpers/            # Admin login helper (auto-registers if needed)
+├── pages/              # Page Object Models (selector layer)
+└── tests/              # Test specs (behavior assertions)
 ```
 
-## Writing New Tests
-
-1. **Use Page Objects**: Keep selectors and actions in page files
-2. **Generate Test Data**: Use faker for dynamic test data
-3. **Clean State**: Each test should be independent
-4. **Wait Properly**: Use Playwright's built-in waiting mechanisms
-
-Example:
-```typescript
-test('my new test', async ({ page }) => {
-  const registerPage = new RegisterPage(page);
-  const user = generateTestUser();
-  
-  await registerPage.goto();
-  await registerPage.fillForm(user);
-  await registerPage.submit();
-  
-  await expect(page).toHaveURL('/');
-});
-```
-
-## Debugging Tips
-
-1. **Use UI Mode**: Best for development
-   ```bash
-   npm run test:e2e:ui
-   ```
-
-2. **Add Screenshots**: For debugging failures
-   ```typescript
-   await page.screenshot({ path: 'debug.png' });
-   ```
-
-3. **Pause Execution**: Opens Playwright Inspector
-   ```typescript
-   await page.pause();
-   ```
-
-4. **View Console**: See browser console output
-   ```typescript
-   page.on('console', msg => console.log(msg.text()));
-   ```
-
-## Test Data Management
-
-All test users are created with emails matching the pattern:
-`test_{timestamp}_{random}@example.com`
-
-This allows easy cleanup:
-```bash
-npm run test:e2e:cleanup
-```
-
-## Troubleshooting
-
-**Tests fail with "Cannot connect to localhost:5173"**
-- Make sure the frontend dev server is running
-- Check if another process is using port 5173
-
-**"User already exists" errors**
-- Run `npm run test:e2e:cleanup` to remove test users
-- Check if tests are creating users with static emails
-
-**Tests are flaky**
-- Add explicit waits for network requests
-- Use `waitForLoadState('networkidle')`
-- Check for race conditions in the UI
-
-**Cannot see what's happening**
-- Use headed mode: `npm run test:e2e:headed`
-- Use debug mode: `npm run test:e2e:debug`
-- Enable video recording in playwright.config.ts
+**Conventions**: `input[name="..."]` selectors, `button[type="submit"]` for forms, `[data-testid="EditIcon"]` for row actions, `[role="dialog"]` for confirmations, timestamp emails for isolation.

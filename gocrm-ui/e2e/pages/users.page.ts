@@ -1,8 +1,8 @@
-import { Page, Locator } from '@playwright/test';
+import { Page } from '@playwright/test';
 
 export class UsersPage {
   readonly page: Page;
-  
+
   constructor(page: Page) {
     this.page = page;
   }
@@ -28,17 +28,13 @@ export class UsersPage {
     return this.page.locator('input[placeholder*="Search"]');
   }
 
-  get roleFilter() {
-    return this.page.locator('select[name="role"]');
-  }
-
-  // Locators for form view
+  // Locators for form view — match actual input[name] attributes in UserForm.tsx
   get firstNameInput() {
-    return this.page.locator('input[name="firstName"]');
+    return this.page.locator('input[name="first_name"]');
   }
 
   get lastNameInput() {
-    return this.page.locator('input[name="lastName"]');
+    return this.page.locator('input[name="last_name"]');
   }
 
   get emailInput() {
@@ -53,36 +49,26 @@ export class UsersPage {
     return this.page.locator('input[name="confirmPassword"]');
   }
 
-  get roleSelect() {
-    return this.page.locator('select[name="role"]');
-  }
-
   get isActiveSwitch() {
-    return this.page.locator('input[name="isActive"]');
+    return this.page.locator('input[name="is_active"]');
   }
 
   get saveButton() {
-    return this.page.locator('button:has-text("Save")');
+    return this.page.locator('button[type="submit"]');
   }
 
   get cancelButton() {
     return this.page.locator('button:has-text("Cancel")');
   }
 
-  get deleteButton() {
-    return this.page.locator('button:has-text("Delete")');
-  }
-
-  get confirmDeleteButton() {
-    return this.page.locator('button:has-text("Delete"):visible');
-  }
-
-  get deactivateButton() {
-    return this.page.locator('button:has-text("Deactivate")');
-  }
-
-  get activateButton() {
-    return this.page.locator('button:has-text("Activate")');
+  // Helper method for Material-UI Select components
+  async selectMuiOption(fieldName: string, value: string) {
+    const selectField = this.page.locator(`[name="${fieldName}"]`).locator('..');
+    await selectField.click();
+    await this.page.waitForTimeout(500);
+    const option = this.page.locator(`li[data-value="${value}"]`);
+    await option.click();
+    await this.page.waitForTimeout(300);
   }
 
   // Actions
@@ -95,6 +81,7 @@ export class UsersPage {
   async clickNewUser() {
     await this.newUserButton.click();
     await this.page.waitForURL('**/users/new');
+    await this.page.waitForLoadState('networkidle');
   }
 
   async fillUserForm(userData: {
@@ -104,85 +91,85 @@ export class UsersPage {
     password?: string;
     confirmPassword?: string;
     role?: string;
-    isActive?: boolean;
   }) {
     await this.firstNameInput.fill(userData.firstName);
     await this.lastNameInput.fill(userData.lastName);
     await this.emailInput.fill(userData.email);
-    
+
     if (userData.password) {
       await this.passwordInput.fill(userData.password);
     }
-    
+
     if (userData.confirmPassword) {
       await this.confirmPasswordInput.fill(userData.confirmPassword);
     }
-    
+
     if (userData.role) {
-      await this.roleSelect.selectOption(userData.role);
-    }
-    
-    if (userData.isActive !== undefined) {
-      const isChecked = await this.isActiveSwitch.isChecked();
-      if (isChecked !== userData.isActive) {
-        await this.isActiveSwitch.click();
-      }
+      await this.selectMuiOption('role', userData.role);
     }
   }
 
   async saveUser() {
     await this.saveButton.click();
-    await this.page.waitForURL('**/users/**');
+    await this.page.waitForLoadState('networkidle');
   }
 
   async saveAndWaitForResponse() {
     const responsePromise = this.page.waitForResponse(
-      response => response.url().includes('/api/users') && response.request().method() === 'POST'
+      response => response.url().includes('/users') && response.request().method() === 'POST'
     );
-    await this.saveUser();
+    await this.saveButton.click();
     return await responsePromise;
   }
 
   async editUser(rowIndex: number = 0) {
-    const editButton = this.tableRows.nth(rowIndex).locator('button:has-text("Edit")');
-    await editButton.click();
+    const row = this.tableRows.nth(rowIndex);
+    const editBtn = row.locator('[data-testid="EditIcon"]').first();
+    if (await editBtn.isVisible()) {
+      await editBtn.click();
+    } else {
+      await row.locator('button').nth(1).click();
+    }
     await this.page.waitForURL('**/users/**/edit');
   }
 
   async viewUser(rowIndex: number = 0) {
-    const viewButton = this.tableRows.nth(rowIndex).locator('button:has-text("View")');
-    await viewButton.click();
+    const row = this.tableRows.nth(rowIndex);
+    const viewBtn = row.locator('[data-testid="VisibilityIcon"]').first();
+    if (await viewBtn.isVisible()) {
+      await viewBtn.click();
+    } else {
+      await row.locator('button').nth(0).click();
+    }
     await this.page.waitForURL('**/users/**');
   }
 
+  async clickDeleteOnRow(rowIndex: number = 0) {
+    const row = this.tableRows.nth(rowIndex);
+    const deleteBtn = row.locator('[data-testid="DeleteIcon"]').first();
+    if (await deleteBtn.isVisible()) {
+      await deleteBtn.click();
+    } else {
+      await row.locator('button').last().click();
+    }
+  }
+
+  async confirmDelete() {
+    const dialog = this.page.locator('[role="dialog"]');
+    await dialog.waitFor({ state: 'visible' });
+    await dialog.locator('button:has-text("Delete")').click();
+  }
+
   async deleteUser(rowIndex: number = 0) {
-    const deleteButton = this.tableRows.nth(rowIndex).locator('button:has-text("Delete")');
-    await deleteButton.click();
-    
-    await this.confirmDeleteButton.waitFor({ state: 'visible' });
-    await this.confirmDeleteButton.click();
-    
-    await this.page.waitForResponse(
-      response => response.url().includes('/api/users') && response.request().method() === 'DELETE'
-    );
-  }
+    await this.clickDeleteOnRow(rowIndex);
 
-  async deactivateUser(rowIndex: number = 0) {
-    const deactivateButton = this.tableRows.nth(rowIndex).locator('button:has-text("Deactivate")');
-    await deactivateButton.click();
-    
-    await this.page.waitForResponse(
-      response => response.url().includes('/api/users') && response.request().method() === 'PUT'
+    const responsePromise = this.page.waitForResponse(
+      response => response.url().includes('/users') && response.request().method() === 'DELETE'
     );
-  }
 
-  async activateUser(rowIndex: number = 0) {
-    const activateButton = this.tableRows.nth(rowIndex).locator('button:has-text("Activate")');
-    await activateButton.click();
-    
-    await this.page.waitForResponse(
-      response => response.url().includes('/api/users') && response.request().method() === 'PUT'
-    );
+    await this.confirmDelete();
+    await responsePromise;
+    await this.page.waitForLoadState('networkidle');
   }
 
   async searchUsers(searchTerm: string) {
@@ -191,13 +178,22 @@ export class UsersPage {
   }
 
   async filterByRole(role: string) {
-    await this.roleFilter.selectOption(role);
+    // MUI Select filter on list page
+    const filterSelect = this.page.locator('[role="combobox"]').first();
+    await filterSelect.click();
+    await this.page.waitForTimeout(500);
+    const option = this.page.locator(`li[data-value="${role}"]`);
+    await option.click();
     await this.page.waitForTimeout(500);
   }
 
   async getUserCount(): Promise<number> {
-    await this.tableRows.first().waitFor({ state: 'visible', timeout: 5000 });
-    return await this.tableRows.count();
+    try {
+      await this.tableRows.first().waitFor({ state: 'visible', timeout: 5000 });
+      return await this.tableRows.count();
+    } catch {
+      return 0;
+    }
   }
 
   async getUserData(rowIndex: number = 0): Promise<{
@@ -209,7 +205,7 @@ export class UsersPage {
   }> {
     const row = this.tableRows.nth(rowIndex);
     const cells = row.locator('td');
-    
+
     return {
       firstName: await cells.nth(0).textContent() || '',
       lastName: await cells.nth(1).textContent() || '',
@@ -221,9 +217,8 @@ export class UsersPage {
 
   async getErrorMessage(): Promise<string | null> {
     const alert = this.page.locator('.MuiAlert-message');
-    
     try {
-      await alert.waitFor({ state: 'visible', timeout: 2000 });
+      await alert.waitFor({ state: 'visible', timeout: 5000 });
       return await alert.textContent();
     } catch {
       return null;
@@ -232,9 +227,8 @@ export class UsersPage {
 
   async getSuccessMessage(): Promise<string | null> {
     const alert = this.page.locator('.MuiAlert-message');
-    
     try {
-      await alert.waitFor({ state: 'visible', timeout: 2000 });
+      await alert.waitFor({ state: 'visible', timeout: 5000 });
       return await alert.textContent();
     } catch {
       return null;
