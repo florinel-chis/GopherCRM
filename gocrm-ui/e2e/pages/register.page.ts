@@ -79,7 +79,7 @@ export class RegisterPage {
 
   async submitAndWaitForResponse() {
     const responsePromise = this.page.waitForResponse(
-      response => response.url().includes('/api/auth/register') && response.status() === 201
+      response => response.url().includes('/auth/register') && response.request().method() === 'POST'
     );
     await this.submit();
     return await responsePromise;

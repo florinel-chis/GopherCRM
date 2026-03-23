@@ -17,9 +17,7 @@ export class AdminAuthHelper {
    */
   async createAndLoginAdmin(): Promise<AdminUser> {
     const loginPage = new LoginPage(this.page);
-    const dashboardPage = new DashboardPage(this.page);
 
-    // Use the existing admin user
     this.adminUser = {
       firstName: 'Test',
       lastName: 'Admin',
@@ -28,25 +26,32 @@ export class AdminAuthHelper {
       role: 'admin'
     };
 
-    // Login with the admin user
+    // Ensure the admin user exists by registering via API (ignores duplicate errors)
+    await this.page.request.post('http://localhost:8090/api/v1/auth/register', {
+      data: {
+        email: this.adminUser.email,
+        password: this.adminUser.password,
+        first_name: this.adminUser.firstName,
+        last_name: this.adminUser.lastName,
+        role: 'admin',
+      }
+    }).catch(() => {}); // Ignore if already exists
+
+    // Login
     await loginPage.goto();
 
-    // Set up response listener BEFORE triggering login
     const responsePromise = this.page.waitForResponse(
       response => response.url().includes('/auth/login') && response.request().method() === 'POST'
     );
-
     await loginPage.login(this.adminUser.email, this.adminUser.password);
 
-    // Wait for the API response
     const response = await responsePromise;
     expect(response.status()).toBe(200);
 
     // Wait for redirect to dashboard
     await this.page.waitForURL('/', { timeout: 15000 });
     await this.page.waitForLoadState('networkidle');
-    
-    // Verify admin is logged in
+
     const token = await this.page.evaluate(() => localStorage.getItem('gophercrm_token'));
     expect(token).toBeTruthy();
 

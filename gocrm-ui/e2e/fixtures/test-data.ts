@@ -12,7 +12,7 @@ export function generateTestUser(): TestUser {
     firstName: faker.person.firstName(),
     lastName: faker.person.lastName(),
     email: `test_${Date.now()}_${faker.string.alphanumeric(5)}@example.com`,
-    password: 'TestPassword123',
+    password: 'TestPassword123!',
   };
 }
 
@@ -29,7 +29,7 @@ export function generateUserWithPassword(password: string): TestUser {
 
 // Test data for various scenarios
 export const testPasswords = {
-  valid: 'TestPassword123',
+  valid: 'TestPassword123!',
   tooShort: 'Test1',
   noUppercase: 'testpassword123',
   noLowercase: 'TESTPASSWORD123',
