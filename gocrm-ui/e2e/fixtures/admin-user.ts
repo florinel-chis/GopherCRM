@@ -23,30 +23,31 @@ export const testAdminCredentials = {
   password: 'AdminPass123!'
 };
 
-// Test data for entities
+// Test data for entities — field names use camelCase to match page object fillXxxForm() parameters
 export function generateLeadData() {
   return {
     companyName: faker.company.name(),
     contactName: `${faker.person.firstName()} ${faker.person.lastName()}`,
-    email: faker.internet.email(),
+    email: `lead_${Date.now()}_${faker.string.alphanumeric(4)}@example.com`,
     phone: faker.phone.number(),
     source: faker.helpers.arrayElement(['website', 'referral', 'social_media', 'cold_call', 'email_campaign']),
-    status: faker.helpers.arrayElement(['new', 'contacted', 'qualified', 'converted', 'lost']),
+    status: faker.helpers.arrayElement(['new', 'contacted', 'qualified']),
     notes: faker.lorem.paragraph()
   };
 }
 
 export function generateCustomerData() {
   return {
-    firstName: faker.person.firstName(),
-    lastName: faker.person.lastName(),
-    email: faker.internet.email(),
+    companyName: faker.company.name(),
+    contactName: `${faker.person.firstName()} ${faker.person.lastName()}`,
+    email: `cust_${Date.now()}_${faker.string.alphanumeric(4)}@example.com`,
     phone: faker.phone.number(),
-    company: faker.company.name(),
+    industry: faker.commerce.department(),
+    website: faker.internet.url(),
     address: faker.location.streetAddress(),
     city: faker.location.city(),
     state: faker.location.state(),
-    zipCode: faker.location.zipCode(),
+    postalCode: faker.location.zipCode(),
     country: faker.location.country(),
     notes: faker.lorem.paragraph()
   };
@@ -56,10 +57,8 @@ export function generateTicketData() {
   return {
     subject: faker.lorem.sentence(),
     description: faker.lorem.paragraphs(2),
-    priority: faker.helpers.arrayElement(['low', 'medium', 'high', 'urgent']),
-    status: faker.helpers.arrayElement(['open', 'in_progress', 'resolved', 'closed']),
-    customer_id: faker.number.int({ min: 1, max: 5 }), // Assuming some customers exist
-    assignee_id: faker.number.int({ min: 1, max: 5 })  // Assuming some users exist
+    priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
+    status: faker.helpers.arrayElement(['open', 'in_progress']),
   };
 }
 
@@ -68,7 +67,7 @@ export function generateTaskData() {
     title: faker.lorem.sentence(),
     description: faker.lorem.paragraph(),
     priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
-    status: faker.helpers.arrayElement(['pending', 'in_progress', 'completed']),
+    status: faker.helpers.arrayElement(['pending', 'in_progress']),
     dueDate: faker.date.future().toISOString().split('T')[0] // YYYY-MM-DD format
   };
 }
@@ -77,7 +76,7 @@ export function generateUserData() {
   return {
     firstName: faker.person.firstName(),
     lastName: faker.person.lastName(),
-    email: faker.internet.email(),
+    email: `user_${Date.now()}_${faker.string.alphanumeric(4)}@example.com`,
     password: 'TempPass123!',
     role: faker.helpers.arrayElement(['sales', 'support', 'customer'])
   };

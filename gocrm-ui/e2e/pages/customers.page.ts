@@ -1,8 +1,8 @@
-import { Page, Locator } from '@playwright/test';
+import { Page } from '@playwright/test';
 
 export class CustomersPage {
   readonly page: Page;
-  
+
   constructor(page: Page) {
     this.page = page;
   }
@@ -28,13 +28,13 @@ export class CustomersPage {
     return this.page.locator('input[placeholder*="Search"]');
   }
 
-  // Locators for form view
-  get firstNameInput() {
-    return this.page.locator('input[name="firstName"]');
+  // Locators for form — match actual input[name] attributes in CustomerForm.tsx
+  get companyNameInput() {
+    return this.page.locator('input[name="company_name"]');
   }
 
-  get lastNameInput() {
-    return this.page.locator('input[name="lastName"]');
+  get contactNameInput() {
+    return this.page.locator('input[name="contact_name"]');
   }
 
   get emailInput() {
@@ -45,8 +45,12 @@ export class CustomersPage {
     return this.page.locator('input[name="phone"]');
   }
 
-  get companyInput() {
-    return this.page.locator('input[name="company"]');
+  get industryInput() {
+    return this.page.locator('input[name="industry"]');
+  }
+
+  get websiteInput() {
+    return this.page.locator('input[name="website"]');
   }
 
   get addressInput() {
@@ -61,8 +65,8 @@ export class CustomersPage {
     return this.page.locator('input[name="state"]');
   }
 
-  get zipCodeInput() {
-    return this.page.locator('input[name="zipCode"]');
+  get postalCodeInput() {
+    return this.page.locator('input[name="postal_code"]');
   }
 
   get countryInput() {
@@ -74,19 +78,11 @@ export class CustomersPage {
   }
 
   get saveButton() {
-    return this.page.locator('button:has-text("Save")');
+    return this.page.locator('button[type="submit"]');
   }
 
   get cancelButton() {
     return this.page.locator('button:has-text("Cancel")');
-  }
-
-  get deleteButton() {
-    return this.page.locator('button:has-text("Delete")');
-  }
-
-  get confirmDeleteButton() {
-    return this.page.locator('button:has-text("Delete"):visible');
   }
 
   // Actions
@@ -101,91 +97,77 @@ export class CustomersPage {
     await this.page.waitForURL('**/customers/new');
   }
 
-  async fillCustomerForm(customerData: {
-    firstName: string;
-    lastName: string;
+  async fillCustomerForm(data: {
+    companyName: string;
+    contactName: string;
     email: string;
     phone?: string;
-    company?: string;
+    industry?: string;
+    website?: string;
     address?: string;
     city?: string;
     state?: string;
-    zipCode?: string;
+    postalCode?: string;
     country?: string;
     notes?: string;
   }) {
-    await this.firstNameInput.fill(customerData.firstName);
-    await this.lastNameInput.fill(customerData.lastName);
-    await this.emailInput.fill(customerData.email);
-    
-    if (customerData.phone) {
-      await this.phoneInput.fill(customerData.phone);
-    }
-    
-    if (customerData.company) {
-      await this.companyInput.fill(customerData.company);
-    }
-    
-    if (customerData.address) {
-      await this.addressInput.fill(customerData.address);
-    }
-    
-    if (customerData.city) {
-      await this.cityInput.fill(customerData.city);
-    }
-    
-    if (customerData.state) {
-      await this.stateInput.fill(customerData.state);
-    }
-    
-    if (customerData.zipCode) {
-      await this.zipCodeInput.fill(customerData.zipCode);
-    }
-    
-    if (customerData.country) {
-      await this.countryInput.fill(customerData.country);
-    }
-    
-    if (customerData.notes) {
-      await this.notesTextarea.fill(customerData.notes);
-    }
+    await this.companyNameInput.fill(data.companyName);
+    await this.contactNameInput.fill(data.contactName);
+    await this.emailInput.fill(data.email);
+    if (data.phone) await this.phoneInput.fill(data.phone);
+    if (data.industry) await this.industryInput.fill(data.industry);
+    if (data.website) await this.websiteInput.fill(data.website);
+    if (data.address) await this.addressInput.fill(data.address);
+    if (data.city) await this.cityInput.fill(data.city);
+    if (data.state) await this.stateInput.fill(data.state);
+    if (data.postalCode) await this.postalCodeInput.fill(data.postalCode);
+    if (data.country) await this.countryInput.fill(data.country);
+    if (data.notes) await this.notesTextarea.fill(data.notes);
   }
 
   async saveCustomer() {
     await this.saveButton.click();
-    await this.page.waitForURL('**/customers/**');
   }
 
   async saveAndWaitForResponse() {
     const responsePromise = this.page.waitForResponse(
-      response => response.url().includes('/api/customers') && response.request().method() === 'POST'
+      response => response.url().includes('/customers') && response.request().method() === 'POST'
     );
-    await this.saveCustomer();
+    await this.saveButton.click();
     return await responsePromise;
   }
 
-  async editCustomer(rowIndex: number = 0) {
-    const editButton = this.tableRows.nth(rowIndex).locator('button:has-text("Edit")');
-    await editButton.click();
+  async clickEditOnRow(rowIndex: number = 0) {
+    const row = this.tableRows.nth(rowIndex);
+    // DataTable has icon buttons for view/edit/delete
+    const editBtn = row.locator('[data-testid="EditIcon"]').first();
+    if (await editBtn.isVisible()) {
+      await editBtn.click();
+    } else {
+      // Fallback: click the edit icon button
+      await row.locator('button').nth(1).click(); // 0=view, 1=edit, 2=delete
+    }
     await this.page.waitForURL('**/customers/**/edit');
   }
 
-  async viewCustomer(rowIndex: number = 0) {
-    const viewButton = this.tableRows.nth(rowIndex).locator('button:has-text("View")');
-    await viewButton.click();
-    await this.page.waitForURL('**/customers/**');
+  async clickViewOnRow(rowIndex: number = 0) {
+    await this.tableRows.nth(rowIndex).click();
   }
 
-  async deleteCustomer(rowIndex: number = 0) {
-    const deleteButton = this.tableRows.nth(rowIndex).locator('button:has-text("Delete")');
-    await deleteButton.click();
-    
-    await this.confirmDeleteButton.waitFor({ state: 'visible' });
-    await this.confirmDeleteButton.click();
-    
-    await this.page.waitForResponse(
-      response => response.url().includes('/api/customers') && response.request().method() === 'DELETE'
-    );
+  async clickDeleteOnRow(rowIndex: number = 0) {
+    const row = this.tableRows.nth(rowIndex);
+    const deleteBtn = row.locator('[data-testid="DeleteIcon"]').first();
+    if (await deleteBtn.isVisible()) {
+      await deleteBtn.click();
+    } else {
+      await row.locator('button').last().click();
+    }
+  }
+
+  async confirmDelete() {
+    const dialog = this.page.locator('[role="dialog"]');
+    await dialog.waitFor({ state: 'visible' });
+    await dialog.locator('button:has-text("Delete")').click();
   }
 
   async searchCustomers(searchTerm: string) {
@@ -193,44 +175,19 @@ export class CustomersPage {
     await this.page.waitForTimeout(500);
   }
 
-  async getCustomerCount(): Promise<number> {
-    await this.tableRows.first().waitFor({ state: 'visible', timeout: 5000 });
-    return await this.tableRows.count();
-  }
-
-  async getCustomerData(rowIndex: number = 0): Promise<{
-    firstName: string;
-    lastName: string;
-    email: string;
-    company: string;
-  }> {
-    const row = this.tableRows.nth(rowIndex);
-    const cells = row.locator('td');
-    
-    return {
-      firstName: await cells.nth(0).textContent() || '',
-      lastName: await cells.nth(1).textContent() || '',
-      email: await cells.nth(2).textContent() || '',
-      company: await cells.nth(3).textContent() || '',
-    };
+  async getRowCount(): Promise<number> {
+    try {
+      await this.tableRows.first().waitFor({ state: 'visible', timeout: 5000 });
+      return await this.tableRows.count();
+    } catch {
+      return 0;
+    }
   }
 
   async getErrorMessage(): Promise<string | null> {
     const alert = this.page.locator('.MuiAlert-message');
-    
     try {
-      await alert.waitFor({ state: 'visible', timeout: 2000 });
-      return await alert.textContent();
-    } catch {
-      return null;
-    }
-  }
-
-  async getSuccessMessage(): Promise<string | null> {
-    const alert = this.page.locator('.MuiAlert-message');
-    
-    try {
-      await alert.waitFor({ state: 'visible', timeout: 2000 });
+      await alert.waitFor({ state: 'visible', timeout: 5000 });
       return await alert.textContent();
     } catch {
       return null;

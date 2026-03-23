@@ -1,35 +1,22 @@
 import { test, expect } from '@playwright/test';
+import { AdminAuthHelper } from '../helpers/admin-auth';
 import { LeadsPage } from '../pages/leads.page';
-import { LoginPage } from '../pages/login.page';
-
-// Use the test admin credentials
-const ADMIN_EMAIL = 'test-admin@gocrm.test';
-const ADMIN_PASSWORD = 'AdminPass123!';
-
-async function loginAsAdmin(page: any) {
-  const loginPage = new LoginPage(page);
-  await loginPage.goto();
-  await loginPage.login(ADMIN_EMAIL, ADMIN_PASSWORD);
-
-  // Wait for redirect to dashboard
-  await page.waitForURL('/', { timeout: 10000 });
-  await page.waitForLoadState('networkidle');
-}
 
 test.describe('Leads List - Sorting and Search', () => {
+  let adminAuth: AdminAuthHelper;
+
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    adminAuth = new AdminAuthHelper(page);
+    await adminAuth.ensureAdminLoggedIn();
   });
 
   test('should load leads page with data', async ({ page }) => {
     const leadsPage = new LeadsPage(page);
     await leadsPage.goto();
 
-    // Verify the page loaded with a table
     await expect(leadsPage.pageTitle).toBeVisible();
     await expect(leadsPage.leadsTable).toBeVisible();
 
-    // Should have some rows
     const rowCount = await leadsPage.tableRows.count();
     expect(rowCount).toBeGreaterThan(0);
   });
@@ -38,32 +25,24 @@ test.describe('Leads List - Sorting and Search', () => {
     const leadsPage = new LeadsPage(page);
     await leadsPage.goto();
 
-    // Wait for table to load
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    // Find the "Created" column header and click it
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
     await expect(createdHeader).toBeVisible();
 
-    // Wait for the API response after clicking sort
     const responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') && response.request().method() === 'GET'
     );
     await createdHeader.click();
     const response = await responsePromise;
 
-    // Verify the request included sort params
     const requestUrl = response.request().url();
     expect(requestUrl).toContain('sort_by=created_at');
-
-    // Verify the response was successful
     expect(response.status()).toBe(200);
 
-    // Wait for table to update
     await page.waitForLoadState('networkidle');
 
-    // Verify rows are still showing
     const rowCount = await leadsPage.tableRows.count();
     expect(rowCount).toBeGreaterThan(0);
   });
@@ -77,7 +56,6 @@ test.describe('Leads List - Sorting and Search', () => {
 
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
 
-    // First click - should sort ascending (or descending depending on default)
     let responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') && response.request().method() === 'GET'
     );
@@ -85,7 +63,6 @@ test.describe('Leads List - Sorting and Search', () => {
     let response = await responsePromise;
     const firstUrl = response.request().url();
 
-    // Second click - should toggle sort order
     responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') && response.request().method() === 'GET'
     );
@@ -93,10 +70,8 @@ test.describe('Leads List - Sorting and Search', () => {
     response = await responsePromise;
     const secondUrl = response.request().url();
 
-    // The sort order should have changed between clicks
     expect(secondUrl).toContain('sort_by=created_at');
 
-    // One should be asc, the other desc
     const firstHasDesc = firstUrl.includes('sort_order=desc');
     const secondHasDesc = secondUrl.includes('sort_order=desc');
     expect(firstHasDesc).not.toBe(secondHasDesc);
@@ -109,7 +84,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    // Type search query
     const responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') &&
                   response.url().includes('search=') &&
@@ -121,15 +95,12 @@ test.describe('Leads List - Sorting and Search', () => {
     const response = await responsePromise;
     expect(response.status()).toBe(200);
 
-    // Wait for table to update
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 
-    // Should find the lead with that email
     const rowCount = await leadsPage.tableRows.count();
     expect(rowCount).toBeGreaterThanOrEqual(1);
 
-    // Verify the email appears in the results
     const tableText = await leadsPage.leadsTable.textContent();
     expect(tableText).toContain('anders.t@conversio.dk');
   });
@@ -169,7 +140,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    // First search
     let responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') &&
                   response.url().includes('search=') &&
@@ -180,7 +150,6 @@ test.describe('Leads List - Sorting and Search', () => {
 
     await page.waitForLoadState('networkidle');
 
-    // Then sort by clicking Created header
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
 
     responsePromise = page.waitForResponse(
@@ -189,7 +158,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await createdHeader.click();
     const response = await responsePromise;
 
-    // URL should contain both search and sort params
     const url = response.request().url();
     expect(url).toContain('search=conversio');
     expect(url).toContain('sort_by=created_at');
@@ -203,10 +171,8 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    // Get initial row count
     const initialCount = await leadsPage.tableRows.count();
 
-    // Search for something specific
     let responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') && response.request().method() === 'GET'
     );
@@ -217,7 +183,6 @@ test.describe('Leads List - Sorting and Search', () => {
 
     const filteredCount = await leadsPage.tableRows.count();
 
-    // Clear search
     responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') && response.request().method() === 'GET'
     );
@@ -227,8 +192,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await page.waitForTimeout(300);
 
     const restoredCount = await leadsPage.tableRows.count();
-
-    // After clearing, we should have the original amount of results (or more than the filtered)
     expect(restoredCount).toBeGreaterThanOrEqual(filteredCount);
   });
 
@@ -239,7 +202,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    // Search for something that doesn't exist
     const responsePromise = page.waitForResponse(
       response => response.url().includes('/api/leads') &&
                   response.url().includes('search=') &&
@@ -253,7 +215,6 @@ test.describe('Leads List - Sorting and Search', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 
-    // Should have no rows (or the table body should be empty)
     const rowCount = await leadsPage.tableRows.count();
     expect(rowCount).toBe(0);
   });
