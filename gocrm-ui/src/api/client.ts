@@ -52,7 +52,10 @@ class ApiClient {
       async (error: AxiosError<APIError>) => {
         const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        // Skip token refresh for auth endpoints — a 401 on login/register
+        // should show the error, not trigger a redirect loop.
+        const isAuthEndpoint = originalRequest.url?.includes('/auth/');
+        if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
           if (this.isRefreshing) {
             return new Promise((resolve) => {
               this.refreshSubscribers.push((token: string) => {

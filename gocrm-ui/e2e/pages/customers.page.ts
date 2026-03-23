@@ -13,7 +13,7 @@ export class CustomersPage {
   }
 
   get newCustomerButton() {
-    return this.page.locator('button:has-text("New Customer")');
+    return this.page.locator('button:has-text("Add Customer")');
   }
 
   get customersTable() {
