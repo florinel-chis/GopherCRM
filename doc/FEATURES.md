@@ -1,6 +1,6 @@
 # GopherCRM Feature Documentation & Test Coverage
 
-> **Last updated:** 2026-03-22 (updated after security review PRs #29-#43)
+> **Last updated:** 2026-03-23 (updated after e2e test overhaul PR #52, 69/69 passing)
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
 

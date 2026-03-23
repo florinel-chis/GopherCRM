@@ -54,14 +54,16 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
 
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth → RateLimit.
 
-**Rate limiting** — three tiers: Strict (5/min for auth), Moderate (60/min for writes), Generous (120/min for reads). Uses `c.ClientIP()` with trusted proxy configuration to prevent IP spoofing.
+**Rate limiting** — three tiers: Strict (10/min for auth), Moderate (120/min for writes), Generous (240/min for reads). OPTIONS preflight requests are excluded. Uses `c.ClientIP()` with trusted proxy configuration to prevent IP spoofing.
 
 ## Testing
 
 - **Unit tests**: Colocated `*_test.go` files using testify suites and mocks from `internal/mocks/`
 - **Integration tests**: `test/integration/` and `tests/` — use SQLite in-memory DB
-- Tests use `testify/suite` and `testify/mock`
-- Coverage includes: handlers, services, middleware (auth, rate limit, error handler, recovery, request ID), utils (sort, password, response, crypto, context, transaction), config, and models
+- **E2E tests**: `gocrm-ui/e2e/` — 69 Playwright tests covering login, registration, and CRUD for all entities. See `gocrm-ui/e2e/README.md`.
+- **Frontend unit tests**: `gocrm-ui/src/**/*.test.tsx` — Vitest + React Testing Library (run with `npm test` in `gocrm-ui/`)
+- Backend tests use `testify/suite` and `testify/mock`
+- Backend coverage includes: handlers, services, middleware (auth, rate limit, error handler, recovery, request ID), utils (sort, password, response, crypto, context, transaction), config, and models
 
 ## Configuration
 
