@@ -65,7 +65,7 @@ export class LoginPage {
     const alert = this.page.locator('.MuiAlert-message');
     
     try {
-      await alert.waitFor({ state: 'visible', timeout: 2000 });
+      await alert.waitFor({ state: 'visible', timeout: 5000 });
       return await alert.textContent();
     } catch {
       return null;

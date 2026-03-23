@@ -13,7 +13,7 @@ export class TasksPage {
   }
 
   get newTaskButton() {
-    return this.page.locator('button:has-text("New Task")');
+    return this.page.locator('button:has-text("Create Task")');
   }
 
   get tasksTable() {

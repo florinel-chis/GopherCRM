@@ -2,9 +2,9 @@ import { test, expect } from '@playwright/test';
 import { LeadsPage } from '../pages/leads.page';
 import { LoginPage } from '../pages/login.page';
 
-// Use the actual admin credentials from the database
-const ADMIN_EMAIL = 'admin@test.com';
-const ADMIN_PASSWORD = 'admin123';
+// Use the test admin credentials
+const ADMIN_EMAIL = 'test-admin@gocrm.test';
+const ADMIN_PASSWORD = 'AdminPass123!';
 
 async function loginAsAdmin(page: any) {
   const loginPage = new LoginPage(page);

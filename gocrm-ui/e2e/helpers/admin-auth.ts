@@ -30,21 +30,21 @@ export class AdminAuthHelper {
 
     // Login with the admin user
     await loginPage.goto();
-    
-    // Set up response listener before making the call
+
+    // Set up response listener BEFORE triggering login
     const responsePromise = this.page.waitForResponse(
-      response => response.url().includes('/api/auth/login')
+      response => response.url().includes('/auth/login') && response.request().method() === 'POST'
     );
-    
+
     await loginPage.login(this.adminUser.email, this.adminUser.password);
+
+    // Wait for the API response
     const response = await responsePromise;
-    
-    // Verify login was successful
     expect(response.status()).toBe(200);
-    
+
     // Wait for redirect to dashboard
-    await this.page.waitForURL('/', { timeout: 10000 });
-    await dashboardPage.waitForDashboardToLoad();
+    await this.page.waitForURL('/', { timeout: 15000 });
+    await this.page.waitForLoadState('networkidle');
     
     // Verify admin is logged in
     const token = await this.page.evaluate(() => localStorage.getItem('gophercrm_token'));

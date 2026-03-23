@@ -13,7 +13,7 @@ export class UsersPage {
   }
 
   get newUserButton() {
-    return this.page.locator('button:has-text("New User")');
+    return this.page.locator('button:has-text("Add User")');
   }
 
   get usersTable() {
