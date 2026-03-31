@@ -225,63 +225,63 @@ npm run type-check
 The API follows RESTful conventions with the following structure:
 
 ### Authentication
-- `POST /api/auth/register` - Register a new user
-- `POST /api/auth/login` - User login
+- `POST /api/v1/auth/register` - Register a new user
+- `POST /api/v1/auth/login` - User login
 
 ### Users (Admin access required for most endpoints)
-- `GET /api/users` - List all users
-- `GET /api/users/:id` - Get specific user
-- `PUT /api/users/:id` - Update user
-- `DELETE /api/users/:id` - Delete user
-- `GET /api/users/me` - Get current user profile
-- `PUT /api/users/me` - Update current user profile
+- `GET /api/v1/users` - List all users
+- `GET /api/v1/users/:id` - Get specific user
+- `PUT /api/v1/users/:id` - Update user
+- `DELETE /api/v1/users/:id` - Delete user
+- `GET /api/v1/users/me` - Get current user profile
+- `PUT /api/v1/users/me` - Update current user profile
 
 ### Leads (Sales and Admin access)
-- `GET /api/leads` - List leads
-- `POST /api/leads` - Create new lead
-- `GET /api/leads/:id` - Get specific lead
-- `PUT /api/leads/:id` - Update lead
-- `DELETE /api/leads/:id` - Delete lead
-- `POST /api/leads/:id/convert` - Convert lead to customer
+- `GET /api/v1/leads` - List leads
+- `POST /api/v1/leads` - Create new lead
+- `GET /api/v1/leads/:id` - Get specific lead
+- `PUT /api/v1/leads/:id` - Update lead
+- `DELETE /api/v1/leads/:id` - Delete lead
+- `POST /api/v1/leads/:id/convert` - Convert lead to customer
 
 ### Customers
-- `GET /api/customers` - List customers
-- `POST /api/customers` - Create new customer
-- `GET /api/customers/:id` - Get specific customer
-- `PUT /api/customers/:id` - Update customer
-- `DELETE /api/customers/:id` - Delete customer
+- `GET /api/v1/customers` - List customers
+- `POST /api/v1/customers` - Create new customer
+- `GET /api/v1/customers/:id` - Get specific customer
+- `PUT /api/v1/customers/:id` - Update customer
+- `DELETE /api/v1/customers/:id` - Delete customer
 
 ### Tickets (Support and Admin access)
-- `GET /api/tickets` - List tickets
-- `POST /api/tickets` - Create new ticket
-- `GET /api/tickets/:id` - Get specific ticket
-- `PUT /api/tickets/:id` - Update ticket
-- `DELETE /api/tickets/:id` - Delete ticket
-- `GET /api/tickets/my` - Get current user's tickets
+- `GET /api/v1/tickets` - List tickets
+- `POST /api/v1/tickets` - Create new ticket
+- `GET /api/v1/tickets/:id` - Get specific ticket
+- `PUT /api/v1/tickets/:id` - Update ticket
+- `DELETE /api/v1/tickets/:id` - Delete ticket
+- `GET /api/v1/tickets/my` - Get current user's tickets
 
 ### Tasks
-- `GET /api/tasks` - List tasks
-- `POST /api/tasks` - Create new task
-- `GET /api/tasks/:id` - Get specific task
-- `PUT /api/tasks/:id` - Update task
-- `DELETE /api/tasks/:id` - Delete task
-- `GET /api/tasks/my` - Get current user's tasks
+- `GET /api/v1/tasks` - List tasks
+- `POST /api/v1/tasks` - Create new task
+- `GET /api/v1/tasks/:id` - Get specific task
+- `PUT /api/v1/tasks/:id` - Update task
+- `DELETE /api/v1/tasks/:id` - Delete task
+- `GET /api/v1/tasks/my` - Get current user's tasks
 
 ### API Keys
-- `GET /api/api-keys` - List user's API keys
-- `POST /api/api-keys` - Create new API key
-- `DELETE /api/api-keys/:id` - Revoke API key
+- `GET /api/v1/api-keys` - List user's API keys
+- `POST /api/v1/api-keys` - Create new API key
+- `DELETE /api/v1/api-keys/:id` - Revoke API key
 
 ### Configuration (Admin only)
-- `GET /api/configurations` - List all configurations
-- `GET /api/configurations/ui` - Get UI-safe configurations
-- `GET /api/configurations/category/:category` - Get configurations by category
-- `GET /api/configurations/:key` - Get specific configuration
-- `PUT /api/configurations/:key` - Update configuration value
-- `POST /api/configurations/:key/reset` - Reset configuration to default
+- `GET /api/v1/configurations` - List all configurations
+- `GET /api/v1/configurations/ui` - Get UI-safe configurations
+- `GET /api/v1/configurations/category/:category` - Get configurations by category
+- `GET /api/v1/configurations/:key` - Get specific configuration
+- `PUT /api/v1/configurations/:key` - Update configuration value
+- `POST /api/v1/configurations/:key/reset` - Reset configuration to default
 
 ### Dashboard
-- `GET /api/dashboard/stats` - Get dashboard statistics (total leads, customers, open tickets, pending tasks, conversion rate)
+- `GET /api/v1/dashboard/stats` - Get dashboard statistics (total leads, customers, open tickets, pending tasks, conversion rate)
 
 ## Project Structure
 

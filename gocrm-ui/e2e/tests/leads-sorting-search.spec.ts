@@ -32,7 +32,7 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(createdHeader).toBeVisible();
 
     const responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await createdHeader.click();
     const response = await responsePromise;
@@ -57,14 +57,14 @@ test.describe('Leads List - Sorting and Search', () => {
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
 
     let responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await createdHeader.click();
     let response = await responsePromise;
     const firstUrl = response.request().url();
 
     responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await createdHeader.click();
     response = await responsePromise;
@@ -85,7 +85,7 @@ test.describe('Leads List - Sorting and Search', () => {
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
     const responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') &&
+      response => response.url().includes('/api/v1/leads') &&
                   response.url().includes('search=') &&
                   response.request().method() === 'GET'
     );
@@ -113,7 +113,7 @@ test.describe('Leads List - Sorting and Search', () => {
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
     const responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') &&
+      response => response.url().includes('/api/v1/leads') &&
                   response.url().includes('search=') &&
                   response.request().method() === 'GET'
     );
@@ -141,7 +141,7 @@ test.describe('Leads List - Sorting and Search', () => {
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
     let responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') &&
+      response => response.url().includes('/api/v1/leads') &&
                   response.url().includes('search=') &&
                   response.request().method() === 'GET'
     );
@@ -153,7 +153,7 @@ test.describe('Leads List - Sorting and Search', () => {
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
 
     responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await createdHeader.click();
     const response = await responsePromise;
@@ -174,7 +174,7 @@ test.describe('Leads List - Sorting and Search', () => {
     const initialCount = await leadsPage.tableRows.count();
 
     let responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await leadsPage.searchInput.fill('anders.t@conversio.dk');
     await responsePromise;
@@ -184,7 +184,7 @@ test.describe('Leads List - Sorting and Search', () => {
     const filteredCount = await leadsPage.tableRows.count();
 
     responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') && response.request().method() === 'GET'
+      response => response.url().includes('/api/v1/leads') && response.request().method() === 'GET'
     );
     await leadsPage.searchInput.clear();
     await responsePromise;
@@ -203,7 +203,7 @@ test.describe('Leads List - Sorting and Search', () => {
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
     const responsePromise = page.waitForResponse(
-      response => response.url().includes('/api/leads') &&
+      response => response.url().includes('/api/v1/leads') &&
                   response.url().includes('search=') &&
                   response.request().method() === 'GET'
     );
