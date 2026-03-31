@@ -88,7 +88,7 @@ func (suite *ConfigurationIntegrationTestSuite) SetupSuite() {
 	}
 	
 	// Protected routes
-	api := suite.router.Group("/api")
+	api := suite.router.Group("/api/v1")
 	api.Use(middleware.Auth(suite.authService))
 	{
 		handler.SetupConfigurationRoutes(api, configHandler)
