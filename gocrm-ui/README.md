@@ -151,17 +151,17 @@ src/
 The frontend communicates with the GopherCRM backend through RESTful APIs:
 
 ### Authentication Endpoints
-- `POST /api/auth/login` - User authentication
-- `POST /api/auth/register` - User registration
+- `POST /api/v1/auth/login` - User authentication
+- `POST /api/v1/auth/register` - User registration
 
 ### Data Endpoints
-- Leads: `/api/leads/*`
-- Customers: `/api/customers/*`
-- Tickets: `/api/tickets/*`
-- Tasks: `/api/tasks/*`
-- Users: `/api/users/*`
-- Configurations: `/api/configurations/*`
-- Dashboard: `/api/dashboard/stats`
+- Leads: `/api/v1/leads/*`
+- Customers: `/api/v1/customers/*`
+- Tickets: `/api/v1/tickets/*`
+- Tasks: `/api/v1/tasks/*`
+- Users: `/api/v1/users/*`
+- Configurations: `/api/v1/configurations/*`
+- Dashboard: `/api/v1/dashboard/stats`
 
 ### Error Handling
 - Consistent error response format

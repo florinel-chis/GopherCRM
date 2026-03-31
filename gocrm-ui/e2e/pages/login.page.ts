@@ -55,7 +55,7 @@ export class LoginPage {
 
   async submitAndWaitForResponse() {
     const responsePromise = this.page.waitForResponse(
-      response => response.url().includes('/api/auth/login')
+      response => response.url().includes('/api/v1/auth/login')
     );
     await this.submit();
     return await responsePromise;

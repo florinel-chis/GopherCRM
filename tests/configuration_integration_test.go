@@ -138,7 +138,7 @@ func (suite *ConfigurationIntegrationTestSuite) TearDownSuite() {
 
 func (suite *ConfigurationIntegrationTestSuite) TestGetUIConfigurations() {
 	// Test with admin user
-	req, _ := http.NewRequest("GET", "/api/configurations/ui", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations/ui", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -155,7 +155,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestGetUIConfigurations() {
 	suite.Greater(len(configurations), 0)
 	
 	// Test with regular user (should also work)
-	req, _ = http.NewRequest("GET", "/api/configurations/ui", nil)
+	req, _ = http.NewRequest("GET", "/api/v1/configurations/ui", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.regularUserToken)
 	
 	w = httptest.NewRecorder()
@@ -166,7 +166,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestGetUIConfigurations() {
 
 func (suite *ConfigurationIntegrationTestSuite) TestGetAllConfigurations_AdminOnly() {
 	// Test with admin user - should work
-	req, _ := http.NewRequest("GET", "/api/configurations", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -183,7 +183,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestGetAllConfigurations_AdminOn
 	suite.Greater(len(configurations), 0)
 	
 	// Test with regular user - should fail
-	req, _ = http.NewRequest("GET", "/api/configurations", nil)
+	req, _ = http.NewRequest("GET", "/api/v1/configurations", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.regularUserToken)
 	
 	w = httptest.NewRecorder()
@@ -194,7 +194,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestGetAllConfigurations_AdminOn
 
 func (suite *ConfigurationIntegrationTestSuite) TestGetConfigurationByCategory() {
 	// Test getting UI configurations
-	req, _ := http.NewRequest("GET", "/api/configurations/category/ui", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations/category/ui", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -218,7 +218,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestGetConfigurationByCategory()
 
 func (suite *ConfigurationIntegrationTestSuite) TestGetConfigurationByKey() {
 	// Test getting specific configuration
-	req, _ := http.NewRequest("GET", "/api/configurations/general.company_name", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations/general.company_name", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -242,7 +242,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration() {
 	}
 	
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", "/api/configurations/general.company_name", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/general.company_name", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
@@ -271,7 +271,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_InvalidValu
 	}
 	
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", "/api/configurations/security.session_timeout_hours", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/security.session_timeout_hours", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
@@ -325,7 +325,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_ReadOnly() 
 	}
 	
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", fmt.Sprintf("/api/configurations/%s", readOnlyKey), bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", fmt.Sprintf("/api/v1/configurations/%s", readOnlyKey), bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
@@ -353,7 +353,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestResetConfiguration() {
 	assert.Equal(suite.T(), "Custom Company", value)
 	
 	// Reset to default
-	req, _ := http.NewRequest("POST", "/api/configurations/general.company_name/reset", nil)
+	req, _ := http.NewRequest("POST", "/api/v1/configurations/general.company_name/reset", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -374,7 +374,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestBooleanConfiguration() {
 	}
 	
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", "/api/configurations/leads.conversion.require_notes", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/leads.conversion.require_notes", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
@@ -396,7 +396,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestArrayConfiguration() {
 	}
 
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", "/api/configurations/leads.conversion.allowed_statuses", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/leads.conversion.allowed_statuses", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 
@@ -435,7 +435,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestServiceSpecificMethods() {
 
 func (suite *ConfigurationIntegrationTestSuite) TestConfigurationNotFound() {
 	// Test getting non-existent configuration
-	req, _ := http.NewRequest("GET", "/api/configurations/non.existent.key", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations/non.existent.key", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 	
 	w := httptest.NewRecorder()
@@ -446,7 +446,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestConfigurationNotFound() {
 
 func (suite *ConfigurationIntegrationTestSuite) TestUnauthorizedAccess() {
 	// Test without token
-	req, _ := http.NewRequest("GET", "/api/configurations", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/configurations", nil)
 	
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
