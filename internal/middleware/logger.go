@@ -37,6 +37,7 @@ func Logger() gin.HandlerFunc {
 			"latency_ms":   latency.Milliseconds(),
 			"body_size":    c.Writer.Size(),
 			"origin":       c.GetHeader("Origin"),
+			"user_agent":   c.GetHeader("User-Agent"),
 		}
 
 		// Add user context if authenticated
