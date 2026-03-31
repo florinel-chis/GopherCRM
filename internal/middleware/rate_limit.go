@@ -3,6 +3,7 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,7 +120,13 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 // RateLimitStrict returns a stricter rate limit middleware for sensitive endpoints.
 // 10 requests per minute with burst of 5 — prevents brute force while allowing
 // normal browser login attempts (which include preflight OPTIONS + POST pairs).
+// Set DISABLE_RATE_LIMIT=true to disable for testing.
 func RateLimitStrict() gin.HandlerFunc {
+	if os.Getenv("DISABLE_RATE_LIMIT") == "true" {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
 	return RateLimit(10.0/60.0, 5)
 }
 
