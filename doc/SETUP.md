@@ -76,7 +76,7 @@ npm install
 cp .env.example .env
 
 # The default configuration should work:
-# VITE_API_BASE_URL=http://localhost:8080/api
+# VITE_API_BASE_URL=http://localhost:8080/api/v1
 ```
 
 ### 5. Run the Frontend
@@ -128,12 +128,12 @@ curl http://localhost:8080/health
 ### 3. Test API Directly
 ```bash
 # Login
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"yourpassword"}'
 
 # Use the returned token for authenticated requests
-curl http://localhost:8080/api/users/me \
+curl http://localhost:8080/api/v1/users/me \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
@@ -183,11 +183,11 @@ curl http://localhost:8080/api/users/me \
 
 The API endpoints follow RESTful conventions:
 
-- Auth: `/api/auth/*`
-- Users: `/api/users/*`
-- Leads: `/api/leads/*`
-- Customers: `/api/customers/*`
-- Tickets: `/api/tickets/*`
-- Tasks: `/api/tasks/*`
+- Auth: `/api/v1/auth/*`
+- Users: `/api/v1/users/*`
+- Leads: `/api/v1/leads/*`
+- Customers: `/api/v1/customers/*`
+- Tickets: `/api/v1/tickets/*`
+- Tasks: `/api/v1/tasks/*`
 
 All protected endpoints require an `Authorization: Bearer <token>` header.
