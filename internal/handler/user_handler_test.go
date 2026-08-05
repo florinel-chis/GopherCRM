@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -239,6 +240,57 @@ func (suite *UserHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 	
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+func (suite *UserHandlerTestSuite) TestDelete_NotFound() {
+	suite.router.DELETE("/users/:id", suite.handler.Delete)
+
+	suite.mockService.On("Delete", uint(2)).
+		Return(fmt.Errorf("user %d not found: %w", 2, apperrors.ErrNotFound))
+
+	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "User not found", response.Error.Message)
+	// The 404 says nothing beyond "no such user" - no id, no internal detail.
+	assert.Nil(suite.T(), response.Error.Details)
+}
+
+func (suite *UserHandlerTestSuite) TestDelete_GenuineFailureIsInternalError() {
+	suite.router.DELETE("/users/:id", suite.handler.Delete)
+
+	// A driver-level failure part-way through an erasure must not be reported
+	// as "there was nobody to erase".
+	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
+	suite.mockService.On("Delete", uint(2)).Return(dbErr)
+
+	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+	assert.Nil(suite.T(), response.Error.Details)
+
+	// The response body must leak neither the driver text nor the sentinel.
+	body := rec.Body.String()
+	assert.NotContains(suite.T(), body, "Deadlock")
+	assert.NotContains(suite.T(), body, "1213")
+	assert.NotContains(suite.T(), body, "not found")
 }
 
 func (suite *UserHandlerTestSuite) TestDelete_SelfDeletion() {

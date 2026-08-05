@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -144,16 +145,38 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	return lead, nil
 }
 
+// Delete erases the lead's personal data and then soft-deletes the row. It is a
+// GDPR Article 17 erasure and it is IRREVERSIBLE: the email becomes a
+// non-routable placeholder and the names, phone, company, position, external id
+// and free-text notes are cleared. If the lead had been converted, the customer
+// it became is erased in the same transaction — the conversion copied the
+// person's data into that customer, so erasing one half alone erases nobody.
+// See leadRepository.Delete and repository/erasure_cascade.go.
+//
+// Note the logging below deliberately records only the lead ID: an erasure
+// audit trail that quotes the erased email would defeat the erasure.
 func (s *leadService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Delete")
-	
-	err := s.leadRepo.Delete(id)
-	if err != nil {
-		logger.WithError(err).Error("Failed to delete lead")
+
+	// An erasure that matched no row must never report success: the scrub and
+	// the soft delete both match by primary key, and zero matched rows is not an
+	// error in SQL. Reported as the not-found sentinel so the caller can tell
+	// "there was nobody to erase" from "the erasure failed".
+	if _, err := s.leadRepo.GetByID(id); err != nil {
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Lead not found")
+			return fmt.Errorf("lead %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up lead for erasure")
 		return err
 	}
-	
-	logger.Info("Lead deleted successfully")
+
+	if err := s.leadRepo.Delete(id); err != nil {
+		logger.WithError(err).Error("Failed to erase lead")
+		return err
+	}
+
+	logger.Info("Lead erased successfully")
 	return nil
 }
 
@@ -227,6 +250,14 @@ func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder 
 	return leads, total, nil
 }
 
+// ConvertToCustomer promotes a lead to a customer.
+//
+// The lead's personal data is COPIED into the new customer and the lead row is
+// left standing with its own copy — conversion only flips the status and
+// records the new customer's id on the lead. That recorded id (leads.customer_id)
+// is the only link between the two rows, and erasure follows it: deleting
+// either half erases both, or the person would survive in the other one. See
+// repository/erasure_cascade.go.
 func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", leadID), "LeadService", "ConvertToCustomer")
 	

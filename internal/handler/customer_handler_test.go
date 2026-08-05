@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -122,14 +123,16 @@ func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmail() {
 	rec := httptest.NewRecorder()
 	
 	suite.router.ServeHTTP(rec, req)
-	
-	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
-	
+
+	// A duplicate email conflicts with existing state, so it is 409, not 400.
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.False(suite.T(), response.Success)
 	assert.Equal(suite.T(), "customer with this email already exists", response.Error.Message)
+	assertNoDriverInternalsInBody(suite.T(), rec.Body.String())
 }
 
 func (suite *CustomerHandlerTestSuite) TestCreate_ForbiddenForSupportUser() {
@@ -324,14 +327,16 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmail() {
 	rec := httptest.NewRecorder()
 	
 	suite.router.ServeHTTP(rec, req)
-	
-	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
-	
+
+	// A duplicate email conflicts with existing state, so it is 409, not 400.
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.False(suite.T(), response.Success)
 	assert.Equal(suite.T(), "customer with this email already exists", response.Error.Message)
+	assertNoDriverInternalsInBody(suite.T(), rec.Body.String())
 }
 
 func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
@@ -345,6 +350,58 @@ func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 	
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestDelete_NotFound() {
+	suite.router.DELETE("/customers/:id", suite.handler.Delete)
+
+	suite.mockService.On("Delete", uint(1)).
+		Return(fmt.Errorf("customer %d not found: %w", 1, apperrors.ErrNotFound))
+
+	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "Customer not found", response.Error.Message)
+	// The 404 says nothing beyond "no such customer" - no id, no internal detail.
+	assert.Nil(suite.T(), response.Error.Details)
+}
+
+func (suite *CustomerHandlerTestSuite) TestDelete_GenuineFailureIsInternalError() {
+	suite.router.DELETE("/customers/:id", suite.handler.Delete)
+
+	// A failure part-way through an erasure must NOT look like an id that
+	// never existed - the operator would record a completed erasure request
+	// for personal data that is still in the database.
+	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
+	suite.mockService.On("Delete", uint(1)).Return(dbErr)
+
+	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+	assert.Nil(suite.T(), response.Error.Details)
+
+	// The response body must leak neither the driver text nor the sentinel.
+	body := rec.Body.String()
+	assert.NotContains(suite.T(), body, "Deadlock")
+	assert.NotContains(suite.T(), body, "1213")
+	assert.NotContains(suite.T(), body, "not found")
 }
 
 func (suite *CustomerHandlerTestSuite) TestDelete_ForbiddenForNonAdmin() {
@@ -446,6 +503,95 @@ func (suite *CustomerHandlerTestSuite) TestList_SearchWithSort() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+// TestCreate_DuplicateEmailDoesNotLeakDriverInternals ensures that even when the
+// service wraps a raw driver/unique-index error, the 409 body only carries the
+// clean, client-facing message.
+func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmailDoesNotLeakDriverInternals() {
+	suite.router.POST("/customers", suite.handler.Create)
+
+	payload := CreateCustomerRequest{
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "john@example.com",
+	}
+
+	driverErr := fmt.Errorf("Error 1062 (23000): Duplicate entry 'john@example.com' for key 'idx_customers_email': %w", apperrors.ErrDuplicateEmail)
+	suite.mockService.On("Create", mock.Anything).Return(driverErr)
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "customer with this email already exists", response.Error.Message)
+	assertNoDriverInternalsInBody(suite.T(), rec.Body.String())
+}
+
+// TestUpdate_DuplicateEmailDoesNotLeakDriverInternals is the update-path
+// counterpart of the create-path leak check above.
+func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmailDoesNotLeakDriverInternals() {
+	suite.router.PUT("/customers/:id", suite.handler.Update)
+
+	existingCustomer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 1},
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "john@example.com",
+	}
+
+	payload := UpdateCustomerRequest{
+		Email: "existing@example.com",
+	}
+
+	driverErr := fmt.Errorf("UNIQUE constraint failed: customers.email (idx_customers_email): %w", apperrors.ErrDuplicateEmail)
+	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
+	suite.mockService.On("Update", mock.Anything).Return(driverErr)
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "customer with this email already exists", response.Error.Message)
+	assertNoDriverInternalsInBody(suite.T(), rec.Body.String())
+}
+
+// assertNoDriverInternalsInBody fails if a response body leaks database driver
+// text, constraint wording or index names to the client.
+func assertNoDriverInternalsInBody(t *testing.T, body string) {
+	t.Helper()
+	lowered := strings.ToLower(body)
+	for _, needle := range []string{
+		"duplicate entry",
+		"unique constraint",
+		"constraint failed",
+		"idx_customers_email",
+		"sqlstate",
+		"error 1062",
+		"23000",
+		"for key",
+	} {
+		assert.NotContains(t, lowered, needle,
+			"response body leaked driver internals (%q): %s", needle, body)
+	}
 }
 
 func TestCustomerHandlerTestSuite(t *testing.T) {

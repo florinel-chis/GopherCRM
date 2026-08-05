@@ -271,8 +271,9 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	if req.DueDate != nil {
 		task.DueDate = req.DueDate
 	}
-	if req.AssignedToID != 0 {
-		// Only admin can reassign tasks
+	// Only an actual change of assignee counts as a reassignment; clients routinely
+	// echo back the current assigned_to_id when editing other fields.
+	if req.AssignedToID != 0 && req.AssignedToID != task.AssignedToID {
 		if currentUserRole != string(models.RoleAdmin) {
 			utils.RespondForbidden(c, "Only admins can reassign tasks")
 			return

@@ -703,6 +703,110 @@ func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_NoCustomerService_Forb
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
 }
 
+// Regression tests for IDOR in ListByCustomer: a customer-role user must only
+// be able to list tickets for their own customer record.
+func (suite *TicketHandlerTestSuite) TestListByCustomer_CustomerRole_OtherCustomer_Forbidden() {
+	suite.router.GET("/customers/:id/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.ListByCustomer(c)
+	})
+
+	ownCustomer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 5},
+		FirstName: "Customer",
+		UserID:    uintPtr(10),
+	}
+
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(ownCustomer, nil)
+
+	req := httptest.NewRequest("GET", "/customers/7/tickets?offset=0&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "GetByCustomer", mock.Anything, mock.Anything, mock.Anything)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestListByCustomer_CustomerRole_OwnCustomer_Success() {
+	suite.router.GET("/customers/:id/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.ListByCustomer(c)
+	})
+
+	ownCustomer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 5},
+		FirstName: "Customer",
+		UserID:    uintPtr(10),
+	}
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 1}, Title: "My Ticket", CustomerID: 5},
+	}
+
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(ownCustomer, nil)
+	suite.mockService.On("GetByCustomer", uint(5), 0, 10).Return(expectedTickets, int64(1), nil)
+
+	req := httptest.NewRequest("GET", "/customers/5/tickets?offset=0&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestListByCustomer_AdminRole_AnyCustomer_Success() {
+	suite.router.GET("/customers/:id/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.ListByCustomer(c)
+	})
+
+	expectedTickets := []models.Ticket{
+		{BaseModel: models.BaseModel{ID: 1}, Title: "Ticket 1", CustomerID: 7},
+	}
+
+	suite.mockService.On("GetByCustomer", uint(7), 0, 10).Return(expectedTickets, int64(1), nil)
+
+	req := httptest.NewRequest("GET", "/customers/7/tickets?offset=0&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestListByCustomer_CustomerRole_LookupError_Forbidden() {
+	suite.router.GET("/customers/:id/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.ListByCustomer(c)
+	})
+
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(nil, errors.New("customer not found"))
+
+	req := httptest.NewRequest("GET", "/customers/5/tickets?offset=0&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "GetByCustomer", mock.Anything, mock.Anything, mock.Anything)
+}
+
 // Ensure the service import is used by verifying the interface
 var _ service.CustomerService = (*mocks.CustomerService)(nil)
 

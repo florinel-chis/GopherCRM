@@ -13,6 +13,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e/tests',
+  /* Seed the admin account the admin suites log in as */
+  globalSetup: './e2e/global-setup.ts',
   /* Run tests one by one, not in parallel */
   fullyParallel: false,
   workers: 1,

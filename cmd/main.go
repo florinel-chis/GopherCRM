@@ -114,7 +114,12 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
-	customerRepo := repository.NewCustomerRepository(models.DB)
+	// Erasing a customer must also erase the lead it was converted from: the
+	// conversion copied the person's name, email, phone and company into the
+	// customer and left the originals in the lead. This constructor is the plain
+	// customer repository plus that cascade, and it is the one the application
+	// must be wired with.
+	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(models.DB)
 	ticketRepo := repository.NewTicketRepository(models.DB)
 	taskRepo := repository.NewTaskRepository(models.DB)
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)

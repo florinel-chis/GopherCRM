@@ -23,12 +23,14 @@ func NewAuthHandler(authService service.AuthService, userService service.UserSer
 	}
 }
 
+// RegisterRequest deliberately has no Role field. Self-service registration always
+// creates a customer; elevated roles are only assignable through the admin-guarded
+// POST /users endpoint. A client-supplied role here would be a privilege escalation.
 type RegisterRequest struct {
-	Email     string      `json:"email" binding:"required,email"`
-	Password  string      `json:"password" binding:"required,min=8"`
-	FirstName string      `json:"first_name" binding:"required"`
-	LastName  string      `json:"last_name" binding:"required"`
-	Role      models.UserRole `json:"role"`
+	Email     string `json:"email" binding:"required,email"`
+	Password  string `json:"password" binding:"required,min=8"`
+	FirstName string `json:"first_name" binding:"required"`
+	LastName  string `json:"last_name" binding:"required"`
 }
 
 type LoginRequest struct {
@@ -56,16 +58,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	role := req.Role
-	if role == "" {
-		role = models.RoleCustomer // Default to customer if not specified
-	}
-
 	user := &models.User{
 		Email:     req.Email,
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
-		Role:      role,
+		Role:      models.RoleCustomer,
 	}
 
 	if err := h.userService.Register(user, req.Password); err != nil {

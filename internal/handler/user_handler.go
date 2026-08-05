@@ -84,12 +84,7 @@ func (h *UserHandler) List(c *gin.Context) {
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	offset, limit := utils.ParseOffsetLimit(c)
 
 	// Convert page to offset if page is provided
 	if page > 0 {
@@ -262,6 +257,14 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.userService.Delete(uint(id)); err != nil {
+		// An erasure that matched nobody and an erasure that failed must not
+		// look the same to the operator: only the not-found sentinel is a 404,
+		// everything else is a genuine failure and stays a 500.
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(err).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
 		logger.WithError(err).Error("Failed to delete user")
 		utils.RespondInternalError(c)
 		return

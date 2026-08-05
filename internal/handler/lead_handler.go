@@ -150,13 +150,8 @@ func (h *LeadHandler) List(c *gin.Context) {
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, limit := utils.ParseOffsetLimit(c)
 	classification := c.Query("classification")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	// Convert page to offset if page is provided
 	if page > 0 {

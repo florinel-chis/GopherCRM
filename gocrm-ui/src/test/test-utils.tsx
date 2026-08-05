@@ -4,6 +4,7 @@ import type { RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { ConfigurationProvider } from '@/contexts/ConfigurationContext';
 import { SnackbarProvider } from '@/contexts/SnackbarContext';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 
@@ -28,7 +29,9 @@ const AllTheProviders: React.FC<AllTheProvidersProps> = ({ children }) => {
         <ThemeProvider theme={theme}>
           <SnackbarProvider>
             <AuthProvider>
-              {children}
+              <ConfigurationProvider>
+                {children}
+              </ConfigurationProvider>
             </AuthProvider>
           </SnackbarProvider>
         </ThemeProvider>

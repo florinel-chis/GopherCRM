@@ -281,8 +281,9 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_DuplicateEmail() {
 	}
 	
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/customers", payload, suite.adminToken)
-	
-	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+
+	// A duplicate email conflicts with existing state, so it is 409, not 400.
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
 	
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
@@ -457,8 +458,9 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_DuplicateEmail() {
 	}
 	
 	rec := suite.makeRequestWithAuth("PUT", fmt.Sprintf("/api/v1/customers/%d", customer2.ID), payload, suite.adminToken)
-	
-	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+
+	// A duplicate email conflicts with existing state, so it is 409, not 400.
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
 	
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)

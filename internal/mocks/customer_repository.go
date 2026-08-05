@@ -81,6 +81,36 @@ func (_m *CustomerRepository) Delete(id uint) error {
 	return r0
 }
 
+// GetByEmailUnscoped provides a mock function with given fields: email
+func (_m *CustomerRepository) GetByEmailUnscoped(email string) (*models.Customer, error) {
+	ret := _m.Called(email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByEmailUnscoped")
+	}
+
+	var r0 *models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (*models.Customer, error)); ok {
+		return rf(email)
+	}
+	if rf, ok := ret.Get(0).(func(string) *models.Customer); ok {
+		r0 = rf(email)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(email)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetByEmail provides a mock function with given fields: email
 func (_m *CustomerRepository) GetByEmail(email string) (*models.Customer, error) {
 	ret := _m.Called(email)

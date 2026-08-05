@@ -303,3 +303,51 @@ func TestCalculateTotalPages(t *testing.T) {
 	assert.Equal(t, 5, CalculateTotalPages(100, 20))
 	assert.Equal(t, 0, CalculateTotalPages(10, 0))
 }
+
+func TestParseOffsetLimit_Defaults(t *testing.T) {
+	c, _ := createTestContext()
+	c.Request, _ = http.NewRequest("GET", "/test", nil)
+
+	offset, limit := ParseOffsetLimit(c)
+	assert.Equal(t, 0, offset)
+	assert.Equal(t, 20, limit)
+}
+
+func TestParseOffsetLimit_Custom(t *testing.T) {
+	c, _ := createTestContext()
+	c.Request, _ = http.NewRequest("GET", "/test?offset=40&limit=25", nil)
+
+	offset, limit := ParseOffsetLimit(c)
+	assert.Equal(t, 40, offset)
+	assert.Equal(t, 25, limit)
+}
+
+func TestParseOffsetLimit_ExceedsMax(t *testing.T) {
+	c, _ := createTestContext()
+	c.Request, _ = http.NewRequest("GET", "/test?limit=5000", nil)
+
+	_, limit := ParseOffsetLimit(c)
+	assert.Equal(t, 100, limit)
+}
+
+// A limit of 0 previously reached the handlers' `offset / limit` pagination math
+// and panicked with an integer divide by zero, turning any list endpoint into a
+// 500 via a single query parameter.
+func TestParseOffsetLimit_NeverReturnsZeroLimit(t *testing.T) {
+	for _, raw := range []string{"0", "-1", "abc", ""} {
+		c, _ := createTestContext()
+		c.Request, _ = http.NewRequest("GET", "/test?limit="+raw, nil)
+
+		_, limit := ParseOffsetLimit(c)
+		assert.Equal(t, 20, limit, "limit=%q should fall back to the default", raw)
+		assert.NotPanics(t, func() { _ = 1 / limit }, "limit=%q must be safe to divide by", raw)
+	}
+}
+
+func TestParseOffsetLimit_RejectsNegativeOffset(t *testing.T) {
+	c, _ := createTestContext()
+	c.Request, _ = http.NewRequest("GET", "/test?offset=-5", nil)
+
+	offset, _ := ParseOffsetLimit(c)
+	assert.Equal(t, 0, offset)
+}

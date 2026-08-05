@@ -102,7 +102,7 @@ export const Component: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: ticketsApi.deleteTicket,
+    mutationFn: (id: number) => ticketsApi.deleteTicket(id),
     onSuccess: () => {
       showSuccess('Ticket deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['tickets'] });

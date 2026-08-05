@@ -103,12 +103,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	offset, limit := utils.ParseOffsetLimit(c)
 
 	// Convert page to offset if page is provided
 	if page > 0 {
@@ -176,8 +171,21 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 		return
 	}
 
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	// Customer users may only list tickets belonging to their own customer record.
+	currentUserID := c.GetUint("user_id")
+	if c.GetString("user_role") == string(models.RoleCustomer) {
+		if h.customerService == nil {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		customer, err := h.customerService.GetByUserID(currentUserID)
+		if err != nil || customer == nil || customer.ID != uint(customerID) {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+	}
+
+	offset, limit := utils.ParseOffsetLimit(c)
 
 	tickets, total, err := h.ticketService.GetByCustomer(uint(customerID), offset, limit)
 	if err != nil {
@@ -211,8 +219,7 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 		return
 	}
 	
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, limit := utils.ParseOffsetLimit(c)
 
 	tickets, total, err := h.ticketService.GetByAssignee(currentUserID, offset, limit)
 	if err != nil {

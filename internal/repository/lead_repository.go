@@ -89,8 +89,27 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 	return r.db.Save(lead).Error
 }
 
+// Delete erases a lead under the GDPR right to erasure (Article 17).
+//
+// A lead is personal data in exactly the same way a user or a customer is — it
+// holds a name, an email address, a phone number, an employer, a job title and
+// free-text notes about a real person who never asked to be in the CRM at all.
+// It used to be the one entity whose "delete" was a bare soft delete, which
+// hid the row from queries while leaving every one of those fields intact in
+// the table, and left the address locked in for good.
+//
+// So the row is anonymised in place and only then soft-deleted, atomically, the
+// same way users and customers are; see erasure.go for the full rationale and
+// leadErasurePlan for the authoritative list of what is scrubbed.
+//
+// If the lead was converted, the customer it became is erased too: the
+// conversion copied the person's data into that customer, so erasing only the
+// lead would leave the copy behind. See erasure_cascade.go.
+//
+// The transaction is the caller's when this repository was obtained through
+// WithTx, and a fresh one otherwise.
 func (r *leadRepository) Delete(id uint) error {
-	return r.db.Delete(&models.Lead{}, id).Error
+	return eraseLeadWithConversionLink(r.db, id)
 }
 
 func (r *leadRepository) List(offset, limit int) ([]models.Lead, error) {

@@ -26,6 +26,9 @@ type UserRepository interface {
 	Create(user *models.User) error
 	GetByID(id uint) (*models.User, error)
 	GetByEmail(email string) (*models.User, error)
+	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
+	// pre-checks, since the unique index on users.email is not scoped to deleted_at.
+	GetByEmailUnscoped(email string) (*models.User, error)
 	Update(user *models.User) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.User, error)
@@ -64,6 +67,9 @@ type CustomerRepository interface {
 	GetByID(id uint) (*models.Customer, error)
 	GetByIDWithPreloads(id uint, preloads ...string) (*models.Customer, error)
 	GetByEmail(email string) (*models.Customer, error)
+	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
+	// pre-checks, since the unique index on customers.email is not scoped to deleted_at.
+	GetByEmailUnscoped(email string) (*models.Customer, error)
 	GetByUserID(userID uint) (*models.Customer, error)
 	Update(customer *models.Customer) error
 	Delete(id uint) error

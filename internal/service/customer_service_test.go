@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -47,8 +48,8 @@ func (suite *CustomerServiceTestSuite) TestCreate_Success() {
 		Company:   "Acme Corp",
 	}
 
-	// Mock GetByEmail to return not found (no duplicate)
-	suite.mockRepo.On("GetByEmail", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
+	// Mock GetByEmailUnscoped to return not found (no duplicate)
+	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockRepo.On("Create", customer).Return(nil).Run(func(args mock.Arguments) {
 		// Simulate DB setting the ID
 		c := args.Get(0).(*models.Customer)
@@ -72,12 +73,40 @@ func (suite *CustomerServiceTestSuite) TestCreate_DuplicateEmail() {
 		Email:     "john@example.com",
 	}
 
-	// Mock GetByEmail to return existing customer
-	suite.mockRepo.On("GetByEmail", "john@example.com").Return(existingCustomer, nil)
+	// Mock GetByEmailUnscoped to return existing customer
+	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
 
 	err := suite.service.Create(customer)
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
+}
+
+// TestCreate_SoftDeletedCustomerExists pins the duplicate pre-check to the
+// *unscoped* lookup. The unique index on customers.email is not scoped to
+// deleted_at, so a soft-deleted row still reserves the address; a scoped
+// GetByEmail would report it free and let the insert reach the database, where
+// it fails with a raw driver error. Create must reject it up front, without
+// ever calling the repository's Create.
+func (suite *CustomerServiceTestSuite) TestCreate_SoftDeletedCustomerExists() {
+	softDeleted := &models.Customer{
+		BaseModel: models.BaseModel{
+			ID:        7,
+			DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true},
+		},
+		Email: "deleted@example.com",
+	}
+
+	suite.mockRepo.On("GetByEmailUnscoped", "deleted@example.com").Return(softDeleted, nil)
+
+	err := suite.service.Create(&models.Customer{
+		FirstName: "New",
+		LastName:  "Customer",
+		Email:     "deleted@example.com",
+	})
+
+	assert.Error(suite.T(), err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
+	suite.mockRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
 }
 
 func (suite *CustomerServiceTestSuite) TestCreate_RepoError() {
@@ -87,7 +116,7 @@ func (suite *CustomerServiceTestSuite) TestCreate_RepoError() {
 		Email:     "john@example.com",
 	}
 
-	suite.mockRepo.On("GetByEmail", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockRepo.On("Create", customer).Return(errors.New("database error"))
 
 	err := suite.service.Create(customer)
@@ -127,8 +156,8 @@ func (suite *CustomerServiceTestSuite) TestUpdate_Success() {
 		Company:   "Acme Corp",
 	}
 
-	// Mock GetByEmail to check for duplicates
-	suite.mockRepo.On("GetByEmail", "john.doe@example.com").Return(nil, gorm.ErrRecordNotFound)
+	// Mock GetByEmailUnscoped to check for duplicates
+	suite.mockRepo.On("GetByEmailUnscoped", "john.doe@example.com").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockRepo.On("Update", customer).Return(nil)
 
 	err := suite.service.Update(customer)
@@ -148,8 +177,8 @@ func (suite *CustomerServiceTestSuite) TestUpdate_DuplicateEmail() {
 		Email:     "john@example.com",
 	}
 
-	// Mock GetByEmail to return existing customer with different ID
-	suite.mockRepo.On("GetByEmail", "john@example.com").Return(existingCustomer, nil)
+	// Mock GetByEmailUnscoped to return existing customer with different ID
+	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
 
 	err := suite.service.Update(customer)
 	assert.Error(suite.T(), err)
@@ -169,8 +198,8 @@ func (suite *CustomerServiceTestSuite) TestUpdate_SameEmail() {
 		Email:     "john@example.com",
 	}
 
-	// Mock GetByEmail to return existing customer with same ID (self)
-	suite.mockRepo.On("GetByEmail", "john@example.com").Return(existingCustomer, nil)
+	// Mock GetByEmailUnscoped to return existing customer with same ID (self)
+	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
 	suite.mockRepo.On("Update", customer).Return(nil)
 
 	err := suite.service.Update(customer)

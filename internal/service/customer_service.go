@@ -24,8 +24,11 @@ func NewCustomerService(customerRepo repository.CustomerRepository, userRepo rep
 func (s *customerService) Create(customer *models.Customer) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_email", customer.Email), "CustomerService", "Create")
 	
-	// Check for duplicate email
-	existing, err := s.customerRepo.GetByEmail(customer.Email)
+	// Check for duplicate email. The lookup must be unscoped: the unique index on
+	// customers.email is not scoped to deleted_at, so a soft-deleted row still
+	// reserves the address and the insert below would be rejected by the database
+	// even though a scoped lookup reports the address as free.
+	existing, err := s.customerRepo.GetByEmailUnscoped(customer.Email)
 	if err == nil && existing != nil {
 		logger.Warn("Attempted to create customer with duplicate email")
 		return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
@@ -71,7 +74,9 @@ func (s *customerService) Update(customer *models.Customer) error {
 	
 	// Check for duplicate email if email is being updated
 	if customer.Email != "" {
-		existing, err := s.customerRepo.GetByEmail(customer.Email)
+		// Unscoped for the same reason as in Create: a soft-deleted row still
+		// holds the address in the database unique index.
+		existing, err := s.customerRepo.GetByEmailUnscoped(customer.Email)
 		if err == nil && existing != nil && existing.ID != customer.ID {
 			logger.Warn("Attempted to update customer with duplicate email")
 			return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
@@ -87,22 +92,39 @@ func (s *customerService) Update(customer *models.Customer) error {
 	return nil
 }
 
+// Delete erases the customer's personal data and then soft-deletes the row. It
+// is a GDPR Article 17 erasure and it is IRREVERSIBLE: the email becomes a
+// non-routable placeholder and every other personal field — names, phone,
+// company, position, postal address, free-text notes — is cleared. See
+// customerRepository.Delete for the details.
+//
+// This is NOT how you park a dormant account. Nothing here is recoverable, so
+// use it only when the personal data itself must go.
+//
+// Note the logging below deliberately records only the customer ID: an erasure
+// audit trail that quotes the erased email would defeat the erasure.
 func (s *customerService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", id), "CustomerService", "Delete")
-	
-	// Check if customer exists
-	_, err := s.customerRepo.GetByID(id)
-	if err != nil {
-		logger.WithError(err).Warn("Customer not found")
+
+	// An erasure that matched no row must never report success: the update and
+	// the delete both match by primary key, and zero matched rows is not an
+	// error in SQL. Reported as the not-found sentinel so the caller can tell
+	// "there was nobody to erase" from "the erasure failed".
+	if _, err := s.customerRepo.GetByID(id); err != nil {
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Customer not found")
+			return fmt.Errorf("customer %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up customer for erasure")
 		return err
 	}
-	
+
 	if err := s.customerRepo.Delete(id); err != nil {
-		logger.WithError(err).Error("Failed to delete customer")
+		logger.WithError(err).Error("Failed to erase customer")
 		return err
 	}
-	
-	logger.Info("Customer deleted successfully")
+
+	logger.Info("Customer erased successfully")
 	return nil
 }
 

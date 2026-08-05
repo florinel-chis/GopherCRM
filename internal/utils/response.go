@@ -137,6 +137,31 @@ func RespondBadRequest(c *gin.Context, message string) {
 	RespondError(c, http.StatusBadRequest, ErrCodeBadRequest, message, nil)
 }
 
+// ParseOffsetLimit extracts offset/limit pagination parameters from the request,
+// clamping them to a usable range. limit is never returned as 0, so callers can
+// safely divide by it when building pagination metadata.
+func ParseOffsetLimit(c *gin.Context) (offset, limit int) {
+	offset = 0
+	limit = 20
+
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	return offset, limit
+}
+
 // ParsePaginationParams extracts pagination parameters from the request
 func ParsePaginationParams(c *gin.Context) (page, perPage int) {
 	page = 1
