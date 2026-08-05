@@ -82,8 +82,18 @@ pages organized per entity under `src/pages/`.
 multi-step operations. Repositories expose `WithTx()` to participate in transactions.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
-hashing (with a legacy SHA256 fallback for migration). CSRF tokens use HMAC-SHA256 with a 24h
-expiry. Middleware sets the user context. Use `middleware.RequireRole()` for RBAC on routes.
+hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use
+`middleware.RequireRole()` for RBAC on routes. An API key whose owner has been erased or deactivated
+is rejected at authentication time.
+
+**CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
+`CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
+tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It
+is dead code today: treat it as an unfinished feature, not a protection you can rely on. There is no
+live CSRF exposure in the current design either — authentication is Bearer/API-key only and the
+frontend stores its token in `localStorage`/`sessionStorage` and sends it in the `Authorization`
+header, so no credential is attached ambiently by the browser. That changes the moment any
+cookie-borne session is introduced, and the middleware would then have to be wired up.
 
 **Role assignment** — `POST /auth/register` is public and always creates a `customer`; it ignores
 any client-supplied role. Elevated roles are only assignable via the admin-guarded `POST /users` or
@@ -100,23 +110,88 @@ allowlists via `utils.ValidateSort()` to prevent SQL injection.
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
 RateLimit.
 
-**Rate limiting** — three tiers: Strict (10/min for auth), Moderate (120/min for writes), Generous
-(240/min for reads). OPTIONS preflight requests are excluded. Uses `c.ClientIP()` with trusted proxy
-configuration to prevent IP spoofing. Setting `DISABLE_RATE_LIMIT=true` bypasses **only the Strict
-tier** used by the auth endpoints (`internal/middleware/rate_limit.go`); the Moderate and Generous
-tiers stay active. That is enough to keep the E2E suite from tripping the login limiter.
+**Pagination** — every list endpoint parses `offset`/`limit` through `utils.ParseOffsetLimit`
+(`internal/utils/response.go`). It defaults to `offset=0, limit=20`, caps `limit` at 100, ignores
+non-positive and unparseable values, and **never returns `limit=0`** — callers divide by it when
+building pagination metadata, and `?limit=0` used to panic that arithmetic and turn every list
+endpoint into a 500. Do not hand-roll query parsing in a handler; call the helper.
+
+**Duplicate email** — repositories translate driver-level unique-constraint violations into the
+sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
+`internal/repository/duplicate_key.go`. Handlers classify it with `errors.Is` and return 409 for both
+users and customers. The helper is only safe on tables whose sole unique index is `email`, which is
+true of `users` and `customers`; adding a second unique index to either means the helper can no
+longer attribute a hit to the email column.
+
+**Rate limiting** — two tiers are actually wired in `cmd/main.go`:
+
+| Tier | Limit | Where it is applied |
+|------|-------|---------------------|
+| `RateLimitStrict()` | 10 req/min, burst 5 | the `/auth` group — `register` and `login` only (`cmd/main.go:154`) |
+| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike (`cmd/main.go:164`) |
+
+There is no separate tier for reads. `RateLimitGenerous()` (240 req/min, burst 40) is defined at
+`internal/middleware/rate_limit.go:142` but is **never applied to any route** — it is unused code,
+and any doc or comment implying reads get a more generous budget is wrong. The inline comment beside
+the moderate tier in `cmd/main.go` still says "60 req/min"; the real value is 120. OPTIONS preflight
+requests are excluded. Limiting is keyed on `c.ClientIP()`, which is why `TRUSTED_PROXIES` must be
+set correctly — otherwise a spoofed `X-Forwarded-For` defeats the limiter.
+
+`DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside `RateLimitStrict`
+(`internal/middleware/rate_limit.go:125`), so the moderate tier on authenticated traffic stays active
+regardless. That is deliberate and is enough to keep the E2E suite from tripping the login limiter.
 
 ## Testing
 
-- **Backend unit tests**: colocated `*_test.go` files using testify suites and mocks from
-  `internal/mocks/`
-- **Backend integration tests**: `test/integration/` and `tests/` — use an in-memory SQLite database
-- **Frontend unit tests**: `gocrm-ui/src/**/*.test.tsx` — Vitest + React Testing Library
-  (`npm test` in `gocrm-ui/`)
-- **E2E tests**: `gocrm-ui/e2e/` — Playwright suites covering login, registration, and CRUD for all
-  entities. See `gocrm-ui/e2e/README.md` and [doc/ADMIN_TESTING.md](../doc/ADMIN_TESTING.md).
-- Backend coverage spans handlers, services, middleware (auth, rate limit, error handler, recovery,
-  request ID), utils (sort, password, response, crypto, context, transaction), config, and models
+| Layer | Location | Runner |
+|-------|----------|--------|
+| Backend unit | colocated `*_test.go` | `go test ./...` — testify suites, mocks from `internal/mocks/` |
+| Backend integration | `test/integration/`, `tests/` | `go test ./...` — in-memory SQLite |
+| Frontend unit | `gocrm-ui/src/**/*.test.tsx` | `npm test` — Vitest + React Testing Library |
+| E2E | `gocrm-ui/e2e/tests/` | `npm run test:e2e` — Playwright, Chromium |
+
+```bash
+go test ./...                       # everything
+go test -race ./...                 # race detector — must stay clean
+go test -cover ./...                # per-package statement coverage
+go test -run TestFunctionName ./internal/service/
+```
+
+Current state: 9 Go packages pass, including under `-race` with zero races detected; backend
+statement coverage is 46.9%. The frontend has 16 test files / 142 tests and `tsc` is clean. ESLint
+currently reports around 40 errors, all pre-existing and mostly unused Playwright fixture arguments —
+they are unrelated to recent work, so do not treat a clean lint run as a gate until they are cleared.
+
+Backend coverage spans handlers, services, middleware (auth, rate limit, error handler, recovery,
+request ID), utils (sort, password, response, crypto, context, transaction), config, and models.
+
+The E2E suite is 100 tests across 9 spec files and needs a real backend and database. Admin accounts
+cannot be self-registered — `gocrm-ui/e2e/global-setup.ts` seeds them by shelling out to
+`cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [doc/ADMIN_TESTING.md](../doc/ADMIN_TESTING.md).
+
+## Gotchas
+
+Traps that have already cost time here. Each is stated as the wrong move and the correct one.
+
+**Do not add a composite `UNIQUE(email, deleted_at)` index to allow email reuse after soft delete.**
+It looks like the obvious fix and it silently removes the constraint you care about. Both MySQL and
+SQLite treat `NULL`s in a unique index as distinct, so every live row (`deleted_at IS NULL`) compares
+unequal to every other live row and unlimited duplicate *live* emails become insertable. This was
+verified empirically against both engines, not assumed. Email reuse is instead handled by erasure
+overwriting the address on delete (see *Deleting personal data* below), so the original value no
+longer exists in the table and can be registered again.
+
+**Do not rely on `gorm.ErrDuplicatedKey`.** GORM only produces it when the connection is opened with
+`gorm.Config{TranslateError: true}`, and no `gorm.Open` call in this project sets it — confirm with
+`command grep -rn TranslateError`. Detection therefore falls through to driver-specific checks in
+`internal/repository/duplicate_key.go`: MySQL error 1062 (`ER_DUP_ENTRY`) and the SQLite message
+`UNIQUE constraint failed`. If you enable `TranslateError` later, do it on every connection at once,
+or the two paths will disagree between production and tests.
+
+**Do not assume a schema or query behaves the same in tests as in production.** Tests run against
+in-memory SQLite; production is MySQL 8. Anything schema- or driver-specific — index semantics, error
+codes, collation, `ON CONFLICT` versus `ON DUPLICATE KEY` — has to work on both, and a green test
+suite proves only the SQLite half. Both gotchas above are instances of exactly this split.
 
 ## Configuration
 
@@ -146,7 +221,8 @@ MySQL 8.0+ with GORM. Migrations live in `migrations/`. Auto-migration runs on s
 Deleting a user, customer or lead performs a **permanent erasure**, not a recoverable soft delete.
 This implements the right to erasure under GDPR Article 17, and the storage-limitation principle of
 Article 5(1)(e): flagging a row as deleted while retaining the person's name, email and phone number
-is retention, not erasure.
+is retention, not erasure. It is implemented in `internal/repository/erasure.go` and
+`internal/repository/erasure_cascade.go`.
 
 What happens on `DELETE`:
 

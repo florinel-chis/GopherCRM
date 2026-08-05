@@ -5,7 +5,8 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 ## Features
 
 - 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control
-- 🛡️ **Security**: CSRF protection, account lockout, password complexity, SQL injection prevention, rate limiting with IP spoofing protection
+- 🛡️ **Security**: Account lockout, password complexity, sort-column allowlists against SQL injection, rate limiting with trusted-proxy handling
+- 🧹 **Right to Erasure**: Deleting a person overwrites their personal data before the row is soft-deleted (GDPR Art. 17)
 - 👥 **Lead Management**: Lead tracking with conversion to customers
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🎫 **Ticket System**: Support ticket management with assignments
@@ -18,25 +19,52 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 
 ![GopherCRM Dashboard](doc/img/gophercrm-dashboard.png)
 
+## ⚠️ Deletion is irreversible
+
+`DELETE` on a **user, customer or lead** is an erasure, not a recoverable soft delete. Every
+personal field on the row is overwritten in place — the email address is replaced with a random,
+non-routable placeholder in the reserved `.invalid` domain — and the row is only then soft-deleted,
+all in a single transaction. API keys and refresh tokens belonging to the account are purged with
+it. The row itself is deliberately kept so foreign keys from tickets and tasks still resolve:
+business records survive, the person does not.
+
+Two consequences:
+
+- **Nothing can be restored afterwards.** To suspend access reversibly, set `is_active = false`
+  instead; deactivation never touches personal data.
+- **The email address becomes reusable**, because the original no longer exists in the table.
+
+Tickets and tasks are unaffected — deleting one is still an ordinary soft delete.
+
+Rows soft-deleted *before* this behaviour existed still hold personal data;
+`scripts/anonymize_legacy_deleted_pii.sql` remediates them. It is manual, irreversible, and
+deliberately not wired into auto-migration.
+
+Full rationale, the cascade rules for converted leads, and the operational caveats are in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#deleting-personal-data).
+
 ## Tech Stack
 
 ### Backend
 - **Go 1.24+** - Main backend language
-- **Gin** - HTTP web framework
-- **GORM** - ORM for database operations
-- **MySQL 8.0+** - Primary database
-- **JWT** - Authentication tokens
+- **Gin 1.10** - HTTP web framework
+- **GORM 1.30** - ORM for database operations
+- **MySQL 8.0+** - Primary database (SQLite in-memory for tests)
+- **JWT** (`golang-jwt/jwt/v5`) - Authentication tokens
 - **Logrus** - Structured logging
+- **Testify** - Unit and integration test suites
 
 ### Frontend
 - **React 19** - UI framework
-- **TypeScript** - Type safety
+- **TypeScript 5.8** - Type safety
 - **Material-UI (MUI) v7** - Component library
-- **React Router** - Client-side routing
-- **TanStack Query** - Data fetching and caching
+- **React Router 7** - Client-side routing
+- **TanStack Query 5** - Data fetching and caching
 - **React Hook Form + Zod** - Forms and validation
-- **Vite** - Build tool and dev server
-- **Vitest + Playwright** - Unit and end-to-end tests
+- **Axios** - HTTP client
+- **Recharts** - Dashboard charts
+- **Vite 6** - Build tool and dev server
+- **Vitest 3 + Playwright** - Unit and end-to-end tests
 
 ## Prerequisites
 
@@ -46,7 +74,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - Make (optional, for using Makefile commands)
 
 ### Frontend
-- Node.js 18+ and npm/yarn
+- Node.js 20 or newer (React Router 7 requires Node >= 20) and npm
 - Modern web browser
 
 ## Setup Instructions
@@ -74,7 +102,7 @@ mysql -u root < scripts/create_database.sql
 cp .env.example .env
 
 # Edit .env file with your database credentials
-# Default configuration should work for local development
+# JWT_SECRET is required and must be at least 32 characters
 ```
 
 #### Install Go Dependencies
@@ -91,7 +119,20 @@ make run
 go run cmd/main.go
 ```
 
-The backend server will start on `http://localhost:8080`
+The backend server will start on `http://localhost:8080`. Schema auto-migration runs at startup.
+
+#### Create the First Admin
+
+Self-service registration always creates a `customer` account, so the first administrator has to be
+created out of band:
+
+```bash
+make build-tools
+make create-admin
+```
+
+`create-admin` also accepts `--non-interactive --email ... --name ... --password ...` for scripted
+provisioning; that is how the E2E suite seeds its admin (`gocrm-ui/e2e/global-setup.ts`).
 
 ### 3. Frontend Setup
 
@@ -102,20 +143,18 @@ cd gocrm-ui
 
 #### Install Dependencies
 ```bash
-# Using npm
 npm install
+```
 
-# Or using yarn
-yarn install
+#### Configure the API Base URL (optional)
+```bash
+cp .env.example .env
+# VITE_API_BASE_URL defaults to http://localhost:8080/api/v1
 ```
 
 #### Start Development Server
 ```bash
-# Using npm
 npm run dev
-
-# Or using yarn
-yarn dev
 ```
 
 The frontend will start on `http://localhost:5173`
@@ -124,8 +163,14 @@ The frontend will start on `http://localhost:5173`
 
 ### Default Access
 1. **Open your browser** to `http://localhost:5173`
-2. **Register a new account** or use existing credentials
+2. **Register a new account** — self-service registration always creates a `customer` account
 3. **Login** with your credentials
+
+Elevated roles (admin, sales, support) are assignable only by an admin through `POST /users`, or by
+the `create-admin` CLI. The registration endpoint ignores any role supplied by the client.
+
+Tokens are stored in `sessionStorage` and expire with the browser tab unless you tick **Remember
+me** at login, which moves them to `localStorage`.
 
 ### Admin Features
 Admin users have access to additional features:
@@ -183,8 +228,11 @@ make test
 # Run specific tests
 go test -run TestName ./path/to/package
 
-# Run integration tests
-go test ./tests
+# Run integration tests (in-memory SQLite, no MySQL needed)
+go test ./test/integration/ ./tests/
+
+# Race detector
+go test -race ./internal/... ./test/... ./tests/...
 ```
 
 #### Database Operations
@@ -200,7 +248,7 @@ make create-db
 # Start development server
 npm run dev
 
-# Build for production
+# Build for production (runs tsc -b first)
 npm run build
 
 # Preview production build
@@ -209,7 +257,7 @@ npm run preview
 # Run unit tests
 npm run test
 
-# Run end-to-end tests (requires the backend running)
+# Run end-to-end tests (requires the backend and frontend running)
 npm run test:e2e
 
 # Run linting
@@ -219,89 +267,117 @@ npm run lint
 #### Development Tools
 - **Hot Reload**: Automatic browser refresh on code changes
 - **TypeScript**: Full type checking and IntelliSense
-- **ESLint**: Code linting and formatting
+- **ESLint**: Code linting
 - **Prettier**: Code formatting
 
 ## API Documentation
 
-The API follows RESTful conventions with the following structure:
+All application routes are mounted under `/api/v1` (configurable via `API_PREFIX`). Every endpoint
+returns the unified envelope `{ success, data, error, meta }`.
 
-### Authentication
-- `POST /api/v1/auth/register` - Register a new user
+`GET /health` is served outside the API prefix and needs no authentication.
+
+### Authentication (public)
+- `POST /api/v1/auth/register` - Register a new user. **Always creates a `customer`**; a
+  client-supplied role is ignored. Password policy: min 10 chars with upper, lower, digit and
+  special character. A duplicate email returns `409`.
 - `POST /api/v1/auth/login` - User login
 
-### Users (Admin access required for most endpoints)
-- `GET /api/v1/users` - List all users
-- `GET /api/v1/users/:id` - Get specific user
-- `PUT /api/v1/users/:id` - Update user
-- `DELETE /api/v1/users/:id` - Delete user
+Both are behind the strict rate-limit tier (10/min). There is no logout or token-refresh endpoint
+yet — `RefreshAccessToken` and `InvalidateRefreshToken` are stubs that return an error.
+
+### Users
+- `GET /api/v1/users` - List all users *(admin)*
+- `POST /api/v1/users` - Create a user with any role *(admin)*
 - `GET /api/v1/users/me` - Get current user profile
 - `PUT /api/v1/users/me` - Update current user profile
+- `GET /api/v1/users/:id` - Get specific user *(self or admin)*
+- `PUT /api/v1/users/:id` - Update user *(self or admin; only admins may change `role` or `is_active`)*
+- `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself)*
 
-### Leads (Sales and Admin access)
-- `GET /api/v1/leads` - List leads
+### Leads *(entire group requires admin or sales)*
+- `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`)
 - `POST /api/v1/leads` - Create new lead
 - `GET /api/v1/leads/:id` - Get specific lead
 - `PUT /api/v1/leads/:id` - Update lead
-- `DELETE /api/v1/leads/:id` - Delete lead
+- `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into)
 - `POST /api/v1/leads/:id/convert` - Convert lead to customer
 
 ### Customers
-- `GET /api/v1/customers` - List customers
-- `POST /api/v1/customers` - Create new customer
-- `GET /api/v1/customers/:id` - Get specific customer
-- `PUT /api/v1/customers/:id` - Update customer
-- `DELETE /api/v1/customers/:id` - Delete customer
+- `GET /api/v1/customers` - List customers *(admin, sales, support)*
+- `POST /api/v1/customers` - Create new customer *(admin, sales)*
+- `GET /api/v1/customers/:id` - Get specific customer *(admin, sales, support)*
+- `PUT /api/v1/customers/:id` - Update customer *(admin, sales)*
+- `DELETE /api/v1/customers/:id` - **Erase** customer *(admin; cascades to the lead it came from)*
+- `GET /api/v1/customers/:id/tickets` - List that customer's tickets *(a customer-role user may only
+  read their own)*
 
-### Tickets (Support and Admin access)
-- `GET /api/v1/tickets` - List tickets
-- `POST /api/v1/tickets` - Create new ticket
-- `GET /api/v1/tickets/:id` - Get specific ticket
-- `PUT /api/v1/tickets/:id` - Update ticket
-- `DELETE /api/v1/tickets/:id` - Delete ticket
+### Tickets
+- `GET /api/v1/tickets` - List tickets *(customers cannot list all tickets)*
+- `POST /api/v1/tickets` - Create new ticket *(admin, support)*
 - `GET /api/v1/tickets/my` - Get current user's tickets
+- `GET /api/v1/tickets/:id` - Get specific ticket
+- `PUT /api/v1/tickets/:id` - Update ticket *(customers cannot update)*
+- `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; ordinary soft delete)*
 
 ### Tasks
-- `GET /api/v1/tasks` - List tasks
-- `POST /api/v1/tasks` - Create new task
-- `GET /api/v1/tasks/:id` - Get specific task
-- `PUT /api/v1/tasks/:id` - Update task
-- `DELETE /api/v1/tasks/:id` - Delete task
+- `GET /api/v1/tasks` - List tasks *(non-admins see their own)*
+- `POST /api/v1/tasks` - Create new task *(admin, support, sales; non-admins may only assign to themselves)*
 - `GET /api/v1/tasks/my` - Get current user's tasks
+- `GET /api/v1/tasks/:id` - Get specific task
+- `PUT /api/v1/tasks/:id` - Update task *(only admins may reassign)*
+- `DELETE /api/v1/tasks/:id` - Delete task *(admin; ordinary soft delete)*
 
 ### API Keys
 - `GET /api/v1/api-keys` - List user's API keys
 - `POST /api/v1/api-keys` - Create new API key
 - `DELETE /api/v1/api-keys/:id` - Revoke API key
 
-### Configuration (Admin only)
-- `GET /api/v1/configurations` - List all configurations
-- `GET /api/v1/configurations/ui` - Get UI-safe configurations
-- `GET /api/v1/configurations/category/:category` - Get configurations by category
-- `GET /api/v1/configurations/:key` - Get specific configuration
-- `PUT /api/v1/configurations/:key` - Update configuration value
-- `POST /api/v1/configurations/:key/reset` - Reset configuration to default
+Keys authenticate via `Authorization: ApiKey gcrm_xxx`. A key is rejected if it is inactive, or if
+its owner has been deactivated or erased.
+
+### Configuration
+- `GET /api/v1/configurations/ui` - Get UI-safe configurations *(any authenticated user)*
+- `GET /api/v1/configurations` - List all configurations *(admin)*
+- `GET /api/v1/configurations/category/:category` - Get configurations by category *(admin)*
+- `GET /api/v1/configurations/:key` - Get specific configuration *(admin)*
+- `PUT /api/v1/configurations/:key` - Update configuration value *(admin)*
+- `POST /api/v1/configurations/:key/reset` - Reset configuration to default *(admin)*
 
 ### Dashboard
 - `GET /api/v1/dashboard/stats` - Get dashboard statistics (total leads, customers, open tickets, pending tasks, conversion rate)
+
+### Not currently exposed
+
+`internal/handler/bulk_handler.go` implements bulk create/update/delete/action handlers, but no
+router registers them, so there is no reachable HTTP bulk endpoint. The underlying bulk service and
+repository are exercised directly by tests.
+
+A generated OpenAPI spec is checked in at `docs/swagger.json` / `docs/swagger.yaml`. It is **not**
+served by the application and can drift; treat `internal/handler/routes.go` as the source of truth.
 
 ## Project Structure
 
 ```
 gophercrm/
 ├── cmd/
-│   └── main.go                  # Application entry point
+│   ├── main.go                  # Application entry point and DI wiring
+│   ├── create-admin/            # CLI that provisions an admin account
+│   └── migrate/                 # Migration runner
 ├── internal/
-│   ├── config/                  # Configuration management
+│   ├── config/                  # Environment configuration
 │   ├── models/                  # Domain models and database schemas
-│   ├── repository/              # Data access layer interfaces and implementations
+│   ├── repository/              # Data access layer (incl. erasure.go, erasure_cascade.go)
 │   ├── service/                 # Business logic layer
 │   ├── handler/                 # HTTP handlers and routing
-│   ├── middleware/              # Authentication, logging, CORS, etc.
+│   ├── middleware/              # Auth, logging, CORS, rate limiting, recovery
+│   ├── errors/                  # Sentinel error types
+│   ├── mocks/                   # Generated test doubles
 │   └── utils/                   # Utility functions and helpers
-├── tests/                       # Integration tests
-├── scripts/                     # Database and utility scripts
-├── migrations/                  # Database migrations (future)
+├── test/integration/            # Integration tests (SQLite in-memory)
+├── tests/                       # Further integration tests
+├── scripts/                     # create_database.sql, anonymize_legacy_deleted_pii.sql
+├── migrations/                  # SQL migrations
 ├── doc/                         # Project documentation (SETUP.md, FEATURES.md, datamodel.md, etc.)
 ├── docs/                        # Developer guide, roadmap and generated OpenAPI spec
 ├── gocrm-ui/                    # React TypeScript frontend
@@ -310,12 +386,14 @@ gophercrm/
 │   │   ├── pages/               # Application pages
 │   │   ├── api/                 # API client and endpoints
 │   │   ├── hooks/               # Custom React hooks
-│   │   ├── contexts/            # React contexts (auth, config)
+│   │   ├── contexts/            # React contexts (auth, config, snackbar)
+│   │   ├── layouts/             # Shell layouts
+│   │   ├── routes/              # Route table
 │   │   ├── types/               # TypeScript type definitions
-│   │   ├── utils/               # Frontend utilities
+│   │   ├── test/                # Vitest setup and helpers
 │   │   └── theme/               # Material-UI theme configuration
-│   ├── public/                  # Static assets
-│   └── dist/                    # Production build output
+│   ├── e2e/                     # Playwright suites, page objects and global setup
+│   └── public/                  # Static assets
 ├── Makefile                     # Build and development commands
 ├── go.mod                       # Go module definition
 ├── go.sum                       # Go module checksums
@@ -326,18 +404,37 @@ gophercrm/
 
 | Document | Contents |
 |---|---|
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration, deletion semantics |
 | [doc/SETUP.md](doc/SETUP.md) | Backend and frontend setup walkthrough |
 | [doc/FEATURES.md](doc/FEATURES.md) | Feature and test-coverage matrix with known issues |
 | [doc/datamodel.md](doc/datamodel.md) | Entity model and relationships |
 | [doc/ADMIN_TESTING.md](doc/ADMIN_TESTING.md) | Admin E2E page objects and fixtures |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Ideas that are not implemented yet |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+
+## Known Limitations
+
+- **No logout or token refresh.** The refresh-token service methods are stubs; sessions end when the
+  access token expires or storage is cleared.
+- **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
+  a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
+  requires a CSRF token.
+- **Only two rate-limit tiers are active.** `RateLimitStrict` (10/min, burst 5) guards the auth
+  endpoints and `RateLimitModerate` (120/min, burst 30) covers *all* authenticated traffic — reads
+  and writes alike. `RateLimitGenerous` (240/min) is defined but never applied. The inline comment
+  at `cmd/main.go:164` saying "60 req/min" is stale.
+- **Bulk endpoints are unrouted** (see *Not currently exposed* above).
+- **Erasure does not reach logs or issued tokens.** Application logs record the email address on
+  login and on customer create/update, and issued JWTs embed it until they expire. Log retention
+  needs its own policy alongside database erasure.
+- **ESLint reports 40 errors and 137 warnings** in the frontend, mostly unused Playwright fixture
+  arguments and `any` types. `tsc` is clean.
 
 ## Contributing
 
 Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) first — it documents the layering and the patterns
 the codebase enforces (unified response envelope, sentinel errors, sort allowlists, role assignment
-rules). Then:
+rules, erasure-on-delete). Then:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -347,11 +444,13 @@ rules). Then:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project has been documented as MIT-licensed, but no `LICENSE` file is currently checked into
+the repository and no license metadata is declared in `go.mod` or `gocrm-ui/package.json`. Treat the
+licensing as unresolved until a `LICENSE` file lands.
 
 ## Support
 
 For support and questions:
 - Create an issue in the GitHub repository
-- Check the documentation in the `doc/` directory
+- Check the documentation in the `doc/` and `docs/` directories
 - Review the configuration settings for system behavior customization
