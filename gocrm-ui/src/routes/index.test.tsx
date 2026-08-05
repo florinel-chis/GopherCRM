@@ -90,6 +90,41 @@ vi.mock('@/api/endpoints/users', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/customers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/customers')>();
+  return {
+    ...actual,
+    customersApi: {
+      ...actual.customersApi,
+      getCustomers: vi.fn().mockResolvedValue({
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        total_pages: 0,
+      }),
+    },
+  };
+});
+
+vi.mock('@/api/endpoints/tickets', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/tickets')>();
+  return {
+    ...actual,
+    ticketsApi: {
+      ...actual.ticketsApi,
+      getTicket: vi.fn().mockResolvedValue(null),
+      getTickets: vi.fn().mockResolvedValue({
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        total_pages: 0,
+      }),
+    },
+  };
+});
+
 import { router } from './index';
 
 const renderAt = (path: string) => {
@@ -166,4 +201,56 @@ describe('admin routes', () => {
 
     expect(offenders).toEqual([]);
   });
+});
+
+// Ticket writes are support/admin only on the API. The forms therefore sit under
+// their own pathless ProtectedRoute layout so a deep link cannot reach them.
+describe('ticket routes', () => {
+  beforeEach(() => {
+    authUser = null;
+  });
+
+  it.each(['/tickets/new', '/tickets/1/edit'])(
+    'blocks a sales user from %s',
+    async (path) => {
+      authUser = createMockUser({ role: 'sales' });
+
+      renderAt(path);
+
+      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', { name: /ticket/i })
+      ).not.toBeInTheDocument();
+    }
+  );
+
+  it.each(['admin', 'support'] as const)(
+    'lets a %s user reach the ticket create form',
+    async (role) => {
+      authUser = createMockUser({ role });
+
+      renderAt('/tickets/new');
+
+      expect(
+        await screen.findByRole(
+          'heading',
+          { name: 'Create New Ticket' },
+          { timeout: 15000 }
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+    },
+    20000
+  );
+
+  it('leaves the ticket list reachable for a sales user', async () => {
+    authUser = createMockUser({ role: 'sales' });
+
+    renderAt('/tickets');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Tickets' }, { timeout: 15000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+  }, 20000);
 });

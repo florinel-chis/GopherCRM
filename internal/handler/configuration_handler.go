@@ -163,7 +163,7 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 // Set updates a configuration value
 // Set godoc
 // @Summary Update a configuration value
-// @Description Set the value of an existing configuration and return the updated entry (admin only). Read-only configurations are rejected, as are values outside the entry's valid_values constraint.
+// @Description Set the value of an existing configuration and return the updated entry (admin only). The value must match the entry's declared type — a boolean entry takes only true/false, an integer entry only a whole number, a string entry only a string — and a mismatch is rejected rather than coerced. Read-only configurations are rejected, as are values outside the entry's valid_values constraint.
 // @Tags configurations
 // @Accept json
 // @Produce json
@@ -172,7 +172,7 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 // @Param key path string true "Configuration key"
 // @Param request body SetConfigurationRequest true "New configuration value. Any JSON value is accepted, falsy ones (false, 0, \"\") included; the value field itself must be present and must not be null."
 // @Success 200 {object} utils.APIResponse{data=models.Configuration} "Configuration updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Missing or null value, read-only configuration, or a value outside the entry's valid_values constraint"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Missing or null value, a value whose type does not match the configuration's declared type, read-only configuration, or a value outside the entry's valid_values constraint"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"

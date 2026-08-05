@@ -32,6 +32,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi } from '@/api/endpoints';
 import type { Ticket } from '@/types';
@@ -71,8 +72,9 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { showSuccess, showError } = useSnackbar();
-  
+
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [comment, setComment] = useState('');
 
@@ -117,6 +119,16 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
+  // Mirrors the backend policy: admins may update any ticket, support only the
+  // tickets assigned to them, and only admins may delete. Sales and customer
+  // users can read a ticket but every write is rejected with a 403.
+  const canEdit =
+    user?.role === 'admin' ||
+    (user?.role === 'support' &&
+      ticket.assigned_to_id !== undefined &&
+      ticket.assigned_to_id === user.id);
+  const canDelete = user?.role === 'admin';
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
@@ -133,19 +145,23 @@ export const Component: React.FC = () => {
           />
         </Box>
         <Box display="flex" gap={1}>
-          <Button
-            variant="outlined"
-            startIcon={<EditIcon />}
-            onClick={() => navigate(`/tickets/${id}/edit`)}
-          >
-            Edit
-          </Button>
-          <IconButton
-            color="error"
-            onClick={() => setDeleteDialog(true)}
-          >
-            <DeleteIcon />
-          </IconButton>
+          {canEdit && (
+            <Button
+              variant="outlined"
+              startIcon={<EditIcon />}
+              onClick={() => navigate(`/tickets/${id}/edit`)}
+            >
+              Edit
+            </Button>
+          )}
+          {canDelete && (
+            <IconButton
+              color="error"
+              onClick={() => setDeleteDialog(true)}
+            >
+              <DeleteIcon />
+            </IconButton>
+          )}
         </Box>
       </Box>
 
