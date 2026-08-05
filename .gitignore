@@ -1,88 +1,86 @@
-# Binaries for programs and plugins
+# ---------------------------------------------------------------------------
+# Go build artifacts
+# ---------------------------------------------------------------------------
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-
-# Dependency directories (remove the comment below to include it)
+__debug_bin
+go.work
+go.work.sum
 # vendor/
 
-# Go workspace file
-go.work
-
+# ---------------------------------------------------------------------------
 # Build output
-/gocrm
+# ---------------------------------------------------------------------------
 /bin/
 /build/
 /dist/
+/gocrm
+/gophercrm
+/main
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# ---------------------------------------------------------------------------
+# Test and coverage output
+# ---------------------------------------------------------------------------
+coverage.out
+coverage.html
+profile.cov
+/coverage/
+gocrm-ui/coverage/
+gocrm-ui/test-results/
+gocrm-ui/playwright-report/
+gocrm-ui/blob-report/
+gocrm-ui/playwright/.cache/
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# ---------------------------------------------------------------------------
+# Frontend (gocrm-ui)
+# ---------------------------------------------------------------------------
+node_modules/
+gocrm-ui/dist/
+gocrm-ui/dist-ssr/
+.pnp
+.pnp.js
+*.tsbuildinfo
+.eslintcache
 
-# Environment variables
+# ---------------------------------------------------------------------------
+# Environment and secrets
+# ---------------------------------------------------------------------------
 .env
 .env.local
 .env.development
 .env.test
 .env.production
+config/secrets.yaml
+config/local.yaml
+*.pem
+*.key
+*.crt
 
-# Log files
+# ---------------------------------------------------------------------------
+# Logs, databases and dumps
+# ---------------------------------------------------------------------------
 *.log
 logs/
 server.log
-
-# Database files (if using local sqlite for development)
 *.db
 *.sqlite
 *.sqlite3
+*.sql.gz
+*.dump
 
-# Configuration files with secrets
-config/secrets.yaml
-config/local.yaml
-
-# Coverage reports
-coverage.out
-coverage.html
-
-# Temporary files
-*.tmp
-*.temp
-/tmp/
-
-# Air (live reload) files
-.air.toml
-tmp/
-
-# Delve debugger
-__debug_bin
-
-# GoLand
-.idea/
-
-# VS Code
+# ---------------------------------------------------------------------------
+# Local editor and tooling workspace
+# ---------------------------------------------------------------------------
 .vscode/
-
-# Emacs
+.idea/
+.lsp.json
+*.swp
+*.swo
 *~
 \#*\#
 /.emacs.desktop
@@ -91,56 +89,51 @@ __debug_bin
 auto-save-list
 tramp
 .\#*
-
-# Vim
 [._]*.s[a-v][a-z]
 [._]*.sw[a-p]
 [._]s[a-rt-v][a-z]
 [._]ss[a-gi-z]
 [._]sw[a-p]
+CLAUDE.md
+.claude/
+agents/
 
-# Local development certificates
-*.pem
-*.key
-*.crt
+# ---------------------------------------------------------------------------
+# OS generated files
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Backup files
+# ---------------------------------------------------------------------------
+# Temporary and backup files
+# ---------------------------------------------------------------------------
+*.tmp
+*.temp
+/tmp/
+tmp/
+.air.toml
 *.bak
 *.backup
-
-# Documentation build
-docs/_build/
-
-# Local database dumps
-*.sql.gz
-*.dump
-
-# Test coverage
-profile.cov
-
-# Goreleaser
-dist/
-
-# Compiled binaries (project-specific)
-/gophercrm
-/main
-
-# Claude Code
-.claude/
-
-# LSP configuration (local)
-.lsp.json
-
-# Cookies / session files
 cookies.txt
 gocrm-ui/cookies.txt
 
-# Generated reports (ephemeral)
+# ---------------------------------------------------------------------------
+# Generated reports (ephemeral, not part of the repo)
+# ---------------------------------------------------------------------------
 API_DOCUMENTATION.md
 FINAL_STATUS_REPORT.md
 FIXES_PROGRESS.md
 SWAGGER_USAGE_GUIDE.md
 task-form-validation-demo.md
+docs/_build/
 
-# Agent artifacts
-agents/
+# ---------------------------------------------------------------------------
+# Keep documentation images tracked (referenced from README.md)
+# ---------------------------------------------------------------------------
+!doc/img/
+!doc/img/**
