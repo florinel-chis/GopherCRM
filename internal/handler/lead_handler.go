@@ -66,10 +66,13 @@ type ConvertLeadRequest struct {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param request body CreateLeadRequest true "Lead creation request"
 // @Success 201 {object} utils.APIResponse{data=models.Lead} "Lead created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Sales or Admin role required"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or missing owner_id for admin users"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only assign leads to themselves"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /leads [post]
 func (h *LeadHandler) Create(c *gin.Context) {
@@ -145,6 +148,27 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, lead)
 }
 
+// List godoc
+// @Summary List leads
+// @Description List leads (sales and admin roles only). Sales users see only leads they own, and the search, classification and sort parameters are ignored for them. Admins see all leads.
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); overrides offset when greater than 0"
+// @Param offset query int false "Pagination offset" default(0)
+// @Param limit query int false "Page size (max 100)" default(20)
+// @Param search query string false "Search across lead fields (admin listing only)"
+// @Param classification query string false "Filter by classification (admin listing only)" Enums(unclassified, test, spam, lead, hot_lead)
+// @Param sort_by query string false "Sort column (admin listing only)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
+// @Param sort_order query string false "Sort direction" Enums(asc, desc) default(asc)
+// @Success 200 {object} utils.APIResponse{meta=utils.APIMeta} "Leads list; data contains a leads array and a total count"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /leads [get]
 func (h *LeadHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.List")
 
@@ -233,6 +257,22 @@ func (h *LeadHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// Get godoc
+// @Summary Get a lead
+// @Description Get a lead by ID (sales and admin roles only; sales users can only view their own leads)
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Lead ID"
+// @Success 200 {object} utils.APIResponse{data=models.Lead} "Lead retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only view their own leads"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /leads/{id} [get]
 func (h *LeadHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Get")
 	
@@ -262,6 +302,24 @@ func (h *LeadHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, lead)
 }
 
+// Update godoc
+// @Summary Update a lead
+// @Description Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner)
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Lead ID"
+// @Param request body UpdateLeadRequest true "Lead update request; empty fields are left unchanged"
+// @Success 200 {object} utils.APIResponse{data=models.Lead} "Lead updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID or request data"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only update their own leads; only admins can reassign owners"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /leads/{id} [put]
 func (h *LeadHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Update")
 	
@@ -350,6 +408,23 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, updatedLead)
 }
 
+// Delete godoc
+// @Summary Delete a lead
+// @Description Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row; a converted lead's customer record is erased in the same transaction.
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Lead ID"
+// @Success 204 "No Content"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only delete their own leads"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /leads/{id} [delete]
 func (h *LeadHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Delete")
 	
@@ -388,18 +463,20 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 
 // ConvertToCustomer godoc
 // @Summary Convert lead to customer
-// @Description Convert a lead to a customer with additional customer information
+// @Description Convert a lead to a customer with additional customer information (admin or owning sales user only)
 // @Tags leads
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path int true "Lead ID"
 // @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Sales or Admin role required"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or lead already converted"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Lead already converted"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /leads/{id}/convert [post]
 func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {

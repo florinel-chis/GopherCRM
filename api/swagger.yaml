@@ -1,0 +1,4185 @@
+basePath: /api/v1
+definitions:
+  github_com_florinel-chis_gophercrm_internal_models.APIKey:
+    properties:
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      expires_at:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      last_used_at:
+        type: string
+      name:
+        type: string
+      prefix:
+        type: string
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+      user_id:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.Configuration:
+    properties:
+      category:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationCategory'
+      created_at:
+        type: string
+      default_value:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      id:
+        type: integer
+      is_read_only:
+        description: Read-only configs cannot be modified via API
+        type: boolean
+      is_system:
+        description: System configs cannot be deleted
+        type: boolean
+      key:
+        type: string
+      type:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationType'
+      updated_at:
+        type: string
+      valid_values:
+        description: JSON array of valid values for validation
+        type: string
+      value:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.ConfigurationCategory:
+    enum:
+    - general
+    - leads
+    - customers
+    - tickets
+    - tasks
+    - security
+    - integration
+    - ui
+    type: string
+    x-enum-varnames:
+    - CategoryGeneral
+    - CategoryLeads
+    - CategoryCustomers
+    - CategoryTickets
+    - CategoryTasks
+    - CategorySecurity
+    - CategoryIntegration
+    - CategoryUI
+  github_com_florinel-chis_gophercrm_internal_models.ConfigurationType:
+    enum:
+    - string
+    - boolean
+    - integer
+    - float
+    - json
+    - array
+    type: string
+    x-enum-varnames:
+    - ConfigTypeString
+    - ConfigTypeBoolean
+    - ConfigTypeInteger
+    - ConfigTypeFloat
+    - ConfigTypeJSON
+    - ConfigTypeArray
+  github_com_florinel-chis_gophercrm_internal_models.Customer:
+    properties:
+      address:
+        type: string
+      city:
+        type: string
+      company:
+        type: string
+      country:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: integer
+      last_name:
+        type: string
+      notes:
+        type: string
+      phone:
+        type: string
+      position:
+        type: string
+      postal_code:
+        type: string
+      state:
+        type: string
+      tickets:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Ticket'
+        type: array
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+      user_id:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.Lead:
+    properties:
+      classification:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadClassification'
+      company:
+        type: string
+      created_at:
+        type: string
+      customer:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+      customer_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      email:
+        type: string
+      external_id:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: integer
+      last_name:
+        type: string
+      notes:
+        type: string
+      owner:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+      owner_id:
+        type: integer
+      phone:
+        type: string
+      position:
+        type: string
+      source:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadStatus'
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.LeadClassification:
+    enum:
+    - unclassified
+    - test
+    - spam
+    - lead
+    - hot_lead
+    type: string
+    x-enum-varnames:
+    - LeadClassificationUnclassified
+    - LeadClassificationTest
+    - LeadClassificationSpam
+    - LeadClassificationLead
+    - LeadClassificationHotLead
+  github_com_florinel-chis_gophercrm_internal_models.LeadStatus:
+    enum:
+    - new
+    - contacted
+    - qualified
+    - unqualified
+    - converted
+    type: string
+    x-enum-varnames:
+    - LeadStatusNew
+    - LeadStatusContacted
+    - LeadStatusQualified
+    - LeadStatusUnqualified
+    - LeadStatusConverted
+  github_com_florinel-chis_gophercrm_internal_models.Task:
+    properties:
+      assigned_to:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+      assigned_to_id:
+        type: integer
+      created_at:
+        type: string
+      customer:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+      customer_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      due_date:
+        type: string
+      id:
+        type: integer
+      lead:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
+      lead_id:
+        type: integer
+      priority:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TaskPriority'
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TaskStatus'
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.TaskPriority:
+    enum:
+    - low
+    - medium
+    - high
+    type: string
+    x-enum-varnames:
+    - TaskPriorityLow
+    - TaskPriorityMedium
+    - TaskPriorityHigh
+  github_com_florinel-chis_gophercrm_internal_models.TaskStatus:
+    enum:
+    - pending
+    - in_progress
+    - completed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - TaskStatusPending
+    - TaskStatusInProgress
+    - TaskStatusCompleted
+    - TaskStatusCancelled
+  github_com_florinel-chis_gophercrm_internal_models.Ticket:
+    properties:
+      assigned_to:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+      assigned_to_id:
+        type: integer
+      created_at:
+        type: string
+      customer:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+      customer_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      id:
+        type: integer
+      priority:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketPriority'
+      resolution:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketStatus'
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.TicketPriority:
+    enum:
+    - low
+    - medium
+    - high
+    - urgent
+    type: string
+    x-enum-varnames:
+    - TicketPriorityLow
+    - TicketPriorityMedium
+    - TicketPriorityHigh
+    - TicketPriorityUrgent
+  github_com_florinel-chis_gophercrm_internal_models.TicketStatus:
+    enum:
+    - open
+    - in_progress
+    - resolved
+    - closed
+    type: string
+    x-enum-varnames:
+    - TicketStatusOpen
+    - TicketStatusInProgress
+    - TicketStatusResolved
+    - TicketStatusClosed
+  github_com_florinel-chis_gophercrm_internal_models.User:
+    properties:
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      last_login_at:
+        type: string
+      last_name:
+        type: string
+      locked_until:
+        type: string
+      role:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.UserRole:
+    enum:
+    - admin
+    - sales
+    - support
+    - customer
+    type: string
+    x-enum-varnames:
+    - RoleAdmin
+    - RoleSales
+    - RoleSupport
+    - RoleCustomer
+  github_com_florinel-chis_gophercrm_internal_utils.APIError:
+    properties:
+      code:
+        type: string
+      details: {}
+      message:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_utils.APIMeta:
+    properties:
+      page:
+        type: integer
+      per_page:
+        type: integer
+      request_id:
+        type: string
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_utils.APIResponse:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+      meta:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+      success:
+        type: boolean
+    type: object
+  gorm.DeletedAt:
+    properties:
+      time:
+        type: string
+      valid:
+        description: Valid is true if Time is not NULL
+        type: boolean
+    type: object
+  internal_handler.AuthResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+    type: object
+  internal_handler.ConvertLeadRequest:
+    properties:
+      address:
+        type: string
+      company_name:
+        type: string
+      notes:
+        type: string
+      website:
+        type: string
+    type: object
+  internal_handler.CreateAPIKeyRequest:
+    properties:
+      name:
+        maxLength: 100
+        minLength: 3
+        type: string
+    required:
+    - name
+    type: object
+  internal_handler.CreateAPIKeyResponse:
+    properties:
+      api_key:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.APIKey'
+      key:
+        type: string
+    type: object
+  internal_handler.CreateCustomerRequest:
+    properties:
+      address:
+        type: string
+      city:
+        type: string
+      company:
+        type: string
+      country:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      notes:
+        type: string
+      phone:
+        type: string
+      position:
+        type: string
+      postal_code:
+        type: string
+      state:
+        type: string
+    required:
+    - email
+    - first_name
+    - last_name
+    type: object
+  internal_handler.CreateLeadRequest:
+    properties:
+      classification:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadClassification'
+        enum:
+        - unclassified
+        - test
+        - spam
+        - lead
+        - hot_lead
+      company:
+        type: string
+      created_at:
+        description: ISO8601 timestamp for import
+        type: string
+      email:
+        type: string
+      external_id:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      notes:
+        type: string
+      owner_id:
+        type: integer
+      phone:
+        type: string
+      position:
+        type: string
+      source:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadStatus'
+        enum:
+        - new
+        - contacted
+        - qualified
+        - unqualified
+        - converted
+    required:
+    - email
+    - first_name
+    - last_name
+    type: object
+  internal_handler.CreateTaskRequest:
+    properties:
+      assigned_to_id:
+        type: integer
+      customer_id:
+        type: integer
+      description:
+        type: string
+      due_date:
+        type: string
+      lead_id:
+        type: integer
+      priority:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TaskPriority'
+        enum:
+        - low
+        - medium
+        - high
+      title:
+        type: string
+    required:
+    - assigned_to_id
+    - title
+    type: object
+  internal_handler.CreateTicketRequest:
+    properties:
+      assigned_to_id:
+        type: integer
+      customer_id:
+        type: integer
+      description:
+        type: string
+      priority:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketPriority'
+        enum:
+        - low
+        - medium
+        - high
+        - urgent
+      title:
+        type: string
+    required:
+    - customer_id
+    - description
+    - title
+    type: object
+  internal_handler.CreateUserRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      password:
+        minLength: 10
+        type: string
+      role:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
+        enum:
+        - admin
+        - sales
+        - support
+        - customer
+    required:
+    - email
+    - first_name
+    - last_name
+    - password
+    - role
+    type: object
+  internal_handler.DashboardStats:
+    properties:
+      conversion_rate:
+        type: number
+      open_tickets:
+        type: integer
+      pending_tasks:
+        type: integer
+      total_customers:
+        type: integer
+      total_leads:
+        type: integer
+    type: object
+  internal_handler.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+      remember_me:
+        type: boolean
+    required:
+    - email
+    - password
+    type: object
+  internal_handler.RegisterRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      password:
+        minLength: 10
+        type: string
+    required:
+    - email
+    - first_name
+    - last_name
+    - password
+    type: object
+  internal_handler.SetConfigurationRequest:
+    properties:
+      value: {}
+    required:
+    - value
+    type: object
+  internal_handler.UpdateCustomerRequest:
+    properties:
+      address:
+        type: string
+      city:
+        type: string
+      company:
+        type: string
+      country:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      notes:
+        type: string
+      phone:
+        type: string
+      position:
+        type: string
+      postal_code:
+        type: string
+      state:
+        type: string
+    type: object
+  internal_handler.UpdateLeadRequest:
+    properties:
+      classification:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadClassification'
+        enum:
+        - unclassified
+        - test
+        - spam
+        - lead
+        - hot_lead
+      company:
+        type: string
+      email:
+        type: string
+      external_id:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      notes:
+        type: string
+      owner_id:
+        type: integer
+      phone:
+        type: string
+      position:
+        type: string
+      source:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.LeadStatus'
+        enum:
+        - new
+        - contacted
+        - qualified
+        - unqualified
+        - converted
+    type: object
+  internal_handler.UpdateMeRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      password:
+        minLength: 10
+        type: string
+    type: object
+  internal_handler.UpdateTaskRequest:
+    properties:
+      assigned_to_id:
+        type: integer
+      customer_id:
+        type: integer
+      description:
+        type: string
+      due_date:
+        type: string
+      lead_id:
+        type: integer
+      priority:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TaskPriority'
+        enum:
+        - low
+        - medium
+        - high
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TaskStatus'
+        enum:
+        - pending
+        - in_progress
+        - completed
+        - cancelled
+      title:
+        type: string
+    type: object
+  internal_handler.UpdateTicketRequest:
+    properties:
+      assigned_to_id:
+        type: integer
+      description:
+        type: string
+      priority:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketPriority'
+        enum:
+        - low
+        - medium
+        - high
+        - urgent
+      resolution:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketStatus'
+        enum:
+        - open
+        - in_progress
+        - resolved
+        - closed
+      title:
+        type: string
+    type: object
+  internal_handler.UpdateUserRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      is_active:
+        type: boolean
+      last_name:
+        type: string
+      role:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
+        enum:
+        - admin
+        - sales
+        - support
+        - customer
+    type: object
+info:
+  contact: {}
+  description: CRM API for managing users, leads, customers, tickets, tasks and API
+    keys.
+  title: GopherCRM API
+  version: "1.0"
+paths:
+  /api-keys:
+    get:
+      description: List the API keys owned by the authenticated user. Scoped to the
+        caller's own keys only — there is no admin-wide view and no pagination or
+        filtering. Revoked (inactive) keys are included; the plaintext key is never
+        returned, only its prefix.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API keys retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.APIKey'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List API keys
+      tags:
+      - api-keys
+    post:
+      consumes:
+      - application/json
+      description: Create an API key for the authenticated user. The plaintext key
+        is returned only in this response — only its HMAC hash is stored, so it can
+        never be retrieved again. Any authenticated role may create a key, and the
+        key always belongs to the caller.
+      parameters:
+      - description: API key creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: API key created successfully; contains the plaintext key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.CreateAPIKeyResponse'
+              type: object
+        "400":
+          description: Invalid request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new API key
+      tags:
+      - api-keys
+  /api-keys/{id}:
+    delete:
+      description: |-
+        Revoke an API key by marking it inactive; the row is kept, not deleted. Only the owner of the key may revoke it — there is no admin override, and a key belonging to another user is rejected with 403.
+        Note: a well-formed ID that matches no key currently surfaces as 500, not 404, because the repository returns gorm.ErrRecordNotFound while the handler tests for a different message.
+      parameters:
+      - description: API key ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API key revoked successfully
+          schema:
+            $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+        "400":
+          description: Invalid API key ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - the API key belongs to another user
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Revoke an API key
+      tags:
+      - api-keys
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Exchange email and password for a JWT bearer token and the authenticated
+        user. After 5 consecutive failed attempts the account is locked for 15 minutes;
+        while locked, and for a deactivated account, the response is the same 401
+        with the same generic message as a wrong password, so no account state is
+        disclosed. The remember_me field is accepted but does not currently alter
+        the token's lifetime.
+      parameters:
+      - description: Login request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Authenticated; JWT and user returned
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.AuthResponse'
+              type: object
+        "400":
+          description: Malformed body or failed field validation
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Invalid email or password, account locked, or account deactivated
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Rate limit exceeded (10 requests per minute per IP)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Authenticate and obtain a JWT
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Public self-service registration. The account is always created
+        with the customer role — the request body carries no role field and no client
+        input can influence it. Elevated roles are assignable only through the admin-guarded
+        POST /users endpoint. On success a JWT for the new account is returned alongside
+        the user. The password must be at least 10 characters and contain an uppercase
+        letter, a lowercase letter, a digit and a special character.
+      parameters:
+      - description: Registration request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Account created; JWT and user returned
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.AuthResponse'
+              type: object
+        "400":
+          description: Malformed body, failed field validation, or password complexity
+            not met
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: A user with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Rate limit exceeded (10 requests per minute per IP)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Register a new account
+      tags:
+      - auth
+  /configurations:
+    get:
+      description: Retrieve every configuration entry, ordered by category and key
+        (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configurations retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    configurations:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+                      type: array
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List all configurations
+      tags:
+      - configurations
+  /configurations/{key}:
+    get:
+      description: Retrieve a single configuration entry by its key (admin only)
+      parameters:
+      - description: Configuration key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configuration retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Configuration not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a configuration by key
+      tags:
+      - configurations
+    put:
+      consumes:
+      - application/json
+      description: Set the value of an existing configuration and return the updated
+        entry (admin only). Read-only configurations are rejected, as are values outside
+        the entry's valid_values constraint.
+      parameters:
+      - description: Configuration key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: New configuration value
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.SetConfigurationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configuration updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+              type: object
+        "400":
+          description: Invalid request data, read-only configuration, or invalid value
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Configuration not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a configuration value
+      tags:
+      - configurations
+  /configurations/{key}/reset:
+    post:
+      description: Restore a configuration's value from its stored default and return
+        the updated entry (admin only). Read-only configurations are rejected. An
+        unknown key currently surfaces as 500 rather than 404.
+      parameters:
+      - description: Configuration key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configuration reset successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+              type: object
+        "400":
+          description: Configuration is read-only
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error, including an unknown configuration key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Reset a configuration to its default value
+      tags:
+      - configurations
+  /configurations/category/{category}:
+    get:
+      description: Retrieve all configurations belonging to a category (admin only).
+        An unrecognised category yields an empty list rather than an error.
+      parameters:
+      - description: Configuration category
+        enum:
+        - general
+        - leads
+        - customers
+        - tickets
+        - tasks
+        - security
+        - integration
+        - ui
+        in: path
+        name: category
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configurations retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    configurations:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+                      type: array
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List configurations in a category
+      tags:
+      - configurations
+  /configurations/ui:
+    get:
+      description: 'Retrieve the configurations the frontend is allowed to read: the
+        whole ui category, general.company_name, and a synthetic leads.conversion.allowed_statuses
+        entry. Available to any authenticated user.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configurations retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    configurations:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
+                      type: array
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List UI-safe configurations
+      tags:
+      - configurations
+  /customers:
+    get:
+      description: List customers with pagination, optional search and sorting. Admin,
+        sales and support roles see the same unfiltered set; the customer role is
+        rejected outright and has no view of its own record here.
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset, ignored when page is supplied
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column; ignored unless one of the allowed values
+        enum:
+        - created_at
+        - updated_at
+        - first_name
+        - last_name
+        - email
+        - company
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction; anything else falls back to asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      - description: Free-text search across customer fields; takes precedence over
+          sort_by
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Customers retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    customers:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+                      type: array
+                    total:
+                      type: integer
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, Sales or Support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List customers
+      tags:
+      - customers
+    post:
+      consumes:
+      - application/json
+      description: Create a new customer (admin and sales roles only)
+      parameters:
+      - description: Customer creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateCustomerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Customer created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+              type: object
+        "400":
+          description: Invalid request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or Sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: Customer with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new customer
+      tags:
+      - customers
+  /customers/{id}:
+    delete:
+      description: 'Irreversibly erase a customer (admin role only). This is a GDPR
+        Article 17 erasure, not a reversible archive: every personal field is overwritten
+        in place — the email is replaced by an unrelated random address in the reserved
+        .invalid domain — and the row is then soft-deleted so foreign keys from tickets
+        and tasks still resolve. If the customer originated from a converted lead,
+        that lead is erased in the same transaction. Use deactivation instead when
+        the data must be recoverable.'
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid customer ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Erasure failed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Erase a customer
+      tags:
+      - customers
+    get:
+      description: Retrieve a single customer. Admin, sales and support roles may
+        read any customer; the customer role is rejected and cannot read its own record
+        through this endpoint.
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Customer retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+              type: object
+        "400":
+          description: Invalid customer ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, Sales or Support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a customer by ID
+      tags:
+      - customers
+    put:
+      consumes:
+      - application/json
+      description: Update a customer (admin and sales roles only). Only non-empty
+        fields in the request are applied; empty fields leave the stored value unchanged.
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Customer update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateCustomerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Customer updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+              type: object
+        "400":
+          description: Invalid customer ID or request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or Sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: Customer with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a customer
+      tags:
+      - customers
+  /customers/{id}/tickets:
+    get:
+      description: List the tickets belonging to one customer. Admin, sales and support
+        users may query any customer; a customer user may only query the customer
+        record linked to their own account. The response data is an object with a
+        "tickets" array and a "total" count, alongside pagination metadata.
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - default: 0
+        description: Result offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tickets retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: Invalid customer ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - customers can only view their own tickets
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tickets for a customer
+      tags:
+      - tickets
+  /dashboard/stats:
+    get:
+      description: 'Aggregate counts for the dashboard: total leads, total customers,
+        open tickets and pending tasks, plus a conversion rate computed as customers
+        / leads * 100 (0 when there are no leads). The route carries no role guard,
+        so every authenticated role - admin, sales, support and customer alike - receives
+        the same unscoped, system-wide totals; nothing is filtered to the caller''s
+        own records.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Dashboard statistics retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.DashboardStats'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get dashboard statistics
+      tags:
+      - dashboard
+  /leads:
+    get:
+      consumes:
+      - application/json
+      description: List leads (sales and admin roles only). Sales users see only leads
+        they own, and the search, classification and sort parameters are ignored for
+        them. Admins see all leads.
+      parameters:
+      - description: Page number (1-based); overrides offset when greater than 0
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Search across lead fields (admin listing only)
+        in: query
+        name: search
+        type: string
+      - description: Filter by classification (admin listing only)
+        enum:
+        - unclassified
+        - test
+        - spam
+        - lead
+        - hot_lead
+        in: query
+        name: classification
+        type: string
+      - description: Sort column (admin listing only)
+        enum:
+        - created_at
+        - updated_at
+        - first_name
+        - last_name
+        - email
+        - company
+        - status
+        - classification
+        - source
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Leads list; data contains a leads array and a total count
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - requires sales or admin role
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List leads
+      tags:
+      - leads
+    post:
+      consumes:
+      - application/json
+      description: Create a new lead (sales and admin roles only)
+      parameters:
+      - description: Lead creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateLeadRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Lead created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
+              type: object
+        "400":
+          description: Invalid request data, or missing owner_id for admin users
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - requires sales or admin role; sales users can only
+            assign leads to themselves
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new lead
+      tags:
+      - leads
+  /leads/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a lead by ID (admin or owning sales user only). Deletion
+        irreversibly erases the lead's personal data before soft-deleting the row;
+        a converted lead's customer record is erased in the same transaction.
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid lead ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - sales users can only delete their own leads
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Lead not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a lead
+      tags:
+      - leads
+    get:
+      consumes:
+      - application/json
+      description: Get a lead by ID (sales and admin roles only; sales users can only
+        view their own leads)
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lead retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
+              type: object
+        "400":
+          description: Invalid lead ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - requires sales or admin role; sales users can only
+            view their own leads
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Lead not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a lead
+      tags:
+      - leads
+    put:
+      consumes:
+      - application/json
+      description: Update a lead by ID (sales and admin roles only; sales users can
+        only update their own leads, and only admins can reassign the owner)
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lead update request; empty fields are left unchanged
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateLeadRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lead updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
+              type: object
+        "400":
+          description: Invalid lead ID or request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - sales users can only update their own leads; only
+            admins can reassign owners
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Lead not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a lead
+      tags:
+      - leads
+  /leads/{id}/convert:
+    post:
+      consumes:
+      - application/json
+      description: Convert a lead to a customer with additional customer information
+        (admin or owning sales user only)
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lead conversion request with customer details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.ConvertLeadRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lead converted to customer successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
+              type: object
+        "400":
+          description: Invalid request data, or lead already converted
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - requires sales or admin role; sales users can only
+            convert their own leads
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Lead not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Convert lead to customer
+      tags:
+      - leads
+  /tasks:
+    get:
+      description: List tasks with page-based pagination. Admins see all tasks and
+        may use search and sorting; every other role is silently narrowed to the tasks
+        assigned to them, and the search, sort_by and sort_order parameters are ignored
+        for them.
+      parameters:
+      - default: 1
+        description: Page number (1-based); non-numeric or non-positive values fall
+          back to 1
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size; values outside 1-100 fall back to 20
+        in: query
+        name: per_page
+        type: integer
+      - description: Sort column; ignored unless one of the allowed values, and ignored
+          entirely for non-admin callers
+        enum:
+        - created_at
+        - updated_at
+        - title
+        - status
+        - priority
+        - due_date
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction; anything else falls back to asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      - description: Free-text search across task fields; admin only, and takes precedence
+          over sort_by
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tasks retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    tasks:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Task'
+                      type: array
+                    total:
+                      type: integer
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tasks
+      tags:
+      - tasks
+    post:
+      consumes:
+      - application/json
+      description: Create a new task (admin, support and sales roles only). Non-admin
+        callers may only assign the task to themselves; admins may assign it to any
+        active user. A task may reference a lead or a customer, but not both. The
+        new task always starts in status "pending" regardless of the request body.
+      parameters:
+      - description: Task creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Task created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Task'
+              type: object
+        "400":
+          description: Invalid request data, assignee is deactivated, or task links
+            both a lead and a customer
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, support or sales role required, or non-admin
+            assigning to another user
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Assignee, lead or customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new task
+      tags:
+      - tasks
+  /tasks/{id}:
+    delete:
+      description: Delete a task (admin role only). The role check runs before the
+        ID is parsed, so non-admins always receive 403. Any failure while deleting
+        is reported as 404.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid task ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Task not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a task
+      tags:
+      - tasks
+    get:
+      description: Retrieve a single task. Admins can view any task; every other role
+        can only view tasks assigned to them.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Task retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Task'
+              type: object
+        "400":
+          description: Invalid task ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Task is not assigned to you
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Task not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a task by ID
+      tags:
+      - tasks
+    put:
+      consumes:
+      - application/json
+      description: Partially update a task; only the fields present in the request
+        body are applied. Admins can update any task; every other role can only update
+        tasks assigned to them. Only admins may change assigned_to_id (sending the
+        current assignee back unchanged is not treated as a reassignment). A task
+        that is already completed cannot be moved to another status, and a task cannot
+        reference both a lead and a customer.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Task update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Task updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Task'
+              type: object
+        "400":
+          description: Invalid task ID, invalid request data, assignee is deactivated,
+            task links both a lead and a customer, or the task is already completed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Task is not assigned to you, or only admins can
+            reassign tasks
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Task, assignee, lead or customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a task
+      tags:
+      - tasks
+  /tasks/my:
+    get:
+      description: List the tasks assigned to the authenticated user, with page-based
+        pagination. Available to every authenticated role, including admins, who also
+        see only their own tasks here. Sorting and search are not supported on this
+        endpoint.
+      parameters:
+      - default: 1
+        description: Page number (1-based); non-numeric or non-positive values fall
+          back to 1
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size; values outside 1-100 fall back to 20
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tasks retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    tasks:
+                      items:
+                        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Task'
+                      type: array
+                    total:
+                      type: integer
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tasks assigned to the current user
+      tags:
+      - tasks
+  /tickets:
+    get:
+      description: List all tickets with pagination, optional free-text search and
+        sorting. Admin, sales and support users all see every ticket; customer users
+        are rejected. The response data is an object with a "tickets" array and a
+        "total" count, alongside pagination metadata.
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset, ignored when page is supplied
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column; ignored unless one of the allowed values
+        enum:
+        - created_at
+        - updated_at
+        - title
+        - status
+        - priority
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction; anything else falls back to asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      - description: Free-text search across ticket fields; takes precedence over
+          the plain sorted listing
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tickets retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - customers cannot list all tickets
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tickets
+      tags:
+      - tickets
+    post:
+      consumes:
+      - application/json
+      description: Create a support ticket. Only support and admin users may create
+        tickets; sales and customer users are rejected. When assigned_to_id is omitted
+        the ticket is assigned to the caller. The assignee, if given, must exist and
+        hold the support or admin role.
+      parameters:
+      - description: Ticket creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Ticket created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Ticket'
+              type: object
+        "400":
+          description: Invalid request data, unknown assignee, or assignee is not
+            a support/admin user
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Support or Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Customer not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new ticket
+      tags:
+      - tickets
+  /tickets/{id}:
+    delete:
+      description: Delete a ticket (admin role only). Any failure to delete an existing
+        ticket is also reported as 404.
+      parameters:
+      - description: Ticket ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ticket ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Ticket not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a ticket
+      tags:
+      - tickets
+    get:
+      description: Retrieve a single ticket. Admin and sales users may read any ticket;
+        support users may only read tickets assigned to them; customer users may only
+        read tickets belonging to the customer record linked to their account.
+      parameters:
+      - description: Ticket ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ticket retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Ticket'
+              type: object
+        "400":
+          description: Invalid ticket ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - the ticket is outside the caller's scope
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Ticket not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a ticket by ID
+      tags:
+      - tickets
+    put:
+      consumes:
+      - application/json
+      description: Update a ticket. Customer users are rejected outright; support
+        users may only update tickets assigned to them; admin and sales users may
+        update any ticket. Only non-empty fields are applied. A closed ticket cannot
+        be moved back to another status, and a new assignee must exist and hold the
+        support or admin role.
+      parameters:
+      - description: Ticket ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Ticket update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ticket updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Ticket'
+              type: object
+        "400":
+          description: Invalid ticket ID, invalid request data, attempt to reopen
+            a closed ticket, unknown assignee, or assignee is not a support/admin
+            user
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - customers cannot update tickets and support users
+            only their own assignments
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Ticket not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a ticket
+      tags:
+      - tickets
+  /tickets/my:
+    get:
+      description: List the tickets assigned to the authenticated user. Customer users
+        are rejected because tickets are never assigned to them; sales users are allowed
+        through but will always get an empty list, since only support and admin users
+        can be assignees. The response data is an object with a "tickets" array and
+        a "total" count, alongside pagination metadata.
+      parameters:
+      - default: 0
+        description: Result offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tickets retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  type: object
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - customers cannot have tickets assigned to them
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tickets assigned to the current user
+      tags:
+      - tickets
+  /users:
+    get:
+      description: List users with pagination, optional search and sorting (admin
+        role only)
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset, ignored when page is supplied
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column; ignored unless one of the allowed values
+        enum:
+        - created_at
+        - updated_at
+        - email
+        - first_name
+        - last_name
+        - role
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction; anything else falls back to asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      - description: Free-text search across user fields; takes precedence over sort_by
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Users retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Create a new user with any role (admin role only). Unlike the public
+        /auth/register endpoint, this one honours the requested role.
+      parameters:
+      - description: User creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: User created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+              type: object
+        "400":
+          description: Invalid request data, password does not meet complexity requirements,
+            or user could not be created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: User with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a new user
+      tags:
+      - users
+  /users/{id}:
+    delete:
+      description: 'Delete a user (admin role only). This is a GDPR Article 17 erasure
+        and is IRREVERSIBLE: every personal field is overwritten in place — the email
+        is replaced with a random address in the reserved .invalid domain, the names
+        are blanked and the password hash is made unusable — before the row is soft-deleted,
+        and the user''s API keys and refresh tokens are purged so no credential outlives
+        the account. The row itself is kept so foreign keys from tickets, tasks and
+        leads still resolve. To suspend someone reversibly, set is_active to false
+        via the update endpoint instead. Admins cannot delete their own account.'
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid user ID or attempt to delete your own account
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: User not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a user (irreversible erasure of personal data)
+      tags:
+      - users
+    get:
+      description: Retrieve a single user. Any authenticated user may fetch their
+        own record; fetching another user's record requires the admin role.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+              type: object
+        "400":
+          description: Invalid user ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - you can only view your own profile unless you are
+            an admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: User not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a user by ID
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update a user. Any authenticated user may update their own record;
+        updating another user's record requires the admin role. The role and is_active
+        fields are applied only for admins and silently ignored for everyone else.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+              type: object
+        "400":
+          description: Invalid user ID or request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - you can only update your own profile unless you
+            are an admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: User with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error, including when the user does not exist
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a user
+      tags:
+      - users
+  /users/me:
+    get:
+      description: Retrieve the profile of the currently authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: User not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get the current user
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update the profile of the currently authenticated user. Only email,
+        name and password can be changed here — role and active status are not settable
+        through this endpoint.
+      parameters:
+      - description: Profile update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateMeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+              type: object
+        "400":
+          description: Invalid request data or password does not meet complexity requirements
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: User with this email already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update the current user
+      tags:
+      - users
+securityDefinitions:
+  ApiKeyAuth:
+    description: API key issued via POST /api-keys. The plaintext key is shown only
+      once at creation.
+    in: header
+    name: ApiKey
+    type: apiKey
+  BearerAuth:
+    description: 'JWT access token. Format: "Bearer {token}"'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

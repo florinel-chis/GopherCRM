@@ -8,6 +8,7 @@ help:
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
+	@echo "  make swagger      - Regenerate api/swagger.json and api/swagger.yaml"
 
 .PHONY: create-db
 create-db:
@@ -44,3 +45,7 @@ create-admin:
 .PHONY: build-tools
 build-tools:
 	go build -o bin/create-admin cmd/create-admin/main.go
+
+.PHONY: swagger
+swagger:
+	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/main.go --output api --outputTypes json,yaml --parseDependency

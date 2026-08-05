@@ -20,6 +20,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// @title GopherCRM API
+// @version 1.0
+// @description CRM API for managing users, leads, customers, tickets, tasks and API keys.
+// @BasePath /api/v1
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description JWT access token. Format: "Bearer {token}"
+
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name ApiKey
+// @description API key issued via POST /api-keys. The plaintext key is shown only once at creation.
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {

@@ -37,6 +37,18 @@ type DashboardStats struct {
 	ConversionRate float64 `json:"conversion_rate"`
 }
 
+// GetStats godoc
+// @Summary Get dashboard statistics
+// @Description Aggregate counts for the dashboard: total leads, total customers, open tickets and pending tasks, plus a conversion rate computed as customers / leads * 100 (0 when there are no leads). The route carries no role guard, so every authenticated role - admin, sales, support and customer alike - receives the same unscoped, system-wide totals; nothing is filtered to the caller's own records.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.APIResponse{data=DashboardStats} "Dashboard statistics retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /dashboard/stats [get]
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetStats")
 

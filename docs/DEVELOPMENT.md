@@ -257,6 +257,8 @@ database does not reach either, so log retention needs its own policy.
 ## API Reference
 
 The REST surface is enumerated in the [README](../README.md#api-documentation). A generated
-OpenAPI/Swagger spec is checked in under `docs/swagger.json` and `docs/swagger.yaml`; it is not
-currently served by the application, so treat the router in `internal/handler/` as the source of
-truth when the two disagree.
+Swagger 2.0 spec is checked in under `api/swagger.json` and `api/swagger.yaml`, built from the swag
+annotations on the handlers and the general block in `cmd/main.go`. Regenerate it with
+`make swagger` (runs the pinned swag CLI via `go run`) after changing a handler or a route; the spec
+is not served by the application, and the router in `internal/handler/` remains the source of truth
+when the two disagree.

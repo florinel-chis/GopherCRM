@@ -42,6 +42,23 @@ type UpdateTicketRequest struct {
 	Resolution   string                  `json:"resolution,omitempty"`
 }
 
+// Create godoc
+// @Summary Create a new ticket
+// @Description Create a support ticket. Only support and admin users may create tickets; sales and customer users are rejected. When assigned_to_id is omitted the ticket is assigned to the caller. The assignee, if given, must exist and hold the support or admin role.
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body CreateTicketRequest true "Ticket creation request"
+// @Success 201 {object} utils.APIResponse{data=models.Ticket} "Ticket created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, unknown assignee, or assignee is not a support/admin user"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Support or Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets [post]
 func (h *TicketHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Create")
 
@@ -90,6 +107,25 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, ticket)
 }
 
+// List godoc
+// @Summary List tickets
+// @Description List all tickets with pagination, optional free-text search and sorting. Admin, sales and support users all see every ticket; customer users are rejected. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); when supplied it overrides offset"
+// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
+// @Param limit query int false "Page size, capped at 100" default(20)
+// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, title, status, priority)
+// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Free-text search across ticket fields; takes precedence over the plain sorted listing"
+// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot list all tickets"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets [get]
 func (h *TicketHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.List")
 
@@ -162,6 +198,23 @@ func (h *TicketHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// ListByCustomer godoc
+// @Summary List tickets for a customer
+// @Description List the tickets belonging to one customer. Admin, sales and support users may query any customer; a customer user may only query the customer record linked to their own account. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Customer ID"
+// @Param offset query int false "Result offset" default(0)
+// @Param limit query int false "Page size, capped at 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers can only view their own tickets"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers/{id}/tickets [get]
 func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListByCustomer")
 	
@@ -207,6 +260,21 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// ListMyTickets godoc
+// @Summary List tickets assigned to the current user
+// @Description List the tickets assigned to the authenticated user. Customer users are rejected because tickets are never assigned to them; sales users are allowed through but will always get an empty list, since only support and admin users can be assignees. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param offset query int false "Result offset" default(0)
+// @Param limit query int false "Page size, capped at 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot have tickets assigned to them"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets/my [get]
 func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListMyTickets")
 	
@@ -241,6 +309,21 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// Get godoc
+// @Summary Get a ticket by ID
+// @Description Retrieve a single ticket. Admin and sales users may read any ticket; support users may only read tickets assigned to them; customer users may only read tickets belonging to the customer record linked to their account.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Ticket ID"
+// @Success 200 {object} utils.APIResponse{data=models.Ticket} "Ticket retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the ticket is outside the caller's scope"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /tickets/{id} [get]
 func (h *TicketHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Get")
 	
@@ -293,6 +376,24 @@ func (h *TicketHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, ticket)
 }
 
+// Update godoc
+// @Summary Update a ticket
+// @Description Update a ticket. Customer users are rejected outright; support users may only update tickets assigned to them; admin and sales users may update any ticket. Only non-empty fields are applied. A closed ticket cannot be moved back to another status, and a new assignee must exist and hold the support or admin role.
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Ticket ID"
+// @Param request body UpdateTicketRequest true "Ticket update request"
+// @Success 200 {object} utils.APIResponse{data=models.Ticket} "Ticket updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID, invalid request data, attempt to reopen a closed ticket, unknown assignee, or assignee is not a support/admin user"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot update tickets and support users only their own assignments"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets/{id} [put]
 func (h *TicketHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Update")
 	
@@ -368,6 +469,21 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, ticket)
 }
 
+// Delete godoc
+// @Summary Delete a ticket
+// @Description Delete a ticket (admin role only). Any failure to delete an existing ticket is also reported as 404.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Ticket ID"
+// @Success 204 "No Content"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /tickets/{id} [delete]
 func (h *TicketHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Delete")
 	

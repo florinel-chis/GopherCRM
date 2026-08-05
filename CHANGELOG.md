@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `src/routes/index.test.tsx`, `src/pages/auth/Register.validation.test.tsx`).
 - `gocrm-ui/e2e/global-setup.ts` provisions the E2E admin account through the `create-admin` CLI,
   since registration can no longer create an admin.
+- A regenerable Swagger 2.0 spec at `api/swagger.json` / `api/swagger.yaml`, built by `make swagger`
+  from swag annotations now covering all 43 routed operations. Status codes, permission rules and
+  response shapes were derived from the actual code paths, including the unflattering ones (see the
+  API-defects list in `docs/ROADMAP.md`).
 
 ### Changed
 
@@ -56,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "remember me" is selected.
 - The registration form's validation now mirrors the server password policy: minimum 10 characters
   with an uppercase letter, a lowercase letter, a digit and a special character.
+- The hand-written documentation moved from `doc/` into `docs/`; there is now a single
+  documentation directory.
+- Password fields in register and user create/update requests declare `min=10` at binding time,
+  matching the complexity rule that was already enforced afterwards. 8–9 character passwords were
+  always rejected; they are now rejected at validation with an accurate message (and the generated
+  spec no longer claims a minimum of 8).
+- The old generated `docs/` Swagger package (`docs.go`, `models.go`, `swagger.json`,
+  `swagger.yaml`) is gone, along with the direct `swaggo/swag` dependency — it was generated in
+  March, imported by nothing, and documented removed behaviour (a client-supplied `role` on
+  register, a CSRF token on login). The CLI now runs via `go run` pinned in the Makefile.
 - Backend statement coverage is now 46.9% (measured with
   `-coverpkg=./internal/...,./cmd/...`), up from a previously reported 41.3%. The frontend suite is
   now 142 tests across 16 files, all passing, up from a previously reported 100 passing with 11
