@@ -43,4 +43,4 @@ create-admin:
 
 .PHONY: build-tools
 build-tools:
-	go build -o bin/.create-admin cmd/create-admin/main.go
+	go build -o bin/create-admin cmd/create-admin/main.go
