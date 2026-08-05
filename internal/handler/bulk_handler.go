@@ -201,8 +201,7 @@ func (h *BulkHandler) GetBulkOperation(c *gin.Context) {
 func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.ListBulkOperations")
 	
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, limit := utils.ParseOffsetLimit(c)
 	
 	if limit > 100 {
 		limit = 100

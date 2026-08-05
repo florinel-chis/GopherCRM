@@ -85,7 +85,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	if err := h.customerService.Create(customer); err != nil {
 		logger.WithError(err).Error("Failed to create customer")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
-			utils.RespondBadRequest(c, "customer with this email already exists")
+			utils.RespondConflict(c, "customer with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}
@@ -111,12 +111,7 @@ func (h *CustomerHandler) List(c *gin.Context) {
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	offset, limit := utils.ParseOffsetLimit(c)
 
 	// Convert page to offset if page is provided
 	if page > 0 {
@@ -278,7 +273,7 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	if err := h.customerService.Update(customer); err != nil {
 		logger.WithError(err).Error("Failed to update customer")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
-			utils.RespondBadRequest(c, "customer with this email already exists")
+			utils.RespondConflict(c, "customer with this email already exists")
 		} else {
 			utils.RespondInternalError(c)
 		}
@@ -307,8 +302,16 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.customerService.Delete(uint(id)); err != nil {
+		// Only the not-found sentinel means "there was nobody to erase". Any
+		// other error is a failed erasure and must surface as a 500, so an
+		// operator never records a completed erasure that did not happen.
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(err).Warn("Customer not found")
+			utils.RespondNotFound(c, "Customer not found")
+			return
+		}
 		logger.WithError(err).Error("Failed to delete customer")
-		utils.RespondNotFound(c, "Customer not found")
+		utils.RespondInternalError(c)
 		return
 	}
 

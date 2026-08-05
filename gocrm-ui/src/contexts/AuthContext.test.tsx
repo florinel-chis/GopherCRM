@@ -109,8 +109,8 @@ describe('AuthContext', () => {
       });
     });
 
-    expect(apiClient.setToken).toHaveBeenCalledWith('test-token');
-    expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token');
+    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', true);
+    expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', true);
     expect(result.current.user).toEqual(mockUser);
     expect(localStorage.getItem('remember_me')).toBe('true');
   });

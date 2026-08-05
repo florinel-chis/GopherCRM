@@ -115,7 +115,7 @@ export const Component: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: leadsApi.deleteLead,
+    mutationFn: (id: number) => leadsApi.deleteLead(id),
     onSuccess: () => {
       showSuccess('Lead deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['leads'] });

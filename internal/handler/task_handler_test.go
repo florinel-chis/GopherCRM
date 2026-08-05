@@ -393,6 +393,117 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminReassign_Forbidden() {
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
 }
 
+// Regression test: a non-admin updating their own task while echoing back the
+// current assigned_to_id must not be treated as a reassignment attempt.
+func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminSameAssignee_Success() {
+	// Set user as non-admin
+	suite.router = gin.New()
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleSales))
+		c.Next()
+	})
+	SetupTaskRoutes(suite.router.Group(""), suite.handler)
+
+	taskID := uint(1)
+	existingTask := &models.Task{
+		Title:        "Original Task",
+		AssignedToID: 1,
+		Status:       models.TaskStatusPending,
+	}
+	existingTask.ID = taskID
+
+	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
+	suite.mockService.On("Update", mock.MatchedBy(func(t *models.Task) bool {
+		return t.ID == taskID && t.Title == "Updated Task" && t.AssignedToID == uint(1)
+	})).Return(nil)
+
+	updateData := map[string]interface{}{
+		"title":          "Updated Task",
+		"assigned_to_id": 1, // Same as current assignee - not a reassignment
+	}
+	body, _ := json.Marshal(updateData)
+	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminDifferentAssignee_Forbidden() {
+	// Set user as non-admin
+	suite.router = gin.New()
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleSales))
+		c.Next()
+	})
+	SetupTaskRoutes(suite.router.Group(""), suite.handler)
+
+	taskID := uint(1)
+	existingTask := &models.Task{
+		Title:        "Original Task",
+		AssignedToID: 1,
+		Status:       models.TaskStatusPending,
+	}
+	existingTask.ID = taskID
+
+	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
+
+	updateData := map[string]interface{}{
+		"title":          "Updated Task",
+		"assigned_to_id": 3, // Actual reassignment attempt
+	}
+	body, _ := json.Marshal(updateData)
+	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
+}
+
+func (suite *TaskHandlerTestSuite) TestUpdateTask_AdminReassign_Success() {
+	taskID := uint(1)
+	existingTask := &models.Task{
+		Title:        "Original Task",
+		AssignedToID: 1,
+		Status:       models.TaskStatusPending,
+	}
+	existingTask.ID = taskID
+
+	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
+	suite.mockService.On("Update", mock.MatchedBy(func(t *models.Task) bool {
+		return t.ID == taskID && t.AssignedToID == uint(2)
+	})).Return(nil)
+
+	updateData := map[string]interface{}{
+		"assigned_to_id": 2, // Admin reassigns to a different user
+	}
+	body, _ := json.Marshal(updateData)
+	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
 func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminAccessOthersTask_Forbidden() {
 	// Set user as non-admin with different ID
 	suite.router = gin.New()

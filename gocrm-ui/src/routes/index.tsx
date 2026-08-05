@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Outlet } from 'react-router-dom';
 import { MainLayout } from '@/layouts/MainLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Login } from '@/pages/auth/Login';
@@ -97,40 +97,37 @@ export const router = createBrowserRouter([
         lazy: () => import('@/pages/tasks/TaskForm'),
       },
       {
-        path: 'users',
+        // Pathless layout route: applies the admin guard to every child below.
+        // The guard must not live on the child routes themselves — a statically
+        // defined `element` takes precedence over `lazy`, which would silently
+        // discard the real page component.
         element: (
           <ProtectedRoute requiredRole="admin">
-            <div>Users List (Admin only)</div>
+            <Outlet />
           </ProtectedRoute>
         ),
-        lazy: () => import('@/pages/users/UserList'),
-      },
-      {
-        path: 'users/new',
-        element: (
-          <ProtectedRoute requiredRole="admin">
-            <div>New User (Admin only)</div>
-          </ProtectedRoute>
-        ),
-        lazy: () => import('@/pages/users/UserForm'),
-      },
-      {
-        path: 'users/:id',
-        element: (
-          <ProtectedRoute requiredRole="admin">
-            <div>User Detail (Admin only)</div>
-          </ProtectedRoute>
-        ),
-        lazy: () => import('@/pages/users/UserDetail'),
-      },
-      {
-        path: 'users/:id/edit',
-        element: (
-          <ProtectedRoute requiredRole="admin">
-            <div>Edit User (Admin only)</div>
-          </ProtectedRoute>
-        ),
-        lazy: () => import('@/pages/users/UserForm'),
+        children: [
+          {
+            path: 'users',
+            lazy: () => import('@/pages/users/UserList'),
+          },
+          {
+            path: 'users/new',
+            lazy: () => import('@/pages/users/UserForm'),
+          },
+          {
+            path: 'users/:id',
+            lazy: () => import('@/pages/users/UserDetail'),
+          },
+          {
+            path: 'users/:id/edit',
+            lazy: () => import('@/pages/users/UserForm'),
+          },
+          {
+            path: 'settings/configuration',
+            lazy: () => import('@/pages/settings/ConfigurationSettings'),
+          },
+        ],
       },
       {
         path: 'settings/profile',
@@ -139,15 +136,6 @@ export const router = createBrowserRouter([
       {
         path: 'settings/api-keys',
         lazy: () => import('@/pages/settings/APIKeys'),
-      },
-      {
-        path: 'settings/configuration',
-        element: (
-          <ProtectedRoute requiredRole="admin">
-            <div>Configuration Settings (Admin only)</div>
-          </ProtectedRoute>
-        ),
-        lazy: () => import('@/pages/settings/ConfigurationSettings'),
       },
     ],
   },

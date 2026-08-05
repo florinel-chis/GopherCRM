@@ -85,7 +85,7 @@ export const Component: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: usersApi.deleteUser,
+    mutationFn: (id: number) => usersApi.deleteUser(id),
     onSuccess: () => {
       showSuccess('User deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -97,7 +97,7 @@ export const Component: React.FC = () => {
   });
 
   const activateMutation = useMutation({
-    mutationFn: usersApi.activateUser,
+    mutationFn: (id: number) => usersApi.activateUser(id),
     onSuccess: () => {
       showSuccess('User activated successfully');
       queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -108,7 +108,7 @@ export const Component: React.FC = () => {
   });
 
   const deactivateMutation = useMutation({
-    mutationFn: usersApi.deactivateUser,
+    mutationFn: (id: number) => usersApi.deactivateUser(id),
     onSuccess: () => {
       showSuccess('User deactivated successfully');
       queryClient.invalidateQueries({ queryKey: ['users'] });

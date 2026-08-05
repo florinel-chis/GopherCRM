@@ -20,63 +20,110 @@ func (r *bulkRepository) WithTx(tx *gorm.DB) BulkRepository {
 	return &bulkRepository{db: tx}
 }
 
-// Helper function to handle bulk operations with error tracking
-func (r *bulkRepository) bulkCreate(entities interface{}, tableName string) (interface{}, []error) {
-	var errors []error
-	
+// bulkCreate inserts entities in batches.
+//
+// Bulk create is all-or-nothing: CreateInBatches issues several multi-row
+// INSERT statements, so a failure part way through leaves an arbitrary prefix
+// of the input persisted and the remainder untouched. There is no reliable way
+// to say which individual rows made it, so on any error we report NO results
+// at all and expect the caller to roll the surrounding transaction back. The
+// caller must never treat the input slice as "what was persisted".
+func bulkCreate[T any](db *gorm.DB, entities []T, tableName string) ([]T, []error) {
+	if len(entities) == 0 {
+		return nil, nil
+	}
+
 	// Use CreateInBatches for better performance
-	if err := r.db.CreateInBatches(entities, 100).Error; err != nil {
-		errors = append(errors, err)
-		return entities, errors
+	if err := db.CreateInBatches(&entities, 100).Error; err != nil {
+		return nil, []error{fmt.Errorf("failed to bulk create %s: %w", tableName, err)}
 	}
-	
-	return entities, errors
+
+	return entities, nil
 }
 
-// Helper function to handle bulk updates
-func (r *bulkRepository) bulkUpdate(updates []models.BulkUpdateItem, model interface{}, tableName string) (interface{}, []error) {
-	var errors []error
-	var results []interface{}
-	
-	for _, update := range updates {
-		result := model
-		err := r.db.Model(result).Where("id = ?", update.ID).Updates(update.Updates).Error
-		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to update %s with ID %d: %w", tableName, update.ID, err))
-			continue
-		}
-		
-		// Fetch the updated record
-		err = r.db.First(result, update.ID).Error
-		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to fetch updated %s with ID %d: %w", tableName, update.ID, err))
-			continue
-		}
-		
-		results = append(results, result)
-	}
-	
-	return results, errors
-}
-
-// Helper function to handle bulk deletes
+// Helper function to handle bulk deletes of entities that hold no personal
+// data of their own — tasks and tickets. They carry a title, a description and
+// foreign keys to the people involved, and those people are erased through
+// their own rows, so a plain soft delete is the whole of it here.
+//
+// Deletes are performed one statement per ID, so partial success is real: the
+// rows reported as deleted are exactly the rows removed. An ID that matched no
+// row is reported as an error rather than silently counted as a success.
 func (r *bulkRepository) bulkDelete(ids []uint, model interface{}, tableName string) []error {
 	var errors []error
-	
+
 	for _, id := range ids {
-		err := r.db.Delete(model, id).Error
-		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, err))
+		result := r.db.Delete(model, id)
+		if result.Error != nil {
+			errors = append(errors, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, result.Error))
+			continue
+		}
+		if result.RowsAffected == 0 {
+			errors = append(errors, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, gorm.ErrRecordNotFound))
 		}
 	}
-	
+
 	return errors
+}
+
+// bulkErase is bulkDelete for the entities that DO hold personal data: users,
+// customers and leads.
+//
+// Deleting one of those is a GDPR Article 17 erasure — anonymise the row in
+// place, purge whatever must not outlive the person, then soft-delete — and
+// which endpoint the request came through cannot change that. The bulk paths
+// used to issue a bare soft delete instead, so the very same operation erased
+// the person when it went through DELETE /users/:id and merely hid them when it
+// went through the bulk endpoint, leaving their name, email and credentials in
+// the database and their address locked in the unique index for good. There is
+// no separate "bulk delete" semantics: erase is passed the single-record
+// erasure and this function only handles the per-item accounting around it.
+//
+// That accounting is unchanged from bulkDelete. Each ID is erased on its own so
+// partial success stays meaningful, and an ID that matches no live row is
+// reported as an error instead of being counted as a success — checked up front
+// here because an erasure spans several statements and has no single
+// RowsAffected to test.
+//
+// "On its own" is a requirement on erase, not a description of this loop. This
+// function appends a failure and continues, and the caller commits, so an erase
+// that is not isolated has its half-finished statements committed by the very
+// batch that reported it as failed. Every caller therefore passes an erase built
+// on runIsolated (see BulkDeleteUsers) or on the cascade's batch-item helpers.
+func bulkErase[T any](db *gorm.DB, ids []uint, tableName string, erasedInThisBatch func(id uint) bool, erase func(id uint) error) []error {
+	var errs []error
+
+	for _, id := range ids {
+		// The row may already be gone because an earlier ID in this same batch
+		// cascaded into it — a lead and the customer it was converted into are
+		// one person, and erasing either erases both. It is gone, which is what
+		// was asked for, so it counts as a success rather than as a missing row.
+		if erasedInThisBatch != nil && erasedInThisBatch(id) {
+			continue
+		}
+
+		var entity T
+		var found int64
+		if err := db.Model(&entity).Where("id = ?", id).Count(&found).Error; err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, err))
+			continue
+		}
+		if found == 0 {
+			errs = append(errs, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, gorm.ErrRecordNotFound))
+			continue
+		}
+
+		if err := erase(id); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s with ID %d: %w", tableName, id, err))
+		}
+	}
+
+	return errs
 }
 
 // User bulk operations
 func (r *bulkRepository) BulkCreateUsers(users []models.User) ([]models.User, []error) {
-	result, errors := r.bulkCreate(&users, "users")
-	return result.([]models.User), errors
+	return bulkCreate(r.db, users, "users")
 }
 
 func (r *bulkRepository) BulkUpdateUsers(updates []models.BulkUpdateItem) ([]models.User, []error) {
@@ -104,14 +151,27 @@ func (r *bulkRepository) BulkUpdateUsers(updates []models.BulkUpdateItem) ([]mod
 	return users, errors
 }
 
+// BulkDeleteUsers erases every listed user: personal fields scrubbed, password
+// hash made unusable, API keys and refresh tokens purged, row soft-deleted. It
+// delegates to the user repository so there is exactly one definition of what
+// erasing a user means.
+//
+// Each user is erased through runIsolated, so an item that fails rolls back on
+// its own. Handing the repository r.db directly would let a failing item's scrub
+// and credential purge ride out on the transaction the caller wrapped the batch
+// in and be committed alongside the items that worked — reported as a failure,
+// persisted as a half-erasure.
 func (r *bulkRepository) BulkDeleteUsers(ids []uint) []error {
-	return r.bulkDelete(ids, &models.User{}, "users")
+	return bulkErase[models.User](r.db, ids, "users", nil, func(id uint) error {
+		return runIsolated(r.db, func(tx *gorm.DB) error {
+			return NewUserRepository(tx).Delete(id)
+		})
+	})
 }
 
 // Lead bulk operations
 func (r *bulkRepository) BulkCreateLeads(leads []models.Lead) ([]models.Lead, []error) {
-	result, errors := r.bulkCreate(&leads, "leads")
-	return result.([]models.Lead), errors
+	return bulkCreate(r.db, leads, "leads")
 }
 
 func (r *bulkRepository) BulkUpdateLeads(updates []models.BulkUpdateItem) ([]models.Lead, []error) {
@@ -139,14 +199,22 @@ func (r *bulkRepository) BulkUpdateLeads(updates []models.BulkUpdateItem) ([]mod
 	return leads, errors
 }
 
+// BulkDeleteLeads erases every listed lead, and with each converted lead the
+// customer it became — one cascade is shared by the whole batch so that a lead
+// erased as a side effect of an earlier ID is recognised rather than reported
+// as missing. eraseLeadAsBatchItem keeps that shared memory honest: an item that
+// fails rolls back its statements AND every mark it left behind, so the batch
+// can never skip a row it did not actually erase.
 func (r *bulkRepository) BulkDeleteLeads(ids []uint) []error {
-	return r.bulkDelete(ids, &models.Lead{}, "leads")
+	cascade := newErasureCascade()
+	return bulkErase[models.Lead](r.db, ids, "leads", cascade.leadErased, func(id uint) error {
+		return cascade.eraseLeadAsBatchItem(r.db, id)
+	})
 }
 
 // Customer bulk operations
 func (r *bulkRepository) BulkCreateCustomers(customers []models.Customer) ([]models.Customer, []error) {
-	result, errors := r.bulkCreate(&customers, "customers")
-	return result.([]models.Customer), errors
+	return bulkCreate(r.db, customers, "customers")
 }
 
 func (r *bulkRepository) BulkUpdateCustomers(updates []models.BulkUpdateItem) ([]models.Customer, []error) {
@@ -174,14 +242,19 @@ func (r *bulkRepository) BulkUpdateCustomers(updates []models.BulkUpdateItem) ([
 	return customers, errors
 }
 
+// BulkDeleteCustomers erases every listed customer, and with each converted
+// customer the lead it came from, which still holds a copy of the same person's
+// name, email, phone and company.
 func (r *bulkRepository) BulkDeleteCustomers(ids []uint) []error {
-	return r.bulkDelete(ids, &models.Customer{}, "customers")
+	cascade := newErasureCascade()
+	return bulkErase[models.Customer](r.db, ids, "customers", cascade.customerErased, func(id uint) error {
+		return cascade.eraseCustomerAsBatchItem(r.db, id)
+	})
 }
 
 // Task bulk operations
 func (r *bulkRepository) BulkCreateTasks(tasks []models.Task) ([]models.Task, []error) {
-	result, errors := r.bulkCreate(&tasks, "tasks")
-	return result.([]models.Task), errors
+	return bulkCreate(r.db, tasks, "tasks")
 }
 
 func (r *bulkRepository) BulkUpdateTasks(updates []models.BulkUpdateItem) ([]models.Task, []error) {
@@ -209,14 +282,16 @@ func (r *bulkRepository) BulkUpdateTasks(updates []models.BulkUpdateItem) ([]mod
 	return tasks, errors
 }
 
+// BulkDeleteTasks is a plain soft delete. A task holds a title, a description
+// and foreign keys to the user, lead or customer it concerns; the people are
+// erased through their own rows, so there is nothing here to anonymise.
 func (r *bulkRepository) BulkDeleteTasks(ids []uint) []error {
 	return r.bulkDelete(ids, &models.Task{}, "tasks")
 }
 
 // Ticket bulk operations
 func (r *bulkRepository) BulkCreateTickets(tickets []models.Ticket) ([]models.Ticket, []error) {
-	result, errors := r.bulkCreate(&tickets, "tickets")
-	return result.([]models.Ticket), errors
+	return bulkCreate(r.db, tickets, "tickets")
 }
 
 func (r *bulkRepository) BulkUpdateTickets(updates []models.BulkUpdateItem) ([]models.Ticket, []error) {
@@ -244,6 +319,9 @@ func (r *bulkRepository) BulkUpdateTickets(updates []models.BulkUpdateItem) ([]m
 	return tickets, errors
 }
 
+// BulkDeleteTickets is a plain soft delete, for the same reason as tasks: a
+// ticket's subject and description belong to the support case, and the customer
+// it points at is erased through the customers table.
 func (r *bulkRepository) BulkDeleteTickets(ids []uint) []error {
 	return r.bulkDelete(ids, &models.Ticket{}, "tickets")
 }

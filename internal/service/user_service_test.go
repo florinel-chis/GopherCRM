@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type UserServiceTestSuite struct {
@@ -36,7 +38,7 @@ func (suite *UserServiceTestSuite) TestRegister_Success() {
 		Role:      models.RoleCustomer,
 	}
 
-	suite.mockRepo.On("GetByEmail", user.Email).Return(nil, errors.New("not found"))
+	suite.mockRepo.On("GetByEmailUnscoped", user.Email).Return(nil, errors.New("not found"))
 	suite.mockRepo.On("Create", mock.MatchedBy(func(u *models.User) bool {
 		// Verify password is hashed
 		err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte("password123"))
@@ -58,11 +60,37 @@ func (suite *UserServiceTestSuite) TestRegister_UserExists() {
 		LastName:  "User",
 	}
 
-	suite.mockRepo.On("GetByEmail", existingUser.Email).Return(existingUser, nil)
+	suite.mockRepo.On("GetByEmailUnscoped", existingUser.Email).Return(existingUser, nil)
 
 	err := suite.userService.Register(newUser, "password123")
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
+}
+
+// TestRegister_SoftDeletedUserExists pins the duplicate pre-check to the
+// *unscoped* lookup. The unique index on users.email is not scoped to
+// deleted_at, so a soft-deleted row still reserves the address; a scoped
+// GetByEmail would report it free and let the insert reach the database, where
+// it fails with a raw driver error. Register must reject it up front, without
+// ever calling Create.
+func (suite *UserServiceTestSuite) TestRegister_SoftDeletedUserExists() {
+	deletedAt := gorm.DeletedAt{Time: time.Now(), Valid: true}
+	softDeleted := &models.User{
+		BaseModel: models.BaseModel{ID: 7, DeletedAt: deletedAt},
+		Email:     "deleted@example.com",
+	}
+
+	suite.mockRepo.On("GetByEmailUnscoped", "deleted@example.com").Return(softDeleted, nil)
+
+	err := suite.userService.Register(&models.User{
+		Email:     "deleted@example.com",
+		FirstName: "New",
+		LastName:  "User",
+	}, "password123")
+
+	assert.Error(suite.T(), err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
+	suite.mockRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
 }
 
 func (suite *UserServiceTestSuite) TestGetByID_Success() {
@@ -146,7 +174,7 @@ func (suite *UserServiceTestSuite) TestUpdate_EmailConflict() {
 	}
 
 	suite.mockRepo.On("GetByID", uint(1)).Return(existingUser, nil)
-	suite.mockRepo.On("GetByEmail", "conflict@example.com").Return(conflictingUser, nil)
+	suite.mockRepo.On("GetByEmailUnscoped", "conflict@example.com").Return(conflictingUser, nil)
 
 	user, err := suite.userService.Update(1, updates)
 	assert.Error(suite.T(), err)
@@ -179,10 +207,44 @@ func (suite *UserServiceTestSuite) TestUpdate_PasswordChange() {
 }
 
 func (suite *UserServiceTestSuite) TestDelete_Success() {
+	suite.mockRepo.On("GetByID", uint(1)).Return(&models.User{
+		BaseModel: models.BaseModel{ID: 1},
+		Email:     "test@example.com",
+	}, nil)
 	suite.mockRepo.On("Delete", uint(1)).Return(nil)
 
 	err := suite.userService.Delete(1)
 	assert.NoError(suite.T(), err)
+}
+
+// Erasing a user that does not exist must NOT report success. Both statements
+// the repository runs match by primary key, and matching nothing is not an
+// error in SQL, so without the existence check DELETE /users/99999 answered
+// "done" and an operator would have logged a GDPR erasure that never happened.
+func (suite *UserServiceTestSuite) TestDelete_NotFound() {
+	suite.mockRepo.On("GetByID", uint(99999)).Return(nil, gorm.ErrRecordNotFound)
+
+	err := suite.userService.Delete(99999)
+
+	assert.Error(suite.T(), err)
+	assert.True(suite.T(), apperrors.IsNotFound(err),
+		"expected the not-found sentinel, got %v", err)
+	// Nothing may be erased on the strength of an ID that matches no row.
+	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything)
+}
+
+// A database failure during the existence check is not "no such user": it must
+// surface as itself, or a broken database would be reported to the operator as
+// a successful lookup of a nonexistent account.
+func (suite *UserServiceTestSuite) TestDelete_LookupFailureIsNotReportedAsNotFound() {
+	dbErr := errors.New("dial tcp: connection refused")
+	suite.mockRepo.On("GetByID", uint(1)).Return(nil, dbErr)
+
+	err := suite.userService.Delete(1)
+
+	assert.ErrorIs(suite.T(), err, dbErr)
+	assert.False(suite.T(), apperrors.IsNotFound(err))
+	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything)
 }
 
 func (suite *UserServiceTestSuite) TestList_Success() {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -254,22 +255,27 @@ func (s *bulkOperationService) BulkCreateUsers(request *models.BulkCreateRequest
 		}, nil
 	}
 
-	// Perform bulk create with transaction
+	// Perform bulk create with transaction. Bulk create is all-or-nothing:
+	// runBulkCreateTx rolls the transaction back if the repository reports any
+	// error, so on failure nothing is persisted and nothing is reported as
+	// created.
 	var results []models.User
 	var operationErrors []error
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok || tx == nil {
-			return fmt.Errorf("transaction not found in context")
-		}
-		txRepo := s.bulkRepo.WithTx(tx)
-		results, operationErrors = txRepo.BulkCreateUsers(users)
-		return nil
+	operationErrors, err = s.runBulkCreateTx(func(txRepo repository.BulkRepository) []error {
+		var repoErrors []error
+		results, repoErrors = txRepo.BulkCreateUsers(users)
+		return repoErrors
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("transaction failed: %w", err)
+	}
+
+	// The transaction was rolled back, so discard anything the repository
+	// handed back - none of it reached the database.
+	if len(operationErrors) > 0 {
+		results = nil
 	}
 
 	// Build response
@@ -354,12 +360,17 @@ func (s *bulkOperationService) BulkDeleteUsers(request *models.BulkDeleteRequest
 		return nil, err
 	}
 
-	// Prevent self-deletion
+	// Prevent self-deletion. A skipped ID is reported as a failure rather than
+	// silently dropped, otherwise the response would count it as neither a
+	// success nor a failure.
 	filteredIDs := make([]uint, 0, len(request.IDs))
+	var skipErrors []error
 	for _, id := range request.IDs {
-		if id != currentUserID {
-			filteredIDs = append(filteredIDs, id)
+		if id == currentUserID {
+			skipErrors = append(skipErrors, fmt.Errorf("failed to delete user with ID %d: cannot delete your own account", id))
+			continue
 		}
+		filteredIDs = append(filteredIDs, id)
 	}
 
 	// Perform bulk delete with transaction
@@ -379,8 +390,10 @@ func (s *bulkOperationService) BulkDeleteUsers(request *models.BulkDeleteRequest
 		return nil, fmt.Errorf("transaction failed: %w", err)
 	}
 
+	operationErrors = append(skipErrors, operationErrors...)
+
 	// Build response
-	successCount := len(filteredIDs) - len(operationErrors)
+	successCount := len(request.IDs) - len(operationErrors)
 	response := s.buildBulkDeleteResponse(operation.ID, len(request.IDs), successCount, operationErrors, startTime)
 
 	// Update operation status
@@ -574,22 +587,27 @@ func (s *bulkOperationService) BulkCreateLeads(request *models.BulkCreateRequest
 		}, nil
 	}
 
-	// Perform bulk create with transaction
+	// Perform bulk create with transaction. Bulk create is all-or-nothing:
+	// runBulkCreateTx rolls the transaction back if the repository reports any
+	// error, so on failure nothing is persisted and nothing is reported as
+	// created.
 	var results []models.Lead
 	var operationErrors []error
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok || tx == nil {
-			return fmt.Errorf("transaction not found in context")
-		}
-		txRepo := s.bulkRepo.WithTx(tx)
-		results, operationErrors = txRepo.BulkCreateLeads(leads)
-		return nil
+	operationErrors, err = s.runBulkCreateTx(func(txRepo repository.BulkRepository) []error {
+		var repoErrors []error
+		results, repoErrors = txRepo.BulkCreateLeads(leads)
+		return repoErrors
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("transaction failed: %w", err)
+	}
+
+	// The transaction was rolled back, so discard anything the repository
+	// handed back - none of it reached the database.
+	if len(operationErrors) > 0 {
+		results = nil
 	}
 
 	// Build response
@@ -786,22 +804,27 @@ func (s *bulkOperationService) BulkCreateCustomers(request *models.BulkCreateReq
 		}, nil
 	}
 
-	// Perform bulk create with transaction
+	// Perform bulk create with transaction. Bulk create is all-or-nothing:
+	// runBulkCreateTx rolls the transaction back if the repository reports any
+	// error, so on failure nothing is persisted and nothing is reported as
+	// created.
 	var results []models.Customer
 	var operationErrors []error
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok || tx == nil {
-			return fmt.Errorf("transaction not found in context")
-		}
-		txRepo := s.bulkRepo.WithTx(tx)
-		results, operationErrors = txRepo.BulkCreateCustomers(customers)
-		return nil
+	operationErrors, err = s.runBulkCreateTx(func(txRepo repository.BulkRepository) []error {
+		var repoErrors []error
+		results, repoErrors = txRepo.BulkCreateCustomers(customers)
+		return repoErrors
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("transaction failed: %w", err)
+	}
+
+	// The transaction was rolled back, so discard anything the repository
+	// handed back - none of it reached the database.
+	if len(operationErrors) > 0 {
+		results = nil
 	}
 
 	// Build response
@@ -1007,22 +1030,27 @@ func (s *bulkOperationService) BulkCreateTasks(request *models.BulkCreateRequest
 		}, nil
 	}
 
-	// Perform bulk create with transaction
+	// Perform bulk create with transaction. Bulk create is all-or-nothing:
+	// runBulkCreateTx rolls the transaction back if the repository reports any
+	// error, so on failure nothing is persisted and nothing is reported as
+	// created.
 	var results []models.Task
 	var operationErrors []error
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok || tx == nil {
-			return fmt.Errorf("transaction not found in context")
-		}
-		txRepo := s.bulkRepo.WithTx(tx)
-		results, operationErrors = txRepo.BulkCreateTasks(tasks)
-		return nil
+	operationErrors, err = s.runBulkCreateTx(func(txRepo repository.BulkRepository) []error {
+		var repoErrors []error
+		results, repoErrors = txRepo.BulkCreateTasks(tasks)
+		return repoErrors
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("transaction failed: %w", err)
+	}
+
+	// The transaction was rolled back, so discard anything the repository
+	// handed back - none of it reached the database.
+	if len(operationErrors) > 0 {
+		results = nil
 	}
 
 	// Build response
@@ -1229,22 +1257,27 @@ func (s *bulkOperationService) BulkCreateTickets(request *models.BulkCreateReque
 		}, nil
 	}
 
-	// Perform bulk create with transaction
+	// Perform bulk create with transaction. Bulk create is all-or-nothing:
+	// runBulkCreateTx rolls the transaction back if the repository reports any
+	// error, so on failure nothing is persisted and nothing is reported as
+	// created.
 	var results []models.Ticket
 	var operationErrors []error
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok || tx == nil {
-			return fmt.Errorf("transaction not found in context")
-		}
-		txRepo := s.bulkRepo.WithTx(tx)
-		results, operationErrors = txRepo.BulkCreateTickets(tickets)
-		return nil
+	operationErrors, err = s.runBulkCreateTx(func(txRepo repository.BulkRepository) []error {
+		var repoErrors []error
+		results, repoErrors = txRepo.BulkCreateTickets(tickets)
+		return repoErrors
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("transaction failed: %w", err)
+	}
+
+	// The transaction was rolled back, so discard anything the repository
+	// handed back - none of it reached the database.
+	if len(operationErrors) > 0 {
+		results = nil
 	}
 
 	// Build response
@@ -1392,6 +1425,45 @@ func (s *bulkOperationService) BulkActionTickets(request *models.BulkActionReque
 	default:
 		return nil, fmt.Errorf("unsupported ticket action: %s", request.Action)
 	}
+}
+
+// errBulkCreateRollback is an internal sentinel returned from the bulk-create
+// transaction closure purely to force TransactionManager.WithTransaction to
+// roll back. It never escapes this package.
+var errBulkCreateRollback = errors.New("bulk create rolled back")
+
+// runBulkCreateTx runs create inside a transaction and rolls the transaction
+// back if the repository reported any errors.
+//
+// Bulk creates are all-or-nothing. The underlying repository uses batched
+// multi-row INSERTs, so it cannot tell which individual rows of a failed batch
+// survived; committing here would leave an arbitrary partial write behind
+// while the response claimed every item succeeded. Instead any repository
+// error aborts the transaction, nothing is persisted, and the caller reports
+// zero successes.
+//
+// It returns the repository errors (with the transaction already rolled back)
+// and, separately, an infrastructure error if the transaction itself failed.
+func (s *bulkOperationService) runBulkCreateTx(create func(txRepo repository.BulkRepository) []error) ([]error, error) {
+	var operationErrors []error
+
+	err := s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok || tx == nil {
+			return fmt.Errorf("transaction not found in context")
+		}
+		operationErrors = create(s.bulkRepo.WithTx(tx))
+		if len(operationErrors) > 0 {
+			return errBulkCreateRollback
+		}
+		return nil
+	})
+
+	if err != nil && !errors.Is(err, errBulkCreateRollback) {
+		return nil, err
+	}
+
+	return operationErrors, nil
 }
 
 // Helper methods

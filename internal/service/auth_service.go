@@ -180,13 +180,36 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 		return nil, errors.New("API key expired")
 	}
 
+	// Defence in depth: a credential must never outlive its owner.
+	//
+	// Erasing a user destroys their API keys in the same transaction, so in
+	// principle no key can reach this point without a live owner. This check is
+	// the second line: a key restored from a backup, written by an older
+	// release, or one that escaped the purge for any reason at all must not
+	// authenticate. The lookup is deliberately the SCOPED one, so an erased
+	// (soft-deleted) owner simply does not exist and the key is rejected —
+	// relying on the preloaded association would not do, because a preload of a
+	// soft-deleted row silently yields a zero-valued user, which would sail
+	// through as a user with ID 0.
+	user, err := s.userRepo.GetByID(apiKey.UserID)
+	if err != nil {
+		utils.Logger.WithField("api_key_id", apiKey.ID).WithField("user_id", apiKey.UserID).
+			Warn("Rejected API key whose owner no longer exists")
+		return nil, errors.New("invalid API key")
+	}
+	if !user.IsActive {
+		utils.Logger.WithField("api_key_id", apiKey.ID).WithField("user_id", apiKey.UserID).
+			Warn("Rejected API key of an inactive user")
+		return nil, errors.New("API key owner is not active")
+	}
+
 	// Update last used timestamp (best effort - don't fail validation if this fails)
 	if err := s.apiKeyRepo.UpdateLastUsed(apiKey.ID); err != nil {
 		// Log error but don't fail validation
 		utils.Logger.WithError(err).WithField("api_key_id", apiKey.ID).Warn("Failed to update API key last used timestamp")
 	}
 
-	return &apiKey.User, nil
+	return user, nil
 }
 
 func (s *authService) GenerateJWT(user *models.User) (string, error) {

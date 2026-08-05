@@ -111,25 +111,41 @@ class ApiClient {
     return axios.post(`${API_BASE_URL}/auth/refresh`, { refresh_token: refreshToken });
   }
 
-  public getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
+  // Tokens live in localStorage only when the user opted into "remember me";
+  // otherwise they go to sessionStorage so the session ends with the browser tab.
+  // Reads check sessionStorage first, since that is the more specific session.
+  private readToken(key: string): string | null {
+    return sessionStorage.getItem(key) ?? localStorage.getItem(key);
   }
 
-  public setToken(token: string): void {
-    localStorage.setItem(TOKEN_KEY, token);
+  private writeToken(key: string, token: string, persist: boolean): void {
+    const target = persist ? localStorage : sessionStorage;
+    const other = persist ? sessionStorage : localStorage;
+    other.removeItem(key);
+    target.setItem(key, token);
+  }
+
+  public getToken(): string | null {
+    return this.readToken(TOKEN_KEY);
+  }
+
+  public setToken(token: string, persist = true): void {
+    this.writeToken(TOKEN_KEY, token, persist);
   }
 
   public getRefreshToken(): string | null {
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+    return this.readToken(REFRESH_TOKEN_KEY);
   }
 
-  public setRefreshToken(token: string): void {
-    localStorage.setItem(REFRESH_TOKEN_KEY, token);
+  public setRefreshToken(token: string, persist = true): void {
+    this.writeToken(REFRESH_TOKEN_KEY, token, persist);
   }
 
   public clearTokens(): void {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    for (const key of [TOKEN_KEY, REFRESH_TOKEN_KEY]) {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    }
   }
 
   public getClient(): AxiosInstance {

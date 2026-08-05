@@ -2,7 +2,7 @@ import React, { createContext, useState, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User, LoginRequest, RegisterRequest } from '@/types';
 import { authApi } from '@/api/endpoints';
-import { apiClient, TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/api/client';
+import { apiClient } from '@/api/client';
 
 interface AuthContextType {
   user: User | null;
@@ -61,20 +61,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = useCallback(async (data: LoginRequest) => {
     try {
       const response = await authApi.login(data);
-      apiClient.setToken(response.token);
+      const persist = Boolean(data.remember_me);
+      apiClient.setToken(response.token, persist);
       if (response.refresh_token) {
-        apiClient.setRefreshToken(response.refresh_token);
+        apiClient.setRefreshToken(response.refresh_token, persist);
       }
       setUser(response.user);
 
-      // Handle remember me
-      if (data.remember_me) {
+      if (persist) {
         localStorage.setItem('remember_me', 'true');
       } else {
-        sessionStorage.setItem(TOKEN_KEY, response.token);
-        if (response.refresh_token) {
-          sessionStorage.setItem(REFRESH_TOKEN_KEY, response.refresh_token);
-        }
+        localStorage.removeItem('remember_me');
       }
     } catch (error) {
       console.error('Login failed:', error);

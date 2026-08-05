@@ -26,16 +26,8 @@ export class AdminAuthHelper {
       role: 'admin'
     };
 
-    // Ensure the admin user exists by registering via API (ignores duplicate errors)
-    await this.page.request.post('http://localhost:8090/api/v1/auth/register', {
-      data: {
-        email: this.adminUser.email,
-        password: this.adminUser.password,
-        first_name: this.adminUser.firstName,
-        last_name: this.adminUser.lastName,
-        role: 'admin',
-      }
-    }).catch(() => {}); // Ignore if already exists
+    // The admin account is seeded by e2e/global-setup.ts via the create-admin CLI.
+    // It cannot be created here: /auth/register only ever creates customers.
 
     // Login
     await loginPage.goto();

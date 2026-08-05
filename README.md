@@ -29,12 +29,14 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - **Logrus** - Structured logging
 
 ### Frontend
-- **React 18** - UI framework
+- **React 19** - UI framework
 - **TypeScript** - Type safety
-- **Material-UI (MUI)** - Component library
+- **Material-UI (MUI) v7** - Component library
 - **React Router** - Client-side routing
 - **TanStack Query** - Data fetching and caching
+- **React Hook Form + Zod** - Forms and validation
 - **Vite** - Build tool and dev server
+- **Vitest + Playwright** - Unit and end-to-end tests
 
 ## Prerequisites
 
@@ -204,14 +206,14 @@ npm run build
 # Preview production build
 npm run preview
 
-# Run tests
+# Run unit tests
 npm run test
+
+# Run end-to-end tests (requires the backend running)
+npm run test:e2e
 
 # Run linting
 npm run lint
-
-# Type checking
-npm run type-check
 ```
 
 #### Development Tools
@@ -300,7 +302,8 @@ gophercrm/
 ├── tests/                       # Integration tests
 ├── scripts/                     # Database and utility scripts
 ├── migrations/                  # Database migrations (future)
-├── doc/                         # Documentation (FEATURES.md, SETUP.md, datamodel.md, etc.)
+├── doc/                         # Project documentation (SETUP.md, FEATURES.md, datamodel.md, etc.)
+├── docs/                        # Developer guide, roadmap and generated OpenAPI spec
 ├── gocrm-ui/                    # React TypeScript frontend
 │   ├── src/
 │   │   ├── components/          # Reusable UI components
@@ -319,7 +322,22 @@ gophercrm/
 └── README.md                    # This file
 ```
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration |
+| [doc/SETUP.md](doc/SETUP.md) | Backend and frontend setup walkthrough |
+| [doc/FEATURES.md](doc/FEATURES.md) | Feature and test-coverage matrix with known issues |
+| [doc/datamodel.md](doc/datamodel.md) | Entity model and relationships |
+| [doc/ADMIN_TESTING.md](doc/ADMIN_TESTING.md) | Admin E2E page objects and fixtures |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Ideas that are not implemented yet |
+
 ## Contributing
+
+Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) first — it documents the layering and the patterns
+the codebase enforces (unified response envelope, sentinel errors, sort allowlists, role assignment
+rules). Then:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)

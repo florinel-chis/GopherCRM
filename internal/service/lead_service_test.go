@@ -177,10 +177,40 @@ func (suite *LeadServiceTestSuite) TestUpdate_LeadNotFound() {
 }
 
 func (suite *LeadServiceTestSuite) TestDelete_Success() {
+	suite.mockLeadRepo.On("GetByID", uint(1)).Return(&models.Lead{
+		BaseModel: models.BaseModel{ID: 1},
+		Email:     "erase-me@example.com",
+	}, nil)
 	suite.mockLeadRepo.On("Delete", uint(1)).Return(nil)
 
 	err := suite.leadService.Delete(1)
 	assert.NoError(suite.T(), err)
+}
+
+// Deleting a lead is an erasure, and an erasure that matched no row must not
+// report success: the scrub and the soft delete both match by primary key, and
+// zero matched rows is not an error in SQL. The repository is never even asked
+// to erase a lead that is not there.
+func (suite *LeadServiceTestSuite) TestDelete_NotFound() {
+	suite.mockLeadRepo.On("GetByID", uint(404)).Return(nil, gorm.ErrRecordNotFound)
+
+	err := suite.leadService.Delete(404)
+
+	assert.ErrorIs(suite.T(), err, apperrors.ErrNotFound)
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "Delete", uint(404))
+}
+
+// A lookup that fails for any other reason is an infrastructure failure, not a
+// missing lead, and must not be reported as one.
+func (suite *LeadServiceTestSuite) TestDelete_LookupFailurePropagates() {
+	boom := errors.New("connection reset by peer")
+	suite.mockLeadRepo.On("GetByID", uint(7)).Return(nil, boom)
+
+	err := suite.leadService.Delete(7)
+
+	assert.ErrorIs(suite.T(), err, boom)
+	assert.NotErrorIs(suite.T(), err, apperrors.ErrNotFound)
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "Delete", uint(7))
 }
 
 func (suite *LeadServiceTestSuite) TestList_Success() {

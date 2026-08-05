@@ -43,6 +43,14 @@ func (m *MockUserRepository) GetByEmail(email string) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+func (m *MockUserRepository) GetByEmailUnscoped(email string) (*models.User, error) {
+	args := m.Called(email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
 func (m *MockUserRepository) Update(user *models.User) error {
 	args := m.Called(user)
 	return args.Error(0)
@@ -487,6 +495,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
 			Role:      models.RoleCustomer,
+			IsActive:  true,
 		}
 
 		apiKey := &models.APIKey{
@@ -497,14 +506,77 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 		}
 
 		mockAPIKeyRepo.On("GetByKeyHash", mock.Anything).Return(apiKey, nil)
+		mockUserRepo.On("GetByID", uint(1)).Return(user, nil)
 		mockAPIKeyRepo.On("UpdateLastUsed", uint(1)).Return(nil)
 
 		validatedUser, err := authService.ValidateAPIKey("test-api-key")
-		
+
 		assert.NoError(t, err)
 		assert.NotNil(t, validatedUser)
 		assert.Equal(t, user.ID, validatedUser.ID)
 		mockAPIKeyRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	// An API key must never outlive its owner. Erasing a user destroys their
+	// keys, so a key with no live owner should not exist — but if one ever does,
+	// it must not authenticate. The owner lookup is scoped, so an erased
+	// (soft-deleted) user comes back as "record not found".
+	t.Run("key of an erased user is rejected", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		apiKey := &models.APIKey{
+			BaseModel: models.BaseModel{ID: 7},
+			UserID:    42,
+			IsActive:  true,
+		}
+
+		mockAPIKeyRepo.On("GetByKeyHash", mock.Anything).Return(apiKey, nil)
+		mockUserRepo.On("GetByID", uint(42)).Return(nil, gorm.ErrRecordNotFound)
+
+		validatedUser, err := authService.ValidateAPIKey("orphaned-key")
+
+		assert.Error(t, err)
+		assert.Equal(t, "invalid API key", err.Error())
+		assert.Nil(t, validatedUser)
+		// The key must not even be marked as used.
+		mockAPIKeyRepo.AssertNotCalled(t, "UpdateLastUsed", mock.Anything)
+		mockAPIKeyRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("key of a deactivated user is rejected", func(t *testing.T) {
+		mockUserRepo := new(MockUserRepository)
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
+
+		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
+		apiKey := &models.APIKey{
+			BaseModel: models.BaseModel{ID: 8},
+			UserID:    43,
+			IsActive:  true,
+		}
+		suspended := &models.User{
+			BaseModel: models.BaseModel{ID: 43},
+			Email:     "suspended@example.com",
+			Role:      models.RoleSales,
+			IsActive:  false,
+		}
+
+		mockAPIKeyRepo.On("GetByKeyHash", mock.Anything).Return(apiKey, nil)
+		mockUserRepo.On("GetByID", uint(43)).Return(suspended, nil)
+
+		validatedUser, err := authService.ValidateAPIKey("suspended-owner-key")
+
+		assert.Error(t, err)
+		assert.Equal(t, "API key owner is not active", err.Error())
+		assert.Nil(t, validatedUser)
+		mockAPIKeyRepo.AssertNotCalled(t, "UpdateLastUsed", mock.Anything)
+		mockAPIKeyRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
 	})
 
 	t.Run("invalid API key", func(t *testing.T) {
