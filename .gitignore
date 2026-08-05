@@ -135,5 +135,5 @@ docs/_build/
 # ---------------------------------------------------------------------------
 # Keep documentation images tracked (referenced from README.md)
 # ---------------------------------------------------------------------------
-!doc/img/
-!doc/img/**
+!docs/img/
+!docs/img/**

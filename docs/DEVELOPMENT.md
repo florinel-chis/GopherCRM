@@ -1,8 +1,8 @@
 # GopherCRM Development Guide
 
 Reference for developers working in this repository: commands, layering, and the conventions the
-codebase enforces. For first-time setup instructions see [doc/SETUP.md](../doc/SETUP.md); for the
-feature and test-coverage matrix see [doc/FEATURES.md](../doc/FEATURES.md).
+codebase enforces. For first-time setup instructions see [SETUP.md](SETUP.md); for the
+feature and test-coverage matrix see [FEATURES.md](FEATURES.md).
 
 ## Project Overview
 
@@ -167,7 +167,7 @@ request ID), utils (sort, password, response, crypto, context, transaction), con
 
 The E2E suite is 100 tests across 9 spec files and needs a real backend and database. Admin accounts
 cannot be self-registered — `gocrm-ui/e2e/global-setup.ts` seeds them by shelling out to
-`cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [doc/ADMIN_TESTING.md](../doc/ADMIN_TESTING.md).
+`cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [ADMIN_TESTING.md](ADMIN_TESTING.md).
 
 ## Gotchas
 
@@ -214,7 +214,7 @@ points the Axios client at the backend.
 
 MySQL 8.0+ with GORM. Migrations live in `migrations/`. Auto-migration runs on startup via
 `models.MigrateDatabase()`. The global DB handle is `models.DB`. The data model is documented in
-[doc/datamodel.md](../doc/datamodel.md).
+[datamodel.md](datamodel.md).
 
 ## Deleting personal data
 
