@@ -76,10 +76,24 @@ class ApiClient {
               throw new Error('No refresh token available');
             }
 
+            // The refresh call goes through a bare axios instance, so the
+            // unwrap interceptor above does not run — peel the
+            // { success, data } envelope here.
             const response = await this.refreshToken(refreshToken);
-            const { token } = response.data;
-            
-            this.setToken(token);
+            const payload = response.data?.data ?? response.data;
+            const { token, refresh_token: rotatedRefreshToken } = payload;
+
+            // Keep the tokens in whichever storage they already lived in, so
+            // a non-"remember me" session stays in sessionStorage.
+            const persist = sessionStorage.getItem(REFRESH_TOKEN_KEY) === null;
+
+            this.setToken(token, persist);
+            // Refresh tokens are rotated server-side: the one just used is
+            // dead, so the replacement must be stored or the next refresh
+            // will fail.
+            if (rotatedRefreshToken) {
+              this.setRefreshToken(rotatedRefreshToken, persist);
+            }
             this.refreshSubscribers.forEach((callback) => callback(token));
             this.refreshSubscribers = [];
             
@@ -107,6 +121,8 @@ class ApiClient {
     );
   }
 
+  // Uses a bare axios call (not this.client) so no Authorization header from
+  // the expired session is attached — /auth/refresh is a public endpoint.
   private async refreshToken(refreshToken: string) {
     return axios.post(`${API_BASE_URL}/auth/refresh`, { refresh_token: refreshToken });
   }

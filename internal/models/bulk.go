@@ -43,6 +43,12 @@ var (
 // MaxBulkItems is the maximum number of items allowed in a single bulk operation
 const MaxBulkItems = 1000
 
+// MaxBulkStatusItems is the maximum number of records a single bulk status
+// update may touch. It is far below MaxBulkItems on purpose: a status update is
+// all-or-nothing, so every listed row is read, authorized and written inside one
+// transaction, and the cap bounds how long that transaction can hold its locks.
+const MaxBulkStatusItems = 100
+
 // BulkOperation represents a bulk operation record
 type BulkOperation struct {
 	BaseModel
@@ -116,6 +122,14 @@ type BulkResponse struct {
 	FailureCount   int             `json:"failure_count"`
 	ProcessingTime *time.Duration  `json:"processing_time,omitempty"`
 	Errors         interface{}     `json:"errors,omitempty"` // Can be []string or []BulkItemError
+}
+
+// BulkStatusUpdateResult is what a bulk status update reports back. There are
+// no per-item results to report: the operation either updates every listed
+// record or updates none of them, so a single count says everything there is to
+// say about a success, and a failure is carried by the error instead.
+type BulkStatusUpdateResult struct {
+	Updated int `json:"updated"`
 }
 
 // Bulk action type constants for each resource

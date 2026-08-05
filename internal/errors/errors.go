@@ -22,6 +22,7 @@ var (
 	ErrLeadNotFound            = errors.New("lead not found")
 	ErrForbidden               = errors.New("forbidden")
 	ErrInvalidAssigneeRole     = errors.New("tickets can only be assigned to support or admin users")
+	ErrInvalidCustomerAssignee = errors.New("customers can only be assigned to sales or admin users")
 	ErrInactiveUser            = errors.New("cannot assign task to inactive user")
 	ErrClosedTicketReopen      = errors.New("cannot reopen closed ticket")
 	ErrCompletedTaskModify     = errors.New("cannot change status of completed task")

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -455,6 +456,82 @@ func (suite *TaskServiceTestSuite) TestList_Success() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedTasks, tasks)
 	assert.Equal(suite.T(), int64(2), total)
+}
+
+// --- dashboard analytics -----------------------------------------------------
+
+func (suite *TaskServiceTestSuite) TestGetStatusCounts_Success() {
+	expected := map[string]int64{"pending": 4, "completed": 2}
+	suite.mockTaskRepo.On("CountByStatus").Return(expected, nil)
+
+	counts, err := suite.service.GetStatusCounts()
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expected, counts)
+}
+
+func (suite *TaskServiceTestSuite) TestGetStatusCounts_RepositoryError() {
+	suite.mockTaskRepo.On("CountByStatus").Return(nil, errors.New("database is down"))
+
+	counts, err := suite.service.GetStatusCounts()
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), counts)
+}
+
+// A nil assignee filter is what makes the query span every assignee; passing a
+// zero uint instead would silently match nobody.
+func (suite *TaskServiceTestSuite) TestGetUpcoming_PassesNilAssigneeFilter() {
+	suite.mockTaskRepo.On("ListUpcoming", (*uint)(nil), 5).Return([]models.Task{{Title: "Due soon"}}, nil)
+
+	tasks, err := suite.service.GetUpcoming(5)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), tasks, 1)
+}
+
+func (suite *TaskServiceTestSuite) TestGetUpcomingByAssignee_PassesAssigneeFilter() {
+	suite.mockTaskRepo.On("ListUpcoming", mock.MatchedBy(func(assigneeID *uint) bool {
+		return assigneeID != nil && *assigneeID == 12
+	}), 5).Return([]models.Task{}, nil)
+
+	tasks, err := suite.service.GetUpcomingByAssignee(12, 5)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), tasks)
+}
+
+func (suite *TaskServiceTestSuite) TestGetDueWithin_PassesWindowAndNilAssignee() {
+	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 7)
+	suite.mockTaskRepo.On("ListDueBetween", (*uint)(nil), from, to, 100).Return([]models.Task{{Title: "In window"}}, nil)
+
+	tasks, err := suite.service.GetDueWithin(from, to, 100)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), tasks, 1)
+}
+
+func (suite *TaskServiceTestSuite) TestGetDueWithinByAssignee_PassesWindowAndAssignee() {
+	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 7)
+	suite.mockTaskRepo.On("ListDueBetween", mock.MatchedBy(func(assigneeID *uint) bool {
+		return assigneeID != nil && *assigneeID == 9
+	}), from, to, 100).Return([]models.Task{}, nil)
+
+	tasks, err := suite.service.GetDueWithinByAssignee(9, from, to, 100)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), tasks)
+}
+
+func (suite *TaskServiceTestSuite) TestGetRecentlyCompleted_Success() {
+	suite.mockTaskRepo.On("ListRecentlyCompleted", 10).Return([]models.Task{{Title: "Done"}}, nil)
+
+	tasks, err := suite.service.GetRecentlyCompleted(10)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), tasks, 1)
 }
 
 func TestTaskServiceTestSuite(t *testing.T) {

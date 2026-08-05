@@ -49,6 +49,7 @@ func (s *BulkOperationPersistenceSuite) SetupTest() {
 		&models.Task{},
 		&models.APIKey{},
 		&models.RefreshToken{},
+		&models.PasswordResetToken{},
 		&models.BulkOperation{},
 		&models.BulkOperationItem{},
 	))

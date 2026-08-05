@@ -37,9 +37,12 @@ func SetupCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
 	{
 		customers.POST("", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.Create)
 		customers.GET("", handler.List)
+		// Mass PII egress, so admin only — see the handler's GDPR note.
+		customers.GET("/export", middleware.RequireRole(models.RoleAdmin), handler.Export)
 		customers.GET("/:id", handler.Get)
 		customers.PUT("/:id", handler.Update)
 		customers.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+		customers.POST("/:id/assign", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.Assign)
 	}
 }
 
@@ -64,6 +67,7 @@ func SetupTaskRoutes(router *gin.RouterGroup, handler *TaskHandler) {
 		tasks.POST("", handler.Create)
 		tasks.GET("", handler.List)
 		tasks.GET("/my", handler.ListMyTasks)
+		tasks.GET("/upcoming", handler.GetUpcoming)
 		tasks.GET("/:id", handler.Get)
 		tasks.PUT("/:id", handler.Update)
 		tasks.DELETE("/:id", handler.Delete)
@@ -75,6 +79,8 @@ func SetupAPIKeyRoutes(router *gin.RouterGroup, handler *APIKeyHandler) {
 	{
 		apiKeys.POST("", handler.Create)
 		apiKeys.GET("", handler.List)
+		apiKeys.GET("/:id", handler.Get)
+		apiKeys.PUT("/:id", handler.Update)
 		apiKeys.DELETE("/:id", handler.Revoke)
 	}
 }
@@ -96,7 +102,27 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 
 func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	dashboard := router.Group("/dashboard")
+	guard := middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport)
 	{
-		dashboard.GET("/stats", middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport), handler.GetStats)
+		dashboard.GET("/stats", guard, handler.GetStats)
+		dashboard.GET("/leads-by-status", guard, handler.GetLeadsByStatus)
+		dashboard.GET("/tickets-by-priority", guard, handler.GetTicketsByPriority)
+		dashboard.GET("/tasks-by-status", guard, handler.GetTasksByStatus)
+		dashboard.GET("/sales-performance", guard, handler.GetSalesPerformance)
+		dashboard.GET("/activities", guard, handler.GetActivities)
+		dashboard.GET("/upcoming-tasks", guard, handler.GetUpcomingTasks)
+		dashboard.GET("/recent-tickets", guard, handler.GetRecentTickets)
+		dashboard.GET("/new-leads", guard, handler.GetNewLeads)
 	}
+}
+
+// SetupBulkStatusRoutes registers the entity bulk status endpoints. They are
+// registered outside the entity groups so the Setup* signatures stay stable
+// for the test suites that mount them; the lead variant therefore repeats the
+// lead group's role guard explicitly. Per-item authorization happens in the
+// bulk service.
+func SetupBulkStatusRoutes(router *gin.RouterGroup, bulkHandler *BulkHandler) {
+	router.POST("/leads/bulk/status", middleware.RequireRole(models.RoleAdmin, models.RoleSales), bulkHandler.BulkUpdateLeadStatus)
+	router.POST("/tickets/bulk/status", bulkHandler.BulkUpdateTicketStatus)
+	router.POST("/tasks/bulk/status", bulkHandler.BulkUpdateTaskStatus)
 }

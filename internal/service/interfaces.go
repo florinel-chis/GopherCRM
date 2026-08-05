@@ -1,12 +1,19 @@
 package service
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
 type AuthTokens struct {
 	AccessToken  string
 	RefreshToken string
+	// User is the authenticated account the tokens belong to, so handlers can
+	// mirror the login response shape without a second lookup. RefreshToken is
+	// the raw opaque value — it is returned to the client once and only its
+	// hash is persisted; it must never be logged.
+	User *models.User
 }
 
 type AuthService interface {
@@ -18,6 +25,14 @@ type AuthService interface {
 	GenerateTokens(user *models.User) (*AuthTokens, error)
 	RefreshAccessToken(refreshToken string) (*AuthTokens, error)
 	InvalidateRefreshToken(refreshToken string) error
+	// Logout revokes the given refresh token if it belongs to the user, or all
+	// of the user's refresh tokens when refreshToken is empty. Idempotent.
+	Logout(userID uint, refreshToken string) error
+	ChangePassword(userID uint, currentPassword, newPassword string) error
+	// RequestPasswordReset never discloses whether the account exists; mail
+	// and lookup failures are swallowed by design (anti-enumeration).
+	RequestPasswordReset(email string) error
+	ConfirmPasswordReset(token, newPassword string) error
 	GenerateCSRFToken() (string, error)
 	ValidateCSRFToken(token string) bool
 }
@@ -47,6 +62,15 @@ type LeadService interface {
 	ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error)
 	GetCount() (int64, error)
 	GetCountByClassification(classification models.LeadClassification) (int64, error)
+	// Dashboard analytics.
+	GetStatusCounts() (map[string]int64, error)
+	GetRecent(limit int) ([]models.Lead, error)
+	GetRecentByOwner(ownerID uint, limit int) ([]models.Lead, error)
+	GetRecentlyConverted(limit int) ([]models.Lead, error)
+	// GetConversionTimestamps returns the conversion time of every lead
+	// converted at or after `since`. Callers bucket them in Go: no date function
+	// is spelled the same on MySQL 8 and SQLite.
+	GetConversionTimestamps(since time.Time) ([]time.Time, error)
 }
 
 type CustomerService interface {
@@ -58,6 +82,12 @@ type CustomerService interface {
 	List(offset, limit int) ([]models.Customer, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)
+	// ExportAll returns every matching customer, unpaginated, for the admin-only
+	// CSV export.
+	ExportAll(search, sortBy, sortOrder string) ([]models.Customer, error)
+	// Assign sets the staff account owning the customer relationship. The
+	// assignee must exist, be active, and hold the admin or sales role.
+	Assign(customerID, userID uint) (*models.Customer, error)
 	GetCount() (int64, error)
 }
 
@@ -72,6 +102,10 @@ type TicketService interface {
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	GetOpenCount() (int64, error)
+	// Dashboard analytics.
+	GetPriorityCounts() (map[string]int64, error)
+	GetRecent(limit int) ([]models.Ticket, error)
+	GetRecentlyResolved(limit int) ([]models.Ticket, error)
 }
 
 type TaskService interface {
@@ -84,11 +118,27 @@ type TaskService interface {
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	GetPendingCount() (int64, error)
+	// Dashboard analytics. The ByAssignee variants exist so the handlers can
+	// narrow non-admin callers to their own assignments without the scoping
+	// decision leaking into the repository.
+	GetStatusCounts() (map[string]int64, error)
+	GetUpcoming(limit int) ([]models.Task, error)
+	GetUpcomingByAssignee(assigneeID uint, limit int) ([]models.Task, error)
+	GetDueWithin(from, to time.Time, limit int) ([]models.Task, error)
+	GetDueWithinByAssignee(assigneeID uint, from, to time.Time, limit int) ([]models.Task, error)
+	GetRecentlyCompleted(limit int) ([]models.Task, error)
 }
 
 type APIKeyService interface {
-	Generate(userID uint, name string) (string, *models.APIKey, error)
+	// Generate mints a key for userID. A non-nil expiresAt is stored on the key
+	// and enforced at authentication time by AuthService.ValidateAPIKey.
+	Generate(userID uint, name string, expiresAt *time.Time) (string, *models.APIKey, error)
 	GetByUser(userID uint) ([]models.APIKey, error)
+	// GetByID is owner-scoped: a key belonging to another user yields
+	// apperrors.ErrForbidden, a missing one apperrors.ErrNotFound.
+	GetByID(id uint, userID uint) (*models.APIKey, error)
+	// Update applies only the non-nil fields. Owner-scoped like GetByID.
+	Update(id uint, userID uint, name *string, isActive *bool) (*models.APIKey, error)
 	Revoke(id uint, userID uint) error
 	List(userID uint) ([]models.APIKey, error)
 }
@@ -132,6 +182,12 @@ type BulkOperationService interface {
 	BulkDeleteTasks(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionTasks(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
 	
+	// Bulk status updates. All-or-nothing, authorized per record against the
+	// same rules the single-record update applies.
+	BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTicketStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTaskStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
+
 	// Ticket bulk operations
 	BulkCreateTickets(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkUpdateTickets(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)

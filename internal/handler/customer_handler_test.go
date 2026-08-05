@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -708,4 +710,291 @@ func assertNoDriverInternalsInBody(t *testing.T, body string) {
 
 func TestCustomerHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(CustomerHandlerTestSuite))
+}
+// --- Export ------------------------------------------------------------------
+//
+// The export deliberately does NOT answer with the utils.APIResponse envelope:
+// the browser reads it as a file. Every assertion below therefore reads the raw
+// body as CSV rather than as JSON, which is exactly what would break if somebody
+// "unified" this endpoint with the rest of the API.
+
+// exportCSVColumns is the contract the downloaded file has to keep. Changing the
+// order or the names of these columns breaks every spreadsheet built on a
+// previous download, so the header is pinned here rather than derived.
+var exportCSVColumns = []string{
+	"id", "first_name", "last_name", "email", "phone", "company",
+	"address", "notes", "assigned_to_id", "created_at", "updated_at",
+}
+
+func (suite *CustomerHandlerTestSuite) TestExport_Success() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	assignee := uint(9)
+	created := time.Date(2024, 3, 1, 10, 0, 0, 0, time.UTC)
+	updated := time.Date(2024, 3, 2, 11, 30, 0, 0, time.UTC)
+	customers := []models.Customer{
+		{
+			BaseModel: models.BaseModel{ID: 1, CreatedAt: created, UpdatedAt: updated},
+			FirstName: "John", LastName: "Doe", Email: "john@example.com",
+			Phone: "+1234567890", Company: "Acme Corp", Address: "123 Main St",
+			Notes: "Important customer", AssignedToID: &assignee,
+		},
+		{
+			BaseModel: models.BaseModel{ID: 2, CreatedAt: created, UpdatedAt: updated},
+			FirstName: "Jane", LastName: "Smith", Email: "jane@example.com",
+		},
+	}
+
+	suite.mockService.On("ExportAll", "", "", "").Return(customers, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), "text/csv; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.Equal(suite.T(), "attachment; filename=customers-export.csv", rec.Header().Get("Content-Disposition"))
+
+	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), records, 3, "one header row plus one row per customer")
+	assert.Equal(suite.T(), exportCSVColumns, records[0])
+	assert.Equal(suite.T(), []string{
+		"1", "John", "Doe", "john@example.com", "+1234567890", "Acme Corp",
+		"123 Main St", "Important customer", "9",
+		created.Format(time.RFC3339), updated.Format(time.RFC3339),
+	}, records[1])
+	// An unassigned customer must export as an empty cell, not as "0" or "<nil>".
+	assert.Equal(suite.T(), "", records[2][8])
+}
+
+func (suite *CustomerHandlerTestSuite) TestExport_HonoursSearchFilter() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	suite.mockService.On("ExportAll", "acme", "", "").Return([]models.Customer{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", LastName: "Doe", Email: "john@acme.com", Company: "Acme Corp"},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export?search=acme", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), records, 2)
+	assert.Equal(suite.T(), "john@acme.com", records[1][3])
+}
+
+func (suite *CustomerHandlerTestSuite) TestExport_HonoursSortParameters() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	suite.mockService.On("ExportAll", "", "email", "desc").Return([]models.Customer{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export?sort_by=email&sort_order=desc", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+// A sort column outside the allowlist must be dropped, not passed down: the
+// allowlist is the SQL-injection guard.
+func (suite *CustomerHandlerTestSuite) TestExport_RejectsUnknownSortColumn() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	suite.mockService.On("ExportAll", "", "", "").Return([]models.Customer{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export?sort_by=password;DROP+TABLE+customers", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestExport_EmptyDatabaseYieldsHeaderOnly() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	suite.mockService.On("ExportAll", "", "", "").Return([]models.Customer{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), "text/csv; charset=utf-8", rec.Header().Get("Content-Type"))
+
+	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), records, 1, "an empty database still produces the header row")
+	assert.Equal(suite.T(), exportCSVColumns, records[0])
+}
+
+// The export is a mass PII egress, so the handler refuses anybody but an admin
+// even if a future route registration forgets the guard.
+func (suite *CustomerHandlerTestSuite) TestExport_ForbiddenForSalesUser() {
+	req := httptest.NewRequest(http.MethodGet, "/customers/export", nil)
+	rec := httptest.NewRecorder()
+
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Set("user_id", uint(1))
+	ctx.Set("user_role", "sales")
+	ctx.Set("request_id", "test-request-id")
+	ctx.Request = req
+
+	suite.handler.Export(ctx)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.NotContains(suite.T(), rec.Header().Get("Content-Type"), "text/csv")
+}
+
+// A failed export must not answer with a truncated, apparently-complete file.
+func (suite *CustomerHandlerTestSuite) TestExport_ServiceFailureIsInternalError() {
+	suite.router.GET("/customers/export", suite.handler.Export)
+
+	suite.mockService.On("ExportAll", "", "", "").Return(nil, errors.New("connection refused"))
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/export", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+	assert.NotContains(suite.T(), rec.Header().Get("Content-Type"), "text/csv")
+
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+}
+
+// --- Assign ------------------------------------------------------------------
+
+func (suite *CustomerHandlerTestSuite) TestAssign_Success() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	assignee := uint(7)
+	assigned := &models.Customer{
+		BaseModel:    models.BaseModel{ID: 1},
+		FirstName:    "John",
+		LastName:     "Doe",
+		Email:        "john@example.com",
+		AssignedToID: &assignee,
+	}
+
+	suite.mockService.On("Assign", uint(1), uint(7)).Return(assigned, nil)
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.True(suite.T(), response.Success)
+	data := response.Data.(map[string]interface{})
+	assert.Equal(suite.T(), float64(7), data["assigned_to_id"])
+}
+
+func (suite *CustomerHandlerTestSuite) TestAssign_InvalidCustomerID() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/not-a-number/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestAssign_CustomerNotFound() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	suite.mockService.On("Assign", uint(1), uint(7)).
+		Return(nil, fmt.Errorf("customer %d not found: %w", 1, apperrors.ErrNotFound))
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestAssign_UserNotFound() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	suite.mockService.On("Assign", uint(1), uint(99)).
+		Return(nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound))
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 99})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+}
+
+// A deactivated account exists, so this is a rejected request (400), not a miss.
+func (suite *CustomerHandlerTestSuite) TestAssign_InactiveUserIsBadRequest() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	suite.mockService.On("Assign", uint(1), uint(7)).
+		Return(nil, fmt.Errorf("cannot assign customer to inactive user: %w", apperrors.ErrInactiveUser))
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestAssign_WrongRoleIsBadRequest() {
+	suite.router.POST("/customers/:id/assign", suite.handler.Assign)
+
+	suite.mockService.On("Assign", uint(1), uint(7)).
+		Return(nil, fmt.Errorf("customers can only be assigned to sales or admin users: %w", apperrors.ErrInvalidCustomerAssignee))
+
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (suite *CustomerHandlerTestSuite) TestAssign_ForbiddenForSupportUser() {
+	body, _ := json.Marshal(AssignCustomerRequest{UserID: 7})
+	req := httptest.NewRequest(http.MethodPost, "/customers/1/assign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Set("user_id", uint(1))
+	ctx.Set("user_role", "support")
+	ctx.Set("request_id", "test-request-id")
+	ctx.Request = req
+
+	suite.handler.Assign(ctx)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }

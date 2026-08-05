@@ -115,6 +115,51 @@ describe('AuthContext', () => {
     expect(localStorage.getItem('remember_me')).toBe('true');
   });
 
+  it('stores both tokens as session-only when remember_me is not set', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({
+      token: 'test-token',
+      refresh_token: 'test-refresh-token',
+      user: mockUser,
+    });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await act(async () => {
+      await result.current.login({
+        email: 'test@example.com',
+        password: 'password',
+      });
+    });
+
+    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', false);
+    expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', false);
+    expect(localStorage.getItem('remember_me')).toBeNull();
+  });
+
+  it('does not store a refresh token when the login response omits it', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({
+      token: 'test-token',
+      user: mockUser,
+    });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await act(async () => {
+      await result.current.login({
+        email: 'test@example.com',
+        password: 'password',
+        remember_me: true,
+      });
+    });
+
+    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', true);
+    expect(apiClient.setRefreshToken).not.toHaveBeenCalled();
+  });
+
   it('handles logout', async () => {
     vi.mocked(apiClient.getToken).mockReturnValue('test-token');
     vi.mocked(authApi.getCurrentUser).mockResolvedValue(mockUser);
@@ -132,7 +177,12 @@ describe('AuthContext', () => {
     });
 
     expect(authApi.logout).toHaveBeenCalled();
+    // clearTokens wipes access AND refresh tokens from both storages, and the
+    // server must be told first, while the access token is still available.
     expect(apiClient.clearTokens).toHaveBeenCalled();
+    const logoutOrder = vi.mocked(authApi.logout).mock.invocationCallOrder[0];
+    const clearOrder = vi.mocked(apiClient.clearTokens).mock.invocationCallOrder[0];
+    expect(logoutOrder).toBeLessThan(clearOrder);
     expect(result.current.user).toBe(null);
     expect(result.current.isAuthenticated).toBe(false);
   });

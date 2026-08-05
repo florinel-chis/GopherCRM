@@ -172,10 +172,12 @@ Status meanings:
 
 ## 10. Bulk Operations
 
-**These are not reachable over HTTP.** `internal/handler/bulk_handler.go` implements bulk
-create/update/delete/action handlers, but no `Setup*Routes` function registers them and
-`cmd/main.go` never constructs a `BulkHandler`. The rows below describe the service and repository
-layers, which *are* exercised.
+**Bulk status updates ARE reachable over HTTP** since the 2026-08 build-out:
+`POST /leads|tickets|tasks/bulk/status` (max 100 ids, all-or-nothing, per-item authorization),
+covered by 24 handler tests (`bulk_handler_test.go`) and 20 integration tests
+(`test/integration/bulk_status_update_test.go`) including rollback proofs. The generic
+`/bulk/:resource` create/update/delete/action handlers below remain unrouted; their rows describe
+the service and repository layers, which *are* exercised.
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
@@ -185,6 +187,20 @@ layers, which *are* exercised.
 | 10.4 | **Bulk Actions** | Apply actions to multiple records | -- | -- | -- | -- | **untested** | No tests at all; no HTTP route |
 
 ---
+
+## 10b. 2026-08 Backend Build-out (session lifecycle, analytics, export/assign, API-key management)
+
+Added after this matrix was first compiled; every row verified by the named suites. See
+CHANGELOG "Added" for the full behavioural description.
+
+| Feature | Endpoints | Tests |
+|---|---|---|
+| Auth sessions | `POST /auth/refresh`, `/auth/logout`, `/auth/change-password`, `/auth/password-reset`, `/auth/password-reset/confirm`; login returns a rotating refresh token | `internal/service/auth_session_test.go`, `internal/repository/refresh_token_repository_test.go`, `password_reset_token_repository_test.go`, `internal/mailer/mailer_test.go`, `tests/auth_session_integration_test.go` (login→refresh→replay-401→logout lifecycle, mailed reset round-trip) |
+| Dashboard analytics | `GET /dashboard/{leads-by-status,tickets-by-priority,tasks-by-status,sales-performance,activities,upcoming-tasks,recent-tickets,new-leads}`, `GET /tasks/upcoming` | 85 tests: `dashboard_handler_test.go`, pure Go time-bucketing tests (leap day / quarter rollover), `internal/repository/dashboard_queries_test.go`, service tests; mutation-checked |
+| Bulk status | `POST /{leads,tickets,tasks}/bulk/status` | see section 10 above |
+| API keys | `GET/PUT /api-keys/{id}`, `expires_at` on create, expiry enforced at auth | `apikey_service_test.go`, `apikey_handler_test.go`, `tests/apikey_integration_test.go` incl. `TestExpiredAPIKeyIsRejectedAtAuth` |
+| Customers | `GET /customers/export` (CSV, admin), `POST /customers/{id}/assign` (new `assigned_to_id` column, survives erasure) | handler/service/repo suites + `tests/customer_integration_test.go` (15 new tests) incl. erasure regression |
+| Erasure | password-reset tokens purged with the account | `test/integration/erasure_test.go` `TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount` |
 
 ## 11. Cross-Cutting Concerns
 

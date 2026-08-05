@@ -45,6 +45,8 @@ export interface Customer {
   is_active: boolean;
   owner_id: number;
   owner?: User;
+  assigned_to_id?: number;
+  assigned_to?: User;
   created_at: string;
   updated_at: string;
 }

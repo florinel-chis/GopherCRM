@@ -209,3 +209,79 @@ func (s *customerService) Search(query string, offset, limit int, sortBy, sortOr
 func (s *customerService) GetCount() (int64, error) {
 	return s.customerRepo.Count()
 }
+
+// ExportAll returns every customer matching the optional search term, unpaginated.
+//
+// The caller is expected to be the admin-only CSV export: this is a bulk read of
+// personal data, so it is deliberately a distinct method rather than "List with
+// a very large limit", and the audit log below records that a full export was
+// taken.
+func (s *customerService) ExportAll(search, sortBy, sortOrder string) ([]models.Customer, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"search":     search,
+		"sort_by":    sortBy,
+		"sort_order": sortOrder,
+	}), "CustomerService", "ExportAll")
+
+	customers, err := s.customerRepo.ListAllForExport(search, sortBy, sortOrder)
+	if err != nil {
+		logger.WithError(err).Error("Failed to export customers")
+		return nil, err
+	}
+
+	logger.WithField("count", len(customers)).Info("Customer export produced")
+	return customers, nil
+}
+
+// Assign sets the staff account that owns a customer relationship.
+//
+// The assignee is validated the same way a ticket assignee is: the account has
+// to exist, has to be active, and has to hold a role that can actually work the
+// record. Customer ownership is a sales function, so admin and sales qualify and
+// support and customer accounts do not — handing a book of customers to a
+// customer-role account would be a data-protection incident, not a typo.
+//
+// Each rejection carries its own sentinel so the handler can answer 404 for a
+// missing customer or user and 400 for one that exists but cannot be assigned.
+func (s *customerService) Assign(customerID, userID uint) (*models.Customer, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"customer_id": customerID,
+		"user_id":     userID,
+	}), "CustomerService", "Assign")
+
+	customer, err := s.customerRepo.GetByID(customerID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Customer not found")
+			return nil, fmt.Errorf("customer %d not found: %w", customerID, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up customer for assignment")
+		return nil, err
+	}
+
+	assignee, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		logger.WithError(err).Warn("Assignee not found")
+		return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
+	}
+
+	if !assignee.IsActive {
+		logger.Warn("Cannot assign customer to inactive user")
+		return nil, fmt.Errorf("cannot assign customer to inactive user: %w", apperrors.ErrInactiveUser)
+	}
+
+	if assignee.Role != models.RoleSales && assignee.Role != models.RoleAdmin {
+		logger.WithField("assignee_role", assignee.Role).Warn("Invalid assignee role")
+		return nil, fmt.Errorf("customers can only be assigned to sales or admin users: %w", apperrors.ErrInvalidCustomerAssignee)
+	}
+
+	customer.AssignedToID = &userID
+	customer.AssignedTo = nil // let the caller re-read the association rather than persist a stale copy
+	if err := s.customerRepo.Update(customer); err != nil {
+		logger.WithError(err).Error("Failed to assign customer")
+		return nil, err
+	}
+
+	logger.Info("Customer assigned successfully")
+	return customer, nil
+}

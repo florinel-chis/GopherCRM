@@ -73,6 +73,26 @@ func (m *MockAuthService) InvalidateRefreshToken(refreshToken string) error {
 	return args.Error(0)
 }
 
+func (m *MockAuthService) Logout(userID uint, refreshToken string) error {
+	args := m.Called(userID, refreshToken)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ChangePassword(userID uint, currentPassword, newPassword string) error {
+	args := m.Called(userID, currentPassword, newPassword)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) RequestPasswordReset(email string) error {
+	args := m.Called(email)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ConfirmPasswordReset(token, newPassword string) error {
+	args := m.Called(token, newPassword)
+	return args.Error(0)
+}
+
 func (m *MockAuthService) GenerateCSRFToken() (string, error) {
 	args := m.Called()
 	return args.String(0), args.Error(1)

@@ -229,8 +229,9 @@ What happens on `DELETE`:
 - Every personal field is overwritten in place. The email is replaced with a unique, non-routable
   placeholder in the reserved `.invalid` domain (RFC 2606) that is generated from `crypto/rand` and
   is **not** derived from the original address, so it cannot be reversed or linked back.
-- The user's API keys and refresh tokens are purged, so credentials cannot outlive the account. An
-  API key whose owner has been erased or deactivated is rejected at authentication time regardless.
+- The user's API keys, refresh tokens and password-reset tokens are purged, so no credential can
+  outlive the account. An API key whose owner has been erased or deactivated is rejected at
+  authentication time regardless.
 - Only then is the row soft-deleted. The row is deliberately **kept** so that foreign keys from
   tickets, tasks and leads still resolve — business records survive, the person does not.
 - Scrub and soft-delete happen in one transaction, so a failure part-way cannot leave a half-erased

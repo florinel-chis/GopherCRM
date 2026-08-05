@@ -305,6 +305,66 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// upcomingTasksDefaultDays, upcomingTasksMaxDays and upcomingTasksMaxResults
+// bound GET /tasks/upcoming. The day count is clamped rather than rejected, in
+// keeping with the other list parameters here, and the result count is capped
+// so the endpoint can never be turned into an unbounded table scan by widening
+// the window.
+const (
+	upcomingTasksDefaultDays = 7
+	upcomingTasksMaxDays     = 90
+	upcomingTasksMaxResults  = 100
+)
+
+// GetUpcoming godoc
+// @Summary List tasks due in the next N days
+// @Description The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending. Completed and cancelled tasks are excluded, as are tasks with no due date. The window starts at the current instant, so tasks that are already overdue are NOT included — use the task list for those. Admins see every assignee's tasks; every other role sees only the tasks assigned to them. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param days query int false "Size of the look-ahead window in days; clamped to 1-90" minimum(1) maximum(90) default(7)
+// @Success 200 {object} utils.APIResponse{data=[]models.Task} "Upcoming tasks retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tasks/upcoming [get]
+func (h *TaskHandler) GetUpcoming(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "TaskHandler.GetUpcoming")
+
+	days := upcomingTasksDefaultDays
+	if raw := c.Query("days"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	if days > upcomingTasksMaxDays {
+		days = upcomingTasksMaxDays
+	}
+
+	from := time.Now()
+	to := from.AddDate(0, 0, days)
+
+	var tasks []models.Task
+	var err error
+	if c.GetString("user_role") == string(models.RoleAdmin) {
+		tasks, err = h.taskService.GetDueWithin(from, to, upcomingTasksMaxResults)
+	} else {
+		tasks, err = h.taskService.GetDueWithinByAssignee(c.GetUint("user_id"), from, to, upcomingTasksMaxResults)
+	}
+	if err != nil {
+		logger.WithError(err).Error("Failed to list upcoming tasks")
+		utils.RespondInternalError(c)
+		return
+	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, tasks)
+	utils.RespondSuccess(c, http.StatusOK, tasks)
+}
+
 // Update godoc
 // @Summary Update a task
 // @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer.

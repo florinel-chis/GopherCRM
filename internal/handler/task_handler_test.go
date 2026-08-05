@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -83,6 +85,58 @@ func (m *MockTaskService) GetPendingCount() (int64, error) {
 	args := m.Called()
 	return args.Get(0).(int64), args.Error(1)
 }
+
+func (m *MockTaskService) GetStatusCounts() (map[string]int64, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]int64), args.Error(1)
+}
+
+func (m *MockTaskService) GetUpcoming(limit int) ([]models.Task, error) {
+	args := m.Called(limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetUpcomingByAssignee(assigneeID uint, limit int) ([]models.Task, error) {
+	args := m.Called(assigneeID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetDueWithin(from, to time.Time, limit int) ([]models.Task, error) {
+	args := m.Called(from, to, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetDueWithinByAssignee(assigneeID uint, from, to time.Time, limit int) ([]models.Task, error) {
+	args := m.Called(assigneeID, from, to, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetRecentlyCompleted(limit int) ([]models.Task, error) {
+	args := m.Called(limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+// Compile-time proof that the local double still satisfies the service
+// interface it stands in for.
+var _ service.TaskService = (*MockTaskService)(nil)
 
 type TaskHandlerTestSuite struct {
 	suite.Suite
@@ -866,4 +920,129 @@ func (suite *TaskHandlerTestSuite) TestListTasks_SearchWithSort() {
 
 func TestTaskHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(TaskHandlerTestSuite))
+}
+
+// --- GET /tasks/upcoming -----------------------------------------------------
+
+// newUpcomingRouter registers only the upcoming route, on its own engine, so
+// the test never collides with whatever SetupTaskRoutes registers in routes.go.
+func (suite *TaskHandlerTestSuite) newUpcomingRouter(role models.UserRole, userID uint) *gin.Engine {
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("request_id", "test-request-id")
+		c.Set("user_id", userID)
+		c.Set("user_role", string(role))
+		c.Next()
+	})
+	router.GET("/tasks/upcoming", suite.handler.GetUpcoming)
+	return router
+}
+
+func (suite *TaskHandlerTestSuite) getUpcoming(role models.UserRole, userID uint, query string) *httptest.ResponseRecorder {
+	router := suite.newUpcomingRouter(role, userID)
+	req := httptest.NewRequest(http.MethodGet, "/tasks/upcoming"+query, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+// The window must be exactly seven days wide by default, and the payload a bare
+// JSON array — the frontend reads response.data as the array itself.
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_DefaultsToSevenDaysForAdmin() {
+	task := models.Task{Title: "Renew contract", AssignedToID: 4}
+	task.ID = 3
+
+	var capturedFrom, capturedTo time.Time
+	suite.mockService.On("GetDueWithin", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Run(func(args mock.Arguments) {
+			capturedFrom = args.Get(0).(time.Time)
+			capturedTo = args.Get(1).(time.Time)
+		}).
+		Return([]models.Task{task}, nil)
+
+	rec := suite.getUpcoming(models.RoleAdmin, 1, "")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), capturedFrom.AddDate(0, 0, 7), capturedTo)
+
+	var env struct {
+		Success bool          `json:"success"`
+		Data    []models.Task `json:"data"`
+	}
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.True(suite.T(), env.Success)
+	assert.Len(suite.T(), env.Data, 1)
+	assert.Equal(suite.T(), "Renew contract", env.Data[0].Title)
+}
+
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_HonoursDaysParameter() {
+	var capturedFrom, capturedTo time.Time
+	suite.mockService.On("GetDueWithin", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Run(func(args mock.Arguments) {
+			capturedFrom = args.Get(0).(time.Time)
+			capturedTo = args.Get(1).(time.Time)
+		}).
+		Return([]models.Task{}, nil)
+
+	rec := suite.getUpcoming(models.RoleAdmin, 1, "?days=30")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), capturedFrom.AddDate(0, 0, 30), capturedTo)
+}
+
+// Non-admins only ever see their own assignments, exactly as TaskHandler.List
+// narrows them.
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_NonAdminScopedToAssignee() {
+	suite.mockService.On("GetDueWithinByAssignee", uint(12), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Return([]models.Task{}, nil)
+
+	rec := suite.getUpcoming(models.RoleSupport, 12, "")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	var env struct {
+		Success bool            `json:"success"`
+		Data    json.RawMessage `json:"data"`
+	}
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.True(suite.T(), env.Success)
+	assert.Equal(suite.T(), "[]", string(env.Data), "an empty result must be a JSON array, never null")
+}
+
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_DaysAboveRangeIsClampedToNinety() {
+	var capturedFrom, capturedTo time.Time
+	suite.mockService.On("GetDueWithin", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Run(func(args mock.Arguments) {
+			capturedFrom = args.Get(0).(time.Time)
+			capturedTo = args.Get(1).(time.Time)
+		}).
+		Return([]models.Task{}, nil)
+
+	rec := suite.getUpcoming(models.RoleAdmin, 1, "?days=365")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), capturedFrom.AddDate(0, 0, 90), capturedTo)
+}
+
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_InvalidDaysFallsBackToDefault() {
+	var capturedFrom, capturedTo time.Time
+	suite.mockService.On("GetDueWithin", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Run(func(args mock.Arguments) {
+			capturedFrom = args.Get(0).(time.Time)
+			capturedTo = args.Get(1).(time.Time)
+		}).
+		Return([]models.Task{}, nil)
+
+	rec := suite.getUpcoming(models.RoleAdmin, 1, "?days=not-a-number")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), capturedFrom.AddDate(0, 0, 7), capturedTo)
+}
+
+func (suite *TaskHandlerTestSuite) TestGetUpcoming_ServiceErrorIsInternalError() {
+	suite.mockService.On("GetDueWithin", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 100).
+		Return(nil, errors.New("database is down"))
+
+	rec := suite.getUpcoming(models.RoleAdmin, 1, "")
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
 }

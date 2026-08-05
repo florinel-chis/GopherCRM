@@ -341,6 +341,46 @@ func uintPtr(u uint) *uint {
 	return &u
 }
 
+// --- dashboard analytics -----------------------------------------------------
+
+func (suite *TicketServiceTestSuite) TestGetPriorityCounts_Success() {
+	expected := map[string]int64{"high": 2, "urgent": 1}
+	suite.mockTicketRepo.On("CountByPriority").Return(expected, nil)
+
+	counts, err := suite.service.GetPriorityCounts()
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expected, counts)
+}
+
+func (suite *TicketServiceTestSuite) TestGetPriorityCounts_RepositoryError() {
+	suite.mockTicketRepo.On("CountByPriority").Return(nil, errors.New("database is down"))
+
+	counts, err := suite.service.GetPriorityCounts()
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), counts)
+}
+
+func (suite *TicketServiceTestSuite) TestGetRecent_Success() {
+	suite.mockTicketRepo.On("ListRecent", 5).Return([]models.Ticket{{Title: "Newest"}}, nil)
+
+	tickets, err := suite.service.GetRecent(5)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), tickets, 1)
+	assert.Equal(suite.T(), "Newest", tickets[0].Title)
+}
+
+func (suite *TicketServiceTestSuite) TestGetRecentlyResolved_Success() {
+	suite.mockTicketRepo.On("ListRecentlyResolved", 10).Return([]models.Ticket{{Title: "Resolved"}}, nil)
+
+	tickets, err := suite.service.GetRecentlyResolved(10)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), tickets, 1)
+}
+
 func TestTicketServiceTestSuite(t *testing.T) {
 	suite.Run(t, new(TicketServiceTestSuite))
 }

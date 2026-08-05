@@ -260,3 +260,21 @@ func (s *ticketService) Search(query string, offset, limit int, sortBy, sortOrde
 func (s *ticketService) GetOpenCount() (int64, error) {
 	return s.ticketRepo.CountOpen()
 }
+
+// GetPriorityCounts returns the live ticket count per priority, for the
+// dashboard's priority distribution chart. Priorities with no rows are missing
+// from the map — the handler owns the label set.
+func (s *ticketService) GetPriorityCounts() (map[string]int64, error) {
+	return s.ticketRepo.CountByPriority()
+}
+
+// GetRecent returns the newest tickets, for the dashboard widget.
+func (s *ticketService) GetRecent(limit int) ([]models.Ticket, error) {
+	return s.ticketRepo.ListRecent(limit)
+}
+
+// GetRecentlyResolved returns the tickets most recently resolved or closed, for
+// the activity feed.
+func (s *ticketService) GetRecentlyResolved(limit int) ([]models.Ticket, error) {
+	return s.ticketRepo.ListRecentlyResolved(limit)
+}

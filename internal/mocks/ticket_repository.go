@@ -476,6 +476,39 @@ func (_m *TicketRepository) CountSearch(query string) (int64, error) {
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+// CountByPriority provides a mock function with no fields
+func (_m *TicketRepository) CountByPriority() (map[string]int64, error) {
+	ret := _m.Called()
+
+	var r0 map[string]int64
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]int64)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRecent provides a mock function with given fields: limit
+func (_m *TicketRepository) ListRecent(limit int) ([]models.Ticket, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRecentlyResolved provides a mock function with given fields: limit
+func (_m *TicketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
 func (_m *TicketRepository) WithTx(tx *gorm.DB) repository.TicketRepository {
 	_m.Called(tx)
 	return _m

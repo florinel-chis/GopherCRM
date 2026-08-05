@@ -225,7 +225,7 @@ func inTransaction(db *gorm.DB) bool {
 // and the transaction would still commit, leaving an anonymised user whose
 // credentials still work.
 func purgeCredentials(tx *gorm.DB, userID uint) error {
-	credentialModels := []interface{}{&models.APIKey{}, &models.RefreshToken{}}
+	credentialModels := []interface{}{&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}}
 	for _, model := range credentialModels {
 		if err := tx.Unscoped().Where("user_id = ?", userID).Delete(model).Error; err != nil {
 			return fmt.Errorf("purging credentials of user %d: %w", userID, err)
