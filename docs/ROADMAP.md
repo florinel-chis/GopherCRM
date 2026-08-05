@@ -3,7 +3,7 @@
 Unprioritized ideas that are **not** implemented today. This list is the salvaged remainder of two
 pre-implementation build checklists (`tasks.md` and `uitasks.md`) that were removed once the
 features they planned had shipped; only items verified as still missing are kept here. Shipped
-functionality and its test coverage are tracked in [doc/FEATURES.md](../doc/FEATURES.md).
+functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 ## Frontend
 

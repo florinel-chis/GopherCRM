@@ -17,7 +17,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
 - 🔌 **RESTful API**: Clean architecture with comprehensive endpoints
 
-![GopherCRM Dashboard](doc/img/gophercrm-dashboard.png)
+![GopherCRM Dashboard](docs/img/gophercrm-dashboard.png)
 
 ## ⚠️ Deletion is irreversible
 
@@ -182,7 +182,7 @@ Admin users have access to additional features:
 
 GopherCRM includes a powerful configuration management system that allows administrators to customize system behavior through a web interface.
 
-![Configuration Management](doc/img/gophercrm-config.png)
+![Configuration Management](docs/img/gophercrm-config.png)
 
 #### Accessing Configuration Settings
 1. Login as an admin user
@@ -378,8 +378,7 @@ gophercrm/
 ├── tests/                       # Further integration tests
 ├── scripts/                     # create_database.sql, anonymize_legacy_deleted_pii.sql
 ├── migrations/                  # SQL migrations
-├── doc/                         # Project documentation (SETUP.md, FEATURES.md, datamodel.md, etc.)
-├── docs/                        # Developer guide, roadmap and generated OpenAPI spec
+├── docs/                        # Project documentation (developer guide, setup, features, roadmap)
 ├── gocrm-ui/                    # React TypeScript frontend
 │   ├── src/
 │   │   ├── components/          # Reusable UI components
@@ -405,10 +404,10 @@ gophercrm/
 | Document | Contents |
 |---|---|
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration, deletion semantics |
-| [doc/SETUP.md](doc/SETUP.md) | Backend and frontend setup walkthrough |
-| [doc/FEATURES.md](doc/FEATURES.md) | Feature and test-coverage matrix with known issues |
-| [doc/datamodel.md](doc/datamodel.md) | Entity model and relationships |
-| [doc/ADMIN_TESTING.md](doc/ADMIN_TESTING.md) | Admin E2E page objects and fixtures |
+| [docs/SETUP.md](docs/SETUP.md) | Backend and frontend setup walkthrough |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |
+| [docs/datamodel.md](docs/datamodel.md) | Entity model and relationships |
+| [docs/ADMIN_TESTING.md](docs/ADMIN_TESTING.md) | Admin E2E page objects and fixtures |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Ideas that are not implemented yet |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
 
@@ -452,5 +451,5 @@ licensing as unresolved until a `LICENSE` file lands.
 
 For support and questions:
 - Create an issue in the GitHub repository
-- Check the documentation in the `doc/` and `docs/` directories
+- Check the documentation in the `docs/` directory
 - Review the configuration settings for system behavior customization
