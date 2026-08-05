@@ -1,25 +1,19 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 // isNotFound reports whether a repository error means "there is no such row".
-//
-// Both halves are needed. Repositories hand gorm's own sentinel straight back
-// to us, and errors.Is compares identity, not text — gorm.ErrRecordNotFound and
-// apperrors.ErrRecordNotFound read the same and match neither each other nor
-// apperrors.ErrNotFound. Testing only one of them silently misclassifies half
-// the not-found errors in the codebase as internal failures.
+// Repositories hand gorm's own sentinel straight back to us, so the helper
+// must cover it alongside the apperrors sentinels; apperrors.IsNotFound does.
 func isNotFound(err error) bool {
-	return apperrors.IsNotFound(err) || errors.Is(err, gorm.ErrRecordNotFound)
+	return apperrors.IsNotFound(err)
 }
 
 type userService struct {
@@ -61,6 +55,13 @@ func (s *userService) GetByEmail(email string) (*models.User, error) {
 func (s *userService) Update(id uint, updates map[string]interface{}) (*models.User, error) {
 	user, err := s.userRepo.GetByID(id)
 	if err != nil {
+		// The repository hands gorm's sentinel back unchanged, and that value
+		// matches none of ours by identity. Translate it here, as Delete does,
+		// so the caller can tell "no such user" from a database failure and
+		// answer 404 instead of 500.
+		if isNotFound(err) {
+			return nil, fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
+		}
 		return nil, err
 	}
 

@@ -48,10 +48,19 @@ func (s *customerService) GetByID(id uint) (*models.Customer, error) {
 	
 	customer, err := s.customerRepo.GetByID(id)
 	if err != nil {
-		logger.WithError(err).Warn("Customer not found")
+		// "No such customer" and "the lookup failed" are different answers and
+		// the caller has to be able to tell them apart. The repository hands
+		// gorm's own sentinel straight back, which matches neither apperrors
+		// sentinel, so the miss is re-wrapped here; anything else is returned
+		// untouched so it cannot be mistaken for a missing row.
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Customer not found")
+			return nil, fmt.Errorf("customer %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up customer")
 		return nil, err
 	}
-	
+
 	logger.Debug("Customer retrieved successfully")
 	return customer, nil
 }

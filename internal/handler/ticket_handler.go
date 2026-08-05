@@ -323,6 +323,7 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the ticket is outside the caller's scope"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /tickets/{id} [get]
 func (h *TicketHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Get")
@@ -335,8 +336,13 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 	ticket, err := h.ticketService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Ticket not found")
-		utils.RespondNotFound(c, "Ticket not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Ticket not found")
+			utils.RespondNotFound(c, "Ticket not found")
+		} else {
+			logger.WithError(err).Error("Failed to get ticket")
+			utils.RespondInternalError(c)
+		}
 		return
 	}
 
@@ -378,7 +384,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a ticket
-// @Description Update a ticket. Customer users are rejected outright; support users may only update tickets assigned to them; admin and sales users may update any ticket. Only non-empty fields are applied. A closed ticket cannot be moved back to another status, and a new assignee must exist and hold the support or admin role.
+// @Description Update a ticket. Customer and sales users are rejected outright — the sales role is read-only on tickets; support users may only update tickets assigned to them; admin users may update any ticket. Only non-empty fields are applied. A closed ticket cannot be moved back to another status, and a new assignee must exist and hold the support or admin role.
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -389,7 +395,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Ticket} "Ticket updated successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID, invalid request data, attempt to reopen a closed ticket, unknown assignee, or assignee is not a support/admin user"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot update tickets and support users only their own assignments"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers and sales users cannot update tickets (sales is read-only) and support users only their own assignments"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
@@ -403,6 +409,12 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	// Customers cannot update tickets
 	if currentUserRole == string(models.RoleCustomer) {
 		utils.RespondForbidden(c, "Customers cannot update tickets")
+		return
+	}
+
+	// Sales users are read-only on tickets
+	if currentUserRole == string(models.RoleSales) {
+		utils.RespondForbidden(c, "Sales users cannot update tickets")
 		return
 	}
 
@@ -421,8 +433,13 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	// Get existing ticket
 	ticket, err := h.ticketService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Ticket not found")
-		utils.RespondNotFound(c, "Ticket not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Ticket not found")
+			utils.RespondNotFound(c, "Ticket not found")
+		} else {
+			logger.WithError(err).Error("Failed to get ticket for update")
+			utils.RespondInternalError(c)
+		}
 		return
 	}
 
@@ -471,7 +488,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a ticket
-// @Description Delete a ticket (admin role only). Any failure to delete an existing ticket is also reported as 404.
+// @Description Delete a ticket (admin role only).
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
@@ -483,6 +500,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /tickets/{id} [delete]
 func (h *TicketHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Delete")
@@ -502,8 +520,13 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.ticketService.Delete(uint(id)); err != nil {
-		logger.WithError(err).Error("Failed to delete ticket")
-		utils.RespondNotFound(c, "Ticket not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Ticket not found")
+			utils.RespondNotFound(c, "Ticket not found")
+		} else {
+			logger.WithError(err).Error("Failed to delete ticket")
+			utils.RespondInternalError(c)
+		}
 		return
 	}
 

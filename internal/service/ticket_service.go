@@ -69,10 +69,14 @@ func (s *ticketService) GetByID(id uint) (*models.Ticket, error) {
 	
 	ticket, err := s.ticketRepo.GetByID(id)
 	if err != nil {
-		logger.WithError(err).Warn("Ticket not found")
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Ticket not found")
+			return nil, fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to get ticket")
 		return nil, err
 	}
-	
+
 	logger.Debug("Ticket retrieved successfully")
 	return ticket, nil
 }
@@ -167,7 +171,11 @@ func (s *ticketService) Delete(id uint) error {
 	// Check if ticket exists
 	_, err := s.ticketRepo.GetByID(id)
 	if err != nil {
-		logger.WithError(err).Warn("Ticket not found")
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Ticket not found")
+			return fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up ticket for deletion")
 		return err
 	}
 	

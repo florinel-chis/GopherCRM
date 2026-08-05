@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -52,13 +53,18 @@ func (s *apiKeyService) GetByUser(userID uint) ([]models.APIKey, error) {
 func (s *apiKeyService) Revoke(id uint, userID uint) error {
 	apiKey, err := s.apiKeyRepo.GetByID(id)
 	if err != nil {
+		// The repository returns gorm's own sentinel unwrapped. Translate it here
+		// so callers can classify with errors.Is instead of matching on a message.
+		if isNotFound(err) {
+			return fmt.Errorf("api key %d not found: %w", id, apperrors.ErrNotFound)
+		}
 		return err
 	}
-	
+
 	if apiKey.UserID != userID {
-		return fmt.Errorf("unauthorized")
+		return fmt.Errorf("api key %d belongs to another user: %w", id, apperrors.ErrForbidden)
 	}
-	
+
 	apiKey.IsActive = false
 	return s.apiKeyRepo.Update(apiKey)
 }

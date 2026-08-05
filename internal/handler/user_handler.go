@@ -236,9 +236,10 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or request data"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only update your own profile unless you are an admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error, including when the user does not exist"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Update")
@@ -288,12 +289,20 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	user, err := h.userService.Update(uint(id), updates)
 	if err != nil {
-		logger.WithError(err).Error("Failed to update user")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			logger.WithError(err).Warn("Failed to update user")
 			utils.RespondConflict(c, "user with this email already exists")
-		} else {
-			utils.RespondInternalError(c)
+			return
 		}
+		// An update that matched nobody is a client error, not a server fault:
+		// only a genuine failure stays a 500.
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(err).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to update user")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -388,7 +397,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 // UpdateMe godoc
 // @Summary Update the current user
-// @Description Update the profile of the currently authenticated user. Only email, name and password can be changed here — role and active status are not settable through this endpoint.
+// @Description Update the profile of the currently authenticated user. Only email, name and password can be changed here — role and active status are not settable through this endpoint. A 404 here means the account was deleted while the session was still live.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -398,6 +407,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data or password does not meet complexity requirements"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found - the authenticated account no longer exists"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
@@ -437,12 +447,20 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 
 	user, err := h.userService.Update(userID, updates)
 	if err != nil {
-		logger.WithError(err).Error("Failed to update user")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			logger.WithError(err).Warn("Failed to update user")
 			utils.RespondConflict(c, "user with this email already exists")
-		} else {
-			utils.RespondInternalError(c)
+			return
 		}
+		// The id comes from the token, so this means the account was deleted
+		// while the session was still live. 404 remains the honest answer.
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(err).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to update user")
+		utils.RespondInternalError(c)
 		return
 	}
 

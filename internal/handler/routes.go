@@ -97,6 +97,6 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	dashboard := router.Group("/dashboard")
 	{
-		dashboard.GET("/stats", handler.GetStats)
+		dashboard.GET("/stats", middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport), handler.GetStats)
 	}
 }

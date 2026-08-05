@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -99,7 +101,6 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 // Revoke godoc
 // @Summary Revoke an API key
 // @Description Revoke an API key by marking it inactive; the row is kept, not deleted. Only the owner of the key may revoke it — there is no admin override, and a key belonging to another user is rejected with 403.
-// @Description Note: a well-formed ID that matches no key currently surfaces as 500, not 404, because the repository returns gorm.ErrRecordNotFound while the handler tests for a different message.
 // @Tags api-keys
 // @Produce json
 // @Security BearerAuth
@@ -109,6 +110,7 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid API key ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the API key belongs to another user"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "API key not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /api-keys/{id} [delete]
@@ -125,12 +127,12 @@ func (h *APIKeyHandler) Revoke(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
 	if err := h.apiKeyService.Revoke(uint(id), userID); err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, apperrors.ErrForbidden) {
 			logger.Warn("Unauthorized attempt to revoke API key")
 			utils.RespondForbidden(c, "You are not authorized to revoke this API key")
 			return
 		}
-		if err.Error() == "api key not found" {
+		if apperrors.IsNotFound(err) {
 			logger.WithError(err).Warn("API key not found")
 			utils.RespondNotFound(c, "API key not found")
 			return

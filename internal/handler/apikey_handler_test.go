@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/gorm"
 )
 
 type APIKeyHandlerTestSuite struct {
@@ -162,10 +165,39 @@ func (suite *APIKeyHandlerTestSuite) TestRevoke_Success() {
 	assert.True(suite.T(), response.Success)
 }
 
+// The stub here must return exactly what the real service returns for a missing
+// key — the wrapped sentinel. An earlier version of this test fabricated
+// errors.New("api key not found"), a string no code path in the repository or
+// the service ever produces, so it kept a dead handler branch green while the
+// endpoint answered 500 in production.
 func (suite *APIKeyHandlerTestSuite) TestRevoke_NotFound() {
 	suite.router.DELETE("/api-keys/:id", suite.handler.Revoke)
 
-	suite.mockService.On("Revoke", uint(999), uint(1)).Return(errors.New("api key not found"))
+	suite.mockService.On("Revoke", uint(999), uint(1)).
+		Return(fmt.Errorf("api key %d not found: %w", 999, apperrors.ErrNotFound))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api-keys/999", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "NOT_FOUND", response.Error.Code)
+}
+
+// Repositories hand gorm's own sentinel back unwrapped and no gorm.Open sets
+// TranslateError, so the handler must recognise that identity too — it reads
+// the same as apperrors.ErrRecordNotFound but matches neither it nor
+// apperrors.ErrNotFound under errors.Is.
+func (suite *APIKeyHandlerTestSuite) TestRevoke_NotFound_GormSentinel() {
+	suite.router.DELETE("/api-keys/:id", suite.handler.Revoke)
+
+	suite.mockService.On("Revoke", uint(999), uint(1)).Return(gorm.ErrRecordNotFound)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api-keys/999", nil)
 	rec := httptest.NewRecorder()
@@ -184,7 +216,8 @@ func (suite *APIKeyHandlerTestSuite) TestRevoke_NotFound() {
 func (suite *APIKeyHandlerTestSuite) TestRevoke_Forbidden() {
 	suite.router.DELETE("/api-keys/:id", suite.handler.Revoke)
 
-	suite.mockService.On("Revoke", uint(5), uint(1)).Return(errors.New("unauthorized"))
+	suite.mockService.On("Revoke", uint(5), uint(1)).
+		Return(fmt.Errorf("api key %d belongs to another user: %w", 5, apperrors.ErrForbidden))
 
 	req := httptest.NewRequest(http.MethodDelete, "/api-keys/5", nil)
 	rec := httptest.NewRecorder()
@@ -199,6 +232,27 @@ func (suite *APIKeyHandlerTestSuite) TestRevoke_Forbidden() {
 	assert.False(suite.T(), response.Success)
 	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
 	assert.Equal(suite.T(), "You are not authorized to revoke this API key", response.Error.Message)
+}
+
+// A genuine infrastructure failure must stay a 500 — the not-found and
+// forbidden branches must not swallow everything that is not a success.
+func (suite *APIKeyHandlerTestSuite) TestRevoke_InternalError() {
+	suite.router.DELETE("/api-keys/:id", suite.handler.Revoke)
+
+	suite.mockService.On("Revoke", uint(5), uint(1)).Return(errors.New("connection refused"))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api-keys/5", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "INTERNAL_ERROR", response.Error.Code)
 }
 
 func TestAPIKeyHandlerTestSuite(t *testing.T) {

@@ -154,7 +154,21 @@ func (suite *TicketIntegrationTestSuite) TestTicketPermissions() {
 	resp, err := suite.client.Do(req)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), http.StatusForbidden, resp.StatusCode)
-	
+
+	// Test 1b: Sales user is read-only — updating any ticket is rejected
+	salesUpdateReq := map[string]interface{}{
+		"status": "resolved",
+	}
+
+	body, _ = json.Marshal(salesUpdateReq)
+	req, _ = http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/tickets/%d", suite.baseURL, ticket.ID), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+suite.salesToken)
+
+	resp, err = suite.client.Do(req)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusForbidden, resp.StatusCode)
+
 	// Test 2: Support user can only update their assigned tickets
 	// Create another support user
 	suite.CreateUser("support2@example.com", "password123", models.RoleSupport)

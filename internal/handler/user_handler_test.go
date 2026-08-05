@@ -229,6 +229,92 @@ func (suite *UserHandlerTestSuite) TestUpdate_Success() {
 	assert.True(suite.T(), response.Success)
 }
 
+// Updating an id that matches no row is a client error, not a server fault:
+// the request was well formed and the server is healthy, there is simply no
+// such user. Reporting 500 told the caller to retry something that can never
+// succeed, and hid genuine failures among the noise.
+func (suite *UserHandlerTestSuite) TestUpdate_NotFound() {
+	suite.router.PUT("/users/:id", suite.handler.Update)
+
+	payload := UpdateUserRequest{FirstName: "Updated"}
+
+	suite.mockService.On("Update", uint(999), mock.Anything).
+		Return(nil, fmt.Errorf("user %d not found: %w", 999, apperrors.ErrNotFound))
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/users/999", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "User not found", response.Error.Message)
+	// The 404 says nothing beyond "no such user" - no id, no internal detail.
+	assert.Nil(suite.T(), response.Error.Details)
+}
+
+// The counterpart: a real database failure must keep its 500, or the not-found
+// branch would swallow outages and report them as missing records.
+func (suite *UserHandlerTestSuite) TestUpdate_GenuineFailureIsInternalError() {
+	suite.router.PUT("/users/:id", suite.handler.Update)
+
+	payload := UpdateUserRequest{FirstName: "Updated"}
+
+	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
+	suite.mockService.On("Update", uint(2), mock.Anything).Return(nil, dbErr)
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/users/2", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+
+	// The response body must leak neither the driver text nor a false 404 story.
+	responseBody := rec.Body.String()
+	assert.NotContains(suite.T(), responseBody, "Deadlock")
+	assert.NotContains(suite.T(), responseBody, "1213")
+	assert.NotContains(suite.T(), responseBody, "not found")
+}
+
+func (suite *UserHandlerTestSuite) TestUpdate_EmailConflict() {
+	suite.router.PUT("/users/:id", suite.handler.Update)
+
+	payload := UpdateUserRequest{Email: "taken@example.com"}
+
+	suite.mockService.On("Update", uint(2), mock.Anything).
+		Return(nil, fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail))
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/users/2", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "user with this email already exists", response.Error.Message)
+}
+
 func (suite *UserHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/users/:id", suite.handler.Delete)
 	
@@ -367,6 +453,34 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
+}
+
+// The id here comes from the token, so a not-found means the account was
+// erased or deleted while the session was still live. 404 is still the honest
+// answer: the record the caller is asking to change no longer exists.
+func (suite *UserHandlerTestSuite) TestUpdateMe_NotFound() {
+	suite.router.PUT("/users/me", suite.handler.UpdateMe)
+
+	payload := UpdateMeRequest{FirstName: "Updated"}
+
+	suite.mockService.On("Update", uint(1), mock.Anything).
+		Return(nil, fmt.Errorf("user %d not found: %w", 1, apperrors.ErrNotFound))
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/users/me", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "User not found", response.Error.Message)
+	assert.Nil(suite.T(), response.Error.Details)
 }
 
 func (suite *UserHandlerTestSuite) TestList_SortByCreatedAtDesc() {

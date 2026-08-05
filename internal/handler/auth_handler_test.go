@@ -191,6 +191,7 @@ func (suite *AuthHandlerTestSuite) SetupTest() {
 	})
 
 	suite.router.POST("/auth/register", suite.handler.Register)
+	suite.router.POST("/auth/login", suite.handler.Login)
 }
 
 func (suite *AuthHandlerTestSuite) TearDownTest() {
@@ -326,6 +327,42 @@ func (suite *AuthHandlerTestSuite) TestRegister_Success() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusCreated, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+	data, ok := response.Data.(map[string]interface{})
+	assert.True(suite.T(), ok)
+	assert.Equal(suite.T(), "jwt-token", data["token"])
+}
+
+// LoginRequest no longer declares a remember_me field — the backend never read
+// it and token lifetime comes from JWT_EXPIRY_HOURS. Clients that still send the
+// key (the React app does, to drive its own localStorage/sessionStorage choice)
+// must keep working: the binder uses plain ShouldBindJSON, which does not enable
+// DisallowUnknownFields, so encoding/json discards the unknown key.
+func (suite *AuthHandlerTestSuite) TestLogin_UnknownRememberMeField_Ignored() {
+	user := &models.User{
+		Email: "user@example.com",
+		Role:  models.RoleCustomer,
+	}
+	suite.mockAuthService.On("Login", "user@example.com", "SecurePass1!").Return("jwt-token", nil)
+	suite.mockUserService.On("GetByEmail", "user@example.com").Return(user, nil)
+
+	requestBody := map[string]interface{}{
+		"email":       "user@example.com",
+		"password":    "SecurePass1!",
+		"remember_me": true,
+	}
+	body, _ := json.Marshal(requestBody)
+	req := httptest.NewRequest("POST", "/auth/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
 
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)

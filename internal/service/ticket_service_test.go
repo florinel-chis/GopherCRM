@@ -163,6 +163,21 @@ func (suite *TicketServiceTestSuite) TestGetByID_NotFound() {
 	ticket, err := suite.service.GetByID(999)
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), ticket)
+	// The raw gorm sentinel must be wrapped at the service boundary so
+	// handlers can classify it without importing gorm.
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+}
+
+func (suite *TicketServiceTestSuite) TestGetByID_RepoError_PassesThroughUnwrapped() {
+	repoErr := errors.New("connection refused")
+	suite.mockTicketRepo.On("GetByID", uint(1)).Return(nil, repoErr)
+
+	ticket, err := suite.service.GetByID(1)
+	assert.Nil(suite.T(), ticket)
+	assert.True(suite.T(), errors.Is(err, repoErr))
+	// A genuine failure must NOT look like a missing ticket.
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+	assert.False(suite.T(), errors.Is(err, gorm.ErrRecordNotFound))
 }
 
 func (suite *TicketServiceTestSuite) TestGetByCustomer_Success() {
@@ -285,6 +300,25 @@ func (suite *TicketServiceTestSuite) TestDelete_NotFound() {
 
 	err := suite.service.Delete(999)
 	assert.Error(suite.T(), err)
+	// The raw gorm sentinel must be wrapped at the service boundary so
+	// handlers can classify it without importing gorm.
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+}
+
+func (suite *TicketServiceTestSuite) TestDelete_RepoError_PassesThroughUnwrapped() {
+	ticket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Test Ticket",
+	}
+	repoErr := errors.New("database is locked")
+
+	suite.mockTicketRepo.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockTicketRepo.On("Delete", uint(1)).Return(repoErr)
+
+	err := suite.service.Delete(1)
+	assert.True(suite.T(), errors.Is(err, repoErr))
+	// A genuine failure must NOT look like a missing ticket.
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound))
 }
 
 func (suite *TicketServiceTestSuite) TestList_Success() {

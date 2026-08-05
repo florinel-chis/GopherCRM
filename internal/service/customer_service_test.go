@@ -139,12 +139,32 @@ func (suite *CustomerServiceTestSuite) TestGetByID_Success() {
 	assert.Equal(suite.T(), expectedCustomer, customer)
 }
 
+// TestGetByID_NotFound pins the classification the caller depends on: a missing
+// row must come back as the not-found sentinel, so a handler can tell it apart
+// from a database failure and answer 404 rather than collapsing every error into
+// one status.
 func (suite *CustomerServiceTestSuite) TestGetByID_NotFound() {
 	suite.mockRepo.On("GetByID", uint(1)).Return(nil, gorm.ErrRecordNotFound)
 
 	customer, err := suite.service.GetByID(1)
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), customer)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound),
+		"a missing customer must satisfy errors.Is(err, apperrors.ErrNotFound), got %v", err)
+}
+
+// TestGetByID_RepoError is the other half of the same contract: anything that is
+// not a missing row must NOT be dressed up as one.
+func (suite *CustomerServiceTestSuite) TestGetByID_RepoError() {
+	dbErr := errors.New("dial tcp 127.0.0.1:3306: connect: connection refused")
+	suite.mockRepo.On("GetByID", uint(1)).Return(nil, dbErr)
+
+	customer, err := suite.service.GetByID(1)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), customer)
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound),
+		"a database failure must not be classified as not-found")
+	assert.ErrorIs(suite.T(), err, dbErr)
 }
 
 func (suite *CustomerServiceTestSuite) TestUpdate_Success() {

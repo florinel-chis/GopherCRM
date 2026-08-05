@@ -162,35 +162,3 @@ func ParseOffsetLimit(c *gin.Context) (offset, limit int) {
 	return offset, limit
 }
 
-// ParsePaginationParams extracts pagination parameters from the request
-func ParsePaginationParams(c *gin.Context) (page, perPage int) {
-	page = 1
-	perPage = 20
-	
-	if p := c.Query("page"); p != "" {
-		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
-			page = parsed
-		}
-	}
-	
-	if pp := c.Query("per_page"); pp != "" {
-		if parsed, err := strconv.Atoi(pp); err == nil && parsed > 0 && parsed <= 100 {
-			perPage = parsed
-		}
-	}
-	
-	return page, perPage
-}
-
-// CalculateOffset calculates the database offset from page and perPage
-func CalculateOffset(page, perPage int) int {
-	return (page - 1) * perPage
-}
-
-// CalculateTotalPages calculates total pages from total items and perPage
-func CalculateTotalPages(total int64, perPage int) int {
-	if total == 0 || perPage == 0 {
-		return 0
-	}
-	return int((total + int64(perPage) - 1) / int64(perPage))
-}
