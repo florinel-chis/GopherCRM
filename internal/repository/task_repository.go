@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
@@ -149,6 +151,68 @@ func (r *taskRepository) CountSearch(query string) (int64, error) {
 		searchPattern, searchPattern,
 	).Count(&count).Error
 	return count, err
+}
+
+// CountByStatus returns the number of live tasks per status. Statuses with no
+// rows are absent from the map; the caller supplies the full label set.
+func (r *taskRepository) CountByStatus() (map[string]int64, error) {
+	return countGroupedByColumn(r.db.Model(&models.Task{}), "status")
+}
+
+// ListUpcoming returns the open tasks with the nearest due dates first.
+//
+// Completed and cancelled tasks are excluded — they are not upcoming work — and
+// so are tasks with no due date at all, which have no place on a due-soonest
+// list. Overdue tasks are deliberately kept: they are the ones that most need
+// to surface. A nil assignedToID means every assignee.
+func (r *taskRepository) ListUpcoming(assignedToID *uint, limit int) ([]models.Task, error) {
+	tasks := []models.Task{}
+	err := r.openDueQuery(assignedToID).
+		Order("due_date ASC, id ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
+// ListDueBetween returns the open tasks whose due date falls in [from, to],
+// nearest first. A nil assignedToID means every assignee.
+func (r *taskRepository) ListDueBetween(assignedToID *uint, from, to time.Time, limit int) ([]models.Task, error) {
+	tasks := []models.Task{}
+	err := r.openDueQuery(assignedToID).
+		Where("due_date >= ? AND due_date <= ?", from, to).
+		Order("due_date ASC, id ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
+// openDueQuery is the shared predicate behind the two due-date listings: a task
+// that is still open and actually has a due date, optionally narrowed to one
+// assignee.
+func (r *taskRepository) openDueQuery(assignedToID *uint) *gorm.DB {
+	query := r.db.Preload("AssignedTo").
+		Where("due_date IS NOT NULL").
+		Where("status NOT IN ?", []string{
+			string(models.TaskStatusCompleted),
+			string(models.TaskStatusCancelled),
+		})
+	if assignedToID != nil {
+		query = query.Where("assigned_to_id = ?", *assignedToID)
+	}
+	return query
+}
+
+// ListRecentlyCompleted returns completed tasks, most recently touched first.
+// There is no completed_at column, so updated_at stands in for the completion
+// time.
+func (r *taskRepository) ListRecentlyCompleted(limit int) ([]models.Task, error) {
+	tasks := []models.Task{}
+	err := r.db.Preload("AssignedTo").
+		Where("status = ?", models.TaskStatusCompleted).
+		Order("updated_at DESC, id DESC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
 }
 
 func (r *taskRepository) WithTx(tx *gorm.DB) TaskRepository {

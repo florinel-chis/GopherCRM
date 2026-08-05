@@ -29,12 +29,13 @@ const transformAPIKeyFromBackend = (backendKey: any): APIKey => {
 
 export const apiKeysApi = {
   getAPIKeys: async (filters?: APIKeyFilters): Promise<PaginatedResponse<APIKey>> => {
-    const response = await api.get<any>('/apikeys', { params: filters });
-    // Backend returns { api_keys: [...] } and uses direct JSON response
-    const apiKeys = response.data.api_keys || [];
+    // Backend returns a bare APIKey[] (unwrapped from the envelope by the
+    // client interceptor); pagination is synthesized client-side.
+    const response = await api.get<any>('/api-keys', { params: filters });
+    const apiKeys = Array.isArray(response.data) ? response.data : [];
     return {
       data: apiKeys.map(transformAPIKeyFromBackend),
-      total: apiKeys.length, // Backend doesn't provide total in handler
+      total: apiKeys.length,
       page: filters?.page || 1,
       limit: filters?.limit || 10,
       total_pages: Math.ceil(apiKeys.length / (filters?.limit || 10)),
@@ -42,26 +43,30 @@ export const apiKeysApi = {
   },
 
   getAPIKey: async (id: number): Promise<APIKey> => {
-    const response = await api.get<any>(`/apikeys/${id}`);
+    const response = await api.get<any>(`/api-keys/${id}`);
     return transformAPIKeyFromBackend(response.data);
   },
 
   createAPIKey: async (data: CreateAPIKeyData): Promise<GeneratedAPIKey> => {
-    const response = await api.post<any>('/apikeys', data);
-    // For creation, we keep the plain text key that's returned
-    return response.data;
+    // Backend returns { key, api_key }: the plaintext key (shown exactly
+    // once) alongside the stored key record.
+    const response = await api.post<any>('/api-keys', data);
+    const { key, api_key } = response.data;
+    return { ...transformAPIKeyFromBackend(api_key), key };
   },
 
   updateAPIKey: async (id: number, data: UpdateAPIKeyData): Promise<APIKey> => {
-    const response = await api.put<any>(`/apikeys/${id}`, data);
+    const response = await api.put<any>(`/api-keys/${id}`, data);
     return transformAPIKeyFromBackend(response.data);
   },
 
+  // DELETE /api-keys/{id} revokes the key (marks it inactive). There is no
+  // hard-delete route, so revoke and delete are the same operation.
   revokeAPIKey: async (id: number): Promise<void> => {
-    await api.post(`/apikeys/${id}/revoke`);
+    await api.delete(`/api-keys/${id}`);
   },
 
   deleteAPIKey: async (id: number): Promise<void> => {
-    await api.delete(`/apikeys/${id}`);
+    await api.delete(`/api-keys/${id}`);
   },
 };

@@ -18,8 +18,9 @@ import (
 
 type CustomerServiceTestSuite struct {
 	suite.Suite
-	mockRepo *mocks.CustomerRepository
-	service  CustomerService
+	mockRepo     *mocks.CustomerRepository
+	mockUserRepo *mocks.UserRepository
+	service      CustomerService
 }
 
 func (suite *CustomerServiceTestSuite) SetupSuite() {
@@ -33,11 +34,13 @@ func (suite *CustomerServiceTestSuite) SetupSuite() {
 
 func (suite *CustomerServiceTestSuite) SetupTest() {
 	suite.mockRepo = new(mocks.CustomerRepository)
-	suite.service = NewCustomerService(suite.mockRepo, nil)
+	suite.mockUserRepo = new(mocks.UserRepository)
+	suite.service = NewCustomerService(suite.mockRepo, suite.mockUserRepo)
 }
 
 func (suite *CustomerServiceTestSuite) TearDownTest() {
 	suite.mockRepo.AssertExpectations(suite.T())
+	suite.mockUserRepo.AssertExpectations(suite.T())
 }
 
 func (suite *CustomerServiceTestSuite) TestCreate_Success() {
@@ -283,4 +286,162 @@ func (suite *CustomerServiceTestSuite) TestList_RepoError() {
 
 func TestCustomerServiceTestSuite(t *testing.T) {
 	suite.Run(t, new(CustomerServiceTestSuite))
+}
+// --- ExportAll ---------------------------------------------------------------
+
+func (suite *CustomerServiceTestSuite) TestExportAll_Success() {
+	expected := []models.Customer{
+		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", LastName: "Doe", Email: "john@example.com"},
+		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", LastName: "Smith", Email: "jane@example.com"},
+	}
+
+	suite.mockRepo.On("ListAllForExport", "", "", "").Return(expected, nil)
+
+	customers, err := suite.service.ExportAll("", "", "")
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), customers, 2)
+}
+
+func (suite *CustomerServiceTestSuite) TestExportAll_PassesFiltersThrough() {
+	suite.mockRepo.On("ListAllForExport", "acme", "email", "desc").Return([]models.Customer{}, nil)
+
+	customers, err := suite.service.ExportAll("acme", "email", "desc")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), customers)
+}
+
+func (suite *CustomerServiceTestSuite) TestExportAll_RepoError() {
+	suite.mockRepo.On("ListAllForExport", "", "", "").Return(nil, errors.New("database error"))
+
+	customers, err := suite.service.ExportAll("", "", "")
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), customers)
+}
+
+// --- Assign ------------------------------------------------------------------
+
+func (suite *CustomerServiceTestSuite) TestAssign_Success() {
+	customer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 1},
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "john@example.com",
+	}
+	assignee := &models.User{
+		BaseModel: models.BaseModel{ID: 7},
+		Email:     "sales@example.com",
+		Role:      models.RoleSales,
+		IsActive:  true,
+	}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(assignee, nil)
+	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
+		return c.ID == 1 && c.AssignedToID != nil && *c.AssignedToID == 7
+	})).Return(nil)
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), updated)
+	assert.NotNil(suite.T(), updated.AssignedToID)
+	assert.Equal(suite.T(), uint(7), *updated.AssignedToID)
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_AdminAssigneeAllowed() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	assignee := &models.User{BaseModel: models.BaseModel{ID: 3}, Role: models.RoleAdmin, IsActive: true}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(3)).Return(assignee, nil)
+	suite.mockRepo.On("Update", mock.Anything).Return(nil)
+
+	updated, err := suite.service.Assign(1, 3)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), uint(3), *updated.AssignedToID)
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_CustomerNotFound() {
+	suite.mockRepo.On("GetByID", uint(1)).Return(nil, gorm.ErrRecordNotFound)
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+}
+
+// A failed lookup is not a missing customer, and must not be reported as one.
+func (suite *CustomerServiceTestSuite) TestAssign_CustomerLookupFailureIsNotNotFound() {
+	suite.mockRepo.On("GetByID", uint(1)).Return(nil, errors.New("connection refused"))
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.False(suite.T(), apperrors.IsNotFound(err))
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_AssigneeNotFound() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(99)).Return(nil, gorm.ErrRecordNotFound)
+
+	updated, err := suite.service.Assign(1, 99)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrAssigneeNotFound))
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_InactiveAssigneeRejected() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	assignee := &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleSales, IsActive: false}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(assignee, nil)
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInactiveUser))
+}
+
+// Customer ownership is a sales responsibility: a support account has no
+// business holding a book of customers, and a customer-role account holding one
+// would be a data-protection incident waiting to happen.
+func (suite *CustomerServiceTestSuite) TestAssign_CustomerRoleAssigneeRejected() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	assignee := &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleCustomer, IsActive: true}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(assignee, nil)
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInvalidCustomerAssignee))
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_SupportRoleAssigneeRejected() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	assignee := &models.User{BaseModel: models.BaseModel{ID: 8}, Role: models.RoleSupport, IsActive: true}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(8)).Return(assignee, nil)
+
+	updated, err := suite.service.Assign(1, 8)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrInvalidCustomerAssignee))
+}
+
+func (suite *CustomerServiceTestSuite) TestAssign_PersistFailureIsReported() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	assignee := &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleSales, IsActive: true}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(assignee, nil)
+	suite.mockRepo.On("Update", mock.Anything).Return(errors.New("database error"))
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
 }

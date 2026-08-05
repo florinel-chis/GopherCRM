@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -411,6 +412,79 @@ func (suite *LeadServiceTestSuite) TestGetByOwner_Success() {
 func init() {
 	// Suppress unused import for context
 	_ = context.Background
+}
+
+// --- dashboard analytics -----------------------------------------------------
+
+func (suite *LeadServiceTestSuite) TestGetStatusCounts_Success() {
+	expected := map[string]int64{"new": 3, "converted": 1}
+	suite.mockLeadRepo.On("CountByStatus").Return(expected, nil)
+
+	counts, err := suite.leadService.GetStatusCounts()
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expected, counts)
+}
+
+func (suite *LeadServiceTestSuite) TestGetStatusCounts_RepositoryError() {
+	suite.mockLeadRepo.On("CountByStatus").Return(nil, errors.New("database is down"))
+
+	counts, err := suite.leadService.GetStatusCounts()
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), counts)
+}
+
+// GetRecent must not narrow to an owner: a nil owner filter is what makes the
+// query system-wide.
+func (suite *LeadServiceTestSuite) TestGetRecent_PassesNilOwnerFilter() {
+	suite.mockLeadRepo.On("ListRecent", (*uint)(nil), 5).Return([]models.Lead{{FirstName: "Fresh"}}, nil)
+
+	leads, err := suite.leadService.GetRecent(5)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), leads, 1)
+}
+
+func (suite *LeadServiceTestSuite) TestGetRecentByOwner_PassesOwnerFilter() {
+	suite.mockLeadRepo.On("ListRecent", mock.MatchedBy(func(ownerID *uint) bool {
+		return ownerID != nil && *ownerID == 21
+	}), 5).Return([]models.Lead{}, nil)
+
+	leads, err := suite.leadService.GetRecentByOwner(21, 5)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), leads)
+}
+
+func (suite *LeadServiceTestSuite) TestGetRecentlyConverted_Success() {
+	suite.mockLeadRepo.On("ListRecentlyConverted", 10).Return([]models.Lead{{FirstName: "Converted"}}, nil)
+
+	leads, err := suite.leadService.GetRecentlyConverted(10)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), leads, 1)
+}
+
+func (suite *LeadServiceTestSuite) TestGetConversionTimestamps_Success() {
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	expected := []time.Time{since.Add(time.Hour)}
+	suite.mockLeadRepo.On("ConversionTimestampsSince", since).Return(expected, nil)
+
+	timestamps, err := suite.leadService.GetConversionTimestamps(since)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expected, timestamps)
+}
+
+func (suite *LeadServiceTestSuite) TestGetConversionTimestamps_RepositoryError() {
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	suite.mockLeadRepo.On("ConversionTimestampsSince", since).Return(nil, errors.New("database is down"))
+
+	timestamps, err := suite.leadService.GetConversionTimestamps(since)
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), timestamps)
 }
 
 func TestLeadServiceTestSuite(t *testing.T) {

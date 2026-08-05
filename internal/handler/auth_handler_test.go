@@ -78,6 +78,26 @@ func (m *MockAuthService) InvalidateRefreshToken(refreshToken string) error {
 	return args.Error(0)
 }
 
+func (m *MockAuthService) Logout(userID uint, refreshToken string) error {
+	args := m.Called(userID, refreshToken)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ChangePassword(userID uint, currentPassword, newPassword string) error {
+	args := m.Called(userID, currentPassword, newPassword)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) RequestPasswordReset(email string) error {
+	args := m.Called(email)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ConfirmPasswordReset(token, newPassword string) error {
+	args := m.Called(token, newPassword)
+	return args.Error(0)
+}
+
 func (m *MockAuthService) GenerateCSRFToken() (string, error) {
 	args := m.Called()
 	return args.String(0), args.Error(1)
@@ -192,6 +212,19 @@ func (suite *AuthHandlerTestSuite) SetupTest() {
 
 	suite.router.POST("/auth/register", suite.handler.Register)
 	suite.router.POST("/auth/login", suite.handler.Login)
+	suite.router.POST("/auth/refresh", suite.handler.Refresh)
+	suite.router.POST("/auth/password-reset", suite.handler.RequestPasswordReset)
+	suite.router.POST("/auth/password-reset/confirm", suite.handler.ConfirmPasswordReset)
+
+	// Authenticated endpoints: simulate the auth middleware having populated
+	// the context, exactly as middleware.Auth does after token validation.
+	authed := suite.router.Group("")
+	authed.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(42))
+		c.Next()
+	})
+	authed.POST("/auth/logout", suite.handler.Logout)
+	authed.POST("/auth/change-password", suite.handler.ChangePassword)
 }
 
 func (suite *AuthHandlerTestSuite) TearDownTest() {
@@ -347,8 +380,8 @@ func (suite *AuthHandlerTestSuite) TestLogin_UnknownRememberMeField_Ignored() {
 		Email: "user@example.com",
 		Role:  models.RoleCustomer,
 	}
-	suite.mockAuthService.On("Login", "user@example.com", "SecurePass1!").Return("jwt-token", nil)
-	suite.mockUserService.On("GetByEmail", "user@example.com").Return(user, nil)
+	suite.mockAuthService.On("LoginWithTokens", "user@example.com", "SecurePass1!").
+		Return(&service.AuthTokens{AccessToken: "jwt-token", RefreshToken: "refresh-1", User: user}, nil)
 
 	requestBody := map[string]interface{}{
 		"email":       "user@example.com",
@@ -371,6 +404,228 @@ func (suite *AuthHandlerTestSuite) TestLogin_UnknownRememberMeField_Ignored() {
 	data, ok := response.Data.(map[string]interface{})
 	assert.True(suite.T(), ok)
 	assert.Equal(suite.T(), "jwt-token", data["token"])
+}
+
+func (suite *AuthHandlerTestSuite) TestLogin_ResponseIncludesRefreshToken() {
+	user := &models.User{Email: "user@example.com", Role: models.RoleCustomer}
+	suite.mockAuthService.On("LoginWithTokens", "user@example.com", "SecurePass1!").
+		Return(&service.AuthTokens{AccessToken: "jwt-token", RefreshToken: "refresh-raw", User: user}, nil)
+
+	body, _ := json.Marshal(map[string]string{"email": "user@example.com", "password": "SecurePass1!"})
+	req := httptest.NewRequest("POST", "/auth/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	data, ok := response.Data.(map[string]interface{})
+	assert.True(suite.T(), ok)
+	assert.Equal(suite.T(), "jwt-token", data["token"])
+	assert.Equal(suite.T(), "refresh-raw", data["refresh_token"])
+	assert.NotNil(suite.T(), data["user"])
+}
+
+func (suite *AuthHandlerTestSuite) TestRefresh_Success_MirrorsLoginShape() {
+	user := &models.User{Email: "user@example.com", Role: models.RoleCustomer}
+	suite.mockAuthService.On("RefreshAccessToken", "old-refresh").
+		Return(&service.AuthTokens{AccessToken: "new-jwt", RefreshToken: "new-refresh", User: user}, nil)
+
+	body, _ := json.Marshal(map[string]string{"refresh_token": "old-refresh"})
+	req := httptest.NewRequest("POST", "/auth/refresh", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.True(suite.T(), response.Success)
+	data, ok := response.Data.(map[string]interface{})
+	assert.True(suite.T(), ok)
+	assert.Equal(suite.T(), "new-jwt", data["token"])
+	assert.Equal(suite.T(), "new-refresh", data["refresh_token"])
+	assert.NotNil(suite.T(), data["user"])
+}
+
+func (suite *AuthHandlerTestSuite) TestRefresh_InvalidToken_Generic401() {
+	suite.mockAuthService.On("RefreshAccessToken", "revoked-or-expired").
+		Return(nil, service.ErrInvalidRefreshToken)
+
+	body, _ := json.Marshal(map[string]string{"refresh_token": "revoked-or-expired"})
+	req := httptest.NewRequest("POST", "/auth/refresh", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusUnauthorized, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	// The message must not disclose why the token was rejected.
+	assert.Equal(suite.T(), "Invalid or expired refresh token", response.Error.Message)
+	assert.NotContains(suite.T(), response.Error.Message, "revoked")
+}
+
+func (suite *AuthHandlerTestSuite) TestRefresh_MissingBody_BadRequest() {
+	req := httptest.NewRequest("POST", "/auth/refresh", bytes.NewBufferString("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	suite.mockAuthService.AssertNotCalled(suite.T(), "RefreshAccessToken", mock.Anything)
+}
+
+// The frontend calls logout with no body at all (AuthContext.tsx); that path
+// must revoke every session of the authenticated user and return 200.
+func (suite *AuthHandlerTestSuite) TestLogout_NoBody_RevokesAllSessions() {
+	suite.mockAuthService.On("Logout", uint(42), "").Return(nil)
+
+	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.True(suite.T(), response.Success)
+	data, ok := response.Data.(map[string]interface{})
+	assert.True(suite.T(), ok)
+	assert.NotEmpty(suite.T(), data["message"])
+}
+
+func (suite *AuthHandlerTestSuite) TestLogout_WithRefreshToken_RevokesThatToken() {
+	suite.mockAuthService.On("Logout", uint(42), "my-refresh").Return(nil)
+
+	body, _ := json.Marshal(map[string]string{"refresh_token": "my-refresh"})
+	req := httptest.NewRequest("POST", "/auth/logout", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	suite.mockAuthService.AssertCalled(suite.T(), "Logout", uint(42), "my-refresh")
+}
+
+func (suite *AuthHandlerTestSuite) TestChangePassword_Success() {
+	suite.mockAuthService.On("ChangePassword", uint(42), "CurrentPass1!", "NewSecret123!").Return(nil)
+
+	body, _ := json.Marshal(map[string]string{
+		"current_password": "CurrentPass1!",
+		"new_password":     "NewSecret123!",
+	})
+	req := httptest.NewRequest("POST", "/auth/change-password", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *AuthHandlerTestSuite) TestChangePassword_WrongCurrent_BadRequest() {
+	suite.mockAuthService.On("ChangePassword", uint(42), "WrongPass1!", "NewSecret123!").
+		Return(service.ErrInvalidCurrentPassword)
+
+	body, _ := json.Marshal(map[string]string{
+		"current_password": "WrongPass1!",
+		"new_password":     "NewSecret123!",
+	})
+	req := httptest.NewRequest("POST", "/auth/change-password", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	assert.Contains(suite.T(), response.Error.Message, "current password")
+}
+
+func (suite *AuthHandlerTestSuite) TestChangePassword_WeakNewPassword_BadRequest() {
+	// Fails ValidatePasswordComplexity in the handler; the service is never hit.
+	body, _ := json.Marshal(map[string]string{
+		"current_password": "CurrentPass1!",
+		"new_password":     "weakpassword",
+	})
+	req := httptest.NewRequest("POST", "/auth/change-password", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	suite.mockAuthService.AssertNotCalled(suite.T(), "ChangePassword", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Anti-enumeration: the response for an existing account and an unknown one
+// must be byte-for-byte identical.
+func (suite *AuthHandlerTestSuite) TestPasswordReset_AntiEnumeration_IdenticalResponses() {
+	suite.mockAuthService.On("RequestPasswordReset", "exists@example.com").Return(nil)
+	suite.mockAuthService.On("RequestPasswordReset", "unknown@example.com").Return(nil)
+
+	responses := make([]*httptest.ResponseRecorder, 0, 2)
+	for _, email := range []string{"exists@example.com", "unknown@example.com"} {
+		body, _ := json.Marshal(map[string]string{"email": email})
+		req := httptest.NewRequest("POST", "/auth/password-reset", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		responses = append(responses, w)
+	}
+
+	assert.Equal(suite.T(), http.StatusOK, responses[0].Code)
+	assert.Equal(suite.T(), responses[0].Code, responses[1].Code)
+	assert.Equal(suite.T(), responses[0].Body.String(), responses[1].Body.String(),
+		"existing and unknown accounts must yield identical response bodies")
+}
+
+func (suite *AuthHandlerTestSuite) TestPasswordResetConfirm_Success() {
+	suite.mockAuthService.On("ConfirmPasswordReset", "valid-token", "BrandNewPass1!").Return(nil)
+
+	body, _ := json.Marshal(map[string]string{
+		"token":        "valid-token",
+		"new_password": "BrandNewPass1!",
+	})
+	req := httptest.NewRequest("POST", "/auth/password-reset/confirm", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *AuthHandlerTestSuite) TestPasswordResetConfirm_InvalidToken_Generic400() {
+	suite.mockAuthService.On("ConfirmPasswordReset", "spent-token", "BrandNewPass1!").
+		Return(service.ErrInvalidResetToken)
+
+	body, _ := json.Marshal(map[string]string{
+		"token":        "spent-token",
+		"new_password": "BrandNewPass1!",
+	})
+	req := httptest.NewRequest("POST", "/auth/password-reset/confirm", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	// Generic message: no used/expired/unknown distinction.
+	assert.Equal(suite.T(), "Invalid or expired reset token", response.Error.Message)
 }
 
 func TestAuthHandlerTestSuite(t *testing.T) {

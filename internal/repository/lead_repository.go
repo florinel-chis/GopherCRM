@@ -1,10 +1,38 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
+
+// countGroupedByColumn counts live rows grouped by one column, for the
+// dashboard's distribution charts. Shared by the lead, ticket and task
+// repositories, which all need the same shape.
+//
+// The column is always a constant supplied by the repository itself, never
+// anything derived from a request, so there is no injection surface here; the
+// user-controlled sort path stays behind utils.SafeOrderClause.
+func countGroupedByColumn(query *gorm.DB, column string) (map[string]int64, error) {
+	var rows []struct {
+		Value string
+		Total int64
+	}
+	if err := query.
+		Select(column + " as value, COUNT(*) as total").
+		Group(column).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Value] = row.Total
+	}
+	return counts, nil
+}
 
 type leadRepository struct {
 	db *gorm.DB
@@ -205,6 +233,61 @@ func (r *leadRepository) ConvertToCustomer(leadID uint, customerID uint) error {
 			"status": models.LeadStatusConverted,
 			"customer_id": customerID,
 		}).Error
+}
+
+// CountByStatus returns the number of live leads per status.
+//
+// The grouping is done in SQL because it is a plain column: GROUP BY status is
+// spelled identically on MySQL 8 and SQLite, unlike any date function. Statuses
+// with no rows are simply absent from the map; supplying the full set of labels
+// is the caller's business, since only the caller knows which ones its chart
+// must show.
+func (r *leadRepository) CountByStatus() (map[string]int64, error) {
+	return countGroupedByColumn(r.db.Model(&models.Lead{}), "status")
+}
+
+// ListRecent returns the newest leads first. A nil ownerID means every owner;
+// a non-nil one narrows to that owner, which is what the sales role gets.
+func (r *leadRepository) ListRecent(ownerID *uint, limit int) ([]models.Lead, error) {
+	leads := []models.Lead{}
+	query := r.db.Preload("Owner").Order("created_at DESC, id DESC")
+	if ownerID != nil {
+		query = query.Where("owner_id = ?", *ownerID)
+	}
+	err := query.Limit(limit).Find(&leads).Error
+	return leads, err
+}
+
+// ListRecentlyConverted returns converted leads, most recently touched first.
+//
+// A lead carries no dedicated converted_at column, so updated_at stands in for
+// the conversion time: conversion is the write that sets the status, and it is
+// the best available signal without a schema change.
+func (r *leadRepository) ListRecentlyConverted(limit int) ([]models.Lead, error) {
+	leads := []models.Lead{}
+	err := r.db.Preload("Owner").
+		Where("status = ?", models.LeadStatusConverted).
+		Order("updated_at DESC, id DESC").
+		Limit(limit).
+		Find(&leads).Error
+	return leads, err
+}
+
+// ConversionTimestampsSince returns the conversion time of every lead converted
+// at or after `since`, oldest first.
+//
+// Only the timestamps are selected — the caller counts them into buckets in Go.
+// Bucketing here would need DATE_FORMAT on MySQL and strftime on SQLite, which
+// is exactly the portability trap this avoids; the tests run on SQLite and
+// would never catch a MySQL-only expression.
+func (r *leadRepository) ConversionTimestampsSince(since time.Time) ([]time.Time, error) {
+	timestamps := []time.Time{}
+	err := r.db.Model(&models.Lead{}).
+		Where("status = ?", models.LeadStatusConverted).
+		Where("updated_at >= ?", since).
+		Order("updated_at ASC").
+		Pluck("updated_at", &timestamps).Error
+	return timestamps, err
 }
 
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {

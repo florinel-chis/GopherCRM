@@ -42,6 +42,7 @@ func setupErasureDB(t *testing.T) *gorm.DB {
 		&models.Customer{},
 		&models.APIKey{},
 		&models.RefreshToken{},
+		&models.PasswordResetToken{},
 		&models.Ticket{},
 		&models.Task{},
 	))
@@ -249,6 +250,12 @@ func TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount(t *testing.T) 
 	require.NoError(t, db.Create(&models.RefreshToken{
 		UserID: survivor.ID, TokenHash: "refresh-survivor", ExpiresAt: time.Now().Add(24 * time.Hour),
 	}).Error)
+	require.NoError(t, db.Create(&models.PasswordResetToken{
+		UserID: user.ID, TokenHash: "reset-erased", ExpiresAt: time.Now().Add(time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.PasswordResetToken{
+		UserID: survivor.ID, TokenHash: "reset-survivor", ExpiresAt: time.Now().Add(time.Hour),
+	}).Error)
 
 	require.NoError(t, userRepo.Delete(user.ID))
 
@@ -262,11 +269,17 @@ func TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount(t *testing.T) 
 	require.NoError(t, db.Unscoped().Model(&models.RefreshToken{}).Where("user_id = ?", user.ID).Count(&tokens).Error)
 	assert.Zero(t, tokens, "refresh tokens of an erased user must not survive")
 
+	var resets int64
+	require.NoError(t, db.Unscoped().Model(&models.PasswordResetToken{}).Where("user_id = ?", user.ID).Count(&resets).Error)
+	assert.Zero(t, resets, "password reset tokens of an erased user must not survive")
+
 	// Another user's credentials must be untouched.
 	require.NoError(t, db.Unscoped().Model(&models.APIKey{}).Where("user_id = ?", survivor.ID).Count(&keys).Error)
 	assert.Equal(t, int64(1), keys)
 	require.NoError(t, db.Unscoped().Model(&models.RefreshToken{}).Where("user_id = ?", survivor.ID).Count(&tokens).Error)
 	assert.Equal(t, int64(1), tokens)
+	require.NoError(t, db.Unscoped().Model(&models.PasswordResetToken{}).Where("user_id = ?", survivor.ID).Count(&resets).Error)
+	assert.Equal(t, int64(1), resets)
 }
 
 // The purge is unconditional: if it cannot run, the erasure FAILS. It used to

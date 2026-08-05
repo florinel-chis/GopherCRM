@@ -4,6 +4,8 @@
 package mocks
 
 import (
+	"time"
+
 	models "github.com/florinel-chis/gophercrm/internal/models"
 	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
@@ -471,6 +473,50 @@ func (_m *LeadRepository) CountByOwnerID(ownerID uint) (int64, error) {
 	}
 
 	return r0, r1
+}
+
+// CountByStatus provides a mock function with no fields
+func (_m *LeadRepository) CountByStatus() (map[string]int64, error) {
+	ret := _m.Called()
+
+	var r0 map[string]int64
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]int64)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRecent provides a mock function with given fields: ownerID, limit
+func (_m *LeadRepository) ListRecent(ownerID *uint, limit int) ([]models.Lead, error) {
+	ret := _m.Called(ownerID, limit)
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRecentlyConverted provides a mock function with given fields: limit
+func (_m *LeadRepository) ListRecentlyConverted(limit int) ([]models.Lead, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
+// ConversionTimestampsSince provides a mock function with given fields: since
+func (_m *LeadRepository) ConversionTimestampsSince(since time.Time) ([]time.Time, error) {
+	ret := _m.Called(since)
+
+	var r0 []time.Time
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]time.Time)
+	}
+	return r0, ret.Error(1)
 }
 
 func (_m *LeadRepository) WithTx(tx *gorm.DB) repository.LeadRepository {

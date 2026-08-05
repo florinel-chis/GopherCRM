@@ -4,6 +4,8 @@
 package mocks
 
 import (
+	"time"
+
 	models "github.com/florinel-chis/gophercrm/internal/models"
 	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
@@ -379,6 +381,50 @@ func (_m *TaskRepository) Search(query string, offset int, limit int, sortBy str
 func (_m *TaskRepository) CountSearch(query string) (int64, error) {
 	ret := _m.Called(query)
 	return ret.Get(0).(int64), ret.Error(1)
+}
+
+// CountByStatus provides a mock function with no fields
+func (_m *TaskRepository) CountByStatus() (map[string]int64, error) {
+	ret := _m.Called()
+
+	var r0 map[string]int64
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]int64)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListUpcoming provides a mock function with given fields: assignedToID, limit
+func (_m *TaskRepository) ListUpcoming(assignedToID *uint, limit int) ([]models.Task, error) {
+	ret := _m.Called(assignedToID, limit)
+
+	var r0 []models.Task
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Task)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListDueBetween provides a mock function with given fields: assignedToID, from, to, limit
+func (_m *TaskRepository) ListDueBetween(assignedToID *uint, from time.Time, to time.Time, limit int) ([]models.Task, error) {
+	ret := _m.Called(assignedToID, from, to, limit)
+
+	var r0 []models.Task
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Task)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRecentlyCompleted provides a mock function with given fields: limit
+func (_m *TaskRepository) ListRecentlyCompleted(limit int) ([]models.Task, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Task
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Task)
+	}
+	return r0, ret.Error(1)
 }
 
 func (_m *TaskRepository) WithTx(tx *gorm.DB) repository.TaskRepository {

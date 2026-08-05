@@ -46,6 +46,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `src/routes/index.test.tsx`, `src/pages/auth/Register.validation.test.tsx`).
 - `gocrm-ui/e2e/global-setup.ts` provisions the E2E admin account through the `create-admin` CLI,
   since registration can no longer create an admin.
+- **Auth session lifecycle.** Login now issues a rotating refresh token alongside the JWT;
+  `POST /auth/refresh` exchanges it (strict rotation — replaying a used token returns 401);
+  `POST /auth/logout` revokes the caller's refresh tokens; `POST /auth/change-password` verifies
+  the current password and revokes all sessions; `POST /auth/password-reset` +
+  `/password-reset/confirm` implement a single-use, 1-hour, anti-enumeration reset flow. Tokens are
+  stored only as HMAC-SHA256 hashes. Mail goes through a new `internal/mailer` package — SMTP via
+  `SMTP_*` env vars, with a redacting log fallback for development. Erasing a user also purges
+  their password-reset tokens.
+- **Dashboard analytics.** Eight new admin/sales/support endpoints: grouped counts for leads by
+  status, tickets by priority and tasks by status; lead conversions over time
+  (`sales-performance`, bucketed in Go so SQLite and MySQL agree); an activity feed synthesized
+  from lead/ticket/task events; upcoming tasks; recent tickets; and new leads (scoped per role).
+  Plus `GET /tasks/upcoming` for a forward due-date window.
+- **Bulk status updates.** `POST /leads|tickets|tasks/bulk/status` (up to 100 ids,
+  all-or-nothing in one transaction) wired onto the previously unrouted bulk machinery, with
+  per-item authorization mirroring the single-item rules and failing responses that name the
+  offending ids.
+- **API key management.** `GET` and `PUT /api-keys/{id}` (rename, deactivate, reactivate), an
+  optional `expires_at` on creation, and expiry enforced at authentication time.
+- **Customer operations.** `GET /customers/export` streams a CSV of all matching customers
+  (admin-only, spreadsheet-formula-injection-safe) and `POST /customers/{id}/assign` assigns a
+  customer to an active admin/sales user via the new `assigned_to_id` column, which erasure
+  deliberately leaves intact.
 - A regenerable Swagger 2.0 spec at `api/swagger.json` / `api/swagger.yaml`, built by `make swagger`
   from swag annotations now covering all 43 routed operations. Status codes, permission rules and
   response shapes were derived from the actual code paths, including the unflattering ones (see the
@@ -137,9 +160,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/middleware/csrf.go` is implemented and unit-tested but never installed in `cmd/main.go`,
   so no route currently requires a CSRF token.
 - `RateLimitGenerous` (240/min) is defined but never applied; two tiers are active, not three.
-- The bulk handlers in `internal/handler/bulk_handler.go` are not registered by any router and are
-  therefore unreachable over HTTP.
-- There is no logout or token-refresh endpoint; `RefreshAccessToken` and `InvalidateRefreshToken`
-  return errors.
+- The generic `/bulk/:resource` handlers in `internal/handler/bulk_handler.go` remain unrouted;
+  only the entity-specific `bulk/status` endpoints are reachable over HTTP.
+- An already-issued JWT cannot be revoked before it expires; logout and refresh rotation revoke
+  refresh tokens only, and there is no access-token blocklist.
+- Password-reset delivery requires SMTP configuration; without `SMTP_HOST` the reset link is only
+  written (redacted) to the application log.
 - ESLint reports 40 errors and 137 warnings in the frontend, mostly unused Playwright fixture
   arguments and `any` types. These pre-date this work and were not touched. `tsc -b` is clean.

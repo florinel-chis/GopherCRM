@@ -374,6 +374,126 @@ func (_m *BulkRepository) BulkUpdateUsers(updates []models.BulkUpdateItem) ([]mo
 	return r0, r1
 }
 
+// GetLeadsByIDs provides a mock function with given fields: ids
+func (_m *BulkRepository) GetLeadsByIDs(ids []uint) ([]models.Lead, error) {
+	ret := _m.Called(ids)
+
+	var r0 []models.Lead
+	var r1 error
+	if rf, ok := ret.Get(0).(func([]uint) ([]models.Lead, error)); ok {
+		return rf(ids)
+	}
+	if rf, ok := ret.Get(0).(func([]uint) []models.Lead); ok {
+		r0 = rf(ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func([]uint) error); ok {
+		r1 = rf(ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetTasksByIDs provides a mock function with given fields: ids
+func (_m *BulkRepository) GetTasksByIDs(ids []uint) ([]models.Task, error) {
+	ret := _m.Called(ids)
+
+	var r0 []models.Task
+	var r1 error
+	if rf, ok := ret.Get(0).(func([]uint) ([]models.Task, error)); ok {
+		return rf(ids)
+	}
+	if rf, ok := ret.Get(0).(func([]uint) []models.Task); ok {
+		r0 = rf(ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Task)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func([]uint) error); ok {
+		r1 = rf(ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetTicketsByIDs provides a mock function with given fields: ids
+func (_m *BulkRepository) GetTicketsByIDs(ids []uint) ([]models.Ticket, error) {
+	ret := _m.Called(ids)
+
+	var r0 []models.Ticket
+	var r1 error
+	if rf, ok := ret.Get(0).(func([]uint) ([]models.Ticket, error)); ok {
+		return rf(ids)
+	}
+	if rf, ok := ret.Get(0).(func([]uint) []models.Ticket); ok {
+		r0 = rf(ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Ticket)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func([]uint) error); ok {
+		r1 = rf(ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// SetLeadStatus provides a mock function with given fields: ids, status
+func (_m *BulkRepository) SetLeadStatus(ids []uint, status models.LeadStatus) error {
+	ret := _m.Called(ids, status)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func([]uint, models.LeadStatus) error); ok {
+		r0 = rf(ids, status)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// SetTaskStatus provides a mock function with given fields: ids, status
+func (_m *BulkRepository) SetTaskStatus(ids []uint, status models.TaskStatus) error {
+	ret := _m.Called(ids, status)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func([]uint, models.TaskStatus) error); ok {
+		r0 = rf(ids, status)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// SetTicketStatus provides a mock function with given fields: ids, status
+func (_m *BulkRepository) SetTicketStatus(ids []uint, status models.TicketStatus) error {
+	ret := _m.Called(ids, status)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func([]uint, models.TicketStatus) error); ok {
+		r0 = rf(ids, status)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // WithTx provides a mock function with given fields: tx
 func (_m *BulkRepository) WithTx(tx *gorm.DB) repository.BulkRepository {
 	ret := _m.Called(tx)

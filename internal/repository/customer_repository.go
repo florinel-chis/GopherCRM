@@ -197,6 +197,64 @@ func (r *customerRepository) Search(query string, offset, limit int, sortBy, sor
 	return customers, err
 }
 
+// exportBatchSize is how many customers are read per round trip by
+// ListAllForExport. Big enough that a full export is a handful of queries,
+// small enough that no single result set has to be held in the driver at once.
+const exportBatchSize = 500
+
+// ListAllForExport returns every customer matching the optional search term,
+// with no pagination at all — the export is a whole-book download, and a page
+// boundary in the middle of it would produce a file that looks complete and is
+// not.
+//
+// Rows are read in batches rather than in one unbounded query so the driver
+// never has to materialise the entire table in a single result set. The
+// accumulated slice is still held in memory, which is the deliberate trade: this
+// deployment's customer table is small, and the alternative (streaming rows
+// straight into the HTTP response) would mean a mid-stream failure arriving
+// after a 200 and half a file.
+//
+// FindInBatches drives an ordered keyset scan on the primary key by itself, so
+// this is portable across MySQL and SQLite without any driver-specific SQL.
+//
+// Soft-deleted rows are excluded by GORM's own scope: an erased customer must
+// never reappear in an export.
+//
+// sortBy goes through the same allowlist as every other sorted query. An
+// unrecognised column is an error, never interpolated.
+func (r *customerRepository) ListAllForExport(search, sortBy, sortOrder string) ([]models.Customer, error) {
+	db := r.db.Model(&models.Customer{})
+
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		db = db.Where(
+			"first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?",
+			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
+		)
+	}
+
+	if sortBy != "" {
+		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
+		if err != nil {
+			return nil, err
+		}
+		if orderClause != "" {
+			db = db.Order(orderClause)
+		}
+	}
+
+	customers := make([]models.Customer, 0)
+	var batch []models.Customer
+	result := db.FindInBatches(&batch, exportBatchSize, func(tx *gorm.DB, _ int) error {
+		customers = append(customers, batch...)
+		return nil
+	})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return customers, nil
+}
+
 func (r *customerRepository) CountSearch(query string) (int64, error) {
 	var count int64
 	searchPattern := "%" + query + "%"

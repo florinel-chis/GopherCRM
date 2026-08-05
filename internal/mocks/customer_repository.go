@@ -364,3 +364,33 @@ func NewCustomerRepository(t interface {
 
 	return mock
 }
+
+// ListAllForExport provides a mock function with given fields: search, sortBy, sortOrder
+func (_m *CustomerRepository) ListAllForExport(search string, sortBy string, sortOrder string) ([]models.Customer, error) {
+	ret := _m.Called(search, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListAllForExport")
+	}
+
+	var r0 []models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string, string, string) ([]models.Customer, error)); ok {
+		return rf(search, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(string, string, string) []models.Customer); ok {
+		r0 = rf(search, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string, string, string) error); ok {
+		r1 = rf(search, sortBy, sortOrder)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}

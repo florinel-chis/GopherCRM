@@ -281,10 +281,22 @@ returns the unified envelope `{ success, data, error, meta }`.
 - `POST /api/v1/auth/register` - Register a new user. **Always creates a `customer`**; a
   client-supplied role is ignored. Password policy: min 10 chars with upper, lower, digit and
   special character. A duplicate email returns `409`.
-- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/login` - User login. Returns an access token and a rotating refresh token.
+- `POST /api/v1/auth/refresh` - Exchange a refresh token for a new token pair. Rotation is strict:
+  the presented token is revoked, replaying it returns `401`.
+- `POST /api/v1/auth/password-reset` - Request a password-reset email. Always answers `200`
+  whether or not the account exists (anti-enumeration). Delivery goes through SMTP when
+  `SMTP_HOST` is configured, otherwise a logging fallback.
+- `POST /api/v1/auth/password-reset/confirm` - Redeem a single-use reset token (1 h expiry) and set
+  a new password. Revokes all refresh tokens.
 
-Both are behind the strict rate-limit tier (10/min). There is no logout or token-refresh endpoint
-yet — `RefreshAccessToken` and `InvalidateRefreshToken` are stubs that return an error.
+All of the above sit behind the strict rate-limit tier (10/min). Two more auth endpoints require
+authentication and live on the moderate tier:
+
+- `POST /api/v1/auth/logout` - Revoke the caller's refresh tokens (all of them, or just the one in
+  the optional `{refresh_token}` body). The JWT itself stays valid until expiry.
+- `POST /api/v1/auth/change-password` - Verify the current password, set a new one (same
+  complexity policy), and revoke all refresh tokens.
 
 ### Users
 - `GET /api/v1/users` - List all users *(admin)*
@@ -302,6 +314,8 @@ yet — `RefreshAccessToken` and `InvalidateRefreshToken` are stubs that return 
 - `PUT /api/v1/leads/:id` - Update lead
 - `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into)
 - `POST /api/v1/leads/:id/convert` - Convert lead to customer
+- `POST /api/v1/leads/bulk/status` - Set the status of up to 100 leads at once, all-or-nothing
+  *(sales may only touch leads they own)*
 
 ### Customers
 - `GET /api/v1/customers` - List customers *(admin, sales, support)*
@@ -311,30 +325,44 @@ yet — `RefreshAccessToken` and `InvalidateRefreshToken` are stubs that return 
 - `DELETE /api/v1/customers/:id` - **Erase** customer *(admin; cascades to the lead it came from)*
 - `GET /api/v1/customers/:id/tickets` - List that customer's tickets *(a customer-role user may only
   read their own)*
+- `GET /api/v1/customers/export` - Download all matching customers as CSV *(admin only — mass PII
+  egress; supports `search`, `sort_by`, `sort_order`)*
+- `POST /api/v1/customers/:id/assign` - Assign the customer to an active admin or sales user
+  *(admin, sales)*
 
 ### Tickets
 - `GET /api/v1/tickets` - List tickets *(customers cannot list all tickets)*
 - `POST /api/v1/tickets` - Create new ticket *(admin, support)*
 - `GET /api/v1/tickets/my` - Get current user's tickets
 - `GET /api/v1/tickets/:id` - Get specific ticket
-- `PUT /api/v1/tickets/:id` - Update ticket *(customers cannot update)*
+- `PUT /api/v1/tickets/:id` - Update ticket *(admin any; support only their own assignments; sales
+  is read-only)*
 - `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; ordinary soft delete)*
+- `POST /api/v1/tickets/bulk/status` - Set the status of up to 100 tickets, all-or-nothing *(admin
+  any; support only their assignments; a closed ticket cannot be reopened)*
 
 ### Tasks
 - `GET /api/v1/tasks` - List tasks *(non-admins see their own)*
 - `POST /api/v1/tasks` - Create new task *(admin, support, sales; non-admins may only assign to themselves)*
 - `GET /api/v1/tasks/my` - Get current user's tasks
+- `GET /api/v1/tasks/upcoming` - Tasks due within `days` (1-90, default 7) *(non-admins see their
+  own assignments)*
 - `GET /api/v1/tasks/:id` - Get specific task
 - `PUT /api/v1/tasks/:id` - Update task *(only admins may reassign)*
 - `DELETE /api/v1/tasks/:id` - Delete task *(admin; ordinary soft delete)*
+- `POST /api/v1/tasks/bulk/status` - Set the status of up to 100 tasks, all-or-nothing *(non-admins
+  only their own assignments; completed tasks cannot change status)*
 
-### API Keys
+### API Keys *(always scoped to the caller's own keys — no admin override)*
 - `GET /api/v1/api-keys` - List user's API keys
-- `POST /api/v1/api-keys` - Create new API key
-- `DELETE /api/v1/api-keys/:id` - Revoke API key
+- `POST /api/v1/api-keys` - Create new API key (optional RFC3339 `expires_at`; the plaintext key is
+  returned only in this response)
+- `GET /api/v1/api-keys/:id` - Get one key
+- `PUT /api/v1/api-keys/:id` - Rename, deactivate or reactivate a key
+- `DELETE /api/v1/api-keys/:id` - Revoke API key (marks inactive; the row is kept)
 
-Keys authenticate via `Authorization: ApiKey gcrm_xxx`. A key is rejected if it is inactive, or if
-its owner has been deactivated or erased.
+Keys authenticate via `Authorization: ApiKey gcrm_xxx`. A key is rejected if it is inactive or
+expired, or if its owner has been deactivated or erased.
 
 ### Configuration
 - `GET /api/v1/configurations/ui` - Get UI-safe configurations *(any authenticated user)*
@@ -344,14 +372,24 @@ its owner has been deactivated or erased.
 - `PUT /api/v1/configurations/:key` - Update configuration value *(admin)*
 - `POST /api/v1/configurations/:key/reset` - Reset configuration to default *(admin)*
 
-### Dashboard
-- `GET /api/v1/dashboard/stats` - Get dashboard statistics (total leads, customers, open tickets, pending tasks, conversion rate)
+### Dashboard *(entire group requires admin, sales or support)*
+- `GET /api/v1/dashboard/stats` - Aggregate counts (total leads, customers, open tickets, pending tasks, conversion rate)
+- `GET /api/v1/dashboard/leads-by-status` / `tickets-by-priority` / `tasks-by-status` - Grouped
+  counts in a chart-friendly `{labels, datasets}` shape
+- `GET /api/v1/dashboard/sales-performance?period=week|month|quarter|year` - Lead conversions over
+  time, bucketed per period
+- `GET /api/v1/dashboard/activities` - Recent activity feed synthesized from lead/ticket/task events
+- `GET /api/v1/dashboard/upcoming-tasks` - Due-soonest tasks, including overdue *(non-admins see
+  their own)*
+- `GET /api/v1/dashboard/recent-tickets` - Newest tickets
+- `GET /api/v1/dashboard/new-leads` - Newest leads *(sales sees only their own; support gets an
+  empty list)*
 
 ### Not currently exposed
 
-`internal/handler/bulk_handler.go` implements bulk create/update/delete/action handlers, but no
-router registers them, so there is no reachable HTTP bulk endpoint. The underlying bulk service and
-repository are exercised directly by tests.
+The generic `/bulk/:resource` create/update/delete/action handlers in
+`internal/handler/bulk_handler.go` remain unrouted; only the entity-specific `bulk/status`
+endpoints listed above are reachable over HTTP.
 
 A generated Swagger 2.0 spec is checked in at `api/swagger.json` / `api/swagger.yaml`. It is built
 from swag annotations on the handlers — regenerate it with `make swagger` after changing a handler
@@ -416,8 +454,11 @@ gophercrm/
 
 ## Known Limitations
 
-- **No logout or token refresh.** The refresh-token service methods are stubs; sessions end when the
-  access token expires or storage is cleared.
+- **Access tokens cannot be revoked before expiry.** Logout and the refresh-token rotation revoke
+  the *refresh* tokens, but an already-issued JWT stays valid until `JWT_EXPIRY_HOURS` elapses —
+  there is no token blocklist.
+- **Password-reset email needs SMTP configuration.** Without `SMTP_HOST` set, reset links go to the
+  application log (redacted) instead of a mailbox — fine for development, useless in production.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.

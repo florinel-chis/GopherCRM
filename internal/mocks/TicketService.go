@@ -12,6 +12,39 @@ type TicketService struct {
 	mock.Mock
 }
 
+// GetPriorityCounts provides a mock function with no fields
+func (_m *TicketService) GetPriorityCounts() (map[string]int64, error) {
+	ret := _m.Called()
+
+	var r0 map[string]int64
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]int64)
+	}
+	return r0, ret.Error(1)
+}
+
+// GetRecent provides a mock function with given fields: limit
+func (_m *TicketService) GetRecent(limit int) ([]models.Ticket, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
+// GetRecentlyResolved provides a mock function with given fields: limit
+func (_m *TicketService) GetRecentlyResolved(limit int) ([]models.Ticket, error) {
+	ret := _m.Called(limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
 // Create provides a mock function with given fields: ticket
 func (_m *TicketService) Create(ticket *models.Ticket) error {
 	ret := _m.Called(ticket)

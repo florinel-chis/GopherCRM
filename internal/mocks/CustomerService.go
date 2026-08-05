@@ -278,3 +278,63 @@ func NewCustomerService(t interface {
 
 	return mock
 }
+
+// ExportAll provides a mock function with given fields: search, sortBy, sortOrder
+func (_m *CustomerService) ExportAll(search string, sortBy string, sortOrder string) ([]models.Customer, error) {
+	ret := _m.Called(search, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExportAll")
+	}
+
+	var r0 []models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string, string, string) ([]models.Customer, error)); ok {
+		return rf(search, sortBy, sortOrder)
+	}
+	if rf, ok := ret.Get(0).(func(string, string, string) []models.Customer); ok {
+		r0 = rf(search, sortBy, sortOrder)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string, string, string) error); ok {
+		r1 = rf(search, sortBy, sortOrder)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Assign provides a mock function with given fields: customerID, userID
+func (_m *CustomerService) Assign(customerID uint, userID uint) (*models.Customer, error) {
+	ret := _m.Called(customerID, userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Assign")
+	}
+
+	var r0 *models.Customer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint, uint) (*models.Customer, error)); ok {
+		return rf(customerID, userID)
+	}
+	if rf, ok := ret.Get(0).(func(uint, uint) *models.Customer); ok {
+		r0 = rf(customerID, userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Customer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(uint, uint) error); ok {
+		r1 = rf(customerID, userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}

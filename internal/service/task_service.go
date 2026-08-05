@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -300,4 +301,38 @@ func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder 
 
 func (s *taskService) GetPendingCount() (int64, error) {
 	return s.taskRepo.CountPending()
+}
+
+// GetStatusCounts returns the live task count per status, for the dashboard's
+// status distribution chart. Statuses with no rows are missing from the map —
+// the handler owns the label set.
+func (s *taskService) GetStatusCounts() (map[string]int64, error) {
+	return s.taskRepo.CountByStatus()
+}
+
+// GetUpcoming returns the open tasks due soonest, across every assignee.
+func (s *taskService) GetUpcoming(limit int) ([]models.Task, error) {
+	return s.taskRepo.ListUpcoming(nil, limit)
+}
+
+// GetUpcomingByAssignee returns the open tasks due soonest for one user. Every
+// role but admin is narrowed through here.
+func (s *taskService) GetUpcomingByAssignee(assigneeID uint, limit int) ([]models.Task, error) {
+	return s.taskRepo.ListUpcoming(&assigneeID, limit)
+}
+
+// GetDueWithin returns the open tasks due in [from, to], across every assignee.
+func (s *taskService) GetDueWithin(from, to time.Time, limit int) ([]models.Task, error) {
+	return s.taskRepo.ListDueBetween(nil, from, to, limit)
+}
+
+// GetDueWithinByAssignee returns the open tasks due in [from, to] for one user.
+func (s *taskService) GetDueWithinByAssignee(assigneeID uint, from, to time.Time, limit int) ([]models.Task, error) {
+	return s.taskRepo.ListDueBetween(&assigneeID, from, to, limit)
+}
+
+// GetRecentlyCompleted returns the most recently completed tasks, for the
+// activity feed.
+func (s *taskService) GetRecentlyCompleted(limit int) ([]models.Task, error) {
+	return s.taskRepo.ListRecentlyCompleted(limit)
 }

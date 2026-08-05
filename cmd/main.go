@@ -12,6 +12,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/handler"
+	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -139,8 +140,16 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	taskRepo := repository.NewTaskRepository(models.DB)
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)
 	configRepo := repository.NewConfigurationRepository(models.DB)
+	refreshTokenRepo := repository.NewRefreshTokenRepository(models.DB)
+	passwordResetRepo := repository.NewPasswordResetTokenRepository(models.DB)
+	bulkOperationRepo := repository.NewBulkOperationRepository(models.DB)
+	bulkRepo := repository.NewBulkRepository(models.DB)
 
-	authService := service.NewAuthService(userRepo, apiKeyRepo, cfg.JWT, cfg.API.APIKeySecret)
+	appMailer := mailer.NewFromConfig(cfg.SMTP)
+
+	authService := service.NewAuthServiceWithSessions(
+		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, appMailer,
+		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(models.DB)
 	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
@@ -149,6 +158,10 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	configService := service.NewConfigurationService(configRepo)
+	bulkService := service.NewBulkOperationService(
+		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
+		taskRepo, ticketRepo, txManager, utils.Logger,
+	)
 
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
@@ -159,6 +172,7 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
+	bulkHandler := handler.NewBulkHandler(bulkService)
 
 	// Public routes with strict rate limiting for auth endpoints
 	public := router.Group("")
@@ -170,6 +184,10 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 		{
 			authRoutes.POST("/register", authHandler.Register)
 			authRoutes.POST("/login", authHandler.Login)
+			// Refresh is a credential exchange, so it stays on the strict tier.
+			authRoutes.POST("/refresh", authHandler.Refresh)
+			authRoutes.POST("/password-reset", authHandler.RequestPasswordReset)
+			authRoutes.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
 		}
 	}
 
@@ -186,5 +204,12 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 		handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
 		handler.SetupConfigurationRoutes(protected, configHandler)
 		handler.SetupDashboardRoutes(protected, dashboardHandler)
+		handler.SetupBulkStatusRoutes(protected, bulkHandler)
+
+		protectedAuth := protected.Group("/auth")
+		{
+			protectedAuth.POST("/logout", authHandler.Logout)
+			protectedAuth.POST("/change-password", authHandler.ChangePassword)
+		}
 	}
 }

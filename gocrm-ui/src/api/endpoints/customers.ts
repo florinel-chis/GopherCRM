@@ -109,12 +109,18 @@ export const customersApi = {
 
   assignCustomer: async (id: number, userId: number): Promise<Customer> => {
     const response = await api.post<Customer>(`/customers/${id}/assign`, { user_id: userId });
-    return response.data;
+    return transformCustomerFromBackend(response.data);
   },
 
   exportCustomers: async (filters?: CustomerFilters): Promise<Blob> => {
+    // The export endpoint only supports search, sort_by and sort_order;
+    // other list filters are ignored server-side, so don't send them.
     const response = await api.get('/customers/export', {
-      params: filters,
+      params: {
+        search: filters?.search,
+        sort_by: filters?.sort_by,
+        sort_order: filters?.sort_order,
+      },
       responseType: 'blob',
     });
     return response.data;

@@ -10,6 +10,10 @@ import {
   CardContent,
   Avatar,
   Skeleton,
+  Chip,
+  List,
+  ListItem,
+  ListItemText,
 } from '@mui/material';
 import {
   Business,
@@ -97,22 +101,24 @@ export const Dashboard: React.FC = () => {
     enabled: canViewStats,
   });
 
-  useQuery({
+  // The remaining dashboard endpoints share the stats guard: admin, sales
+  // and support only, so customer-role users must not call them either.
+  const { data: activities, isLoading: activitiesLoading } = useQuery({
     queryKey: ['dashboard', 'activities'],
     queryFn: () => dashboardApi.getRecentActivities(10),
-    enabled: false, // Disable for now since backend doesn't implement this yet
+    enabled: canViewStats,
   });
 
-  const { data: salesData } = useQuery({
+  const { data: salesData, isLoading: salesLoading } = useQuery({
     queryKey: ['dashboard', 'sales'],
     queryFn: () => dashboardApi.getSalesPerformance('month'),
-    enabled: false, // Disable for now since backend doesn't implement this yet
+    enabled: canViewStats,
   });
 
-  useQuery({
+  const { data: upcomingTasks, isLoading: upcomingTasksLoading } = useQuery({
     queryKey: ['dashboard', 'tasks'],
     queryFn: () => dashboardApi.getUpcomingTasks(5),
-    enabled: false, // Disable for now since backend doesn't implement this yet
+    enabled: canViewStats,
   });
 
   return (
@@ -236,7 +242,8 @@ export const Dashboard: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Charts and Activities */}
+      {/* Charts and Activities (same role guard as the stats endpoints) */}
+      {canViewStats && (
       <Stack spacing={3}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
           {/* Sales Performance Chart */}
@@ -245,6 +252,7 @@ export const Dashboard: React.FC = () => {
               <Typography variant="h6" gutterBottom>
                 Sales Performance
               </Typography>
+              {salesLoading && <Skeleton variant="rectangular" height={300} />}
               {salesData && (
                 <ResponsiveContainer width="100%" height={300}>
                   <AreaChart data={salesData.datasets[0].data.map((value, index) => ({
@@ -255,11 +263,11 @@ export const Dashboard: React.FC = () => {
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip />
-                    <Area 
-                      type="monotone" 
-                      dataKey="value" 
-                      stroke="#1976d2" 
-                      fill="#1976d2" 
+                    <Area
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#1976d2"
+                      fill="#1976d2"
                       fillOpacity={0.3}
                     />
                   </AreaChart>
@@ -268,19 +276,62 @@ export const Dashboard: React.FC = () => {
             </Paper>
           </Box>
 
-          {/* Placeholder for future features */}
+          {/* Recent Activities and Upcoming Tasks */}
           <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 calc(33.333% - 12px)' } }}>
-            <Paper sx={{ p: 2, height: '100%' }}>
-              <Typography variant="h6" gutterBottom>
-                Coming Soon
-              </Typography>
-              <Typography color="text.secondary">
-                Recent activities, sales charts, and task management will be available in future updates.
-              </Typography>
-            </Paper>
+            <Stack spacing={3} sx={{ height: '100%' }}>
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Recent Activities
+                </Typography>
+                {activitiesLoading ? (
+                  <Skeleton variant="rectangular" height={140} />
+                ) : activities && activities.length > 0 ? (
+                  <List dense disablePadding>
+                    {activities.map((activity) => (
+                      <ListItem key={activity.id} disableGutters>
+                        <ListItemText
+                          primary={activity.title}
+                          secondary={`${activity.description} — ${new Date(activity.created_at).toLocaleDateString()}`}
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                ) : (
+                  <Typography color="text.secondary">Nothing yet</Typography>
+                )}
+              </Paper>
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Upcoming Tasks
+                </Typography>
+                {upcomingTasksLoading ? (
+                  <Skeleton variant="rectangular" height={140} />
+                ) : upcomingTasks && upcomingTasks.length > 0 ? (
+                  <List dense disablePadding>
+                    {upcomingTasks.map((task) => (
+                      <ListItem
+                        key={task.id}
+                        disableGutters
+                        secondaryAction={
+                          <Chip label={task.priority} size="small" variant="outlined" />
+                        }
+                      >
+                        <ListItemText
+                          primary={task.title}
+                          secondary={`Due ${new Date(task.due_date).toLocaleDateString()}`}
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                ) : (
+                  <Typography color="text.secondary">Nothing yet</Typography>
+                )}
+              </Paper>
+            </Stack>
           </Box>
         </Box>
       </Stack>
+      )}
     </Box>
   );
 };

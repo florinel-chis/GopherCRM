@@ -93,7 +93,7 @@ func TestAuthService_RefreshAccessToken(t *testing.T) {
 		ExpiryHours:        24,
 	}
 
-	t.Run("refresh returns not implemented", func(t *testing.T) {
+	t.Run("refresh rejected on a sessionless instance", func(t *testing.T) {
 		mockUserRepo := &mocks.UserRepository{}
 		mockAPIKeyRepo := &mocks.APIKeyRepository{}
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
@@ -102,7 +102,7 @@ func TestAuthService_RefreshAccessToken(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, tokens)
-		assert.Equal(t, "refresh tokens not implemented", err.Error())
+		assert.ErrorIs(t, err, ErrInvalidRefreshToken)
 	})
 }
 
@@ -150,7 +150,7 @@ func TestAuthService_ValidateCSRFToken(t *testing.T) {
 func TestAuthService_InvalidateRefreshToken(t *testing.T) {
 	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
 
-	t.Run("returns not implemented", func(t *testing.T) {
+	t.Run("rejected on a sessionless instance", func(t *testing.T) {
 		mockUserRepo := &mocks.UserRepository{}
 		mockAPIKeyRepo := &mocks.APIKeyRepository{}
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
@@ -158,6 +158,6 @@ func TestAuthService_InvalidateRefreshToken(t *testing.T) {
 		err := authService.InvalidateRefreshToken("test-refresh-token")
 
 		assert.Error(t, err)
-		assert.Equal(t, "refresh tokens not implemented", err.Error())
+		assert.ErrorIs(t, err, ErrInvalidRefreshToken)
 	})
 }

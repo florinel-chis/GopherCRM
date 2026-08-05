@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"encoding/csv"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -48,6 +50,20 @@ type UpdateCustomerRequest struct {
 	Country    string `json:"country,omitempty"`
 	PostalCode string `json:"postal_code,omitempty"`
 	Notes      string `json:"notes,omitempty"`
+}
+
+// AssignCustomerRequest carries the staff account a customer is being handed to.
+type AssignCustomerRequest struct {
+	UserID uint `json:"user_id" binding:"required"`
+}
+
+// customerExportColumns is the CSV header, and the order every data row is
+// written in. It is the file's contract with whatever spreadsheet or import
+// script consumes the download, so columns are appended, never reordered or
+// renamed in place.
+var customerExportColumns = []string{
+	"id", "first_name", "last_name", "email", "phone", "company",
+	"address", "notes", "assigned_to_id", "created_at", "updated_at",
 }
 
 // Create godoc
@@ -158,16 +174,7 @@ func (h *CustomerHandler) List(c *gin.Context) {
 	sortBy := c.Query("sort_by")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 
-	allowedSortColumns := map[string]bool{
-		"created_at": true,
-		"updated_at": true,
-		"first_name": true,
-		"last_name":  true,
-		"email":      true,
-		"company":    true,
-	}
-
-	if !allowedSortColumns[sortBy] {
+	if !customerSortColumns[sortBy] {
 		sortBy = ""
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
@@ -418,4 +425,236 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusNoContent, nil)
 	c.Status(http.StatusNoContent)
+}
+// customerSortColumns is the sort allowlist shared by the list and export
+// endpoints. It is the SQL-injection guard: anything outside it is dropped
+// before it reaches the repository, never interpolated.
+var customerSortColumns = map[string]bool{
+	"created_at": true,
+	"updated_at": true,
+	"first_name": true,
+	"last_name":  true,
+	"email":      true,
+	"company":    true,
+}
+
+// Export godoc
+// @Summary Export customers as CSV
+// @Description Download every customer matching the optional filters as a CSV file. ADMIN ROLE ONLY, and deliberately narrower than the list endpoint, which sales and support can also read: a single request here egresses the personal data of the entire customer base in a form that leaves the application, so the GDPR data-minimisation principle puts it out of reach of the roles that only need to work one record at a time.
+// @Description
+// @Description The response is NOT the utils.APIResponse envelope. It is the raw CSV body — Content-Type text/csv; charset=utf-8, Content-Disposition attachment; filename=customers-export.csv — because the client saves it as a file. Errors before the file starts are still reported through the ordinary JSON envelope.
+// @Description
+// @Description Columns, in order: id, first_name, last_name, email, phone, company, address, notes, assigned_to_id, created_at, updated_at. Timestamps are RFC3339. An unassigned customer exports an empty assigned_to_id cell. Fields that a spreadsheet would treat as a formula are prefixed with an apostrophe.
+// @Description
+// @Description The export is not paginated: every matching row is included. Soft-deleted (erased) customers are excluded.
+// @Tags customers
+// @Produce text/csv
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param search query string false "Free-text search across first name, last name, email, company, phone and notes"
+// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, first_name, last_name, email, company)
+// @Param sort_order query string false "Sort direction; ignored unless sort_by is supplied" Enums(asc, desc) default(asc)
+// @Success 200 {string} string "CSV file of customers (raw body, not the API envelope)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers/export [get]
+func (h *CustomerHandler) Export(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "CustomerHandler.Export")
+
+	// Belt and braces with the route-level RequireRole(admin) guard. A bulk PII
+	// download is the last endpoint that should depend on a single check.
+	if c.GetString("user_role") != string(models.RoleAdmin) {
+		utils.RespondForbidden(c, "Only administrators can export customers")
+		return
+	}
+
+	search := c.Query("search")
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	if !customerSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortBy == "" {
+		// A direction without a column means nothing; do not pass one down.
+		sortOrder = ""
+	} else if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	// The rows are fetched in full before a single byte is written. Streaming
+	// straight from the database would mean a failure halfway through arriving
+	// after a 200 and half a file, which the client would save as a complete
+	// export.
+	customers, err := h.customerService.ExportAll(search, sortBy, sortOrder)
+	if err != nil {
+		logger.WithError(err).Error("Failed to export customers")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=customers-export.csv")
+	c.Status(http.StatusOK)
+
+	writer := csv.NewWriter(c.Writer)
+	if err := writer.Write(customerExportColumns); err != nil {
+		// The status line is already out; all that is left is to record it.
+		logger.WithError(err).Error("Failed to write CSV header")
+		return
+	}
+
+	for i := range customers {
+		if err := writer.Write(customerExportRecord(&customers[i])); err != nil {
+			logger.WithError(err).WithField("customer_id", customers[i].ID).Error("Failed to write CSV row")
+			return
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		logger.WithError(err).Error("Failed to flush CSV export")
+		return
+	}
+
+	logger.WithField("count", len(customers)).Info("Customer export written")
+}
+
+// customerExportRecord renders one customer as a CSV row, in the column order
+// pinned by customerExportColumns.
+func customerExportRecord(customer *models.Customer) []string {
+	assignedTo := ""
+	if customer.AssignedToID != nil {
+		assignedTo = strconv.FormatUint(uint64(*customer.AssignedToID), 10)
+	}
+
+	return []string{
+		strconv.FormatUint(uint64(customer.ID), 10),
+		csvSafeField(customer.FirstName),
+		csvSafeField(customer.LastName),
+		csvSafeField(customer.Email),
+		csvSafeField(customer.Phone),
+		csvSafeField(customer.Company),
+		csvSafeField(customer.Address),
+		csvSafeField(customer.Notes),
+		assignedTo,
+		customer.CreatedAt.Format(time.RFC3339),
+		customer.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+// csvSafeField blunts spreadsheet formula injection. A cell that opens with =,
+// @, a tab or a carriage return is executed as a formula by Excel and by
+// LibreOffice, so text that arrived from outside (notes carried over from a
+// converted lead, a company name) could run when an administrator opens the
+// download. Prefixing an apostrophe makes the spreadsheet treat it as literal
+// text.
+//
+// A leading + or - is treated separately: those overwhelmingly begin phone
+// numbers and negative figures, and mangling every international dialling code
+// would be a worse outcome than the risk. They are escaped only when what
+// follows is not a plain number.
+func csvSafeField(value string) string {
+	if value == "" {
+		return value
+	}
+
+	switch value[0] {
+	case '=', '@', '\t', '\r':
+		return "'" + value
+	case '+', '-':
+		if !isNumericLike(value[1:]) {
+			return "'" + value
+		}
+	}
+	return value
+}
+
+// isNumericLike reports whether the rest of a +/- prefixed value looks like a
+// phone number or a plain figure rather than a formula.
+func isNumericLike(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+		case r == ' ', r == '-', r == '(', r == ')', r == '.', r == '+', r == ',':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// Assign godoc
+// @Summary Assign a customer to a user
+// @Description Set the staff account that owns this customer relationship (admin and sales roles only; the route is guarded by middleware.RequireRole(admin, sales) and the handler repeats the check).
+// @Description
+// @Description The target account must exist, must be active, and must hold the admin or sales role: customer ownership is a sales function, so support accounts are rejected the same way a support-only ticket assignee is, and a customer-role account is rejected outright — handing it a book of other people's records would be a data-protection incident.
+// @Description
+// @Description A missing customer or a missing user is 404. A user that exists but is deactivated or holds the wrong role is 400, because the request identified a real account and was refused on its merits.
+// @Tags customers
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Customer ID"
+// @Param request body AssignCustomerRequest true "Assignment request"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer assigned successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data, or the target user is deactivated or holds a role that cannot own customers"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer or user not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers/{id}/assign [post]
+func (h *CustomerHandler) Assign(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "CustomerHandler.Assign")
+
+	currentUserRole := c.GetString("user_role")
+
+	// Only admin and sales users can assign customers
+	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
+		utils.RespondForbidden(c, "Insufficient permissions to assign customers")
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid customer ID")
+		return
+	}
+
+	var req AssignCustomerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	customer, err := h.customerService.Assign(uint(id), req.UserID)
+	if err != nil {
+		switch {
+		// The assignee sentinel is checked first: it is a distinct miss from the
+		// customer's, and the two answer with different messages.
+		case errors.Is(err, apperrors.ErrAssigneeNotFound):
+			logger.WithError(err).Warn("Assignee not found")
+			utils.RespondNotFound(c, "User not found")
+		case apperrors.IsNotFound(err):
+			logger.WithError(err).Warn("Customer not found")
+			utils.RespondNotFound(c, "Customer not found")
+		case errors.Is(err, apperrors.ErrInactiveUser):
+			logger.WithError(err).Warn("Assignee is inactive")
+			utils.RespondBadRequest(c, "Cannot assign a customer to a deactivated user")
+		case errors.Is(err, apperrors.ErrInvalidCustomerAssignee):
+			logger.WithError(err).Warn("Assignee holds a role that cannot own customers")
+			utils.RespondBadRequest(c, "Customers can only be assigned to sales or admin users")
+		default:
+			logger.WithError(err).Error("Failed to assign customer")
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, customer)
+	utils.RespondSuccess(c, http.StatusOK, customer)
 }

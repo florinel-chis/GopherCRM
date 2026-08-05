@@ -16,6 +16,8 @@ type Config struct {
 	JWT      JWTConfig
 	Logging  LoggingConfig
 	API      APIConfig
+	SMTP     SMTPConfig
+	App      AppConfig
 }
 
 type DatabaseConfig struct {
@@ -58,6 +60,22 @@ type LoggingConfig struct {
 type APIConfig struct {
 	Prefix       string
 	APIKeySecret string
+}
+
+// SMTPConfig configures outbound transactional mail. An empty Host selects
+// the logging fallback mailer instead of a real SMTP transport.
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	From     string
+}
+
+// AppConfig holds settings about the user-facing application, used when the
+// backend must build absolute links into the frontend (e.g. reset links).
+type AppConfig struct {
+	BaseURL string
 }
 
 type RateLimitConfig struct {
@@ -106,7 +124,10 @@ func Load() (*Config, error) {
 			Secret:             jwtSecret,
 			ExpiryHours:        getEnvAsInt("JWT_EXPIRY_HOURS", 24),
 			AccessTokenMinutes: getEnvAsInt("JWT_ACCESS_TOKEN_MINUTES", 15),
-			RefreshTokenDays:   getEnvAsInt("JWT_REFRESH_TOKEN_DAYS", 7),
+			// REFRESH_TOKEN_EXPIRY_DAYS is the canonical variable; the older
+			// JWT_REFRESH_TOKEN_DAYS is honoured as a fallback for existing
+			// environments. Default is 30 days.
+			RefreshTokenDays: getEnvAsInt("REFRESH_TOKEN_EXPIRY_DAYS", getEnvAsInt("JWT_REFRESH_TOKEN_DAYS", 30)),
 			CookieSameSite:     getEnv("JWT_COOKIE_SAMESITE", "Lax"),
 			CookieDomain:       getEnv("JWT_COOKIE_DOMAIN", ""),
 			CookieSecure:       resolveCookieSecure(getEnv("SERVER_MODE", "development")),
@@ -118,6 +139,16 @@ func Load() (*Config, error) {
 		API: APIConfig{
 			Prefix:       getEnv("API_PREFIX", "/api/v1"),
 			APIKeySecret: getEnv("API_KEY_SECRET", jwtSecret),
+		},
+		SMTP: SMTPConfig{
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     getEnvAsInt("SMTP_PORT", 587),
+			User:     getEnv("SMTP_USER", ""),
+			Password: getEnv("SMTP_PASSWORD", ""),
+			From:     getEnv("SMTP_FROM", "no-reply@localhost"),
+		},
+		App: AppConfig{
+			BaseURL: strings.TrimRight(getEnv("APP_BASE_URL", "http://localhost:5173"), "/"),
 		},
 	}
 

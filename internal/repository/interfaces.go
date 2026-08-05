@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
 )
@@ -59,6 +61,14 @@ type LeadRepository interface {
 	CountByClassification(classification models.LeadClassification) (int64, error)
 	CountByOwnerID(ownerID uint) (int64, error)
 	ConvertToCustomer(leadID uint, customerID uint) error
+	// Dashboard analytics. CountByStatus groups on a plain column, which both
+	// MySQL and SQLite handle identically; every time-based aggregation is a
+	// plain range scan whose results are bucketed in Go, because no date
+	// function is portable across the two drivers.
+	CountByStatus() (map[string]int64, error)
+	ListRecent(ownerID *uint, limit int) ([]models.Lead, error)
+	ListRecentlyConverted(limit int) ([]models.Lead, error)
+	ConversionTimestampsSince(since time.Time) ([]time.Time, error)
 	WithTx(tx *gorm.DB) LeadRepository
 }
 
@@ -77,6 +87,10 @@ type CustomerRepository interface {
 	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Customer, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)
+	// ListAllForExport returns every matching customer with no pagination, read
+	// in batches. Backs the CSV export, where a page boundary would silently
+	// truncate the file.
+	ListAllForExport(search, sortBy, sortOrder string) ([]models.Customer, error)
 	CountSearch(query string) (int64, error)
 	Count() (int64, error)
 	WithTx(tx *gorm.DB) CustomerRepository
@@ -101,6 +115,10 @@ type TicketRepository interface {
 	CountByCustomerID(customerID uint) (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
 	CountOpen() (int64, error)
+	// Dashboard analytics.
+	CountByPriority() (map[string]int64, error)
+	ListRecent(limit int) ([]models.Ticket, error)
+	ListRecentlyResolved(limit int) ([]models.Ticket, error)
 	WithTx(tx *gorm.DB) TicketRepository
 }
 
@@ -120,6 +138,13 @@ type TaskRepository interface {
 	Count() (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
 	CountPending() (int64, error)
+	// Dashboard analytics. A nil assignedToID means "every assignee"; a non-nil
+	// one narrows the result to that user, which is how the non-admin scoping is
+	// pushed down to SQL instead of being filtered after the fact.
+	CountByStatus() (map[string]int64, error)
+	ListUpcoming(assignedToID *uint, limit int) ([]models.Task, error)
+	ListDueBetween(assignedToID *uint, from, to time.Time, limit int) ([]models.Task, error)
+	ListRecentlyCompleted(limit int) ([]models.Task, error)
 	WithTx(tx *gorm.DB) TaskRepository
 }
 
@@ -146,6 +171,19 @@ type RefreshTokenRepository interface {
 	DeleteExpired() error
 	DeleteByTokenHash(tokenHash string) error
 	WithTx(tx *gorm.DB) RefreshTokenRepository
+}
+
+type PasswordResetTokenRepository interface {
+	Create(token *models.PasswordResetToken) error
+	// GetByTokenHash returns the token only while it is still spendable:
+	// unused (used_at IS NULL) and unexpired. Anything else is a not-found.
+	GetByTokenHash(tokenHash string) (*models.PasswordResetToken, error)
+	MarkUsed(id uint) error
+	// InvalidateAllForUser marks every outstanding (unused, unexpired) token of
+	// the user as used, so only the most recently issued reset link works.
+	InvalidateAllForUser(userID uint) error
+	DeleteExpired() error
+	WithTx(tx *gorm.DB) PasswordResetTokenRepository
 }
 
 type BulkOperationRepository interface {
@@ -190,6 +228,17 @@ type BulkRepository interface {
 	BulkCreateTickets(tickets []models.Ticket) ([]models.Ticket, []error)
 	BulkUpdateTickets(updates []models.BulkUpdateItem) ([]models.Ticket, []error)
 	BulkDeleteTickets(ids []uint) []error
+
+	// Bulk status updates. Reading the records and writing the new status are
+	// separate operations on purpose: the caller has to see every row — does it
+	// exist, who owns it, what status is it in now — before any row is written,
+	// because a bulk status update is all-or-nothing.
+	GetLeadsByIDs(ids []uint) ([]models.Lead, error)
+	GetTicketsByIDs(ids []uint) ([]models.Ticket, error)
+	GetTasksByIDs(ids []uint) ([]models.Task, error)
+	SetLeadStatus(ids []uint, status models.LeadStatus) error
+	SetTicketStatus(ids []uint, status models.TicketStatus) error
+	SetTaskStatus(ids []uint, status models.TaskStatus) error
 
 	WithTx(tx *gorm.DB) BulkRepository
 }

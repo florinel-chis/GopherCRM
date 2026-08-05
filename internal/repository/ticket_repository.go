@@ -173,6 +173,38 @@ func (r *ticketRepository) CountSearch(query string) (int64, error) {
 	return count, err
 }
 
+// CountByPriority returns the number of live tickets per priority. Priorities
+// with no rows are absent from the map; the caller supplies the full label set.
+func (r *ticketRepository) CountByPriority() (map[string]int64, error) {
+	return countGroupedByColumn(r.db.Model(&models.Ticket{}), "priority")
+}
+
+// ListRecent returns the newest tickets first, for the dashboard widget.
+func (r *ticketRepository) ListRecent(limit int) ([]models.Ticket, error) {
+	tickets := []models.Ticket{}
+	err := r.db.Preload("Customer").Preload("AssignedTo").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Find(&tickets).Error
+	return tickets, err
+}
+
+// ListRecentlyResolved returns tickets that have left the open states, most
+// recently touched first.
+//
+// Both "resolved" and "closed" count as resolutions, mirroring CountOpen, which
+// treats open and in_progress as the open half. There is no resolved_at column,
+// so updated_at stands in for the moment of resolution.
+func (r *ticketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, error) {
+	tickets := []models.Ticket{}
+	err := r.db.Preload("Customer").Preload("AssignedTo").
+		Where("status IN ?", []string{string(models.TicketStatusResolved), string(models.TicketStatusClosed)}).
+		Order("updated_at DESC, id DESC").
+		Limit(limit).
+		Find(&tickets).Error
+	return tickets, err
+}
+
 func (r *ticketRepository) WithTx(tx *gorm.DB) TicketRepository {
 	return &ticketRepository{db: tx}
 }

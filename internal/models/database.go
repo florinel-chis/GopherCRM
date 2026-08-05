@@ -51,6 +51,7 @@ func MigrateDatabase() error {
 		&APIKey{},
 		&Configuration{},
 		&RefreshToken{},
+		&PasswordResetToken{},
 		&BulkOperation{},
 		&BulkOperationItem{},
 	)
