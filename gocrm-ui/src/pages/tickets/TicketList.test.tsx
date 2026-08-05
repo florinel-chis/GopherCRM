@@ -4,6 +4,7 @@ import { Component as TicketList } from './TicketList';
 import { ticketsApi } from '@/api/endpoints';
 import { createMockTicket, createMockCustomer, createMockUser } from '@/test/factories';
 import { useNavigate } from 'react-router-dom';
+import type { User } from '@/types';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -11,6 +12,22 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useNavigate: vi.fn(),
   };
+});
+
+const mockUseAuth = vi.fn();
+
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
+const authState = (user: User) => ({
+  user,
+  isLoading: false,
+  isAuthenticated: true,
+  login: vi.fn(),
+  register: vi.fn(),
+  logout: vi.fn(),
+  refreshUser: vi.fn(),
 });
 
 vi.mock('@/api/endpoints', () => ({
@@ -69,6 +86,7 @@ describe('TicketList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (useNavigate as any).mockReturnValue(mockNavigate);
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
     (ticketsApi.getTickets as any).mockResolvedValue({
       data: mockTickets,
       total: 4,
@@ -533,6 +551,73 @@ describe('TicketList', () => {
       expect(rows.length).toBe(1); // Only header row
     });
   });
+
+  it.each(['admin', 'support'] as const)(
+    'shows the Create Ticket button for the %s role',
+    async (role) => {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role })));
+
+      render(<TicketList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Login issue')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /create ticket/i })).toBeInTheDocument();
+    }
+  );
+
+  it.each(['sales', 'customer'] as const)(
+    'hides the Create Ticket button for the %s role',
+    async (role) => {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role })));
+
+      render(<TicketList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Login issue')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /create ticket/i })).not.toBeInTheDocument();
+    }
+  );
+
+  it('shows row edit and delete actions for an admin', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
+
+    render(<TicketList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Login issue')).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('EditIcon').length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId('DeleteIcon').length).toBeGreaterThan(0);
+  });
+
+  it('shows row edit actions but no delete actions for a support user', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 2, role: 'support' })));
+
+    render(<TicketList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Login issue')).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('EditIcon').length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('DeleteIcon')).not.toBeInTheDocument();
+  });
+
+  it.each(['sales', 'customer'] as const)(
+    'shows no row edit or delete actions for the %s role',
+    async (role) => {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role })));
+
+      render(<TicketList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Login issue')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('EditIcon')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('DeleteIcon')).not.toBeInTheDocument();
+    }
+  );
 
   it('handles API errors gracefully', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -2,6 +2,9 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
 )
 
 type ConfigurationType string
@@ -64,26 +67,42 @@ func (c *Configuration) GetValueAs() interface{} {
 	}
 }
 
-// SetValue sets the configuration value with proper type conversion
+// SetValue stores the configuration value, rejecting a value whose type does not
+// match the entry's declared type. It used to coerce instead — a non-bool became
+// "false" and a non-string became "" — so a caller sending the wrong type was
+// answered with a success and a corrupted value. On any error the stored value
+// is left untouched.
+//
+// This is a type check only; the valid_values allowlist stays in IsValidValue,
+// which the service applies first.
+//
+// Float, JSON and array entries keep their permissive JSON round trip: their
+// stored form is whatever the value marshals to.
 func (c *Configuration) SetValue(value interface{}) error {
 	switch c.Type {
 	case ConfigTypeString:
-		if str, ok := value.(string); ok {
-			c.Value = str
-		} else {
-			c.Value = ""
+		str, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("expected string value, got %T", value)
 		}
+		c.Value = str
 	case ConfigTypeBoolean:
-		if val, ok := value.(bool); ok {
-			if val {
-				c.Value = "true"
-			} else {
-				c.Value = "false"
-			}
+		val, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("expected boolean value, got %T", value)
+		}
+		if val {
+			c.Value = "true"
 		} else {
 			c.Value = "false"
 		}
-	case ConfigTypeInteger, ConfigTypeFloat, ConfigTypeJSON, ConfigTypeArray:
+	case ConfigTypeInteger:
+		number, err := asInteger(value)
+		if err != nil {
+			return err
+		}
+		c.Value = strconv.FormatInt(number, 10)
+	case ConfigTypeFloat, ConfigTypeJSON, ConfigTypeArray:
 		bytes, err := json.Marshal(value)
 		if err != nil {
 			return err
@@ -93,6 +112,63 @@ func (c *Configuration) SetValue(value interface{}) error {
 		c.Value = ""
 	}
 	return nil
+}
+
+// asInteger narrows a value to an integer. A JSON number decodes to float64, so
+// an integral float64 counts as an integer; a fractional one does not and is
+// rejected rather than silently truncated.
+func asInteger(value interface{}) (int64, error) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), nil
+	case int8:
+		return int64(v), nil
+	case int16:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case uint8:
+		return int64(v), nil
+	case uint16:
+		return int64(v), nil
+	case uint32:
+		return int64(v), nil
+	case uint:
+		return unsignedToInteger(uint64(v))
+	case uint64:
+		return unsignedToInteger(v)
+	case float32:
+		return floatToInteger(float64(v))
+	case float64:
+		return floatToInteger(v)
+	case json.Number:
+		number, err := v.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("expected integer value, got %s", v.String())
+		}
+		return number, nil
+	default:
+		return 0, fmt.Errorf("expected integer value, got %T", value)
+	}
+}
+
+func floatToInteger(v float64) (int64, error) {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) {
+		return 0, fmt.Errorf("expected integer value, got %v", v)
+	}
+	if v < float64(math.MinInt64) || v >= float64(math.MaxInt64) {
+		return 0, fmt.Errorf("integer value %v is out of range", v)
+	}
+	return int64(v), nil
+}
+
+func unsignedToInteger(v uint64) (int64, error) {
+	if v > math.MaxInt64 {
+		return 0, fmt.Errorf("integer value %d is out of range", v)
+	}
+	return int64(v), nil
 }
 
 // IsValidValue checks if the provided value is valid according to ValidValues constraint

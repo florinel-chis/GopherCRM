@@ -511,6 +511,115 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_EmptyString
 	assert.Equal(suite.T(), "", value)
 }
 
+// TestSetConfiguration_TypeMismatch is the silent-coercion defect: a value of
+// the wrong JSON type used to be coerced ("yes" on a boolean entry became
+// "false", a number on a string entry became "") and answered 200. It must now
+// be rejected as an invalid value, and the stored value must survive intact.
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_TypeMismatch() {
+	suite.NoError(suite.db.Where("config_key = ?", "test.mismatch.integer").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.mismatch.integer",
+		Value:        "42",
+		Type:         models.ConfigTypeInteger,
+		Category:     models.CategoryGeneral,
+		Description:  "Test integer configuration",
+		DefaultValue: "42",
+	}).Error)
+
+	suite.NoError(suite.db.Where("config_key = ?", "test.mismatch.string").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.mismatch.string",
+		Value:        "something",
+		Type:         models.ConfigTypeString,
+		Category:     models.CategoryGeneral,
+		Description:  "Test string configuration",
+		DefaultValue: "something",
+	}).Error)
+
+	suite.NoError(suite.configService.Set("tickets.auto_assign_support", true))
+
+	cases := []struct {
+		name     string
+		key      string
+		body     string
+		unharmed string
+	}{
+		{name: "string on boolean entry", key: "tickets.auto_assign_support", body: `{"value": "yes"}`, unharmed: "true"},
+		{name: "number on boolean entry", key: "tickets.auto_assign_support", body: `{"value": 1}`, unharmed: "true"},
+		{name: "string on integer entry", key: "test.mismatch.integer", body: `{"value": "10"}`, unharmed: "42"},
+		{name: "fractional number on integer entry", key: "test.mismatch.integer", body: `{"value": 3.5}`, unharmed: "42"},
+		{name: "number on string entry", key: "test.mismatch.string", body: `{"value": 5}`, unharmed: "something"},
+		{name: "boolean on string entry", key: "test.mismatch.string", body: `{"value": false}`, unharmed: "something"},
+	}
+
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			w := suite.setConfiguration(tc.key, tc.body)
+			assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+
+			var response utils.APIResponse
+			suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			assert.False(suite.T(), response.Success)
+			assert.NotNil(suite.T(), response.Error)
+			assert.Contains(suite.T(), response.Error.Message, "Invalid value")
+
+			config, err := suite.configService.GetByKey(tc.key)
+			suite.NoError(err)
+			assert.Equal(suite.T(), tc.unharmed, config.Value, "a rejected value must not be written")
+		})
+	}
+}
+
+// TestSetConfiguration_CorrectTypesStillAccepted guards the falsy coverage
+// against the strictness added alongside it: false, 0 and "" are of the right
+// type and must still be stored.
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_CorrectTypesStillAccepted() {
+	suite.NoError(suite.db.Where("config_key = ?", "test.accepted.integer").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.accepted.integer",
+		Value:        "42",
+		Type:         models.ConfigTypeInteger,
+		Category:     models.CategoryGeneral,
+		Description:  "Test integer configuration",
+		DefaultValue: "42",
+	}).Error)
+
+	suite.NoError(suite.db.Where("config_key = ?", "test.accepted.string").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.accepted.string",
+		Value:        "something",
+		Type:         models.ConfigTypeString,
+		Category:     models.CategoryGeneral,
+		Description:  "Test string configuration",
+		DefaultValue: "something",
+	}).Error)
+
+	cases := []struct {
+		name  string
+		key   string
+		body  string
+		value string
+	}{
+		{name: "false on boolean entry", key: "tickets.auto_assign_support", body: `{"value": false}`, value: "false"},
+		{name: "true on boolean entry", key: "tickets.auto_assign_support", body: `{"value": true}`, value: "true"},
+		{name: "zero on integer entry", key: "test.accepted.integer", body: `{"value": 0}`, value: "0"},
+		{name: "integral number on integer entry", key: "test.accepted.integer", body: `{"value": 7}`, value: "7"},
+		{name: "empty string on string entry", key: "test.accepted.string", body: `{"value": ""}`, value: ""},
+	}
+
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			w := suite.setConfiguration(tc.key, tc.body)
+			assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+			var response map[string]interface{}
+			suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			config := response["data"].(map[string]interface{})
+			assert.Equal(suite.T(), tc.value, config["value"])
+		})
+	}
+}
+
 func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_AbsentValue() {
 	w := suite.setConfiguration("general.company_name", `{}`)
 	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)

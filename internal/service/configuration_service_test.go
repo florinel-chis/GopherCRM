@@ -168,6 +168,71 @@ func (suite *ConfigurationServiceTestSuite) TestSet_EmptyStringOnStringConfig() 
 	suite.NoError(suite.service.Set("general.company_name", ""))
 }
 
+// --- Set type strictness ---
+
+// TestSet_TypeMismatchIsInvalidValueSentinel covers the entries that carry no
+// valid_values constraint, so the rejection can only come from SetValue: a
+// mismatched type used to be coerced (to "false", to "") and saved.
+func (suite *ConfigurationServiceTestSuite) TestSet_TypeMismatchIsInvalidValueSentinel() {
+	cases := []struct {
+		name   string
+		config *models.Configuration
+		value  interface{}
+	}{
+		{
+			name: "string on boolean entry",
+			config: &models.Configuration{
+				Key:      "tickets.auto_assign_support",
+				Value:    "true",
+				Type:     models.ConfigTypeBoolean,
+				Category: models.CategoryTickets,
+			},
+			value: "yes",
+		},
+		{
+			name: "string on integer entry",
+			config: &models.Configuration{
+				Key:      "test.integer.setting",
+				Value:    "42",
+				Type:     models.ConfigTypeInteger,
+				Category: models.CategoryGeneral,
+			},
+			value: "10",
+		},
+		{
+			name: "fractional number on integer entry",
+			config: &models.Configuration{
+				Key:      "test.integer.setting",
+				Value:    "42",
+				Type:     models.ConfigTypeInteger,
+				Category: models.CategoryGeneral,
+			},
+			value: float64(3.5),
+		},
+		{
+			name:   "number on string entry",
+			config: writableStringConfig(),
+			value:  float64(5),
+		},
+	}
+
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			repo := new(mocks.ConfigurationRepository)
+			repo.On("GetByKey", tc.config.Key).Return(tc.config, nil)
+			svc := NewConfigurationService(repo)
+
+			err := svc.Set(tc.config.Key, tc.value)
+
+			suite.Error(err)
+			assert.True(suite.T(), errors.Is(err, apperrors.ErrConfigurationInvalidValue), "expected ErrConfigurationInvalidValue, got %v", err)
+			assert.Contains(suite.T(), err.Error(), tc.config.Key)
+			repo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+			repo.AssertExpectations(suite.T())
+		})
+	}
+}
+
 // --- Reset classification (the reported defect) ---
 
 func (suite *ConfigurationServiceTestSuite) TestReset_UnknownKeyIsNotFoundSentinel() {

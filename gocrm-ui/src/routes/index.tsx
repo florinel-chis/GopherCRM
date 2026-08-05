@@ -69,16 +69,29 @@ export const router = createBrowserRouter([
         lazy: () => import('@/pages/tickets/TicketList'),
       },
       {
-        path: 'tickets/new',
-        lazy: () => import('@/pages/tickets/TicketForm'),
-      },
-      {
         path: 'tickets/:id',
         lazy: () => import('@/pages/tickets/TicketDetail'),
       },
       {
-        path: 'tickets/:id/edit',
-        lazy: () => import('@/pages/tickets/TicketForm'),
+        // Ticket writes are support/admin only on the API; keep the forms out of
+        // reach of a deep link. Per-assignment precision (support may only update
+        // its own tickets) is not expressible at the route level and is carried by
+        // the action buttons on the detail page plus the API itself.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'support']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'tickets/new',
+            lazy: () => import('@/pages/tickets/TicketForm'),
+          },
+          {
+            path: 'tickets/:id/edit',
+            lazy: () => import('@/pages/tickets/TicketForm'),
+          },
+        ],
       },
       {
         path: 'tasks',

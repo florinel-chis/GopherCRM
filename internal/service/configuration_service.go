@@ -75,8 +75,11 @@ func (s *configurationService) Set(key string, value interface{}) error {
 		return fmt.Errorf("invalid value for configuration %q: %w", key, apperrors.ErrConfigurationInvalidValue)
 	}
 
+	// A value of the wrong type is a bad request, not an internal failure: it is
+	// reported through the same sentinel as the valid_values rejection so the
+	// handler answers 400 either way.
 	if err := config.SetValue(value); err != nil {
-		return err
+		return fmt.Errorf("invalid value for configuration %q: %v: %w", key, err, apperrors.ErrConfigurationInvalidValue)
 	}
 
 	return s.configRepo.Update(config)

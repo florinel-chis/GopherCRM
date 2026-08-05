@@ -24,6 +24,7 @@ import {
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
+import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi, type TicketFilters } from '@/api/endpoints';
 import type { Ticket } from '@/types';
@@ -78,8 +79,17 @@ const getPriorityColor = (priority: Ticket['priority']) => {
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { showSuccess, showError } = useSnackbar();
-  
+
+  // Mirrors the backend policy: only support and admin may create a ticket, and
+  // only admins may delete one. Row-level edit is offered to admin and support;
+  // whether a given ticket is assigned to this support user is enforced per
+  // ticket on the detail page (and by the API).
+  const canCreate = user?.role === 'admin' || user?.role === 'support';
+  const canEdit = canCreate;
+  const canDelete = user?.role === 'admin';
+
   const [filters, setFilters] = useState<TicketFilters>({
     page: 1,
     limit: 10,
@@ -238,13 +248,15 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Tickets</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => navigate('/tickets/new')}
-        >
-          Create Ticket
-        </Button>
+        {canCreate && (
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate('/tickets/new')}
+          >
+            Create Ticket
+          </Button>
+        )}
       </Box>
 
       <Paper sx={{ mb: 2, p: 2 }}>
@@ -307,8 +319,8 @@ export const Component: React.FC = () => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(ticket) => navigate(`/tickets/${ticket.id}`)}
-        onEdit={(ticket) => navigate(`/tickets/${ticket.id}/edit`)}
-        onDelete={(ticket) => setDeleteDialog({ open: true, ticket })}
+        onEdit={canEdit ? (ticket) => navigate(`/tickets/${ticket.id}/edit`) : undefined}
+        onDelete={canDelete ? (ticket) => setDeleteDialog({ open: true, ticket }) : undefined}
         actions={
           <>
             <IconButton
@@ -325,10 +337,12 @@ export const Component: React.FC = () => {
               <MenuItem onClick={() => selectedTicket && navigate(`/tickets/${selectedTicket.id}`)}>
                 View Details
               </MenuItem>
-              <MenuItem onClick={() => selectedTicket && navigate(`/tickets/${selectedTicket.id}/edit`)}>
-                Edit
-              </MenuItem>
-              <MenuItem onClick={handleDelete}>Delete</MenuItem>
+              {canEdit && (
+                <MenuItem onClick={() => selectedTicket && navigate(`/tickets/${selectedTicket.id}/edit`)}>
+                  Edit
+                </MenuItem>
+              )}
+              {canDelete && <MenuItem onClick={handleDelete}>Delete</MenuItem>}
             </Menu>
           </>
         }
