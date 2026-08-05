@@ -353,8 +353,10 @@ its owner has been deactivated or erased.
 router registers them, so there is no reachable HTTP bulk endpoint. The underlying bulk service and
 repository are exercised directly by tests.
 
-A generated OpenAPI spec is checked in at `docs/swagger.json` / `docs/swagger.yaml`. It is **not**
-served by the application and can drift; treat `internal/handler/routes.go` as the source of truth.
+A generated Swagger 2.0 spec is checked in at `api/swagger.json` / `api/swagger.yaml`. It is built
+from swag annotations on the handlers — regenerate it with `make swagger` after changing a handler
+or route. The spec is **not** served by the application; `internal/handler/routes.go` remains the
+routing source of truth.
 
 ## Project Structure
 
@@ -378,6 +380,7 @@ gophercrm/
 ├── tests/                       # Further integration tests
 ├── scripts/                     # create_database.sql, anonymize_legacy_deleted_pii.sql
 ├── migrations/                  # SQL migrations
+├── api/                         # Generated OpenAPI (Swagger 2.0) spec — make swagger
 ├── docs/                        # Project documentation (developer guide, setup, features, roadmap)
 ├── gocrm-ui/                    # React TypeScript frontend
 │   ├── src/

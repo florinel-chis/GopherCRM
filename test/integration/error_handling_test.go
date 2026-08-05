@@ -127,7 +127,7 @@ func (suite *ErrorHandlingTestSuite) TestValidationError_400() {
 		{
 			name:    "short password",
 			payload: map[string]interface{}{"email": "test@example.com", "password": "short", "first_name": "John", "last_name": "Doe"},
-			errors:  map[string]string{"Password": "Password must be at least 8 characters long"},
+			errors:  map[string]string{"Password": "Password must be at least 10 characters long"},
 		},
 		{
 			name:    "missing first name",

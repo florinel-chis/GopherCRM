@@ -42,6 +42,23 @@ type UpdateTaskRequest struct {
 	CustomerID   *uint                 `json:"customer_id,omitempty"`
 }
 
+// Create godoc
+// @Summary Create a new task
+// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. The new task always starts in status "pending" regardless of the request body.
+// @Tags tasks
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body CreateTaskRequest true "Task creation request"
+// @Success 201 {object} utils.APIResponse{data=models.Task} "Task created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, assignee is deactivated, or task links both a lead and a customer"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, support or sales role required, or non-admin assigning to another user"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Assignee, lead or customer not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tasks [post]
 func (h *TaskHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Create")
 
@@ -98,6 +115,21 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, task)
 }
 
+// Get godoc
+// @Summary Get a task by ID
+// @Description Retrieve a single task. Admins can view any task; every other role can only view tasks assigned to them.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Task ID"
+// @Success 200 {object} utils.APIResponse{data=models.Task} "Task retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Task is not assigned to you"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /tasks/{id} [get]
 func (h *TaskHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Get")
 
@@ -129,6 +161,23 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, task)
 }
 
+// List godoc
+// @Summary List tasks
+// @Description List tasks with page-based pagination. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); non-numeric or non-positive values fall back to 1" default(1)
+// @Param per_page query int false "Page size; values outside 1-100 fall back to 20" default(20)
+// @Param sort_by query string false "Sort column; ignored unless one of the allowed values, and ignored entirely for non-admin callers" Enums(created_at, updated_at, title, status, priority, due_date)
+// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Free-text search across task fields; admin only, and takes precedence over sort_by"
+// @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tasks [get]
 func (h *TaskHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.List")
 
@@ -194,6 +243,20 @@ func (h *TaskHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// ListMyTasks godoc
+// @Summary List tasks assigned to the current user
+// @Description List the tasks assigned to the authenticated user, with page-based pagination. Available to every authenticated role, including admins, who also see only their own tasks here. Sorting and search are not supported on this endpoint.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); non-numeric or non-positive values fall back to 1" default(1)
+// @Param per_page query int false "Page size; values outside 1-100 fall back to 20" default(20)
+// @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tasks/my [get]
 func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.ListMyTasks")
 
@@ -221,6 +284,24 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// Update godoc
+// @Summary Update a task
+// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer.
+// @Tags tasks
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Task ID"
+// @Param request body UpdateTaskRequest true "Task update request"
+// @Success 200 {object} utils.APIResponse{data=models.Task} "Task updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID, invalid request data, assignee is deactivated, task links both a lead and a customer, or the task is already completed"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Task is not assigned to you, or only admins can reassign tasks"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task, assignee, lead or customer not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tasks/{id} [put]
 func (h *TaskHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Update")
 
@@ -307,6 +388,21 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, task)
 }
 
+// Delete godoc
+// @Summary Delete a task
+// @Description Delete a task (admin role only). The role check runs before the ID is parsed, so non-admins always receive 403. Any failure while deleting is reported as 404.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Task ID"
+// @Success 204 "No Content"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /tasks/{id} [delete]
 func (h *TaskHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Delete")
 

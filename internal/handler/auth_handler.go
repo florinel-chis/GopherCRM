@@ -28,7 +28,7 @@ func NewAuthHandler(authService service.AuthService, userService service.UserSer
 // POST /users endpoint. A client-supplied role here would be a privilege escalation.
 type RegisterRequest struct {
 	Email     string `json:"email" binding:"required,email"`
-	Password  string `json:"password" binding:"required,min=8"`
+	Password  string `json:"password" binding:"required,min=10"`
 	FirstName string `json:"first_name" binding:"required"`
 	LastName  string `json:"last_name" binding:"required"`
 }
@@ -44,6 +44,19 @@ type AuthResponse struct {
 	User  *models.User `json:"user"`
 }
 
+// Register godoc
+// @Summary Register a new account
+// @Description Public self-service registration. The account is always created with the customer role — the request body carries no role field and no client input can influence it. Elevated roles are assignable only through the admin-guarded POST /users endpoint. On success a JWT for the new account is returned alongside the user. The password must be at least 10 characters and contain an uppercase letter, a lowercase letter, a digit and a special character.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body RegisterRequest true "Registration request"
+// @Success 201 {object} utils.APIResponse{data=AuthResponse} "Account created; JWT and user returned"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Malformed body, failed field validation, or password complexity not met"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A user with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Rate limit exceeded (10 requests per minute per IP)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.Register")
 	
@@ -91,6 +104,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, response)
 }
 
+// Login godoc
+// @Summary Authenticate and obtain a JWT
+// @Description Exchange email and password for a JWT bearer token and the authenticated user. After 5 consecutive failed attempts the account is locked for 15 minutes; while locked, and for a deactivated account, the response is the same 401 with the same generic message as a wrong password, so no account state is disclosed. The remember_me field is accepted but does not currently alter the token's lifetime.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body LoginRequest true "Login request"
+// @Success 200 {object} utils.APIResponse{data=AuthResponse} "Authenticated; JWT and user returned"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Malformed body or failed field validation"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Invalid email or password, account locked, or account deactivated"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Rate limit exceeded (10 requests per minute per IP)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.Login")
 	

@@ -22,7 +22,7 @@ func NewUserHandler(userService service.UserService) *UserHandler {
 
 type CreateUserRequest struct {
 	Email     string           `json:"email" binding:"required,email"`
-	Password  string           `json:"password" binding:"required,min=8"`
+	Password  string           `json:"password" binding:"required,min=10"`
 	FirstName string           `json:"first_name" binding:"required"`
 	LastName  string           `json:"last_name" binding:"required"`
 	Role      models.UserRole  `json:"role" binding:"required,oneof=admin sales support customer"`
@@ -40,9 +40,25 @@ type UpdateMeRequest struct {
 	Email     string `json:"email,omitempty" binding:"omitempty,email"`
 	FirstName string `json:"first_name,omitempty"`
 	LastName  string `json:"last_name,omitempty"`
-	Password  string `json:"password,omitempty" binding:"omitempty,min=8"`
+	Password  string `json:"password,omitempty" binding:"omitempty,min=10"`
 }
 
+// Create godoc
+// @Summary Create a new user
+// @Description Create a new user with any role (admin role only). Unlike the public /auth/register endpoint, this one honours the requested role.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body CreateUserRequest true "User creation request"
+// @Success 201 {object} utils.APIResponse{data=models.User} "User created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, password does not meet complexity requirements, or user could not be created"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Create")
 	
@@ -79,6 +95,25 @@ func (h *UserHandler) Create(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, user)
 }
 
+// List godoc
+// @Summary List users
+// @Description List users with pagination, optional search and sorting (admin role only)
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); when supplied it overrides offset"
+// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
+// @Param limit query int false "Page size, capped at 100" default(20)
+// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, email, first_name, last_name, role)
+// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Free-text search across user fields; takes precedence over sort_by"
+// @Success 200 {object} utils.APIResponse{data=[]models.User,meta=utils.APIMeta} "Users retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.List")
 
@@ -143,6 +178,21 @@ func (h *UserHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, users, meta)
 }
 
+// Get godoc
+// @Summary Get a user by ID
+// @Description Retrieve a single user. Any authenticated user may fetch their own record; fetching another user's record requires the admin role.
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} utils.APIResponse{data=models.User} "User retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only view your own profile unless you are an admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Get")
 	
@@ -172,6 +222,24 @@ func (h *UserHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, user)
 }
 
+// Update godoc
+// @Summary Update a user
+// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "User ID"
+// @Param request body UpdateUserRequest true "User update request"
+// @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or request data"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only update your own profile unless you are an admin"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error, including when the user does not exist"
+// @Router /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Update")
 	
@@ -233,6 +301,22 @@ func (h *UserHandler) Update(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, user)
 }
 
+// Delete godoc
+// @Summary Delete a user (irreversible erasure of personal data)
+// @Description Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "User ID"
+// @Success 204 "No Content"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or attempt to delete your own account"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Delete")
 	
@@ -274,6 +358,18 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// GetMe godoc
+// @Summary Get the current user
+// @Description Retrieve the profile of the currently authenticated user
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.APIResponse{data=models.User} "User retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /users/me [get]
 func (h *UserHandler) GetMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.GetMe")
 	
@@ -290,6 +386,22 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, user)
 }
 
+// UpdateMe godoc
+// @Summary Update the current user
+// @Description Update the profile of the currently authenticated user. Only email, name and password can be changed here — role and active status are not settable through this endpoint.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body UpdateMeRequest true "Profile update request"
+// @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data or password does not meet complexity requirements"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /users/me [put]
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.UpdateMe")
 	

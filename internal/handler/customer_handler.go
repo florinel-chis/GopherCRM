@@ -50,6 +50,23 @@ type UpdateCustomerRequest struct {
 	Notes      string `json:"notes,omitempty"`
 }
 
+// Create godoc
+// @Summary Create a new customer
+// @Description Create a new customer (admin and sales roles only)
+// @Tags customers
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body CreateCustomerRequest true "Customer creation request"
+// @Success 201 {object} utils.APIResponse{data=models.Customer} "Customer created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Customer with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers [post]
 func (h *CustomerHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Create")
 
@@ -96,6 +113,25 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusCreated, customer)
 }
 
+// List godoc
+// @Summary List customers
+// @Description List customers with pagination, optional search and sorting. Admin, sales and support roles see the same unfiltered set; the customer role is rejected outright and has no view of its own record here.
+// @Tags customers
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (1-based); when supplied it overrides offset"
+// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
+// @Param limit query int false "Page size, capped at 100" default(20)
+// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, first_name, last_name, email, company)
+// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Free-text search across customer fields; takes precedence over sort_by"
+// @Success 200 {object} utils.APIResponse{data=object{customers=[]models.Customer,total=integer},meta=utils.APIMeta} "Customers retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, Sales or Support role required"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers [get]
 func (h *CustomerHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.List")
 
@@ -171,6 +207,21 @@ func (h *CustomerHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
 }
 
+// Get godoc
+// @Summary Get a customer by ID
+// @Description Retrieve a single customer. Admin, sales and support roles may read any customer; the customer role is rejected and cannot read its own record through this endpoint.
+// @Tags customers
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Customer ID"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, Sales or Support role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Get")
 	
@@ -201,6 +252,25 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, customer)
 }
 
+// Update godoc
+// @Summary Update a customer
+// @Description Update a customer (admin and sales roles only). Only non-empty fields in the request are applied; empty fields leave the stored value unchanged.
+// @Tags customers
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Customer ID"
+// @Param request body UpdateCustomerRequest true "Customer update request"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer updated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Customer with this email already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /customers/{id} [put]
 func (h *CustomerHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Update")
 	
@@ -284,6 +354,22 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, customer)
 }
 
+// Delete godoc
+// @Summary Erase a customer
+// @Description Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. If the customer originated from a converted lead, that lead is erased in the same transaction. Use deactivation instead when the data must be recoverable.
+// @Tags customers
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Customer ID"
+// @Success 204 "No Content"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Erasure failed"
+// @Router /customers/{id} [delete]
 func (h *CustomerHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Delete")
 	
