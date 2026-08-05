@@ -221,6 +221,7 @@ func (h *CustomerHandler) List(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, Sales or Support role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Get")
@@ -243,8 +244,16 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 	customer, err := h.customerService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Customer not found")
-		utils.RespondNotFound(c, "Customer not found")
+		// Only a genuine miss is a 404. A failed lookup answered with 404 tells
+		// the client the customer does not exist, and it stops retrying data
+		// that is still there.
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Customer not found")
+			utils.RespondNotFound(c, "Customer not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to retrieve customer")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -294,11 +303,17 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Get existing customer
+	// Get existing customer. As in Get, only a genuine miss is a 404 - a failed
+	// lookup must not be reported as a customer that does not exist.
 	customer, err := h.customerService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Customer not found")
-		utils.RespondNotFound(c, "Customer not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Customer not found")
+			utils.RespondNotFound(c, "Customer not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to look up customer for update")
+		utils.RespondInternalError(c)
 		return
 	}
 

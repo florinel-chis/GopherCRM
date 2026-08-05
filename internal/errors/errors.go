@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"gorm.io/gorm"
 )
 
 // Sentinel errors for use with errors.Is() across service/handler boundaries.
@@ -174,6 +176,9 @@ func (e *LeadAlreadyConvertedError) Is(target error) bool {
 // IsNotFound checks whether an error represents a "not found" condition,
 // whether it is one of our sentinel errors or a gorm.ErrRecordNotFound that
 // leaked through. This helper lets callers avoid importing gorm directly.
+// gorm's sentinel must be checked by identity: it shares the "record not
+// found" message with ErrRecordNotFound but errors.Is compares identity,
+// not text, so message equality alone would never match.
 func IsNotFound(err error) bool {
-	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrRecordNotFound)
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
 }

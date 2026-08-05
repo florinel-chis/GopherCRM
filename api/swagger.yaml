@@ -595,8 +595,6 @@ definitions:
         type: string
       password:
         type: string
-      remember_me:
-        type: boolean
     required:
     - email
     - password
@@ -620,7 +618,10 @@ definitions:
     type: object
   internal_handler.SetConfigurationRequest:
     properties:
-      value: {}
+      value:
+        items:
+          type: integer
+        type: array
     required:
     - value
     type: object
@@ -910,9 +911,9 @@ paths:
       - api-keys
   /api-keys/{id}:
     delete:
-      description: |-
-        Revoke an API key by marking it inactive; the row is kept, not deleted. Only the owner of the key may revoke it — there is no admin override, and a key belonging to another user is rejected with 403.
-        Note: a well-formed ID that matches no key currently surfaces as 500, not 404, because the repository returns gorm.ErrRecordNotFound while the handler tests for a different message.
+      description: Revoke an API key by marking it inactive; the row is kept, not
+        deleted. Only the owner of the key may revoke it — there is no admin override,
+        and a key belonging to another user is rejected with 403.
       parameters:
       - description: API key ID
         in: path
@@ -953,6 +954,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "404":
+          description: API key not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: Too many requests - rate limit exceeded
           schema:
@@ -985,8 +995,8 @@ paths:
         user. After 5 consecutive failed attempts the account is locked for 15 minutes;
         while locked, and for a deactivated account, the response is the same 401
         with the same generic message as a wrong password, so no account state is
-        disclosed. The remember_me field is accepted but does not currently alter
-        the token's lifetime.
+        disclosed. The token's lifetime is fixed by server configuration and cannot
+        be influenced by the request.
       parameters:
       - description: Login request
         in: body
@@ -1234,6 +1244,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
@@ -1252,7 +1271,8 @@ paths:
         name: key
         required: true
         type: string
-      - description: New configuration value
+      - description: New configuration value. Any JSON value is accepted, falsy ones
+          (false, 0, \
         in: body
         name: request
         required: true
@@ -1271,7 +1291,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration'
               type: object
         "400":
-          description: Invalid request data, read-only configuration, or invalid value
+          description: Missing or null value, read-only configuration, or a value
+            outside the entry's valid_values constraint
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -1333,8 +1354,7 @@ paths:
   /configurations/{key}/reset:
     post:
       description: Restore a configuration's value from its stored default and return
-        the updated entry (admin only). Read-only configurations are rejected. An
-        unknown key currently surfaces as 500 rather than 404.
+        the updated entry (admin only). Read-only configurations are rejected.
       parameters:
       - description: Configuration key
         in: path
@@ -1380,6 +1400,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "404":
+          description: Configuration not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: Too many requests - rate limit exceeded
           schema:
@@ -1390,7 +1419,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "500":
-          description: Internal server error, including an unknown configuration key
+          description: Internal server error
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -1874,6 +1903,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
@@ -2069,10 +2107,10 @@ paths:
     get:
       description: 'Aggregate counts for the dashboard: total leads, total customers,
         open tickets and pending tasks, plus a conversion rate computed as customers
-        / leads * 100 (0 when there are no leads). The route carries no role guard,
-        so every authenticated role - admin, sales, support and customer alike - receives
-        the same unscoped, system-wide totals; nothing is filtered to the caller''s
-        own records.'
+        / leads * 100 (0 when there are no leads). Restricted to the admin, sales
+        and support roles; customer-role callers receive 403. The totals returned
+        to permitted roles are unscoped and system-wide; nothing is filtered to the
+        caller''s own records.'
       produces:
       - application/json
       responses:
@@ -2087,6 +2125,15 @@ paths:
               type: object
         "401":
           description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -2641,21 +2688,23 @@ paths:
       - leads
   /tasks:
     get:
-      description: List tasks with page-based pagination. Admins see all tasks and
-        may use search and sorting; every other role is silently narrowed to the tasks
-        assigned to them, and the search, sort_by and sort_order parameters are ignored
-        for them.
+      description: List tasks. Admins see all tasks and may use search and sorting;
+        every other role is silently narrowed to the tasks assigned to them, and the
+        search, sort_by and sort_order parameters are ignored for them.
       parameters:
-      - default: 1
-        description: Page number (1-based); non-numeric or non-positive values fall
-          back to 1
+      - description: Page number (1-based); overrides offset when greater than 0
         in: query
         name: page
         type: integer
-      - default: 20
-        description: Page size; values outside 1-100 fall back to 20
+      - default: 0
+        description: Pagination offset
         in: query
-        name: per_page
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
         type: integer
       - description: Sort column; ignored unless one of the allowed values, and ignored
           entirely for non-admin callers
@@ -2827,8 +2876,8 @@ paths:
   /tasks/{id}:
     delete:
       description: Delete a task (admin role only). The role check runs before the
-        ID is parsed, so non-admins always receive 403. Any failure while deleting
-        is reported as 404.
+        ID is parsed, so non-admins always receive 403. A missing task is reported
+        as 404; any other failure is reported as 500.
       parameters:
       - description: Task ID
         in: path
@@ -2878,6 +2927,15 @@ paths:
               type: object
         "429":
           description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -2950,6 +3008,15 @@ paths:
               type: object
         "429":
           description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -3060,21 +3127,23 @@ paths:
       - tasks
   /tasks/my:
     get:
-      description: List the tasks assigned to the authenticated user, with page-based
-        pagination. Available to every authenticated role, including admins, who also
-        see only their own tasks here. Sorting and search are not supported on this
-        endpoint.
+      description: List the tasks assigned to the authenticated user. Available to
+        every authenticated role, including admins, who also see only their own tasks
+        here. Sorting and search are not supported on this endpoint.
       parameters:
-      - default: 1
-        description: Page number (1-based); non-numeric or non-positive values fall
-          back to 1
+      - description: Page number (1-based); overrides offset when greater than 0
         in: query
         name: page
         type: integer
-      - default: 20
-        description: Page size; values outside 1-100 fall back to 20
+      - default: 0
+        description: Pagination offset
         in: query
-        name: per_page
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
         type: integer
       produces:
       - application/json
@@ -3319,8 +3388,7 @@ paths:
       - tickets
   /tickets/{id}:
     delete:
-      description: Delete a ticket (admin role only). Any failure to delete an existing
-        ticket is also reported as 404.
+      description: Delete a ticket (admin role only).
       parameters:
       - description: Ticket ID
         in: path
@@ -3370,6 +3438,15 @@ paths:
               type: object
         "429":
           description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -3450,6 +3527,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
@@ -3459,11 +3545,11 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a ticket. Customer users are rejected outright; support
-        users may only update tickets assigned to them; admin and sales users may
-        update any ticket. Only non-empty fields are applied. A closed ticket cannot
-        be moved back to another status, and a new assignee must exist and hold the
-        support or admin role.
+      description: Update a ticket. Customer and sales users are rejected outright
+        — the sales role is read-only on tickets; support users may only update tickets
+        assigned to them; admin users may update any ticket. Only non-empty fields
+        are applied. A closed ticket cannot be moved back to another status, and a
+        new assignee must exist and hold the support or admin role.
       parameters:
       - description: Ticket ID
         in: path
@@ -3509,8 +3595,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: Forbidden - customers cannot update tickets and support users
-            only their own assignments
+          description: Forbidden - customers and sales users cannot update tickets
+            (sales is read-only) and support users only their own assignments
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -4013,6 +4099,15 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "404":
+          description: User not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "409":
           description: User with this email already exists
           schema:
@@ -4032,7 +4127,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "500":
-          description: Internal server error, including when the user does not exist
+          description: Internal server error
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -4099,7 +4194,8 @@ paths:
       - application/json
       description: Update the profile of the currently authenticated user. Only email,
         name and password can be changed here — role and active status are not settable
-        through this endpoint.
+        through this endpoint. A 404 here means the account was deleted while the
+        session was still live.
       parameters:
       - description: Profile update request
         in: body
@@ -4130,6 +4226,15 @@ paths:
               type: object
         "401":
           description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: User not found - the authenticated account no longer exists
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

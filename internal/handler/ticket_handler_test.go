@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
@@ -17,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/gorm"
 )
 
 type TicketHandlerTestSuite struct {
@@ -201,7 +204,7 @@ func (suite *TicketHandlerTestSuite) TestGet_NotFound() {
 		suite.handler.Get(c)
 	})
 
-	suite.mockService.On("GetByID", uint(999)).Return(nil, errors.New("not found"))
+	suite.mockService.On("GetByID", uint(999)).Return(nil, fmt.Errorf("ticket 999 not found: %w", apperrors.ErrNotFound))
 
 	req := httptest.NewRequest("GET", "/tickets/999", nil)
 	w := httptest.NewRecorder()
@@ -209,6 +212,45 @@ func (suite *TicketHandlerTestSuite) TestGet_NotFound() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestGet_RawGormNotFound() {
+	// Defence in depth: a gorm.ErrRecordNotFound that leaks through unwrapped
+	// must still classify as 404, not 500.
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleSupport))
+		suite.handler.Get(c)
+	})
+
+	suite.mockService.On("GetByID", uint(999)).Return(nil, gorm.ErrRecordNotFound)
+
+	req := httptest.NewRequest("GET", "/tickets/999", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestGet_ServiceError_InternalError() {
+	suite.router.GET("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleSupport))
+		suite.handler.Get(c)
+	})
+
+	suite.mockService.On("GetByID", uint(1)).Return(nil, errors.New("connection refused"))
+
+	req := httptest.NewRequest("GET", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
 }
 
 // Test List
@@ -368,6 +410,86 @@ func (suite *TicketHandlerTestSuite) TestUpdate_Success_Admin() {
 	assert.True(suite.T(), response.Success)
 }
 
+func (suite *TicketHandlerTestSuite) TestUpdate_Sales_Forbidden() {
+	// Sales is read-only on tickets: an update must be rejected before the
+	// service is touched, on any ticket.
+	suite.router.PUT("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 4, string(models.RoleSales))
+		suite.handler.Update(c)
+	})
+
+	updateRequest := UpdateTicketRequest{
+		Title:        "Hijacked Title",
+		Status:       models.TicketStatusResolved,
+		AssignedToID: uintPtr(9),
+	}
+
+	// Optional stubs so the pre-fix fall-through fails on the status
+	// assertion below rather than on a missing mock expectation.
+	existingTicket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Old Title",
+		Status:    models.TicketStatusOpen,
+	}
+	suite.mockService.On("GetByID", uint(1)).Return(existingTicket, nil).Maybe()
+	suite.mockService.On("Update", mock.Anything).Return(nil).Maybe()
+
+	body, _ := json.Marshal(updateRequest)
+	req := httptest.NewRequest("PUT", "/tickets/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	if assert.NotNil(suite.T(), response.Error) {
+		assert.Equal(suite.T(), "Sales users cannot update tickets", response.Error.Message)
+	}
+}
+
+func (suite *TicketHandlerTestSuite) TestUpdate_GetServiceError_InternalError() {
+	suite.router.PUT("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.Update(c)
+	})
+
+	suite.mockService.On("GetByID", uint(1)).Return(nil, errors.New("connection refused"))
+
+	body, _ := json.Marshal(UpdateTicketRequest{Title: "Updated Title"})
+	req := httptest.NewRequest("PUT", "/tickets/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestUpdate_NotFound() {
+	suite.router.PUT("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.Update(c)
+	})
+
+	suite.mockService.On("GetByID", uint(999)).Return(nil, fmt.Errorf("ticket 999 not found: %w", apperrors.ErrNotFound))
+
+	body, _ := json.Marshal(UpdateTicketRequest{Title: "Updated Title"})
+	req := httptest.NewRequest("PUT", "/tickets/999", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
 func (suite *TicketHandlerTestSuite) TestUpdate_Support_NotAssigned_Forbidden() {
 	suite.router.PUT("/tickets/:id", func(c *gin.Context) {
 		suite.setAuthContext(c, 2, string(models.RoleSupport))
@@ -473,6 +595,7 @@ func (suite *TicketHandlerTestSuite) TestDelete_NonAdmin_Forbidden() {
 }
 
 func (suite *TicketHandlerTestSuite) TestDelete_ServiceError() {
+	// A genuine failure must surface as 500, not masquerade as a missing ticket.
 	suite.router.DELETE("/tickets/:id", func(c *gin.Context) {
 		suite.setAuthContext(c, 1, string(models.RoleAdmin))
 		suite.handler.Delete(c)
@@ -481,6 +604,22 @@ func (suite *TicketHandlerTestSuite) TestDelete_ServiceError() {
 	suite.mockService.On("Delete", uint(1)).Return(errors.New("database error"))
 
 	req := httptest.NewRequest("DELETE", "/tickets/1", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestDelete_NotFound() {
+	suite.router.DELETE("/tickets/:id", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.Delete(c)
+	})
+
+	suite.mockService.On("Delete", uint(999)).Return(fmt.Errorf("ticket 999 not found: %w", apperrors.ErrNotFound))
+
+	req := httptest.NewRequest("DELETE", "/tickets/999", nil)
 	w := httptest.NewRecorder()
 
 	suite.router.ServeHTTP(w, req)

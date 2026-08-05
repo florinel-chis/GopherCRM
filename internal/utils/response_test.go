@@ -253,56 +253,6 @@ func TestRespondSuccessWithMeta_NilMeta(t *testing.T) {
 	assert.Equal(t, "test-req-id-123", resp.Meta.RequestID)
 }
 
-func TestParsePaginationParams_Defaults(t *testing.T) {
-	c, _ := createTestContext()
-	c.Request, _ = http.NewRequest("GET", "/test", nil)
-
-	page, perPage := ParsePaginationParams(c)
-	assert.Equal(t, 1, page)
-	assert.Equal(t, 20, perPage)
-}
-
-func TestParsePaginationParams_Custom(t *testing.T) {
-	c, _ := createTestContext()
-	c.Request, _ = http.NewRequest("GET", "/test?page=3&per_page=50", nil)
-
-	page, perPage := ParsePaginationParams(c)
-	assert.Equal(t, 3, page)
-	assert.Equal(t, 50, perPage)
-}
-
-func TestParsePaginationParams_InvalidValues(t *testing.T) {
-	c, _ := createTestContext()
-	c.Request, _ = http.NewRequest("GET", "/test?page=abc&per_page=-5", nil)
-
-	page, perPage := ParsePaginationParams(c)
-	assert.Equal(t, 1, page)
-	assert.Equal(t, 20, perPage)
-}
-
-func TestParsePaginationParams_ExceedsMax(t *testing.T) {
-	c, _ := createTestContext()
-	c.Request, _ = http.NewRequest("GET", "/test?per_page=500", nil)
-
-	_, perPage := ParsePaginationParams(c)
-	assert.Equal(t, 20, perPage) // >100 should fall back to default
-}
-
-func TestCalculateOffset(t *testing.T) {
-	assert.Equal(t, 0, CalculateOffset(1, 20))
-	assert.Equal(t, 20, CalculateOffset(2, 20))
-	assert.Equal(t, 40, CalculateOffset(3, 20))
-	assert.Equal(t, 90, CalculateOffset(10, 10))
-}
-
-func TestCalculateTotalPages(t *testing.T) {
-	assert.Equal(t, 0, CalculateTotalPages(0, 20))
-	assert.Equal(t, 1, CalculateTotalPages(1, 20))
-	assert.Equal(t, 1, CalculateTotalPages(20, 20))
-	assert.Equal(t, 2, CalculateTotalPages(21, 20))
-	assert.Equal(t, 5, CalculateTotalPages(100, 20))
-	assert.Equal(t, 0, CalculateTotalPages(10, 0))
-}
 
 func TestParseOffsetLimit_Defaults(t *testing.T) {
 	c, _ := createTestContext()

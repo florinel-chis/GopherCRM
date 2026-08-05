@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with an uppercase letter, a lowercase letter, a digit and a special character.
 - The hand-written documentation moved from `doc/` into `docs/`; there is now a single
   documentation directory.
+- `remember_me` is gone from the login request body. It was bound and never read — token lifetime
+  comes solely from `JWT_EXPIRY_HOURS` — and the frontend's remember-me checkbox only ever chose
+  the client-side storage location, which is unchanged. Clients still sending the field are
+  unaffected (unknown JSON keys are ignored).
+- `PUT /configurations/{key}` binds its value as `json.RawMessage`, making present-vs-absent
+  structural: `false`, `0` and `""` are accepted (they already were, but only via a
+  version-sensitive quirk of the validator's interface handling), while an absent or `null`
+  value is rejected with an explicit 400.
 - Password fields in register and user create/update requests declare `min=10` at binding time,
   matching the complexity rule that was already enforced afterwards. 8–9 character passwords were
   always rejected; they are now rejected at validation with an accurate message (and the generated
@@ -77,6 +85,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wrong status codes for missing records, all rooted in string-compared errors or gorm's sentinel
+  leaking through unclassified: `DELETE /api-keys/{id}` and `POST /configurations/{key}/reset`
+  returned 500 instead of 404 for a missing key, and `PUT /users/{id}` / `PUT /users/me` returned
+  500 for a nonexistent user. All three now classify with `errors.Is` sentinels.
+- Database failures are no longer masked as 404 on `GET /customers/{id}` (and its update
+  pre-check), `GET`/`PUT`/`DELETE /tickets/{id}`, `GET`/`PUT`/`DELETE /tasks/{id}` and
+  `GET /configurations/{key}` — a genuine internal error now returns 500 instead of "not found".
+- `apperrors.IsNotFound` now actually recognises a raw `gorm.ErrRecordNotFound`, which its doc
+  comment had always claimed but its implementation never did — the sentinels share a message but
+  not an identity. The per-file workaround helpers this forced are gone.
+- Task lists now honour `limit` and `offset`. The handler read `page`/`per_page` while the
+  frontend sends `page`/`limit`, so the frontend's page size was silently ignored and any
+  `per_page` over 100 fell back to 20 instead of capping. Tasks now use the same
+  `ParseOffsetLimit` + `page`-override parsing as every other list; `per_page` is no longer read
+  anywhere and the dead `ParsePaginationParams`/`CalculateOffset`/`CalculateTotalPages` helpers
+  are removed.
 - Bulk create asserted a slice pointer to a slice and panicked on every call, so all bulk create
   paths failed; it also reported rows it had never inserted as successful.
 - Editing a task returned 403 for non-admin users when the request merely echoed the task's current
@@ -90,6 +114,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `GET /dashboard/stats` was the only route without a role guard: any authenticated account —
+  including the `customer` role that public registration hands out — could read system-wide lead,
+  customer, ticket and task counts. It now requires admin, sales or support; the frontend
+  dashboard no longer requests stats for customer-role users.
+- The sales role had unrestricted write access to every ticket (update, reassign, resolve),
+  while support — the role tickets are actually assigned to — was limited to its own assignments.
+  Sales is now read-only on tickets: `PUT /tickets/{id}` returns 403.
 - `POST /auth/register` accepted a client-supplied role, allowing anyone to create an admin account
   and receive a valid token. The endpoint now always creates a `customer`.
 - `GET /customers/:id/tickets` performed no ownership check, letting any authenticated user read

@@ -21,34 +21,23 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 - **Containerization** — Dockerfile and compose setup for backend + frontend + MySQL
 - **CI pipeline** — build, lint, unit tests, and E2E on pull requests
 
-## API defects found while annotating the handlers
+## Loose ends from the API-defect fix round
 
-Surfaced by the swagger-annotation audit (every claim below was traced to the code path); the
-generated spec documents the behaviour as it is, not as intended. Each needs a small fix:
+The defect list surfaced by the swagger-annotation audit has been fixed (dashboard role guard,
+sentinel-error classification across api-keys/configurations/users/customers/tickets/tasks,
+sales made read-only on tickets, task pagination standardised on `offset`/`limit` + `page`,
+dead `remember_me` removed). One item on that list turned out not to reproduce: falsy
+configuration values (`false`, `0`, `""`) were already accepted — the validator's interface
+handling treats a non-nil zero value as present — but the handler now uses `json.RawMessage`
+so present-vs-absent is structural rather than a version-sensitive validator quirk. What remains:
 
-- **`GET /dashboard/stats` has no role guard** — the only route group without `RequireRole`; a
-  self-registered `customer` account can read system-wide lead/customer/ticket/task counts that
-  `GET /customers` refuses to expose to the same role
-- **`DELETE /api-keys/{id}` on a missing key returns 500, not 404** — the handler compares
-  `err.Error() == "api key not found"`, a string nothing produces (the repo returns
-  `gorm.ErrRecordNotFound`); dead branch kept green by mock-driven tests
-- **`POST /configurations/{key}/reset` on an unknown key returns 500, not 404** — the service
-  returns the raw repo error while the handler string-matches `"configuration not found: <key>"`,
-  which only `Set` wraps
-- **`PUT /users/{id}` and `PUT /users/me` return 500 for a nonexistent user** — only
-  `ErrDuplicateEmail` is classified; not-found falls into the internal-error branch
-  (`DELETE /users/{id}` classifies it correctly)
-- **Reads that swallow real errors as 404** — `GET /customers/{id}`, `GET /tickets/{id}`,
-  `GET /tasks/{id}`, `DELETE /tickets/{id}` and `DELETE /tasks/{id}` map every service error to
-  "not found", so a database failure is indistinguishable from a missing record
-- **Sales role has unrestricted ticket read/write** — `GET`/`PUT /tickets/{id}` special-case only
-  customer and support, so sales falls through to full access including reassignment
-- **`PUT /configurations/{key}` cannot set falsy values** — `Value interface{}` with
-  `binding:"required"` rejects `false`, `0` and `""`, so a boolean config cannot be turned off
-- **Tasks paginate differently from every other list** — `page`/`per_page` via
-  `ParsePaginationParams` (out-of-range falls back to 20) instead of `offset`/`limit` via
-  `ParseOffsetLimit` (caps at 100)
-- **`remember_me` on login is accepted but ignored** — token lifetime always comes from
-  `JWT_EXPIRY_HOURS`
-- **String-compared errors** in the API-key and configuration handlers violate the project's
-  sentinel-error rule and caused two of the defects above
+- **Frontend ticket routes are not role-gated** — the Tickets nav item is hidden from sales, but
+  `/tickets/:id/edit` is deep-linkable and `TicketDetail` renders Edit/Delete buttons
+  unconditionally; a sales user now gets a 403 toast on save. Gate the routes or buttons by role.
+- **`models.Configuration.SetValue` silently coerces type mismatches** — a non-bool sent to a
+  boolean config becomes `"false"`, a non-string to a string config becomes `""`, instead of
+  erroring.
+- **Dead frontend API functions call routes that do not exist** — `tasksApi` hits
+  `/tasks/upcoming` and `dashboardApi` hits `/dashboard/upcoming-tasks`; neither route is
+  registered, both would 404. No page calls them today — implement the routes or delete the
+  functions.

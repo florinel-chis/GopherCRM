@@ -22,6 +22,7 @@ import {
   ConfirmationNumber as TicketIcon,
 } from '@mui/icons-material';
 import { dashboardApi } from '@/api/endpoints';
+import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@mui/material';
 import { 
   AreaChart, 
@@ -82,10 +83,18 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, trend })
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  
+  const { user } = useAuth();
+
+  // GET /dashboard/stats is restricted to admin, sales and support on the
+  // backend; customer-role users would only receive a 403, so skip the
+  // request and the stats section entirely for them.
+  const canViewStats =
+    user?.role === 'admin' || user?.role === 'sales' || user?.role === 'support';
+
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboard', 'stats'],
     queryFn: dashboardApi.getStats,
+    enabled: canViewStats,
   });
 
   useQuery({
@@ -112,13 +121,14 @@ export const Dashboard: React.FC = () => {
         Dashboard
       </Typography>
       
-      {/* Stats Cards */}
-      <Box 
-        sx={{ 
-          display: 'flex', 
-          flexWrap: 'wrap', 
-          gap: 3, 
-          mb: 3 
+      {/* Stats Cards (hidden for customer-role users, who may not read them) */}
+      {canViewStats && (
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 3,
+          mb: 3
         }}
       >
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(25% - 18px)' } }}>
@@ -185,6 +195,7 @@ export const Dashboard: React.FC = () => {
           )}
         </Box>
       </Box>
+      )}
 
       {/* Quick Actions Panel */}
       <Paper sx={{ p: 2, mb: 3 }}>

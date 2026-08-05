@@ -33,10 +33,13 @@ type RegisterRequest struct {
 	LastName  string `json:"last_name" binding:"required"`
 }
 
+// LoginRequest carries only the credentials the backend actually uses. Token
+// lifetime is fixed by JWT_EXPIRY_HOURS, so there is no "remember me" input
+// here; that choice is made client-side when deciding where to store the token.
+// Any extra JSON keys a client sends are ignored by the binder.
 type LoginRequest struct {
-	Email      string `json:"email" binding:"required,email"`
-	Password   string `json:"password" binding:"required"`
-	RememberMe bool   `json:"remember_me"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
 }
 
 type AuthResponse struct {
@@ -106,7 +109,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 // Login godoc
 // @Summary Authenticate and obtain a JWT
-// @Description Exchange email and password for a JWT bearer token and the authenticated user. After 5 consecutive failed attempts the account is locked for 15 minutes; while locked, and for a deactivated account, the response is the same 401 with the same generic message as a wrong password, so no account state is disclosed. The remember_me field is accepted but does not currently alter the token's lifetime.
+// @Description Exchange email and password for a JWT bearer token and the authenticated user. After 5 consecutive failed attempts the account is locked for 15 minutes; while locked, and for a deactivated account, the response is the same 401 with the same generic message as a wrong password, so no account state is disclosed. The token's lifetime is fixed by server configuration and cannot be influenced by the request.
 // @Tags auth
 // @Accept json
 // @Produce json

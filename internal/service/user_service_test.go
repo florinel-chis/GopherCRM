@@ -206,6 +206,36 @@ func (suite *UserServiceTestSuite) TestUpdate_PasswordChange() {
 	assert.NotEqual(suite.T(), "newpassword123", user.Password) // Should be hashed
 }
 
+// The repository hands gorm's own sentinel straight back, which matches
+// neither apperrors.ErrNotFound nor apperrors.ErrRecordNotFound by identity.
+// Unless Update translates it, the handler cannot tell "no such user" from a
+// broken database and answers 500 to a request that should be a 404.
+func (suite *UserServiceTestSuite) TestUpdate_NotFound() {
+	suite.mockRepo.On("GetByID", uint(99999)).Return(nil, gorm.ErrRecordNotFound)
+
+	user, err := suite.userService.Update(99999, map[string]interface{}{"first_name": "Updated"})
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), user)
+	assert.True(suite.T(), apperrors.IsNotFound(err),
+		"expected the not-found sentinel, got %v", err)
+	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+}
+
+// A database failure during the lookup is not "no such user": it must surface
+// as itself so the caller still returns 500 rather than a misleading 404.
+func (suite *UserServiceTestSuite) TestUpdate_LookupFailureIsNotReportedAsNotFound() {
+	dbErr := errors.New("dial tcp: connection refused")
+	suite.mockRepo.On("GetByID", uint(1)).Return(nil, dbErr)
+
+	user, err := suite.userService.Update(1, map[string]interface{}{"first_name": "Updated"})
+
+	assert.Nil(suite.T(), user)
+	assert.ErrorIs(suite.T(), err, dbErr)
+	assert.False(suite.T(), apperrors.IsNotFound(err))
+	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+}
+
 func (suite *UserServiceTestSuite) TestDelete_Success() {
 	suite.mockRepo.On("GetByID", uint(1)).Return(&models.User{
 		BaseModel: models.BaseModel{ID: 1},

@@ -433,6 +433,141 @@ func (suite *ConfigurationIntegrationTestSuite) TestServiceSpecificMethods() {
 	assert.True(suite.T(), autoAssign) // Default is true
 }
 
+// setConfiguration issues a raw PUT body so that malformed and falsy payloads
+// can be exercised exactly as a client would send them.
+func (suite *ConfigurationIntegrationTestSuite) setConfiguration(key, body string) *httptest.ResponseRecorder {
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/"+key, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+	return w
+}
+
+// TestSetConfiguration_FalseBoolean is the headline falsy-value case: turning a
+// boolean configuration off used to be rejected as a missing field.
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_FalseBoolean() {
+	err := suite.configService.Set("tickets.auto_assign_support", true)
+	suite.NoError(err)
+
+	w := suite.setConfiguration("tickets.auto_assign_support", `{"value": false}`)
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	config := response["data"].(map[string]interface{})
+	assert.Equal(suite.T(), "false", config["value"])
+
+	value, err := suite.configService.GetBool("tickets.auto_assign_support")
+	suite.NoError(err)
+	assert.False(suite.T(), value)
+}
+
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_ZeroInteger() {
+	// A dedicated integer entry with no valid_values constraint, so that 0 is
+	// rejected only if the binding rejects it.
+	suite.NoError(suite.db.Where("config_key = ?", "test.integer.setting").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.integer.setting",
+		Value:        "42",
+		Type:         models.ConfigTypeInteger,
+		Category:     models.CategoryGeneral,
+		Description:  "Test integer configuration",
+		DefaultValue: "42",
+	}).Error)
+
+	w := suite.setConfiguration("test.integer.setting", `{"value": 0}`)
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	config := response["data"].(map[string]interface{})
+	assert.Equal(suite.T(), "0", config["value"])
+
+	value, err := suite.configService.GetInt("test.integer.setting")
+	suite.NoError(err)
+	assert.Equal(suite.T(), 0, value)
+}
+
+// TestSetConfiguration_EmptyString documents what IsValidValue permits: an entry
+// with no valid_values constraint accepts any string, the empty one included.
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_EmptyString() {
+	suite.NoError(suite.db.Where("config_key = ?", "test.string.setting").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.string.setting",
+		Value:        "something",
+		Type:         models.ConfigTypeString,
+		Category:     models.CategoryGeneral,
+		Description:  "Test string configuration",
+		DefaultValue: "something",
+	}).Error)
+
+	w := suite.setConfiguration("test.string.setting", `{"value": ""}`)
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	value, err := suite.configService.GetString("test.string.setting")
+	suite.NoError(err)
+	assert.Equal(suite.T(), "", value)
+}
+
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_AbsentValue() {
+	w := suite.setConfiguration("general.company_name", `{}`)
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+}
+
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_NullValue() {
+	w := suite.setConfiguration("general.company_name", `{"value": null}`)
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+}
+
+func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_UnknownKey() {
+	w := suite.setConfiguration("no.such.key", `{"value": "x"}`)
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+// TestResetConfiguration_UnknownKey is the reported defect: resetting a key that
+// does not exist answered 500 instead of 404.
+func (suite *ConfigurationIntegrationTestSuite) TestResetConfiguration_UnknownKey() {
+	req, _ := http.NewRequest("POST", "/api/v1/configurations/no.such.key/reset", nil)
+	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+
+	var response utils.APIResponse
+	suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	assert.NotNil(suite.T(), response.Error)
+}
+
+func (suite *ConfigurationIntegrationTestSuite) TestResetConfiguration_ReadOnly() {
+	suite.NoError(suite.db.Where("config_key = ?", "test.readonly.reset").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.readonly.reset",
+		Value:        "readonly_value",
+		Type:         models.ConfigTypeString,
+		Category:     models.CategoryGeneral,
+		Description:  "Test read-only configuration",
+		DefaultValue: "readonly_value",
+		IsReadOnly:   true,
+	}).Error)
+
+	req, _ := http.NewRequest("POST", "/api/v1/configurations/test.readonly.reset/reset", nil)
+	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+
+	var response utils.APIResponse
+	suite.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Contains(suite.T(), response.Error.Message, "read-only")
+}
+
 func (suite *ConfigurationIntegrationTestSuite) TestConfigurationNotFound() {
 	// Test getting non-existent configuration
 	req, _ := http.NewRequest("GET", "/api/v1/configurations/non.existent.key", nil)

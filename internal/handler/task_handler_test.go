@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -279,13 +281,26 @@ func (suite *TaskHandlerTestSuite) TestGetTask_NonAdminAccessOthersTask_Forbidde
 
 func (suite *TaskHandlerTestSuite) TestGetTask_NotFound() {
 	taskID := uint(999)
-	suite.mockService.On("GetByID", taskID).Return(nil, errors.New("task not found"))
+	suite.mockService.On("GetByID", taskID).Return(nil, fmt.Errorf("task 999 not found: %w", apperrors.ErrNotFound))
 
 	req, _ := http.NewRequest("GET", "/tasks/999", nil)
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+// A retrieval failure that is not a missing task must surface as 500, not be
+// disguised as a 404.
+func (suite *TaskHandlerTestSuite) TestGetTask_ServiceError_InternalError() {
+	taskID := uint(1)
+	suite.mockService.On("GetByID", taskID).Return(nil, errors.New("connection refused"))
+
+	req, _ := http.NewRequest("GET", "/tasks/1", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
 }
 
 func (suite *TaskHandlerTestSuite) TestGetTasksByAssignee_Success() {
@@ -332,6 +347,23 @@ func (suite *TaskHandlerTestSuite) TestGetMyTasks_NonAdminCanAccess() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestUpdateTask_LookupFailureIsInternalError() {
+	taskID := uint(1)
+	suite.mockService.On("GetByID", taskID).Return(nil, errors.New("connection refused"))
+
+	updateData := map[string]interface{}{"title": "Updated Task"}
+	body, _ := json.Marshal(updateData)
+	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+	assert.NotContains(suite.T(), w.Body.String(), "not found")
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
 }
 
 func (suite *TaskHandlerTestSuite) TestUpdateTask_Success() {
@@ -549,6 +581,32 @@ func (suite *TaskHandlerTestSuite) TestDeleteTask_Success() {
 	assert.Equal(suite.T(), http.StatusNoContent, w.Code)
 }
 
+func (suite *TaskHandlerTestSuite) TestDeleteTask_NotFound() {
+	taskID := uint(999)
+
+	suite.mockService.On("Delete", taskID).Return(fmt.Errorf("task 999 not found: %w", apperrors.ErrNotFound))
+
+	req, _ := http.NewRequest("DELETE", "/tasks/999", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+// A delete that fails for any reason other than a missing task must surface as
+// 500; reporting it as 404 hides real database failures.
+func (suite *TaskHandlerTestSuite) TestDeleteTask_ServiceError_InternalError() {
+	taskID := uint(1)
+
+	suite.mockService.On("Delete", taskID).Return(errors.New("deadlock detected"))
+
+	req, _ := http.NewRequest("DELETE", "/tasks/1", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+}
+
 func (suite *TaskHandlerTestSuite) TestDeleteTask_NonAdminForbidden() {
 	// Set user as non-admin
 	suite.router = gin.New()
@@ -623,7 +681,112 @@ func (suite *TaskHandlerTestSuite) TestMyTasks_ParsePaginationSuccess() {
 	totalCount := int64(0)
 	suite.mockService.On("GetByAssignee", uint(1), 0, 10).Return(expectedTasks, totalCount, nil)
 
-	req, _ := http.NewRequest("GET", "/tasks/my?per_page=10", nil)
+	req, _ := http.NewRequest("GET", "/tasks/my?limit=10", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+// Regression: the frontend sends `limit`, and it used to be ignored because the
+// handler only read `per_page`.
+func (suite *TaskHandlerTestSuite) TestListTasks_LimitIsHonoured() {
+	suite.mockService.On("List", 0, 50).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?limit=50", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_PageConvertsToOffset() {
+	suite.mockService.On("List", 20, 20).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?page=2&limit=20", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), 2, response.Meta.Page)
+	assert.Equal(suite.T(), 20, response.Meta.PerPage)
+}
+
+// An oversized limit is clamped to the 100 cap, not discarded back to 20.
+func (suite *TaskHandlerTestSuite) TestListTasks_LimitCappedAtHundred() {
+	suite.mockService.On("List", 0, 100).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?limit=500", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListTasks_OffsetIsHonoured() {
+	suite.mockService.On("List", 40, 20).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?offset=40", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListMyTasks_LimitIsHonoured() {
+	suite.mockService.On("GetByAssignee", uint(1), 0, 50).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks/my?limit=50", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TaskHandlerTestSuite) TestListMyTasks_PageConvertsToOffset() {
+	suite.mockService.On("GetByAssignee", uint(1), 20, 20).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks/my?page=2&limit=20", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), 2, response.Meta.Page)
+	assert.Equal(suite.T(), 20, response.Meta.PerPage)
+}
+
+func (suite *TaskHandlerTestSuite) TestListMyTasks_LimitCappedAtHundred() {
+	suite.mockService.On("GetByAssignee", uint(1), 0, 100).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks/my?limit=500", nil)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+// The non-admin branch of List is narrowed to the caller's own tasks; it must
+// paginate identically.
+func (suite *TaskHandlerTestSuite) TestListTasks_NonAdminLimitIsHonoured() {
+	suite.router = gin.New()
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleSales))
+		c.Next()
+	})
+	SetupTaskRoutes(suite.router.Group(""), suite.handler)
+
+	suite.mockService.On("GetByAssignee", uint(1), 0, 50).Return([]models.Task{}, int64(0), nil)
+
+	req, _ := http.NewRequest("GET", "/tasks?limit=50", nil)
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 

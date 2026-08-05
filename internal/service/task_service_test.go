@@ -257,6 +257,21 @@ func (suite *TaskServiceTestSuite) TestGetByID_NotFound() {
 	task, err := suite.service.GetByID(999)
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), task)
+	// A missing task must be classifiable by the caller, not guessed at.
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+}
+
+// A repository failure that is not a missing row must stay unclassified, so the
+// handler can tell it apart from a genuine 404.
+func (suite *TaskServiceTestSuite) TestGetByID_RepositoryError_NotClassifiedAsNotFound() {
+	dbErr := errors.New("connection refused")
+	suite.mockTaskRepo.On("GetByID", uint(1)).Return(nil, dbErr)
+
+	task, err := suite.service.GetByID(1)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), task)
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+	assert.True(suite.T(), errors.Is(err, dbErr))
 }
 
 func (suite *TaskServiceTestSuite) TestGetByAssignee_Success() {
@@ -396,6 +411,35 @@ func (suite *TaskServiceTestSuite) TestDelete_NotFound() {
 
 	err := suite.service.Delete(999)
 	assert.Error(suite.T(), err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+}
+
+// A lookup failure that is not a missing row must not be reported as not-found.
+func (suite *TaskServiceTestSuite) TestDelete_LookupError_NotClassifiedAsNotFound() {
+	dbErr := errors.New("connection refused")
+	suite.mockTaskRepo.On("GetByID", uint(1)).Return(nil, dbErr)
+
+	err := suite.service.Delete(1)
+	assert.Error(suite.T(), err)
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+	assert.True(suite.T(), errors.Is(err, dbErr))
+}
+
+// The delete itself failing is a server error, not a missing task.
+func (suite *TaskServiceTestSuite) TestDelete_RepositoryError_NotClassifiedAsNotFound() {
+	dbErr := errors.New("deadlock detected")
+	task := &models.Task{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Test Task",
+	}
+
+	suite.mockTaskRepo.On("GetByID", uint(1)).Return(task, nil)
+	suite.mockTaskRepo.On("Delete", uint(1)).Return(dbErr)
+
+	err := suite.service.Delete(1)
+	assert.Error(suite.T(), err)
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrNotFound))
+	assert.True(suite.T(), errors.Is(err, dbErr))
 }
 
 func (suite *TaskServiceTestSuite) TestList_Success() {

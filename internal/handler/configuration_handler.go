@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -17,12 +20,16 @@ func NewConfigurationHandler(configService service.ConfigurationService) *Config
 	return &ConfigurationHandler{configService: configService}
 }
 
+// SetConfigurationRequest carries the new value for a configuration entry.
+//
+// The value is captured raw rather than as an interface{} so that "the key is
+// absent" and "the key is present but falsy" are structurally distinct: the
+// raw bytes of false, 0 and "" are non-empty, so binding:"required" rejects
+// only a genuinely missing field. A literal null does bind (as the four bytes
+// "null") and is rejected explicitly in the handler, since there is no
+// configuration type a null could be stored as.
 type SetConfigurationRequest struct {
-	Value interface{} `json:"value" binding:"required"`
-}
-
-type ResetConfigurationRequest struct {
-	Keys []string `json:"keys" binding:"required"`
+	Value json.RawMessage `json:"value" binding:"required"`
 }
 
 // GetAll returns all configurations
@@ -118,6 +125,7 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /configurations/{key} [get]
 func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetByKey")
@@ -138,8 +146,13 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 
 	config, err := h.configService.GetByKey(key)
 	if err != nil {
-		logger.WithError(err).Warn("Configuration not found")
-		utils.RespondNotFound(c, "Configuration not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Configuration not found")
+			utils.RespondNotFound(c, "Configuration not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to get configuration")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -157,9 +170,9 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param key path string true "Configuration key"
-// @Param request body SetConfigurationRequest true "New configuration value"
+// @Param request body SetConfigurationRequest true "New configuration value. Any JSON value is accepted, falsy ones (false, 0, \"\") included; the value field itself must be present and must not be null."
 // @Success 200 {object} utils.APIResponse{data=models.Configuration} "Configuration updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, read-only configuration, or invalid value"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Missing or null value, read-only configuration, or a value outside the entry's valid_values constraint"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
@@ -189,15 +202,30 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 		return
 	}
 
-	if err := h.configService.Set(key, req.Value); err != nil {
+	// Decode the raw value only now that we know the field was present. A
+	// falsy value survives this round trip; a literal null decodes to nil and
+	// is not a value any configuration type can hold.
+	var value interface{}
+	if err := json.Unmarshal(req.Value, &value); err != nil {
+		logger.WithError(err).Warn("Malformed configuration value")
+		utils.RespondBadRequest(c, "Invalid configuration value")
+		return
+	}
+	if value == nil {
+		utils.RespondBadRequest(c, "Configuration value cannot be null")
+		return
+	}
+
+	if err := h.configService.Set(key, value); err != nil {
 		logger.WithError(err).Error("Failed to set configuration")
-		if err.Error() == "configuration not found: "+key {
+		switch {
+		case apperrors.IsNotFound(err):
 			utils.RespondNotFound(c, "Configuration not found")
-		} else if err.Error() == "configuration is read-only" {
+		case errors.Is(err, apperrors.ErrConfigurationReadOnly):
 			utils.RespondBadRequest(c, "Configuration is read-only")
-		} else if err.Error() == "invalid value for configuration" {
+		case errors.Is(err, apperrors.ErrConfigurationInvalidValue):
 			utils.RespondBadRequest(c, "Invalid value for configuration")
-		} else {
+		default:
 			utils.RespondInternalError(c)
 		}
 		return
@@ -218,7 +246,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 // Reset resets a configuration to its default value
 // Reset godoc
 // @Summary Reset a configuration to its default value
-// @Description Restore a configuration's value from its stored default and return the updated entry (admin only). Read-only configurations are rejected. An unknown key currently surfaces as 500 rather than 404.
+// @Description Restore a configuration's value from its stored default and return the updated entry (admin only). Read-only configurations are rejected.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -228,8 +256,9 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Configuration is read-only"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error, including an unknown configuration key"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /configurations/{key}/reset [post]
 func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.Reset")
@@ -250,11 +279,12 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 
 	if err := h.configService.Reset(key); err != nil {
 		logger.WithError(err).Error("Failed to reset configuration")
-		if err.Error() == "configuration not found: "+key {
+		switch {
+		case apperrors.IsNotFound(err):
 			utils.RespondNotFound(c, "Configuration not found")
-		} else if err.Error() == "configuration is read-only" {
+		case errors.Is(err, apperrors.ErrConfigurationReadOnly):
 			utils.RespondBadRequest(c, "Configuration is read-only")
-		} else {
+		default:
 			utils.RespondInternalError(c)
 		}
 		return

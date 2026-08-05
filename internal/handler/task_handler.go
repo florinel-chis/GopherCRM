@@ -129,6 +129,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Task is not assigned to you"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /tasks/{id} [get]
 func (h *TaskHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Get")
@@ -141,8 +142,13 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 	task, err := h.taskService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Task not found")
-		utils.RespondNotFound(c, "Task not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Task not found")
+			utils.RespondNotFound(c, "Task not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to retrieve task")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -163,13 +169,14 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 // List godoc
 // @Summary List tasks
-// @Description List tasks with page-based pagination. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them.
+// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); non-numeric or non-positive values fall back to 1" default(1)
-// @Param per_page query int false "Page size; values outside 1-100 fall back to 20" default(20)
+// @Param page query int false "Page number (1-based); overrides offset when greater than 0"
+// @Param offset query int false "Pagination offset" default(0)
+// @Param limit query int false "Page size (max 100)" default(20)
 // @Param sort_by query string false "Sort column; ignored unless one of the allowed values, and ignored entirely for non-admin callers" Enums(created_at, updated_at, title, status, priority, due_date)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
 // @Param search query string false "Free-text search across task fields; admin only, and takes precedence over sort_by"
@@ -184,8 +191,14 @@ func (h *TaskHandler) List(c *gin.Context) {
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
 
-	page, perPage := utils.ParsePaginationParams(c)
-	offset := utils.CalculateOffset(page, perPage)
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
+	offset, limit := utils.ParseOffsetLimit(c)
+
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
 
 	// Parse and validate sort parameters
 	sortBy := c.Query("sort_by")
@@ -215,13 +228,13 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	// Admin can list all tasks, non-admin users can only list their own tasks
 	if currentUserRole != string(models.RoleAdmin) {
-		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, perPage)
+		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, limit)
 	} else if search != "" {
-		tasks, total, err = h.taskService.Search(search, offset, perPage, sortBy, sortOrder)
+		tasks, total, err = h.taskService.Search(search, offset, limit, sortBy, sortOrder)
 	} else if sortBy != "" {
-		tasks, total, err = h.taskService.ListSorted(offset, perPage, sortBy, sortOrder)
+		tasks, total, err = h.taskService.ListSorted(offset, limit, sortBy, sortOrder)
 	} else {
-		tasks, total, err = h.taskService.List(offset, perPage)
+		tasks, total, err = h.taskService.List(offset, limit)
 	}
 
 	if err != nil {
@@ -232,10 +245,10 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
-		Page:       page,
-		PerPage:    perPage,
+		Page:       (offset / limit) + 1,
+		PerPage:    limit,
 		Total:      total,
-		TotalPages: int64(utils.CalculateTotalPages(total, perPage)),
+		TotalPages: (total + int64(limit) - 1) / int64(limit),
 	}
 
 	responseData := gin.H{"tasks": tasks, "total": total}
@@ -245,13 +258,14 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 // ListMyTasks godoc
 // @Summary List tasks assigned to the current user
-// @Description List the tasks assigned to the authenticated user, with page-based pagination. Available to every authenticated role, including admins, who also see only their own tasks here. Sorting and search are not supported on this endpoint.
+// @Description List the tasks assigned to the authenticated user. Available to every authenticated role, including admins, who also see only their own tasks here. Sorting and search are not supported on this endpoint.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); non-numeric or non-positive values fall back to 1" default(1)
-// @Param per_page query int false "Page size; values outside 1-100 fall back to 20" default(20)
+// @Param page query int false "Page number (1-based); overrides offset when greater than 0"
+// @Param offset query int false "Pagination offset" default(0)
+// @Param limit query int false "Page size (max 100)" default(20)
 // @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
@@ -261,10 +275,17 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.ListMyTasks")
 
 	currentUserID := c.GetUint("user_id")
-	page, perPage := utils.ParsePaginationParams(c)
-	offset := utils.CalculateOffset(page, perPage)
 
-	tasks, total, err := h.taskService.GetByAssignee(currentUserID, offset, perPage)
+	// Support both page-based and offset-based pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
+	offset, limit := utils.ParseOffsetLimit(c)
+
+	// Convert page to offset if page is provided
+	if page > 0 {
+		offset = (page - 1) * limit
+	}
+
+	tasks, total, err := h.taskService.GetByAssignee(currentUserID, offset, limit)
 	if err != nil {
 		logger.WithError(err).Error("Failed to list my tasks")
 		utils.RespondInternalError(c)
@@ -273,10 +294,10 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
-		Page:       page,
-		PerPage:    perPage,
+		Page:       (offset / limit) + 1,
+		PerPage:    limit,
 		Total:      total,
-		TotalPages: int64(utils.CalculateTotalPages(total, perPage)),
+		TotalPages: (total + int64(limit) - 1) / int64(limit),
 	}
 
 	responseData := gin.H{"tasks": tasks, "total": total}
@@ -323,8 +344,13 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	// Get existing task
 	task, err := h.taskService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Task not found")
-		utils.RespondNotFound(c, "Task not found")
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Task not found")
+			utils.RespondNotFound(c, "Task not found")
+			return
+		}
+		logger.WithError(err).Error("Failed to load task")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -390,7 +416,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a task
-// @Description Delete a task (admin role only). The role check runs before the ID is parsed, so non-admins always receive 403. Any failure while deleting is reported as 404.
+// @Description Delete a task (admin role only). The role check runs before the ID is parsed, so non-admins always receive 403. A missing task is reported as 404; any other failure is reported as 500.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -402,6 +428,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /tasks/{id} [delete]
 func (h *TaskHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Delete")
@@ -421,8 +448,13 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.taskService.Delete(uint(id)); err != nil {
+		if apperrors.IsNotFound(err) {
+			logger.WithError(err).Warn("Task not found")
+			utils.RespondNotFound(c, "Task not found")
+			return
+		}
 		logger.WithError(err).Error("Failed to delete task")
-		utils.RespondNotFound(c, "Task not found")
+		utils.RespondInternalError(c)
 		return
 	}
 

@@ -90,7 +90,14 @@ func (s *taskService) GetByID(id uint) (*models.Task, error) {
 
 	task, err := s.taskRepo.GetByID(id)
 	if err != nil {
-		logger.WithError(err).Warn("Task not found")
+		// A missing row and a failing database are different outcomes; only the
+		// former is wrapped in the not-found sentinel, so the handler can answer
+		// 404 for one and 500 for the other instead of hiding both as 404.
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Task not found")
+			return nil, fmt.Errorf("task %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to retrieve task")
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
@@ -195,10 +202,15 @@ func (s *taskService) Update(task *models.Task) error {
 func (s *taskService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_id", id), "TaskService", "Delete")
 
-	// Check if task exists
+	// Check if task exists. Only an absent row is reported as not-found; a failed
+	// lookup is passed through unclassified so it surfaces as a server error.
 	_, err := s.taskRepo.GetByID(id)
 	if err != nil {
-		logger.WithError(err).Warn("Task not found")
+		if isNotFound(err) {
+			logger.WithError(err).Warn("Task not found")
+			return fmt.Errorf("task %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		logger.WithError(err).Error("Failed to look up task for deletion")
 		utils.LogServiceResponse(logger, err)
 		return err
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/gorm"
 )
 
 type CustomerHandlerTestSuite struct {
@@ -252,15 +253,70 @@ func (suite *CustomerHandlerTestSuite) TestGet_Success() {
 
 func (suite *CustomerHandlerTestSuite) TestGet_NotFound() {
 	suite.router.GET("/customers/:id", suite.handler.Get)
-	
-	suite.mockService.On("GetByID", uint(999)).Return(nil, errors.New("not found"))
-	
+
+	// The stub is exactly what the service returns for a missing row: the
+	// repository miss wrapped in the not-found sentinel.
+	suite.mockService.On("GetByID", uint(999)).
+		Return(nil, fmt.Errorf("customer %d not found: %w", 999, apperrors.ErrNotFound))
+
 	req := httptest.NewRequest(http.MethodGet, "/customers/999", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "Customer not found", response.Error.Message)
+}
+
+// TestGet_NotFoundFromRawGormError is defence in depth: repositories hand gorm's
+// own sentinel straight back and nothing configures gorm's TranslateError, so a
+// miss can reach the handler unwrapped. It must still be a 404, not a 500.
+func (suite *CustomerHandlerTestSuite) TestGet_NotFoundFromRawGormError() {
+	suite.router.GET("/customers/:id", suite.handler.Get)
+
+	suite.mockService.On("GetByID", uint(999)).Return(nil, gorm.ErrRecordNotFound)
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/999", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+}
+
+// TestGet_GenuineFailureIsInternalError pins the distinction the endpoint used
+// to collapse: a database that is down is not an id that does not exist. A
+// client told 404 would conclude the customer was deleted and stop retrying.
+func (suite *CustomerHandlerTestSuite) TestGet_GenuineFailureIsInternalError() {
+	suite.router.GET("/customers/:id", suite.handler.Get)
+
+	suite.mockService.On("GetByID", uint(1)).
+		Return(nil, errors.New("dial tcp 127.0.0.1:3306: connect: connection refused"))
+
+	req := httptest.NewRequest(http.MethodGet, "/customers/1", nil)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+	assert.Nil(suite.T(), response.Error.Details)
+
+	// Neither the driver text nor a misleading "not found" may reach the client.
+	body := rec.Body.String()
+	assert.NotContains(suite.T(), body, "connection refused")
+	assert.NotContains(suite.T(), body, "3306")
+	assert.NotContains(suite.T(), body, "not found")
 }
 
 func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
@@ -337,6 +393,62 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmail() {
 	assert.False(suite.T(), response.Success)
 	assert.Equal(suite.T(), "customer with this email already exists", response.Error.Message)
 	assertNoDriverInternalsInBody(suite.T(), rec.Body.String())
+}
+
+func (suite *CustomerHandlerTestSuite) TestUpdate_NotFound() {
+	suite.router.PUT("/customers/:id", suite.handler.Update)
+
+	suite.mockService.On("GetByID", uint(999)).
+		Return(nil, fmt.Errorf("customer %d not found: %w", 999, apperrors.ErrNotFound))
+
+	body, _ := json.Marshal(UpdateCustomerRequest{FirstName: "Jane"})
+	req := httptest.NewRequest(http.MethodPut, "/customers/999", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "Customer not found", response.Error.Message)
+
+	// The pre-check failed, so nothing may be written.
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
+}
+
+// TestUpdate_LookupFailureIsInternalError covers the same swallow on Update's
+// GetByID pre-check: a failed lookup must not be reported as a missing customer,
+// which would tell the caller its update was rejected for the wrong reason.
+func (suite *CustomerHandlerTestSuite) TestUpdate_LookupFailureIsInternalError() {
+	suite.router.PUT("/customers/:id", suite.handler.Update)
+
+	suite.mockService.On("GetByID", uint(1)).
+		Return(nil, errors.New("dial tcp 127.0.0.1:3306: connect: connection refused"))
+
+	body, _ := json.Marshal(UpdateCustomerRequest{FirstName: "Jane"})
+	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+
+	var response utils.APIResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), response.Success)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+
+	body2 := rec.Body.String()
+	assert.NotContains(suite.T(), body2, "connection refused")
+	assert.NotContains(suite.T(), body2, "not found")
+
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
 }
 
 func (suite *CustomerHandlerTestSuite) TestDelete_Success() {

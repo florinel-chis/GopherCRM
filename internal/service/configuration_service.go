@@ -1,9 +1,9 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
@@ -38,8 +38,19 @@ func NewConfigurationService(configRepo repository.ConfigurationRepository) Conf
 	return &configurationService{configRepo: configRepo}
 }
 
+// GetByKey is the single lookup every other method funnels through, so that a
+// missing entry is classified once. A missing row becomes ErrNotFound; anything
+// else (a driver or connection failure) is returned untouched so callers do not
+// mistake infrastructure trouble for an unknown key.
 func (s *configurationService) GetByKey(key string) (*models.Configuration, error) {
-	return s.configRepo.GetByKey(key)
+	config, err := s.configRepo.GetByKey(key)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("configuration %q not found: %w", key, apperrors.ErrNotFound)
+		}
+		return nil, err
+	}
+	return config, nil
 }
 
 func (s *configurationService) GetByCategory(category models.ConfigurationCategory) ([]models.Configuration, error) {
@@ -51,17 +62,17 @@ func (s *configurationService) GetAll() ([]models.Configuration, error) {
 }
 
 func (s *configurationService) Set(key string, value interface{}) error {
-	config, err := s.configRepo.GetByKey(key)
+	config, err := s.GetByKey(key)
 	if err != nil {
-		return fmt.Errorf("configuration not found: %s", key)
+		return err
 	}
 
 	if config.IsReadOnly {
-		return errors.New("configuration is read-only")
+		return fmt.Errorf("configuration %q is read-only: %w", key, apperrors.ErrConfigurationReadOnly)
 	}
 
 	if !config.IsValidValue(value) {
-		return errors.New("invalid value for configuration")
+		return fmt.Errorf("invalid value for configuration %q: %w", key, apperrors.ErrConfigurationInvalidValue)
 	}
 
 	if err := config.SetValue(value); err != nil {
@@ -72,7 +83,7 @@ func (s *configurationService) Set(key string, value interface{}) error {
 }
 
 func (s *configurationService) Get(key string) (interface{}, error) {
-	config, err := s.configRepo.GetByKey(key)
+	config, err := s.GetByKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -146,26 +157,26 @@ func (s *configurationService) GetJSON(key string) (map[string]interface{}, erro
 }
 
 func (s *configurationService) Delete(key string) error {
-	config, err := s.configRepo.GetByKey(key)
+	config, err := s.GetByKey(key)
 	if err != nil {
 		return err
 	}
 
 	if config.IsSystem {
-		return errors.New("cannot delete system configuration")
+		return fmt.Errorf("cannot delete configuration %q: %w", key, apperrors.ErrConfigurationSystemDelete)
 	}
 
 	return s.configRepo.Delete(key)
 }
 
 func (s *configurationService) Reset(key string) error {
-	config, err := s.configRepo.GetByKey(key)
+	config, err := s.GetByKey(key)
 	if err != nil {
 		return err
 	}
 
 	if config.IsReadOnly {
-		return errors.New("configuration is read-only")
+		return fmt.Errorf("configuration %q is read-only: %w", key, apperrors.ErrConfigurationReadOnly)
 	}
 
 	config.Value = config.DefaultValue
