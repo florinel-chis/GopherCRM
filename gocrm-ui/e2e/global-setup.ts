@@ -1,8 +1,9 @@
 import { execFileSync } from 'child_process';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { testAdminCredentials } from './fixtures/admin-user';
 
-const repoRoot = path.resolve(__dirname, '..', '..');
+const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
 /**
  * Provisions the admin account the admin E2E suites log in as.
