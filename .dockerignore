@@ -1,0 +1,8 @@
+.*
+bin/
+gocrm-ui/
+docs/
+*.md
+docker-compose.yml
+Dockerfile
+coverage.out
