@@ -77,6 +77,20 @@ Full rationale, the cascade rules for converted leads, and the operational cavea
 - Node.js 20 or newer (React Router 7 requires Node >= 20) and npm
 - Modern web browser
 
+## Quick Start with Docker
+
+The whole stack (MySQL, API, UI) can run in containers, with database data
+persisted in a named volume across restarts:
+
+```bash
+export JWT_SECRET="$(openssl rand -base64 32)"   # or put it in .env
+docker compose up -d --build
+docker compose exec backend create-admin          # first admin account
+```
+
+UI at http://localhost:3000, API at http://localhost:8080/api/v1. See
+[docs/DOCKER.md](docs/DOCKER.md) for configuration and persistence details.
+
 ## Setup Instructions
 
 ### 1. Clone the Repository

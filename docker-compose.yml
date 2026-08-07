@@ -1,0 +1,82 @@
+# Three-service stack: MySQL, Go API, nginx-served UI.
+#
+# JWT_SECRET is required (>= 32 chars) and is read from the shell or the
+# repo-root .env file. DB passwords default to development values; override
+# DB_PASSWORD / DB_ROOT_PASSWORD for anything beyond local use.
+#
+# MySQL data lives in the db_data named volume and survives
+# `docker compose down`; only `docker compose down -v` destroys it.
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: gocrm
+      MYSQL_USER: gocrm
+      MYSQL_PASSWORD: ${DB_PASSWORD:-gocrm-dev-password}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-gocrm-dev-root-password}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      # TCP explicitly: during initialisation mysqld runs a socket-only
+      # temporary server that must not count as healthy.
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 --protocol=tcp -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Uncomment to reach MySQL from the host:
+    # ports:
+    #   - "3306:3306"
+
+  backend:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: gocrm
+      DB_USER: gocrm
+      DB_PASSWORD: ${DB_PASSWORD:-gocrm-dev-password}
+      SERVER_PORT: 8080
+      SERVER_MODE: production
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (>= 32 random chars, e.g. openssl rand -base64 32)}
+      API_KEY_SECRET: ${API_KEY_SECRET:-}
+      API_PREFIX: /api/v1
+      # Must match the subnet below so the rate limiter sees real client
+      # IPs behind the ui nginx proxy instead of the proxy's address.
+      TRUSTED_PROXIES: 172.28.0.0/16
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      APP_BASE_URL: http://localhost:${UI_PORT:-3000}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ui:
+    build: ./gocrm-ui
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${UI_PORT:-3000}:80"
+
+volumes:
+  db_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
