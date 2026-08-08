@@ -15,18 +15,27 @@ type taskService struct {
 	userRepo     repository.UserRepository
 	leadRepo     repository.LeadRepository
 	customerRepo repository.CustomerRepository
+	labelRepo    repository.LabelRepository
 }
 
-func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository) TaskService {
+func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository) TaskService {
 	return &taskService{
 		taskRepo:     taskRepo,
 		userRepo:     userRepo,
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
+		labelRepo:    labelRepo,
 	}
 }
 
+// Create persists a task without touching its label set.
 func (s *taskService) Create(task *models.Task) error {
+	return s.CreateWithLabels(task, nil)
+}
+
+// CreateWithLabels persists a task and attaches the referenced labels. With no
+// label ids it is exactly Create, down to the repository call it makes.
+func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_title", task.Title), "TaskService", "Create")
 
 	// Set default values
@@ -73,7 +82,18 @@ func (s *taskService) Create(task *models.Task) error {
 		return fmt.Errorf("task cannot be linked to both lead and customer: %w", apperrors.ErrTaskLeadCustomerConflict)
 	}
 
-	if err := s.taskRepo.Create(task); err != nil {
+	labels, err := s.resolveLabels(labelIDs)
+	if err != nil {
+		logger.WithError(err).Warn("Unknown label referenced")
+		return err
+	}
+
+	if len(labels) == 0 {
+		err = s.taskRepo.Create(task)
+	} else {
+		err = s.taskRepo.CreateWithLabels(task, labels)
+	}
+	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
@@ -136,7 +156,15 @@ func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]model
 	return tasks, total, nil
 }
 
+// Update persists the task and leaves its label set untouched.
 func (s *taskService) Update(task *models.Task) error {
+	return s.UpdateWithLabels(task, nil)
+}
+
+// UpdateWithLabels persists the task and, when labelIDs is non-nil, REPLACES
+// its label set with the referenced labels. A non-nil empty slice clears the
+// set; nil leaves it exactly as it was.
+func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_id", task.ID), "TaskService", "Update")
 
 	// Get existing task to validate the update
@@ -191,13 +219,103 @@ func (s *taskService) Update(task *models.Task) error {
 		return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
 	}
 
-	if err := s.taskRepo.Update(task); err != nil {
+	if labelIDs == nil {
+		if err := s.taskRepo.Update(task); err != nil {
+			utils.LogServiceResponse(logger, err)
+			return err
+		}
+		logger.WithField("task_id", task.ID).Info("Task updated successfully")
+		return nil
+	}
+
+	labels, err := s.resolveLabels(*labelIDs)
+	if err != nil {
+		logger.WithError(err).Warn("Unknown label referenced")
+		return err
+	}
+
+	if err := s.taskRepo.UpdateWithLabels(task, labels); err != nil {
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
 
 	logger.WithField("task_id", task.ID).Info("Task updated successfully")
 	return nil
+}
+
+// resolveLabels turns a list of label ids into the labels themselves,
+// rejecting the whole request if any id matches nothing. Duplicated ids are
+// collapsed, so sending the same label twice attaches it once instead of
+// tripping the "unknown label" check on the count comparison.
+func (s *taskService) resolveLabels(labelIDs []uint) ([]models.Label, error) {
+	if len(labelIDs) == 0 {
+		return nil, nil
+	}
+
+	unique := make([]uint, 0, len(labelIDs))
+	seen := make(map[uint]struct{}, len(labelIDs))
+	for _, id := range labelIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	labels, err := s.labelRepo.FindByIDs(unique)
+	if err != nil {
+		return nil, err
+	}
+	if len(labels) == len(unique) {
+		return labels, nil
+	}
+
+	found := make(map[uint]struct{}, len(labels))
+	for _, label := range labels {
+		found[label.ID] = struct{}{}
+	}
+	missing := make([]uint, 0, len(unique)-len(labels))
+	for _, id := range unique {
+		if _, ok := found[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+
+	return nil, fmt.Errorf("unknown label ids %v: %w", missing, apperrors.ErrLabelNotFound)
+}
+
+// ListByLabel returns the tasks carrying one label, across every assignee.
+func (s *taskService) ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	return s.listByLabel(labelID, nil, offset, limit, sortBy, sortOrder)
+}
+
+// ListByLabelForAssignee returns the tasks carrying one label for a single
+// assignee. Every role but admin is narrowed through here.
+func (s *taskService) ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	return s.listByLabel(labelID, &assigneeID, offset, limit, sortBy, sortOrder)
+}
+
+func (s *taskService) listByLabel(labelID uint, assigneeID *uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"label_id": labelID,
+		"offset":   offset,
+		"limit":    limit,
+	}), "TaskService", "ListByLabel")
+
+	tasks, err := s.taskRepo.ListByLabel(labelID, assigneeID, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
+	if err != nil {
+		logger.WithError(err).Error("Failed to list tasks by label")
+		return nil, 0, err
+	}
+
+	total, err := s.taskRepo.CountByLabel(labelID, assigneeID)
+	if err != nil {
+		logger.WithError(err).Error("Failed to count tasks by label")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Tasks listed by label")
+	return tasks, total, nil
 }
 
 func (s *taskService) Delete(id uint) error {
@@ -260,7 +378,7 @@ func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([
 		"sort_order": sortOrder,
 	}), "TaskService", "ListSorted")
 
-	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "AssignedTo")
+	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
 	if err != nil {
 		logger.WithError(err).Error("Failed to list tasks sorted")
 		return nil, 0, err
@@ -283,7 +401,7 @@ func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder 
 		"limit":  limit,
 	}), "TaskService", "Search")
 
-	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, "AssignedTo")
+	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
 	if err != nil {
 		logger.WithError(err).Error("Failed to search tasks")
 		return nil, 0, err

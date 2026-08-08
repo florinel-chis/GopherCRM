@@ -53,6 +53,9 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 		&models.User{},
 		&models.Lead{},
 		&models.Customer{},
+		// Label precedes Task so the many2many join table is built against an
+		// existing labels table, mirroring the order in MigrateDatabase().
+		&models.Label{},
 		&models.Task{},
 		&models.APIKey{},
 	)
@@ -105,6 +108,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 	leadRepo := repository.NewLeadRepository(suite.db)
 	customerRepo := repository.NewCustomerRepository(suite.db)
 	taskRepo := repository.NewTaskRepository(suite.db)
+	labelRepo := repository.NewLabelRepository(suite.db)
 	apiKeyRepo := repository.NewAPIKeyRepository(suite.db)
 
 	// Setup services
@@ -113,7 +117,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 		ExpiryHours: 24,
 	}
 	authService := service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
-	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo)
+	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
 
 	// Generate test tokens
 	suite.adminToken, err = authService.GenerateJWT(suite.adminUser)

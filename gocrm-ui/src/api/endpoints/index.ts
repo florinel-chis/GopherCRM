@@ -4,6 +4,7 @@ export * from './leads';
 export * from './customers';
 export * from './tickets';
 export * from './tasks';
+export * from './labels';
 export * from './dashboard';
 export * from './apikeys';
 export * from './configurations';

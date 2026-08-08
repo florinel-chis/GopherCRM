@@ -36,6 +36,7 @@ import {
   ContactPhone,
   ChevronLeft,
   Tune,
+  LocalOffer,
 } from '@mui/icons-material';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -77,6 +78,11 @@ const navItems: NavItem[] = [
     title: 'Tasks',
     path: '/tasks',
     icon: <Task />,
+  },
+  {
+    title: 'Labels',
+    path: '/labels',
+    icon: <LocalOffer />,
   },
   {
     title: 'Users',

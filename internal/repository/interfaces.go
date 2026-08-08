@@ -145,7 +145,34 @@ type TaskRepository interface {
 	ListUpcoming(assignedToID *uint, limit int) ([]models.Task, error)
 	ListDueBetween(assignedToID *uint, from, to time.Time, limit int) ([]models.Task, error)
 	ListRecentlyCompleted(limit int) ([]models.Task, error)
+	// CreateWithLabels and UpdateWithLabels write the task and its label set in
+	// one transaction. Update replaces the whole set — passing an empty slice
+	// clears it — so a caller that must leave the labels alone uses Update.
+	CreateWithLabels(task *models.Task, labels []models.Label) error
+	UpdateWithLabels(task *models.Task, labels []models.Label) error
+	// ListByLabel and CountByLabel narrow to the tasks carrying one label. A nil
+	// assignedToID means every assignee, matching ListUpcoming's convention, so
+	// the non-admin scoping is pushed down to SQL.
+	ListByLabel(labelID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
+	CountByLabel(labelID uint, assignedToID *uint) (int64, error)
 	WithTx(tx *gorm.DB) TaskRepository
+}
+
+type LabelRepository interface {
+	Create(label *models.Label) error
+	// GetByID returns the label with TaskCount populated.
+	GetByID(id uint) (*models.Label, error)
+	Update(label *models.Label) error
+	// Delete removes the label permanently (labels do not soft-delete) and
+	// clears its task_labels rows in the same transaction.
+	Delete(id uint) error
+	// List returns every label ordered by name, each with TaskCount populated.
+	List() ([]models.Label, error)
+	FindByIDs(ids []uint) ([]models.Label, error)
+	// ExistsByNameInsensitive backs the service's duplicate-name pre-check.
+	// excludeID is the row an update is allowed to collide with; 0 for a create.
+	ExistsByNameInsensitive(name string, excludeID uint) (bool, error)
+	WithTx(tx *gorm.DB) LabelRepository
 }
 
 type APIKeyRepository interface {

@@ -24,7 +24,12 @@ that the test was executed as part of writing this catalog.
 | [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 39 | 14 | 18 | 7 | 13 | 25 | 1 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 2 | 17 | 15 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
-| **Total** | | **394** | **117** | **169** | **108** | **91** | **246** | **57** |
+| [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
+| **Total** | | **440** | **122** | **192** | **126** | **109** | **268** | **63** |
+
+[10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
+are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
+detail the case lists. They are counted as automated above.
 
 ## Case format
 
@@ -90,7 +95,13 @@ fail in ways that look like application bugs.
    The admin comes from the `create-admin` CLI; sales and support accounts require an
    admin-authenticated `POST /users`, and no e2e helper does that yet — building that role-login
    helper is the single change that unblocks the most planned RBAC cases.
-9. **The code outranks the docs.** Cataloguing found `docs/FEATURES.md` rows 1.3/1.4 stale (session
+9. **Labels are hard-deleted and unique by name.** Unlike every other entity, deleting a label
+   removes the row outright, so a name is immediately reusable and nothing is hidden behind
+   `deleted_at`. A spec that creates labels must scope their names to the run *and* delete them
+   again: leftovers are permanently visible on `/labels` and leak into the documentation captures.
+   `e2e/tests/labels.spec.ts` does both; `e2e/screenshots/09-labels.spec.ts` deliberately does the
+   opposite — fixed names, created only when missing — so the captures stay stable.
+10. **The code outranks the docs.** Cataloguing found `docs/FEATURES.md` rows 1.3/1.4 stale (session
    refresh and logout exist since the 2026-08 build-out) and a ROADMAP defect already fixed
    (`/dashboard/stats` is guarded now). Every claim in these documents was traced to code, and new
    cases should be grounded the same way.
@@ -119,6 +130,9 @@ documents as **Known issue** lines. The most consequential:
   wrong beyond page one (07-users.md).
 - The Profile and API Keys settings pages are heading-only stubs while their backends are complete
   and integration-tested (07-users.md, 08-settings.md).
+- A task-list request carrying both `label_id` and `search` silently drops the search: the two
+  filters cannot be combined server-side. The UI no longer contradicts that — applying a label
+  filter clears and disables the search box — but the server-side limitation stands (10-labels.md).
 
 ## Implementation order
 

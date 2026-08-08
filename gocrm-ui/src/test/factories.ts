@@ -1,4 +1,4 @@
-import type { User, Lead, Customer, Ticket, Task, Comment } from '@/types';
+import type { User, Lead, Customer, Ticket, Task, Comment, Label } from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
   id: 1,
@@ -84,6 +84,14 @@ export const createMockTask = (overrides?: Partial<Task>): Task => ({
   creator: createMockUser(),
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
+  ...overrides,
+});
+
+export const createMockLabel = (overrides?: Partial<Label>): Label => ({
+  id: 1,
+  name: 'Urgent',
+  color: '#D62728',
+  task_count: 0,
   ...overrides,
 });
 

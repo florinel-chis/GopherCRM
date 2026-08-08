@@ -22,6 +22,7 @@ type TaskServiceTestSuite struct {
 	mockUserRepo     *mocks.UserRepository
 	mockLeadRepo     *mocks.LeadRepository
 	mockCustomerRepo *mocks.CustomerRepository
+	mockLabelRepo    *mocks.LabelRepository
 	service          TaskService
 }
 
@@ -39,7 +40,8 @@ func (suite *TaskServiceTestSuite) SetupTest() {
 	suite.mockUserRepo = new(mocks.UserRepository)
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
-	suite.service = NewTaskService(suite.mockTaskRepo, suite.mockUserRepo, suite.mockLeadRepo, suite.mockCustomerRepo)
+	suite.mockLabelRepo = new(mocks.LabelRepository)
+	suite.service = NewTaskService(suite.mockTaskRepo, suite.mockUserRepo, suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockLabelRepo)
 }
 
 func (suite *TaskServiceTestSuite) TearDownTest() {
@@ -47,6 +49,7 @@ func (suite *TaskServiceTestSuite) TearDownTest() {
 	suite.mockUserRepo.AssertExpectations(suite.T())
 	suite.mockLeadRepo.AssertExpectations(suite.T())
 	suite.mockCustomerRepo.AssertExpectations(suite.T())
+	suite.mockLabelRepo.AssertExpectations(suite.T())
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_Success() {

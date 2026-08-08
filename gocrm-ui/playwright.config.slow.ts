@@ -7,8 +7,10 @@ import baseConfig from './playwright.config';
 export default defineConfig({
   ...baseConfig,
   
-  /* Even slower timeouts for debugging */
-  timeout: 60 * 1000, // 60 seconds per test
+  /* Even slower timeouts for debugging. The admin-entity-suite workflow tests
+     legitimately run 60-110 s end to end, so the per-test budget sits well
+     above that. */
+  timeout: 180 * 1000, // 180 seconds per test
   
   use: {
     ...baseConfig.use,

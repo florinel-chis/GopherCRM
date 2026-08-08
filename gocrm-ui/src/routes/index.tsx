@@ -110,6 +110,12 @@ export const router = createBrowserRouter([
         lazy: () => import('@/pages/tasks/TaskForm'),
       },
       {
+        // Labels are readable by every authenticated role, like tasks; the
+        // create/edit/delete affordances are gated inside the page.
+        path: 'labels',
+        lazy: () => import('@/pages/labels/LabelList'),
+      },
+      {
         // Pathless layout route: applies the admin guard to every child below.
         // The guard must not live on the child routes themselves — a statically
         // defined `element` takes precedence over `lazy`, which would silently

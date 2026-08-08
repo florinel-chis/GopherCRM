@@ -29,13 +29,19 @@ export class AdminAuthHelper {
     // The admin account is seeded by e2e/global-setup.ts via the create-admin CLI.
     // It cannot be created here: /auth/register only ever creates customers.
 
-    // Login
+    // Login. "Remember me" is ticked deliberately: the app only persists the
+    // JWT to localStorage for a remembered session, and ensureAdminLoggedIn
+    // below probes localStorage to decide whether a re-login is needed. Without
+    // the tick the token lands in sessionStorage and both checks fail.
     await loginPage.goto();
+    await loginPage.emailInput.fill(this.adminUser.email);
+    await loginPage.passwordInput.fill(this.adminUser.password);
+    await loginPage.rememberMeCheckbox.check();
 
     const responsePromise = this.page.waitForResponse(
       response => response.url().includes('/auth/login') && response.request().method() === 'POST'
     );
-    await loginPage.login(this.adminUser.email, this.adminUser.password);
+    await loginPage.submit();
 
     const response = await responsePromise;
     expect(response.status()).toBe(200);

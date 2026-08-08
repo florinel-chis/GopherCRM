@@ -29,4 +29,7 @@ type Task struct {
 	Lead         *Lead        `gorm:"foreignKey:LeadID" json:"lead,omitempty"`
 	CustomerID   *uint        `json:"customer_id,omitempty"`
 	Customer     *Customer    `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+	// Labels is the ad-hoc grouping of the task. The join table carries no
+	// payload of its own, so the whole relationship lives in `task_labels`.
+	Labels []Label `gorm:"many2many:task_labels" json:"labels,omitempty"`
 }

@@ -79,6 +79,14 @@ export interface Comment {
   updated_at: string;
 }
 
+export interface Label {
+  id: number;
+  name: string;
+  color: string;
+  // Only the list endpoint reports how many tasks carry the label.
+  task_count?: number;
+}
+
 export interface Task {
   id: number;
   title: string;
@@ -90,6 +98,7 @@ export interface Task {
   assignee?: User;
   created_by: number;
   creator?: User;
+  labels?: Label[];
   created_at: string;
   updated_at: string;
   completed_at?: string;

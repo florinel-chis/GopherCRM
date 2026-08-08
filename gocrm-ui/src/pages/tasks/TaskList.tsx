@@ -20,6 +20,7 @@ import {
   Card,
   CardContent,
   Stack,
+  Autocomplete,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -31,11 +32,16 @@ import {
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { LabelChip } from '@/components/LabelChip';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { tasksApi, type TaskFilters } from '@/api/endpoints';
-import type { Task } from '@/types';
+import { labelsApi, tasksApi, type TaskFilters } from '@/api/endpoints';
+import type { Label, Task } from '@/types';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
+
+// Chips beyond this many collapse into a "+N" indicator so the column keeps a
+// predictable width.
+const MAX_VISIBLE_LABEL_CHIPS = 3;
 
 const statusOptions = [
   { value: '', label: 'All Statuses' },
@@ -108,11 +114,18 @@ export const Component: React.FC = () => {
     queryFn: () => tasksApi.getTasks(filters),
   });
 
+  const { data: labels } = useQuery({
+    queryKey: ['labels'],
+    queryFn: () => labelsApi.getLabels(),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => tasksApi.deleteTask(id),
     onSuccess: () => {
       showSuccess('Task deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      // Deleting a task detaches it from its labels, so the counts move.
+      queryClient.invalidateQueries({ queryKey: ['labels'] });
       setDeleteDialog({ open: false });
     },
     onError: () => {
@@ -131,11 +144,64 @@ export const Component: React.FC = () => {
     },
   });
 
+  // The filter is stored as an id; resolve it back to the label so the active
+  // filter can be shown as a chip.
+  const activeLabel = (labels || []).find(label => label.id === filters.label_id) ?? null;
+
+  const handleLabelFilterChange = useCallback((label: Label | null) => {
+    // The server applies label_id INSTEAD of search — the two never intersect —
+    // so applying a label filter drops the search term rather than leaving a
+    // populated box claiming a narrowing that is not happening. The box itself
+    // is disabled below for as long as the label filter is active.
+    setFilters(prev => ({
+      ...prev,
+      label_id: label?.id,
+      search: label ? '' : prev.search,
+      page: 1,
+    }));
+  }, []);
+
   const columns: Column<Task>[] = useMemo(() => [
     {
       id: 'title',
       label: 'Title',
       minWidth: 250,
+    },
+    {
+      id: 'labels',
+      label: 'Labels',
+      minWidth: 180,
+      sortable: false,
+      format: (value: Task['labels']) => {
+        const taskLabels = value || [];
+        if (taskLabels.length === 0) {
+          return null;
+        }
+        const visible = taskLabels.slice(0, MAX_VISIBLE_LABEL_CHIPS);
+        const hidden = taskLabels.length - visible.length;
+        return (
+          <Box display="flex" gap={0.5} flexWrap="wrap" alignItems="center">
+            {visible.map((label) => (
+              <LabelChip
+                key={label.id}
+                label={label}
+                clickable
+                onClick={(event) => {
+                  // The row itself navigates to the task; a chip click is a
+                  // filter action, not a drill-down.
+                  event.stopPropagation();
+                  handleLabelFilterChange(label);
+                }}
+              />
+            ))}
+            {hidden > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                +{hidden}
+              </Typography>
+            )}
+          </Box>
+        );
+      },
     },
     {
       id: 'status',
@@ -184,7 +250,7 @@ export const Component: React.FC = () => {
       minWidth: 100,
       format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
     },
-  ], []);
+  ], [handleLabelFilterChange]);
 
   const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, task: Task) => {
     setAnchorEl(event.currentTarget);
@@ -356,6 +422,8 @@ export const Component: React.FC = () => {
             placeholder="Search tasks..."
             value={filters.search}
             onChange={(e) => handleSearch(e.target.value)}
+            disabled={Boolean(activeLabel)}
+            helperText={activeLabel ? 'Clear the label filter to search' : undefined}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -395,6 +463,38 @@ export const Component: React.FC = () => {
               ))}
             </Select>
           </FormControl>
+
+          <Autocomplete
+            size="small"
+            sx={{ minWidth: 220 }}
+            value={activeLabel}
+            onChange={(_, newValue) => handleLabelFilterChange(newValue)}
+            options={labels || []}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            getOptionLabel={(option) => option.name}
+            renderOption={(props, option) => {
+              const { key, ...optionProps } = props;
+              return (
+                <li key={key} {...optionProps}>
+                  <LabelChip label={option} />
+                </li>
+              );
+            }}
+            renderInput={(params) => <TextField {...params} label="Label" />}
+          />
+
+          {activeLabel && (
+            <Box display="flex" gap={1} alignItems="center">
+              <Typography variant="body2" color="text.secondary">
+                Filtered by
+              </Typography>
+              <LabelChip
+                label={activeLabel}
+                onDelete={() => handleLabelFilterChange(null)}
+                data-testid="active-label-filter"
+              />
+            </Box>
+          )}
         </Box>
       </Paper>
 

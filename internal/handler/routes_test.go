@@ -23,6 +23,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupCustomerRoutes(group, &CustomerHandler{})
 	SetupTicketRoutes(group, &TicketHandler{})
 	SetupTaskRoutes(group, &TaskHandler{})
+	SetupLabelRoutes(group, &LabelHandler{})
 	SetupAPIKeyRoutes(group, &APIKeyHandler{})
 	SetupConfigurationRoutes(group, &ConfigurationHandler{})
 	SetupDashboardRoutes(group, &DashboardHandler{})
@@ -36,6 +37,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		"/api/v1/leads/bulk/status",
 		"/api/v1/tickets/bulk/status",
 		"/api/v1/tasks/bulk/status",
+		"/api/v1/labels",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		w := httptest.NewRecorder()
@@ -45,6 +47,28 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		}()
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s did not match any route", path)
+		}
+	}
+
+	// The label group mixes a static collection path with a parameter path, and
+	// the parameter routes carry role guards the collection ones do not, so
+	// every verb is dispatched here rather than only the ones POSTed above.
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/labels"},
+		{http.MethodPut, "/api/v1/labels/1"},
+		{http.MethodDelete, "/api/v1/labels/1"},
+	} {
+		req := httptest.NewRequest(route.method, route.path, nil)
+		w := httptest.NewRecorder()
+		func() {
+			defer func() { recover() }()
+			router.ServeHTTP(w, req)
+		}()
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s did not match any route", route.method, route.path)
 		}
 	}
 }

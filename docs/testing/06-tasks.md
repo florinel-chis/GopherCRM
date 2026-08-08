@@ -47,7 +47,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Wait for the network to settle.
-- **Expected:** `GET /api/v1/tasks?page=1&limit=10` returns 200 with `{ tasks: [...], total: n }`. The `h4` heading "Tasks", the "Create Task" button, the list/calendar toggle and a table with the columns Title, Status, Priority, Assigned To, Due Date, Created, Actions are visible. The footer reads "1–10 of {total}".
+- **Expected:** `GET /api/v1/tasks?page=1&limit=10` returns 200 with `{ tasks: [...], total: n }`. The `h4` heading "Tasks", the "Create Task" button, the list/calendar toggle and a table with the columns Title, Labels, Status, Priority, Assigned To, Due Date, Created, Actions are visible. The footer reads "1–10 of {total}".
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can view tasks list page"
 
 ### TC-TASK-002 — Assigned To column renders "Unassigned" for every task

@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 
 export class TasksPage {
   readonly page: Page;
@@ -73,12 +73,21 @@ export class TasksPage {
     await this.page.waitForLoadState('networkidle');
   }
 
+  /**
+   * Fills the create/edit form.
+   *
+   * The assignee is picked even though the field reads "Assign To (Optional)":
+   * the API binds `assigned_to_id` as required and answers 400 without it, so a
+   * task the form considers complete is not one the backend accepts. Pass
+   * `assignee: false` to exercise that rejection deliberately.
+   */
   async fillTaskForm(taskData: {
     title: string;
     description?: string;
     priority?: string;
     status?: string;
     dueDate?: string;
+    assignee?: boolean;
   }) {
     await this.titleInput.fill(taskData.title);
 
@@ -96,6 +105,10 @@ export class TasksPage {
 
     if (taskData.dueDate) {
       await this.dueDateInput.fill(taskData.dueDate);
+    }
+
+    if (taskData.assignee !== false) {
+      await this.selectFirstAssignee();
     }
   }
 
@@ -144,15 +157,28 @@ export class TasksPage {
     }
   }
 
-  async confirmDelete() {
-    const dialog = this.page.locator('[role="dialog"]');
-    await dialog.waitFor({ state: 'visible' });
-    await dialog.locator('button:has-text("Delete")').click();
+  /**
+   * The delete confirmation. Addressed by its accessible name, not by
+   * `[role="dialog"]`: the collapsed navigation Drawer also reports that role,
+   * so the bare selector matches two elements and trips strict mode.
+   */
+  get deleteDialog() {
+    return this.page.getByRole('dialog', { name: 'Delete Task' });
   }
 
-  async deleteTask(rowIndex: number = 0) {
-    const initialCount = await this.getTaskCount();
+  async confirmDelete() {
+    await this.deleteDialog.waitFor({ state: 'visible' });
+    await this.deleteDialog.getByRole('button', { name: 'Delete' }).click();
+  }
 
+  /**
+   * Deletes a row and waits for the list to settle.
+   *
+   * The row count is deliberately not used as the completion signal: the list
+   * is paginated, so on a full page the row that was deleted is simply replaced
+   * by the next record and the count never drops.
+   */
+  async deleteTask(rowIndex: number = 0) {
     await this.clickDeleteOnRow(rowIndex);
 
     const responsePromise = this.page.waitForResponse(
@@ -166,15 +192,8 @@ export class TasksPage {
       throw new Error(`Delete failed with status ${response.status()}`);
     }
 
+    await this.deleteDialog.waitFor({ state: 'hidden' });
     await this.page.waitForLoadState('networkidle');
-
-    let attempts = 0;
-    while (attempts < 10) {
-      const currentCount = await this.getTaskCount();
-      if (currentCount < initialCount) break;
-      await this.page.waitForTimeout(500);
-      attempts++;
-    }
   }
 
   async searchTasks(searchTerm: string) {
@@ -209,8 +228,11 @@ export class TasksPage {
     }
   }
 
+  // Column order in the list: title, labels, status, priority, assignee,
+  // due date, created, actions.
   async getTaskData(rowIndex: number = 0): Promise<{
     title: string;
+    labels: string;
     status: string;
     priority: string;
     dueDate: string;
@@ -220,10 +242,131 @@ export class TasksPage {
 
     return {
       title: await cells.nth(0).textContent() || '',
-      status: await cells.nth(1).textContent() || '',
-      priority: await cells.nth(2).textContent() || '',
-      dueDate: await cells.nth(3).textContent() || '',
+      labels: await cells.nth(1).textContent() || '',
+      status: await cells.nth(2).textContent() || '',
+      priority: await cells.nth(3).textContent() || '',
+      dueDate: await cells.nth(5).textContent() || '',
     };
+  }
+
+  // --- Labels --------------------------------------------------------------
+  //
+  // The create/edit form carries a multi-select Autocomplete of labels that can
+  // also mint a new one inline; the list carries a single-select label filter
+  // plus clickable chips in the labels column.
+
+  /** The multi-select labels field on the task form. */
+  get labelsField() {
+    return this.page.getByRole('combobox', { name: 'Labels', exact: true });
+  }
+
+  /** The single-select label filter above the task list. */
+  get labelFilterField() {
+    return this.page.getByRole('combobox', { name: 'Label', exact: true });
+  }
+
+  /** The chip echoing the active label filter, with its clear affordance. */
+  get activeLabelFilter() {
+    return this.page.locator('[data-testid="active-label-filter"]');
+  }
+
+  /** Chips currently selected inside the task form's labels field. */
+  get selectedLabelChips() {
+    return this.page.locator('.MuiAutocomplete-root .MuiChip-root');
+  }
+
+  /** The list row for a task, matched on its (run-unique) title. */
+  taskRow(title: string): Locator {
+    return this.tableRows.filter({ hasText: title });
+  }
+
+  /** A label chip inside a task's row in the list. */
+  labelChipInRow(taskTitle: string, labelName: string): Locator {
+    return this.taskRow(taskTitle).locator('.MuiChip-root').filter({ hasText: labelName });
+  }
+
+  /**
+   * The assignee picker is written "(Optional)" but the API requires
+   * assigned_to_id, so every created task needs one.
+   */
+  async selectFirstAssignee() {
+    await this.page.getByLabel('Assign To (Optional)').click();
+    const option = this.page.locator('li[role="option"]').first();
+    await option.waitFor({ state: 'visible' });
+    await option.click();
+  }
+
+  /** Attaches an existing label to the task being edited. */
+  async attachLabel(name: string) {
+    await this.labelsField.click();
+    await this.labelsField.fill(name);
+    const option = this.page.getByRole('option', { name, exact: true });
+    await option.waitFor({ state: 'visible' });
+    await option.click();
+    // Close the dropdown so the next field is not covered by the listbox.
+    await this.page.keyboard.press('Escape');
+  }
+
+  /**
+   * Creates a label from inside the task form via the synthetic `Add "x"`
+   * option, and returns the POST /labels response it triggers.
+   */
+  async createLabelInline(name: string) {
+    await this.labelsField.click();
+    await this.labelsField.fill(name);
+    const option = this.page.getByRole('option', { name: `Add "${name}"`, exact: true });
+    await option.waitFor({ state: 'visible' });
+
+    const responsePromise = this.page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith('/labels') &&
+        response.request().method() === 'POST'
+    );
+    await option.click();
+    const response = await responsePromise;
+    await this.page.keyboard.press('Escape');
+    return response;
+  }
+
+  /** Picks a label in the list filter and returns the refetched task list. */
+  async filterByLabel(name: string) {
+    await this.labelFilterField.click();
+    await this.labelFilterField.fill(name);
+    const option = this.page.getByRole('option', { name, exact: true });
+    await option.waitFor({ state: 'visible' });
+
+    const responsePromise = this.waitForTaskListRequest();
+    await option.click();
+    return await responsePromise;
+  }
+
+  /**
+   * Clears the active label filter through the chip's delete affordance.
+   *
+   * Deliberately does not wait for a task request: clearing returns the query
+   * to a key that was already fetched when the page loaded, so the cached
+   * unfiltered page is reused and no HTTP call is made. Assert the rendered
+   * outcome instead.
+   */
+  async clearLabelFilter() {
+    await this.activeLabelFilter.locator('.MuiChip-deleteIcon').click();
+    await this.activeLabelFilter.waitFor({ state: 'hidden' });
+  }
+
+  /** Clicks a label chip inside a task row, which filters the list by it. */
+  async clickLabelChipInRow(taskTitle: string, labelName: string) {
+    const responsePromise = this.waitForTaskListRequest();
+    await this.labelChipInRow(taskTitle, labelName).click();
+    return await responsePromise;
+  }
+
+  /** The next GET /tasks list request (not a single-task fetch). */
+  private waitForTaskListRequest() {
+    return this.page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith('/tasks') &&
+        response.request().method() === 'GET'
+    );
   }
 
   async getErrorMessage(): Promise<string | null> {
