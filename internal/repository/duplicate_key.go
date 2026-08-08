@@ -25,7 +25,8 @@ import (
 // Callers must only use this on statements where the sole unique constraint on
 // the target table is the one they intend to report on. Both `users` and
 // `customers` have exactly one unique index (on `email`), so a hit there
-// unambiguously means a duplicate email.
+// unambiguously means a duplicate email; `labels` likewise has exactly one (on
+// `name`).
 func isDuplicateKeyError(err error) bool {
 	if err == nil {
 		return false

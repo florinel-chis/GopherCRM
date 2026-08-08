@@ -1,6 +1,6 @@
 # E2E Test Suite — GopherCRM
 
-100 end-to-end tests across 9 spec files, run with Playwright against the Vite frontend
+111 end-to-end tests across 10 spec files, run with Playwright against the Vite frontend
 (`http://localhost:5173`) and a real backend. The frontend reads its API base URL from
 `VITE_API_BASE_URL` in `gocrm-ui/.env`, which points at `http://localhost:8090/api/v1` locally — start
 the backend on whichever port that file names.
@@ -62,6 +62,7 @@ an admin through the app.
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
+| `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
 
 Counts are per `test(...)` block and will drift; `npx playwright test --list` is authoritative.
 
@@ -90,6 +91,15 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
   (`generateLeadData`, `generateCustomerData`, `generateTicketData`, `generateTaskData`,
   `generateUserData`). They embed a timestamp and a random suffix in each email so parallel or
   repeated runs cannot collide on a unique constraint.
+- Labels are unique by name and **hard** deleted, so no tombstone reserves a name. `labels.spec.ts`
+  scopes every name it creates to the run and deletes them all again; leftovers would stay visible
+  on `/labels` forever and leak into the documentation captures. The screenshot suite
+  (`screenshots/09-labels.spec.ts`) deliberately does the opposite — fixed names, created only when
+  missing — so the captures stay stable across runs.
+- Three `admin-entity-suite.spec.ts` tests (CRM workflow, bulk operations, cross-entity search) walk
+  three entity forms each and run for 60–100 s, which exceeds the 60 s per-test budget in
+  `playwright.config.slow.ts`. They pass with `--timeout=180000`. Verified 2026-08-08; unrelated to
+  the entity being created — the timeout lands on the customers step.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.

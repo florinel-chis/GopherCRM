@@ -127,6 +127,32 @@ type TaskService interface {
 	GetDueWithin(from, to time.Time, limit int) ([]models.Task, error)
 	GetDueWithinByAssignee(assigneeID uint, from, to time.Time, limit int) ([]models.Task, error)
 	GetRecentlyCompleted(limit int) ([]models.Task, error)
+	// Labels. CreateWithLabels attaches the referenced labels to the new task;
+	// an empty or nil slice creates it without any. UpdateWithLabels takes a
+	// POINTER so the caller can tell "no label_ids field was sent, leave the set
+	// alone" (nil) apart from "label_ids was sent empty, clear the set"
+	// (non-nil, empty). An id that matches no label yields
+	// apperrors.ErrLabelNotFound, which the handler answers with 400
+	// INVALID_REFERENCE.
+	CreateWithLabels(task *models.Task, labelIDs []uint) error
+	UpdateWithLabels(task *models.Task, labelIDs *[]uint) error
+	// ListByLabel and the ByAssignee variant back the ?label_id= filter, with
+	// the same admin/non-admin split as the rest of the task listings.
+	ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
+	ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
+}
+
+type LabelService interface {
+	// Create trims the name, validates the colour against ^#[0-9a-fA-F]{6}$ and
+	// rejects a name that already exists case-insensitively with
+	// apperrors.ErrDuplicateLabelName.
+	Create(label *models.Label) error
+	GetByID(id uint) (*models.Label, error)
+	Update(label *models.Label) error
+	// Delete removes the label permanently and detaches it from every task.
+	Delete(id uint) error
+	// List returns every label ordered by name, each carrying its task count.
+	List() ([]models.Label, error)
 }
 
 type APIKeyService interface {

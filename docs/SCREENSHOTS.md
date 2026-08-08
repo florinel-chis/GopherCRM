@@ -3,7 +3,7 @@
 Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
 captured from the running application — a MySQL-backed backend and the Vite dev server — by the
 Playwright suite in `gocrm-ui/e2e/screenshots/`, at a 1440x900 viewport with `deviceScaleFactor: 2`.
-Captured 2026-08-06.
+41 captures, all regenerated 2026-08-08 when tasks gained labels.
 
 The captures record the application as it actually is. Where a screen is a placeholder or a control
 does not exist yet, the image shows that rather than a mock-up, and the difference is noted in the
@@ -33,7 +33,11 @@ specs log in as is seeded by `e2e/global-setup.ts`. Images are written straight 
 
 The suite creates records through the UI so lists and detail pages are not empty. It never confirms
 a delete dialog — deleting a user, customer or lead is an irreversible erasure (see FEATURES.md
-section 12).
+section 12), and deleting a label detaches it from every task at once.
+
+The label captures reuse fixed names (`Onboarding`, `Escalation`, `Follow-up`) and create them only
+when missing. Labels are unique by name and hard deleted rather than soft deleted, so run-scoped
+names would pile up on the very screen being photographed.
 
 ## Authentication
 
@@ -130,10 +134,13 @@ The delete confirmation dialog. Ticket deletion is admin-only and an ordinary so
 FEATURES.md section 6.
 
 ![Tasks list](screenshots/tasks/01-list.png)
-The tasks table with title, status, priority, assignee and due date.
+The tasks table with title, labels, status, priority, assignee, due date and created date, plus the
+search box and the status, priority and label filters. The rows on this page carry no labels; see
+[Labels](#labels) for the same list filtered down to a labelled task.
 
 ![Create task form](screenshots/tasks/02-create.png)
-The create form with title, description, priority, due date and assignee.
+The create form with title, description, status, priority, due date, assignee and the Labels
+multi-select. "Assign To" is captioned "(Optional)" but the API rejects a task without an assignee.
 
 ![Task detail](screenshots/tasks/03-detail.png)
 A single task's detail page.
@@ -143,6 +150,31 @@ The edit form populated from the stored record. Only admins may reassign a task.
 
 ![Delete task confirmation](screenshots/tasks/05-delete-confirm.png)
 The delete confirmation dialog. Task deletion is admin-only.
+
+## Labels
+
+Free-form colored labels on tasks; related to FEATURES.md section 6 (Task Management).
+
+![Labels list](screenshots/labels/01-list.png)
+The label management screen at `/labels`: name chip, hex colour with a swatch, the number of tasks
+carrying the label, and the edit and delete actions. Deleting is admin-only.
+
+![Create label dialog](screenshots/labels/02-create-dialog.png)
+The create dialog, filled in and not submitted. The colour comes either from the preset swatches or
+from the free `#RRGGBB` field below them; the preview chip shows the automatic light/dark text
+colour that the chosen background produces.
+
+![Labels on the task form](screenshots/labels/03-task-form.png)
+The task form's Labels field with two labels attached. Typing a name that does not exist yet offers
+an `Add "…"` option that creates the label inline, without leaving the form.
+
+![Tasks filtered by a label](screenshots/labels/04-list-filtered.png)
+The task list filtered to one label, chosen from the Label dropdown. The active filter is echoed as
+a chip with a clear affordance, and the chips in the Labels column filter the list when clicked.
+
+![Delete label confirmation](screenshots/labels/05-delete-confirm.png)
+The delete confirmation, which states how many tasks the label will be removed from. Labels are hard
+deleted along with their task links; the tasks themselves are untouched.
 
 ## Users
 

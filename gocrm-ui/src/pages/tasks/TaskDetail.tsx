@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { LabelChip } from '@/components/LabelChip';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { tasksApi } from '@/api/endpoints';
 import type { Task } from '@/types';
@@ -83,6 +84,8 @@ export const Component: React.FC = () => {
     onSuccess: () => {
       showSuccess('Task deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      // Deleting a task detaches it from its labels, so the counts move.
+      queryClient.invalidateQueries({ queryKey: ['labels'] });
       navigate('/tasks');
     },
     onError: () => {
@@ -181,6 +184,19 @@ export const Component: React.FC = () => {
 
       <Paper sx={{ p: 3 }}>
         <Stack spacing={3}>
+          {task.labels && task.labels.length > 0 && (
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+                Labels
+              </Typography>
+              <Box display="flex" gap={1} flexWrap="wrap">
+                {task.labels.map((label) => (
+                  <LabelChip key={label.id} label={label} />
+                ))}
+              </Box>
+            </Box>
+          )}
+
           <Box>
             <Typography variant="h6" gutterBottom>
               Task Details

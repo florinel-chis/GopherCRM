@@ -29,6 +29,12 @@ type CreateTaskRequest struct {
 	AssignedToID uint                  `json:"assigned_to_id" binding:"required"`
 	LeadID       *uint                 `json:"lead_id,omitempty"`
 	CustomerID   *uint                 `json:"customer_id,omitempty"`
+	// LabelIDs attaches existing labels to the new task. Absent or empty means
+	// no labels; an id that matches no label rejects the whole request. The
+	// list is capped at 100 ids, the same bound the bulk endpoints use, so a
+	// single request cannot turn a few client bytes into an arbitrarily large
+	// IN clause.
+	LabelIDs []uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0"`
 }
 
 type UpdateTaskRequest struct {
@@ -40,11 +46,16 @@ type UpdateTaskRequest struct {
 	AssignedToID uint                  `json:"assigned_to_id,omitempty"`
 	LeadID       *uint                 `json:"lead_id,omitempty"`
 	CustomerID   *uint                 `json:"customer_id,omitempty"`
+	// LabelIDs is a POINTER so the two cases stay distinguishable: an absent
+	// field (nil) leaves the label set alone, while a present one — including an
+	// empty array — replaces it wholesale. When present it is capped at 100 ids,
+	// exactly as on create.
+	LabelIDs *[]uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0"`
 }
 
 // Create godoc
 // @Summary Create a new task
-// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. The new task always starts in status "pending" regardless of the request body.
+// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. The new task always starts in status "pending" regardless of the request body. Optional label_ids attaches existing labels; a repeated id is attached once, and any id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -96,12 +107,17 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		Status:       models.TaskStatusPending,
 	}
 
-	if err := h.taskService.Create(task); err != nil {
+	if err := h.taskService.CreateWithLabels(task, req.LabelIDs); err != nil {
 		logger.WithError(err).Error("Failed to create task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
+		} else if errors.Is(err, apperrors.ErrLabelNotFound) {
+			// A bad label id is a bad reference in the body, not a missing
+			// resource at the requested path, so it is a 400 like the other
+			// payload-level rejections here.
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
 		} else if errors.Is(err, apperrors.ErrInactiveUser) ||
 			errors.Is(err, apperrors.ErrTaskLeadCustomerConflict) {
 			utils.RespondBadRequest(c, err.Error())
@@ -169,7 +185,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 // List godoc
 // @Summary List tasks
-// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them.
+// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them — EXCEPT when label_id is given, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search: when both are sent, search is ignored. An unparseable or non-positive label_id is ignored, and a label_id that matches no label simply yields an empty page rather than a 404.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -179,7 +195,8 @@ func (h *TaskHandler) Get(c *gin.Context) {
 // @Param limit query int false "Page size (max 100)" default(20)
 // @Param sort_by query string false "Sort column; ignored unless one of the allowed values, and ignored entirely for non-admin callers" Enums(created_at, updated_at, title, status, priority, due_date)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search across task fields; admin only, and takes precedence over sort_by"
+// @Param search query string false "Free-text search across task fields; admin only, takes precedence over sort_by, and is itself overridden by label_id"
+// @Param label_id query int false "Only tasks carrying this label; combinable with sort_by/sort_order for every role"
 // @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
@@ -222,12 +239,27 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	search := c.Query("search")
 
+	// A label filter is applied before anything else, and for every role: it is
+	// a narrowing of the same list, so it composes with the assignee scoping
+	// instead of replacing it. A malformed or non-positive value is treated as
+	// "no filter" rather than as an error, matching how sort_by is handled.
+	var labelID uint
+	if raw := c.Query("label_id"); raw != "" {
+		if parsed, parseErr := strconv.ParseUint(raw, 10, 32); parseErr == nil && parsed > 0 {
+			labelID = uint(parsed)
+		}
+	}
+
 	var tasks []models.Task
 	var total int64
 	var err error
 
 	// Admin can list all tasks, non-admin users can only list their own tasks
-	if currentUserRole != string(models.RoleAdmin) {
+	if labelID != 0 && currentUserRole != string(models.RoleAdmin) {
+		tasks, total, err = h.taskService.ListByLabelForAssignee(currentUserID, labelID, offset, limit, sortBy, sortOrder)
+	} else if labelID != 0 {
+		tasks, total, err = h.taskService.ListByLabel(labelID, offset, limit, sortBy, sortOrder)
+	} else if currentUserRole != string(models.RoleAdmin) {
 		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, limit)
 	} else if search != "" {
 		tasks, total, err = h.taskService.Search(search, offset, limit, sortBy, sortOrder)
@@ -367,7 +399,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer.
+// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -454,12 +486,14 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		task.CustomerID = req.CustomerID
 	}
 
-	if err := h.taskService.Update(task); err != nil {
+	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs); err != nil {
 		logger.WithError(err).Error("Failed to update task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
+		} else if errors.Is(err, apperrors.ErrLabelNotFound) {
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
 		} else if errors.Is(err, apperrors.ErrInactiveUser) ||
 			errors.Is(err, apperrors.ErrTaskLeadCustomerConflict) ||
 			errors.Is(err, apperrors.ErrCompletedTaskModify) {

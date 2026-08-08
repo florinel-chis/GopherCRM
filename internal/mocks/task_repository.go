@@ -427,6 +427,46 @@ func (_m *TaskRepository) ListRecentlyCompleted(limit int) ([]models.Task, error
 	return r0, ret.Error(1)
 }
 
+// CreateWithLabels provides a mock function with given fields: task, labels
+func (_m *TaskRepository) CreateWithLabels(task *models.Task, labels []models.Label) error {
+	ret := _m.Called(task, labels)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateWithLabels")
+	}
+
+	return ret.Error(0)
+}
+
+// UpdateWithLabels provides a mock function with given fields: task, labels
+func (_m *TaskRepository) UpdateWithLabels(task *models.Task, labels []models.Label) error {
+	ret := _m.Called(task, labels)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateWithLabels")
+	}
+
+	return ret.Error(0)
+}
+
+// ListByLabel provides a mock function with given fields: labelID, assignedToID, offset, limit, sortBy, sortOrder, preloads
+func (_m *TaskRepository) ListByLabel(labelID uint, assignedToID *uint, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Task, error) {
+	ret := _m.Called(labelID, assignedToID, offset, limit, sortBy, sortOrder, preloads)
+
+	var r0 []models.Task
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Task)
+	}
+	return r0, ret.Error(1)
+}
+
+// CountByLabel provides a mock function with given fields: labelID, assignedToID
+func (_m *TaskRepository) CountByLabel(labelID uint, assignedToID *uint) (int64, error) {
+	ret := _m.Called(labelID, assignedToID)
+
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func (_m *TaskRepository) WithTx(tx *gorm.DB) repository.TaskRepository {
 	_m.Called(tx)
 	return _m

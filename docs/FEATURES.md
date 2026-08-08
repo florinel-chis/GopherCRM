@@ -132,6 +132,21 @@ Status meanings:
 
 ---
 
+## 6b. Task Labels (2026-08)
+
+Free-form colored labels group tasks without a project hierarchy. Design spec:
+`docs/specs/2026-08-07-task-labels-design.md`; screenshots under
+`docs/screenshots/labels/`; catalog cases in `docs/testing/10-labels.md`.
+
+| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+|---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
+| 6b.1 | **Label CRUD** | `/labels` management page: create/rename/recolor with preset swatch picker, duplicate names rejected (409), delete is admin-only and hard-deletes | `labels.spec.ts`: create, duplicate-name error, rename+recolor, delete | `label_handler_test.go`, `label_service_test.go` | `LabelList.test.tsx` | `label_repository_test.go` (SQLite, many2many round-trip, hard delete clears join rows) | **covered** | Labels are hard-deleted (no PII, avoids the soft-delete unique-index trap) |
+| 6b.2 | **Attach labels to tasks** | Multi-select Autocomplete on the task form with inline creation (palette-assigned color); `label_ids` on create/update, capped at 100, unknown ids → 400 | `labels.spec.ts`: attach on create, inline create, replace set with [] | `task_labels_handler_test.go`, `task_labels_test.go` | `TaskForm.test.tsx` (incl. 409 recovery selecting the existing label) | -- | **covered** | Inline create hidden from customer role (would always 403) |
+| 6b.3 | **Chips in list/detail** | Colored chips with luminance-picked text color; list column capped at 3 with +N overflow | `labels.spec.ts`: chips in row and detail | -- | `LabelChip.test.tsx`, `TaskList.test.tsx` | -- | **covered** | -- |
+| 6b.4 | **Filter tasks by label** | Chip click or dropdown sets `?label_id=`; active filter echoed as a deletable chip | `labels.spec.ts`: chip-click filter, dropdown + clear | `task_handler_test.go` label filter cases | `TaskList.test.tsx` | `label_repository_test.go` filter cases | **covered** | Server cannot combine `label_id` with `search` (label filter wins); the UI disables search while a label filter is active |
+
+---
+
 ## 7. User Management
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |

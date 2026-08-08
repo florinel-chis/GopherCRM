@@ -31,6 +31,14 @@ export class LoginPage {
   get passwordVisibilityToggle() {
     return this.page.locator('button[aria-label="toggle password visibility"]');
   }
+
+  /**
+   * "Remember me". Unticked, the app keeps the JWT in sessionStorage for the
+   * tab only; ticked, it persists to localStorage.
+   */
+  get rememberMeCheckbox() {
+    return this.page.locator('input[name="remember_me"]');
+  }
   
   // Actions
   async goto() {

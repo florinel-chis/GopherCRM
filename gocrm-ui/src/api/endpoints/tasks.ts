@@ -9,6 +9,8 @@ export interface TaskFilters extends PaginationParams {
   due_date_from?: string;
   due_date_to?: string;
   search?: string;
+  // Restricts the list to tasks carrying this label.
+  label_id?: number;
 }
 
 export interface CreateTaskData {
@@ -17,6 +19,7 @@ export interface CreateTaskData {
   priority: 'low' | 'medium' | 'high';
   due_date: string;
   assigned_to?: number;
+  label_ids?: number[];
 }
 
 export interface UpdateTaskData {
@@ -26,6 +29,8 @@ export interface UpdateTaskData {
   priority?: 'low' | 'medium' | 'high';
   due_date?: string;
   assigned_to?: number;
+  // Replaces the whole label set; omit the field to leave labels untouched.
+  label_ids?: number[];
 }
 
 // Helper function to transform backend task to frontend format
@@ -36,6 +41,9 @@ const transformTaskFromBackend = (backendTask: any): Task => {
     assigned_to: backendTask.assigned_to_id,
     // Add fields that frontend expects
     created_by: backendTask.assigned_to_id, // Default to assignee since backend doesn't track creator
+    // Labels come back as a nested array; normalize the absent case to [] so
+    // consumers can render without a null check.
+    labels: Array.isArray(backendTask.labels) ? backendTask.labels : [],
     completed_at: backendTask.status === 'completed' ? backendTask.updated_at : undefined,
   };
 };

@@ -27,6 +27,14 @@ var (
 	ErrClosedTicketReopen      = errors.New("cannot reopen closed ticket")
 	ErrCompletedTaskModify     = errors.New("cannot change status of completed task")
 	ErrTaskLeadCustomerConflict = errors.New("task cannot be linked to both lead and customer")
+
+	// Label errors. ErrDuplicateLabelName is the label counterpart of
+	// ErrDuplicateEmail and is answered with 409; the two validation sentinels
+	// are answered with 400.
+	ErrDuplicateLabelName = errors.New("label with this name already exists")
+	ErrInvalidLabelName   = errors.New("label name is required")
+	ErrInvalidLabelColor  = errors.New("label color must be a hex value of the form #RRGGBB")
+	ErrLabelNotFound      = errors.New("label not found")
 )
 
 // Error codes

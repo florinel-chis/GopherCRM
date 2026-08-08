@@ -71,18 +71,23 @@ test.describe('Admin - Tasks Management', () => {
 
   test('admin can delete a task', async ({ page }) => {
     // Create a task first
-    const taskData = generateTaskData();
+    const taskData = { ...generateTaskData(), title: `DeleteTask_${Date.now()}` };
     await tasksPage.goto();
     await tasksPage.clickNewTask();
     await tasksPage.fillTaskForm(taskData);
-    await tasksPage.saveAndWaitForResponse();
 
+    const created = await tasksPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
+
+    // Narrow the list to the task this test created — a spec may only delete
+    // its own records, and the list is not ordered newest-first.
     await tasksPage.goto();
-    const initialCount = await tasksPage.getTaskCount();
-    expect(initialCount).toBeGreaterThan(0);
+    await tasksPage.searchTasks(taskData.title);
+    await expect(tasksPage.taskRow(taskData.title)).toBeVisible();
 
     await tasksPage.deleteTask(0);
-    expect(true).toBe(true);
+
+    await expect(tasksPage.taskRow(taskData.title)).toHaveCount(0);
   });
 
   test('admin can search tasks', async ({ page }) => {
@@ -153,6 +158,10 @@ test.describe('Admin - Tasks Management', () => {
   });
 
   test('admin can create tasks with different priorities', async ({ page }) => {
+    // Three full create round-trips through the UI, each with an assignee
+    // lookup, do not fit the default per-test budget.
+    test.slow();
+
     const priorities = ['low', 'medium', 'high'];
 
     for (const priority of priorities) {
@@ -179,11 +188,18 @@ test.describe('Admin - Tasks Management', () => {
     await tasksPage.goto();
     await tasksPage.clickNewTask();
     await tasksPage.fillTaskForm(taskData);
-    await tasksPage.saveAndWaitForResponse();
 
-    // Edit task to change status
-    await tasksPage.goto();
-    await tasksPage.editTask(0);
+    const response = await tasksPage.saveAndWaitForResponse();
+    expect(response.status()).toBe(201);
+    const taskId = (await response.json())?.data?.id;
+
+    // Edit the task this test created, addressed by id. Editing whichever task
+    // happens to sit in row 0 picks an arbitrary record from a shared database,
+    // and a completed one cannot be moved to another status at all.
+    await page.goto(`/tasks/${taskId}/edit`);
+    await page.waitForLoadState('networkidle');
+    await expect(tasksPage.titleInput).toHaveValue(taskData.title);
+
     await tasksPage.selectMuiOption('status', 'in_progress');
     await tasksPage.saveButton.click();
 

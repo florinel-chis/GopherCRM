@@ -134,6 +134,32 @@ func (m *MockTaskService) GetRecentlyCompleted(limit int) ([]models.Task, error)
 	return args.Get(0).([]models.Task), args.Error(1)
 }
 
+func (m *MockTaskService) CreateWithLabels(task *models.Task, labelIDs []uint) error {
+	args := m.Called(task, labelIDs)
+	return args.Error(0)
+}
+
+func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) error {
+	args := m.Called(task, labelIDs)
+	return args.Error(0)
+}
+
+func (m *MockTaskService) ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(labelID, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockTaskService) ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(assigneeID, labelID, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
 // Compile-time proof that the local double still satisfies the service
 // interface it stands in for.
 var _ service.TaskService = (*MockTaskService)(nil)
@@ -196,9 +222,10 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_Success() {
 		Priority:     models.TaskPriorityMedium,
 	}
 
-	suite.mockService.On("Create", mock.MatchedBy(func(t *models.Task) bool {
+	// No label_ids in the body, so the handler passes a nil id list through.
+	suite.mockService.On("CreateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.Title == task.Title && t.AssignedToID == task.AssignedToID
-	})).Return(nil)
+	}), []uint(nil)).Return(nil)
 
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
@@ -271,7 +298,7 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_ServiceError() {
 		Status:       models.TaskStatusPending,
 	}
 
-	suite.mockService.On("Create", mock.AnythingOfType("*models.Task")).Return(errors.New("service error"))
+	suite.mockService.On("CreateWithLabels", mock.AnythingOfType("*models.Task"), []uint(nil)).Return(errors.New("service error"))
 
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
@@ -430,7 +457,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_Success() {
 	existingTask.ID = taskID
 
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
-	suite.mockService.On("Update", mock.AnythingOfType("*models.Task")).Return(nil)
+	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":  "Updated Task",
@@ -500,9 +527,9 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminSameAssignee_Success()
 	existingTask.ID = taskID
 
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
-	suite.mockService.On("Update", mock.MatchedBy(func(t *models.Task) bool {
+	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.Title == "Updated Task" && t.AssignedToID == uint(1)
-	})).Return(nil)
+	}), (*[]uint)(nil)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":          "Updated Task",
@@ -568,9 +595,9 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_AdminReassign_Success() {
 	existingTask.ID = taskID
 
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
-	suite.mockService.On("Update", mock.MatchedBy(func(t *models.Task) bool {
+	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.AssignedToID == uint(2)
-	})).Return(nil)
+	}), (*[]uint)(nil)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"assigned_to_id": 2, // Admin reassigns to a different user

@@ -24,17 +24,6 @@ interface CreatedTask {
 let sharedTask: CreatedTask | null = null;
 
 /**
- * The create form labels the assignee "(Optional)", but the backend rejects a
- * task without assigned_to_id — pick the first user so the POST succeeds.
- */
-async function selectFirstAssignee(page: Page): Promise<void> {
-  await page.getByLabel('Assign To (Optional)').click();
-  const option = page.locator('li[role="option"]').first();
-  await option.waitFor({ state: 'visible' });
-  await option.click();
-}
-
-/**
  * Walks the create form and returns the identifier the API assigned, so later
  * navigation can address the record directly instead of hunting for its row
  * (the list is not sorted newest-first, so a fresh record may sit on page 2).
@@ -46,8 +35,9 @@ async function createTask(
 ): Promise<CreatedTask> {
   await tasksPage.goto();
   await tasksPage.clickNewTask();
+  // fillTaskForm picks an assignee: the field reads "(Optional)" but the API
+  // requires assigned_to_id.
   await tasksPage.fillTaskForm(data);
-  await selectFirstAssignee(page);
 
   const response = await tasksPage.saveAndWaitForResponse();
   expect(response.status()).toBe(201);

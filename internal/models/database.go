@@ -47,6 +47,7 @@ func MigrateDatabase() error {
 		&Lead{},
 		&Customer{},
 		&Ticket{},
+		&Label{},
 		&Task{},
 		&APIKey{},
 		&Configuration{},

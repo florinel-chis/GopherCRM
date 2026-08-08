@@ -74,6 +74,20 @@ func SetupTaskRoutes(router *gin.RouterGroup, handler *TaskHandler) {
 	}
 }
 
+// SetupLabelRoutes mounts the task-label endpoints. Reading labels is open to
+// every authenticated role because a label is part of how a task renders;
+// creating and editing them is staff-only, and deleting one — which detaches it
+// from every task at once — is admin-only.
+func SetupLabelRoutes(router *gin.RouterGroup, handler *LabelHandler) {
+	labels := router.Group("/labels")
+	{
+		labels.GET("", handler.List)
+		labels.POST("", middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport), handler.Create)
+		labels.PUT("/:id", middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport), handler.Update)
+		labels.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+	}
+}
+
 func SetupAPIKeyRoutes(router *gin.RouterGroup, handler *APIKeyHandler) {
 	apiKeys := router.Group("/api-keys")
 	{
