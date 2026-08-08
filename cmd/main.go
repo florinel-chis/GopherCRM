@@ -106,7 +106,7 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		log.Fatalf("Failed to set trusted proxies: %v", err)
 	}
 
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg.Server.CORSExtraOrigins...))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())

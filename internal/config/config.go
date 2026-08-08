@@ -33,6 +33,11 @@ type ServerConfig struct {
 	Port           int
 	Mode           string
 	TrustedProxies []string // Comma-separated CIDRs from TRUSTED_PROXIES env var; empty means trust no proxies
+	// Comma-separated origins from CORS_ALLOWED_ORIGINS, allowed in addition
+	// to the built-in development defaults. Required whenever the UI is
+	// served from any origin the defaults do not cover (e.g. a non-3000
+	// UI_PORT in docker compose).
+	CORSExtraOrigins []string
 }
 
 type JWTConfig struct {
@@ -116,9 +121,10 @@ func Load() (*Config, error) {
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
 		Server: ServerConfig{
-			Port:           getEnvAsInt("SERVER_PORT", 8080),
-			Mode:           getEnv("SERVER_MODE", "development"),
-			TrustedProxies: parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
+			Port:             getEnvAsInt("SERVER_PORT", 8080),
+			Mode:             getEnv("SERVER_MODE", "development"),
+			TrustedProxies:   parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
+			CORSExtraOrigins: parseCommaList(getEnv("CORS_ALLOWED_ORIGINS", "")),
 		},
 		JWT: JWTConfig{
 			Secret:             jwtSecret,
@@ -128,9 +134,9 @@ func Load() (*Config, error) {
 			// JWT_REFRESH_TOKEN_DAYS is honoured as a fallback for existing
 			// environments. Default is 30 days.
 			RefreshTokenDays: getEnvAsInt("REFRESH_TOKEN_EXPIRY_DAYS", getEnvAsInt("JWT_REFRESH_TOKEN_DAYS", 30)),
-			CookieSameSite:     getEnv("JWT_COOKIE_SAMESITE", "Lax"),
-			CookieDomain:       getEnv("JWT_COOKIE_DOMAIN", ""),
-			CookieSecure:       resolveCookieSecure(getEnv("SERVER_MODE", "development")),
+			CookieSameSite:   getEnv("JWT_COOKIE_SAMESITE", "Lax"),
+			CookieDomain:     getEnv("JWT_COOKIE_DOMAIN", ""),
+			CookieSecure:     resolveCookieSecure(getEnv("SERVER_MODE", "development")),
 		},
 		Logging: LoggingConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
@@ -194,20 +200,26 @@ func resolveCookieSecure(serverMode string) bool {
 // Returns nil (not an empty slice) when input is empty, which signals
 // "trust no proxies" to Gin's SetTrustedProxies.
 func parseTrustedProxies(val string) []string {
+	return parseCommaList(val)
+}
+
+// parseCommaList splits a comma-separated env value into trimmed, non-empty
+// entries; nil when the value is empty.
+func parseCommaList(val string) []string {
 	val = strings.TrimSpace(val)
 	if val == "" {
 		return nil
 	}
 	parts := strings.Split(val, ",")
-	proxies := make([]string, 0, len(parts))
+	entries := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			proxies = append(proxies, p)
+			entries = append(entries, p)
 		}
 	}
-	if len(proxies) == 0 {
+	if len(entries) == 0 {
 		return nil
 	}
-	return proxies
+	return entries
 }

@@ -55,6 +55,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
       APP_BASE_URL: http://localhost:${UI_PORT:-3000}
+      # The UI is same-origin behind nginx, but browsers still send the
+      # Origin header on API calls, and the backend 403s unlisted origins.
+      CORS_ALLOWED_ORIGINS: http://localhost:${UI_PORT:-3000},http://127.0.0.1:${UI_PORT:-3000}
     ports:
       - "8080:8080"
     healthcheck:
