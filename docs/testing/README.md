@@ -88,9 +88,12 @@ fail in ways that look like application bugs.
    burst 30, keyed per IP — still applies to every authenticated request. A fast suite hammering
    list endpoints from localhost can trip it; it also makes the 5-attempt account lockout
    unobservable unless the env var is set (the limiter 429s the sixth attempt first).
-7. **Filters are client-side.** Lead status, ticket status/priority, task filters and the user role
-   filter narrow only the currently loaded page. A case asserting server-side filtered result sets
-   asserts behaviour that does not exist.
+7. **Filters are client-side — except the task label filter.** Lead status, ticket status/priority,
+   task status/priority and the user role filter narrow only the currently loaded page. A case
+   asserting server-side filtered result sets asserts behaviour that does not exist. The one
+   exception since 2026-08-08 is `GET /tasks?label_id=`, which filters server-side (and wins over
+   `search` — the UI disables the search box while a label filter is active for exactly that
+   reason).
 8. **Elevated roles come from outside the app.** Public registration always creates a `customer`.
    The admin comes from the `create-admin` CLI; sales and support accounts require an
    admin-authenticated `POST /users`, and no e2e helper does that yet — building that role-login
@@ -105,6 +108,18 @@ fail in ways that look like application bugs.
    refresh and logout exist since the 2026-08 build-out) and a ROADMAP defect already fixed
    (`/dashboard/stats` is guarded now). Every claim in these documents was traced to code, and new
    cases should be grounded the same way.
+11. **Per-test budgets need headroom over honest runtimes.** The admin-entity-suite workflow tests
+   (CRM workflow, bulk operations, cross-entity search) legitimately run 60–110 s end to end, and
+   `playwright.config.slow.ts` capped tests at 60 s — so three of them failed on infrastructure,
+   which reads exactly like an application regression until the timings are measured. The budget
+   is now 180 s. When a previously green long test starts "failing", check whether it hit the
+   timeout ceiling before debugging the app.
+12. **A passing curl is not a passing browser.** Browsers attach an `Origin` header to every API
+   call — even same-origin ones — and the backend answers a bare, unlogged 403 when that origin is
+   not allowlisted. The dockerised UI on `UI_PORT=3001` failed every login with what looked like
+   bad credentials while the identical curl succeeded, because curl sends no Origin. Deployment
+   smoke tests must include one request with `-H 'Origin: <ui-origin>'` (fixed 2026-08-08 by
+   `CORS_ALLOWED_ORIGINS`; the compose file now derives it from `UI_PORT`).
 
 ## Defects surfaced while cataloguing
 
