@@ -3,7 +3,8 @@
 Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
 captured from the running application — a MySQL-backed backend and the Vite dev server — by the
 Playwright suite in `gocrm-ui/e2e/screenshots/`, at a 1440x900 viewport with `deviceScaleFactor: 2`.
-41 captures, all regenerated 2026-08-08 when tasks gained labels.
+46 captures: 41 regenerated 2026-08-08 when tasks gained labels, plus the five AEO captures added
+2026-08-11 with the module itself.
 
 The captures record the application as it actually is. Where a screen is a placeholder or a control
 does not exist yet, the image shows that rather than a mock-up, and the difference is noted in the
@@ -175,6 +176,37 @@ a chip with a clear affordance, and the chips in the Labels column filter the li
 ![Delete label confirmation](screenshots/labels/05-delete-confirm.png)
 The delete confirmation, which states how many tasks the label will be removed from. Labels are hard
 deleted along with their task links; the tasks themselves are untouched.
+
+## AEO
+
+Answer-engine visibility tracking; FEATURES.md section 10c. Unlike the other suites, the AEO
+captures photograph whatever data the backend holds — a run spends provider credit and takes
+minutes, so the suite creates nothing. The images below were taken against a demo profile (HubSpot
+vs four CRM competitors) after three runs on a single self-hosted engine; with more engines
+configured, the per-engine cards and timeline series multiply accordingly.
+
+![AEO dashboard](screenshots/aeo/aeo-dashboard.png)
+The dashboard at `/aeo`: brand-visibility gauge over the selected window, per-engine summary cards,
+visibility-over-time per engine, the share-of-voice table and the competitor visibility timeline.
+The 7/30/90-day selector drives every panel.
+
+![Tracked prompts](screenshots/aeo/aeo-prompts.png)
+The prompt list: each row carries its visibility bar and percentage, answer and mention counts, the
+last run time and an active toggle. The prompt text opens the answer drawer.
+
+![Answer drawer](screenshots/aeo/aeo-prompt-answers.png)
+The per-prompt drawer: one card per engine and run with the full recorded answer, latency and model,
+brand mentions highlighted inline, and a run selector to walk the history.
+
+![Citations](screenshots/aeo/aeo-citations.png)
+Citation comparisons at `/aeo/citations`: owned-domain citation rate against the competitors'
+domains, and how often a citation coincides with a brand mention. Populated only by engines that
+return sources (or answers that quote URLs), so it reads sparser than the mention metrics.
+
+![AEO settings](screenshots/aeo/aeo-settings.png)
+Settings at `/aeo/settings`: the brand profile (name, aliases, owned domains, competitors), a chip
+per engine showing whether its key is configured, the daily-schedule state and the manual Run now
+button.
 
 ## Users
 
