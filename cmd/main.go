@@ -183,7 +183,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// roster is separate because it must also name the engines that are missing
 	// a key.
 	aeoProviders := aeo.LoadProviders(cfg)
-	aeoEngine := aeo.NewEngine(aeoRepo, aeoProviders, aeo.EngineOptions{})
+	aeoEngine := aeo.NewEngine(aeoRepo, aeoProviders, aeo.EngineOptions{
+		QueryTimeout: time.Duration(cfg.AEO.QueryTimeoutSeconds) * time.Second,
+	})
 	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager,
 		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)))
 

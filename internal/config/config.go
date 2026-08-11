@@ -115,6 +115,11 @@ type AEOConfig struct {
 
 	ScheduleEnabled bool
 	ScheduleHour    int // local time, 0..23
+
+	// QueryTimeoutSeconds is the per-query deadline. The 60s default suits
+	// hosted APIs; a single-GPU self-hosted server answering serially needs
+	// more headroom, because queued requests carry the wait in their latency.
+	QueryTimeoutSeconds int
 }
 
 type RateLimitConfig struct {
@@ -191,22 +196,23 @@ func Load() (*Config, error) {
 			BaseURL: strings.TrimRight(getEnv("APP_BASE_URL", "http://localhost:5173"), "/"),
 		},
 		AEO: AEOConfig{
-			AnthropicAPIKey:  getEnv("ANTHROPIC_API_KEY", ""),
-			AnthropicModel:   getEnv("AEO_ANTHROPIC_MODEL", "claude-opus-5"),
-			OpenAIAPIKey:     getEnv("OPENAI_API_KEY", ""),
-			OpenAIModel:      getEnv("AEO_OPENAI_MODEL", "gpt-4o-mini"),
-			GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
-			GeminiModel:      getEnv("AEO_GEMINI_MODEL", "gemini-2.5-flash"),
-			MoonshotAPIKey:   getEnv("MOONSHOT_API_KEY", ""),
-			KimiModel:        getEnv("AEO_KIMI_MODEL", "moonshot-v1-8k"),
-			PerplexityAPIKey: getEnv("PERPLEXITY_API_KEY", ""),
-			PerplexityModel:  getEnv("AEO_PERPLEXITY_MODEL", "sonar"),
-			CustomName:       getEnv("AEO_CUSTOM_NAME", "custom"),
-			CustomBaseURL:    getEnv("AEO_CUSTOM_BASE_URL", ""),
-			CustomModel:      getEnv("AEO_CUSTOM_MODEL", "openai/gpt-oss-20b"),
-			CustomAPIKey:     getEnv("AEO_CUSTOM_API_KEY", ""),
-			ScheduleEnabled:  getEnvAsBool("AEO_SCHEDULE_ENABLED", true),
-			ScheduleHour:     clampHour(getEnvAsInt("AEO_SCHEDULE_HOUR", 6)),
+			AnthropicAPIKey:     getEnv("ANTHROPIC_API_KEY", ""),
+			AnthropicModel:      getEnv("AEO_ANTHROPIC_MODEL", "claude-opus-5"),
+			OpenAIAPIKey:        getEnv("OPENAI_API_KEY", ""),
+			OpenAIModel:         getEnv("AEO_OPENAI_MODEL", "gpt-4o-mini"),
+			GeminiAPIKey:        getEnv("GEMINI_API_KEY", ""),
+			GeminiModel:         getEnv("AEO_GEMINI_MODEL", "gemini-2.5-flash"),
+			MoonshotAPIKey:      getEnv("MOONSHOT_API_KEY", ""),
+			KimiModel:           getEnv("AEO_KIMI_MODEL", "moonshot-v1-8k"),
+			PerplexityAPIKey:    getEnv("PERPLEXITY_API_KEY", ""),
+			PerplexityModel:     getEnv("AEO_PERPLEXITY_MODEL", "sonar"),
+			CustomName:          getEnv("AEO_CUSTOM_NAME", "custom"),
+			CustomBaseURL:       getEnv("AEO_CUSTOM_BASE_URL", ""),
+			CustomModel:         getEnv("AEO_CUSTOM_MODEL", "openai/gpt-oss-20b"),
+			CustomAPIKey:        getEnv("AEO_CUSTOM_API_KEY", ""),
+			ScheduleEnabled:     getEnvAsBool("AEO_SCHEDULE_ENABLED", true),
+			ScheduleHour:        clampHour(getEnvAsInt("AEO_SCHEDULE_HOUR", 6)),
+			QueryTimeoutSeconds: getEnvAsInt("AEO_QUERY_TIMEOUT_SECONDS", 60),
 		},
 	}
 
