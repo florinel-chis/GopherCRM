@@ -137,3 +137,6 @@ docs/_build/
 # ---------------------------------------------------------------------------
 !docs/img/
 !docs/img/**
+
+# Machine-local notes (model evaluations, environment quirks) - never shipped
+docs/local/
