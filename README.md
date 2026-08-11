@@ -228,6 +228,8 @@ The configuration system includes specific settings for lead conversion:
 
 ### Answer Engine Optimization (AEO)
 
+![AEO dashboard](docs/img/gophercrm-aeo-dashboard.png)
+
 AEO tracks how visible your brand is in the answers large language models give to buyer questions.
 You describe the brand and its competitors once, track a list of prompts, and a daily run asks every
 configured answer engine each prompt and records what came back: whether the brand was mentioned,
@@ -247,6 +249,12 @@ prompt needs admin.
    competitors and their trend, over 7, 30 or 90 days.
 4. **Citations** (`/aeo/citations`) — how often each company's domains are cited, and how often a
    citation coincides with a brand mention.
+
+![AEO answer drawer](docs/img/gophercrm-aeo-answers.png)
+
+Every recorded answer is kept verbatim — the drawer above shows one engine's answer with the brand
+mentions highlighted and a selector to walk earlier runs. The full screen-by-screen tour lives in
+[docs/SCREENSHOTS.md](docs/SCREENSHOTS.md#aeo).
 
 Engines are configured by environment variable, and one without a key is simply skipped:
 
