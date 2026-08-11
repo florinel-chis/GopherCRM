@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/aeo"
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/handler"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
@@ -60,7 +61,13 @@ func main() {
 		log.Printf("Warning: Failed to initialize default configurations: %v", err)
 	}
 
-	router := setupRouter(cfg)
+	// Background workers (currently the AEO scheduler) live for as long as the
+	// process serves traffic. Cancelling this context is what stops them, and it
+	// happens on the same signal that shuts the HTTP server down.
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+
+	router := setupRouter(backgroundCtx, cfg)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
@@ -77,12 +84,16 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	
+
 	utils.Logger.Info("Shutting down server...")
+
+	// Stop the background workers first so no new AEO run starts while the
+	// server is draining.
+	stopBackground()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal("Server forced to shutdown:", err)
 	}
@@ -90,7 +101,7 @@ func main() {
 	utils.Logger.Info("Server exiting")
 }
 
-func setupRouter(cfg *config.Config) *gin.Engine {
+func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine {
 	if cfg.Server.Mode == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -121,13 +132,13 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 
 	api := router.Group(cfg.API.Prefix)
 	{
-		setupDependencies(api, cfg)
+		setupDependencies(backgroundCtx, api, cfg)
 	}
 
 	return router
 }
 
-func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
 	// Erasing a customer must also erase the lead it was converted from: the
@@ -145,6 +156,7 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	passwordResetRepo := repository.NewPasswordResetTokenRepository(models.DB)
 	bulkOperationRepo := repository.NewBulkOperationRepository(models.DB)
 	bulkRepo := repository.NewBulkRepository(models.DB)
+	aeoRepo := repository.NewAEORepository(models.DB)
 
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 
@@ -165,6 +177,16 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 		taskRepo, ticketRepo, txManager, utils.Logger,
 	)
 
+	// AEO. Only engines with credentials are loaded, so a deployment that sets
+	// no provider key still boots — the module then answers 503 on run creation
+	// instead of recording runs that can never produce an answer. The status
+	// roster is separate because it must also name the engines that are missing
+	// a key.
+	aeoProviders := aeo.LoadProviders(cfg)
+	aeoEngine := aeo.NewEngine(aeoRepo, aeoProviders, aeo.EngineOptions{})
+	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager,
+		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)))
+
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
 	leadHandler := handler.NewLeadHandler(leadService)
@@ -176,6 +198,33 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
 	bulkHandler := handler.NewBulkHandler(bulkService)
+	aeoHandler := handler.NewAEOHandler(aeoService)
+
+	// Recover runs stranded by the previous process before anything can start a
+	// new one. The engine runs in-process and writes the terminal status itself,
+	// so a row still marked "running" at boot belongs to a process that died
+	// mid-run (deploy, OOM, docker restart — even a graceful SIGTERM, which
+	// drains HTTP without waiting for a run that may have hours of provider
+	// calls left). Left alone, one such row makes the overlap guard answer 409
+	// to every manual run and skip every scheduled one, permanently.
+	if recovered, err := aeoService.ReconcileRunningRuns(); err != nil {
+		utils.Logger.WithError(err).Error("Failed to reconcile stranded AEO runs")
+	} else if recovered > 0 {
+		utils.Logger.WithField("runs", recovered).
+			Warn("Recovered AEO runs left behind by a previous process")
+	}
+
+	// The daily run is opt-out. It is skipped entirely when no engine is
+	// configured, because every tick would otherwise log the same 503-shaped
+	// failure.
+	if cfg.AEO.ScheduleEnabled && len(aeoProviders) > 0 {
+		aeo.StartScheduler(backgroundCtx, aeoService, cfg.AEO.ScheduleHour)
+	} else {
+		utils.Logger.WithFields(map[string]interface{}{
+			"enabled":   cfg.AEO.ScheduleEnabled,
+			"providers": len(aeoProviders),
+		}).Info("AEO scheduler not started")
+	}
 
 	// Public routes with strict rate limiting for auth endpoints
 	public := router.Group("")
@@ -209,6 +258,7 @@ func setupDependencies(router *gin.RouterGroup, cfg *config.Config) {
 		handler.SetupConfigurationRoutes(protected, configHandler)
 		handler.SetupDashboardRoutes(protected, dashboardHandler)
 		handler.SetupBulkStatusRoutes(protected, bulkHandler)
+		handler.SetupAEORoutes(protected, aeoHandler)
 
 		protectedAuth := protected.Group("/auth")
 		{

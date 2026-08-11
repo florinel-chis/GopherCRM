@@ -25,11 +25,21 @@ that the test was executed as part of writing this catalog.
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 2 | 17 | 15 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
-| **Total** | | **440** | **122** | **192** | **126** | **109** | **268** | **63** |
+| [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 40 | 5 | 23 | 12 | 1 | 36 | 3 |
+| **Total** | | **480** | **127** | **215** | **138** | **110** | **304** | **66** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
 detail the case lists. They are counted as automated above.
+
+[11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. It is the first section with no
+Playwright spec behind it at all: one case is automated at the Go level (the route-coexistence
+smoke test) and the remaining 39 are planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does
+not exist yet, or blocked. Where a Go or Vitest test already pins a case's behaviour the Automation
+line names it, so the E2E spec can be written against a verified contract. Four cases are marked
+*regression*: they cover defects found and fixed during the module's adversarial review
+(500-instead-of-400 on whitespace input, a run stranded by a restart bricking the module, a
+non-atomic run-overlap guard, and `ORDER BY trigger` failing on MySQL only).
 
 ## Case format
 

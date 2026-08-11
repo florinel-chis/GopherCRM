@@ -28,6 +28,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupConfigurationRoutes(group, &ConfigurationHandler{})
 	SetupDashboardRoutes(group, &DashboardHandler{})
 	SetupBulkStatusRoutes(group, &BulkHandler{})
+	SetupAEORoutes(group, &AEOHandler{})
 
 	// A request to a static path that shares a prefix with a parameter route
 	// must dispatch without a panic; the nil-service handler may then blow up,
@@ -38,6 +39,9 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		"/api/v1/tickets/bulk/status",
 		"/api/v1/tasks/bulk/status",
 		"/api/v1/labels",
+		// Static segment registered next to /aeo/prompts/:id.
+		"/api/v1/aeo/prompts/generate",
+		"/api/v1/aeo/runs",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		w := httptest.NewRecorder()
@@ -60,6 +64,19 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/labels"},
 		{http.MethodPut, "/api/v1/labels/1"},
 		{http.MethodDelete, "/api/v1/labels/1"},
+		// The AEO group does the same thing one level deeper: /prompts/generate
+		// is static while /prompts/:id and /prompts/:id/answers are parameter
+		// routes, and they are registered on three different verbs.
+		{http.MethodGet, "/api/v1/aeo/prompts"},
+		{http.MethodGet, "/api/v1/aeo/prompts/1/answers"},
+		{http.MethodPut, "/api/v1/aeo/prompts/1"},
+		{http.MethodDelete, "/api/v1/aeo/prompts/1"},
+		{http.MethodGet, "/api/v1/aeo/runs/1"},
+		{http.MethodGet, "/api/v1/aeo/dashboard"},
+		{http.MethodGet, "/api/v1/aeo/citations"},
+		{http.MethodGet, "/api/v1/aeo/providers"},
+		{http.MethodGet, "/api/v1/aeo/profile"},
+		{http.MethodPut, "/api/v1/aeo/profile"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()

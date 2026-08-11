@@ -116,6 +116,35 @@ export const router = createBrowserRouter([
         lazy: () => import('@/pages/labels/LabelList'),
       },
       {
+        // AEO is internal marketing data: the whole /aeo/* group is staff-only,
+        // matching the server-side RequireRole(admin, sales, support) on the API
+        // group. Same pathless-layout shape as the admin block below — a static
+        // `element` on the children themselves would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'aeo',
+            lazy: () => import('@/pages/aeo/AEODashboard'),
+          },
+          {
+            path: 'aeo/prompts',
+            lazy: () => import('@/pages/aeo/AEOPrompts'),
+          },
+          {
+            path: 'aeo/citations',
+            lazy: () => import('@/pages/aeo/AEOCitations'),
+          },
+          {
+            path: 'aeo/settings',
+            lazy: () => import('@/pages/aeo/AEOSettings'),
+          },
+        ],
+      },
+      {
         // Pathless layout route: applies the admin guard to every child below.
         // The guard must not live on the child routes themselves — a statically
         // defined `element` takes precedence over `lazy`, which would silently

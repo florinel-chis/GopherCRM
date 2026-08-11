@@ -37,6 +37,10 @@ import {
   ChevronLeft,
   Tune,
   LocalOffer,
+  Insights,
+  Timeline,
+  QuestionAnswer,
+  Link as LinkIcon,
 } from '@mui/icons-material';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -85,6 +89,35 @@ const navItems: NavItem[] = [
     icon: <LocalOffer />,
   },
   {
+    // Answer Engine Optimization. Staff-only, mirroring the API group guard;
+    // the customer role never sees the entry and is bounced by the route guard.
+    title: 'AEO',
+    icon: <Insights />,
+    roles: ['admin', 'sales', 'support'],
+    children: [
+      {
+        title: 'Dashboard',
+        path: '/aeo',
+        icon: <Timeline />,
+      },
+      {
+        title: 'Prompts',
+        path: '/aeo/prompts',
+        icon: <QuestionAnswer />,
+      },
+      {
+        title: 'Citations',
+        path: '/aeo/citations',
+        icon: <LinkIcon />,
+      },
+      {
+        title: 'Settings',
+        path: '/aeo/settings',
+        icon: <Tune />,
+      },
+    ],
+  },
+  {
     title: 'Users',
     path: '/users',
     icon: <People />,
@@ -116,7 +149,9 @@ const navItems: NavItem[] = [
 
 export const MainLayout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Keyed by nav title: there is more than one collapsible group now (AEO and
+  // Settings), and a single shared boolean would open and close them together.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -125,8 +160,8 @@ export const MainLayout: React.FC = () => {
     setMobileOpen(!mobileOpen);
   };
 
-  const handleSettingsToggle = () => {
-    setSettingsOpen(!settingsOpen);
+  const handleGroupToggle = (title: string) => {
+    setOpenGroups((previous) => ({ ...previous, [title]: !previous[title] }));
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -166,14 +201,15 @@ export const MainLayout: React.FC = () => {
           if (!canViewNavItem(item)) return null;
 
           if (item.children) {
+            const groupOpen = Boolean(openGroups[item.title]);
             return (
               <React.Fragment key={item.title}>
-                <ListItemButton onClick={handleSettingsToggle}>
+                <ListItemButton onClick={() => handleGroupToggle(item.title)}>
                   <ListItemIcon>{item.icon}</ListItemIcon>
                   <ListItemText primary={item.title} />
-                  {settingsOpen ? <ExpandLess /> : <ExpandMore />}
+                  {groupOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItemButton>
-                <Collapse in={settingsOpen} timeout="auto" unmountOnExit>
+                <Collapse in={groupOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
                     {item.children.map((child) => {
                       if (!canViewNavItem(child)) return null;

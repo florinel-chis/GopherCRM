@@ -15,6 +15,15 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 	// ones that affect CookieSecure and the mandatory JWT_SECRET).
 	keysToClean := []string{
 		"JWT_SECRET", "JWT_COOKIE_SECURE", "SERVER_MODE",
+		// AEO keys are cleaned too: a developer shell that exports a real
+		// provider key would otherwise make the default-value assertions fail.
+		"ANTHROPIC_API_KEY", "AEO_ANTHROPIC_MODEL",
+		"OPENAI_API_KEY", "AEO_OPENAI_MODEL",
+		"GEMINI_API_KEY", "AEO_GEMINI_MODEL",
+		"MOONSHOT_API_KEY", "AEO_KIMI_MODEL",
+		"PERPLEXITY_API_KEY", "AEO_PERPLEXITY_MODEL",
+		"AEO_CUSTOM_NAME", "AEO_CUSTOM_BASE_URL", "AEO_CUSTOM_MODEL", "AEO_CUSTOM_API_KEY",
+		"AEO_SCHEDULE_ENABLED", "AEO_SCHEDULE_HOUR",
 	}
 
 	// Save originals.
@@ -192,6 +201,149 @@ func TestDSN(t *testing.T) {
 	assert.Contains(t, dsn, "127.0.0.1:3307")
 	assert.Contains(t, dsn, "/testdb")
 	assert.Contains(t, dsn, "parseTime=True")
+}
+
+func TestLoad_AEODefaults(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+
+		// No provider is configured out of the box.
+		assert.Empty(t, cfg.AEO.AnthropicAPIKey)
+		assert.Empty(t, cfg.AEO.OpenAIAPIKey)
+		assert.Empty(t, cfg.AEO.GeminiAPIKey)
+		assert.Empty(t, cfg.AEO.MoonshotAPIKey)
+		assert.Empty(t, cfg.AEO.PerplexityAPIKey)
+		assert.Empty(t, cfg.AEO.CustomBaseURL)
+		assert.Empty(t, cfg.AEO.CustomAPIKey)
+
+		// Models fall back to the documented defaults.
+		assert.Equal(t, "claude-opus-5", cfg.AEO.AnthropicModel)
+		assert.Equal(t, "gpt-4o-mini", cfg.AEO.OpenAIModel)
+		assert.Equal(t, "gemini-2.5-flash", cfg.AEO.GeminiModel)
+		assert.Equal(t, "moonshot-v1-8k", cfg.AEO.KimiModel)
+		assert.Equal(t, "sonar", cfg.AEO.PerplexityModel)
+		assert.Equal(t, "custom", cfg.AEO.CustomName)
+		assert.Equal(t, "openai/gpt-oss-20b", cfg.AEO.CustomModel)
+
+		assert.True(t, cfg.AEO.ScheduleEnabled)
+		assert.Equal(t, 6, cfg.AEO.ScheduleHour)
+	})
+}
+
+func TestLoad_AEOOverrides(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":           validSecret(),
+		"ANTHROPIC_API_KEY":    "anthropic-key",
+		"AEO_ANTHROPIC_MODEL":  "claude-test-model",
+		"OPENAI_API_KEY":       "openai-key",
+		"AEO_OPENAI_MODEL":     "gpt-test",
+		"GEMINI_API_KEY":       "gemini-key",
+		"AEO_GEMINI_MODEL":     "gemini-test",
+		"MOONSHOT_API_KEY":     "moonshot-key",
+		"AEO_KIMI_MODEL":       "kimi-test",
+		"PERPLEXITY_API_KEY":   "perplexity-key",
+		"AEO_PERPLEXITY_MODEL": "sonar-test",
+		"AEO_CUSTOM_NAME":      "lmstudio",
+		"AEO_CUSTOM_BASE_URL":  "http://10.0.1.21:1234/v1",
+		"AEO_CUSTOM_MODEL":     "local/model",
+		"AEO_CUSTOM_API_KEY":   "custom-key",
+		"AEO_SCHEDULE_ENABLED": "false",
+		"AEO_SCHEDULE_HOUR":    "3",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+
+		assert.Equal(t, "anthropic-key", cfg.AEO.AnthropicAPIKey)
+		assert.Equal(t, "claude-test-model", cfg.AEO.AnthropicModel)
+		assert.Equal(t, "openai-key", cfg.AEO.OpenAIAPIKey)
+		assert.Equal(t, "gpt-test", cfg.AEO.OpenAIModel)
+		assert.Equal(t, "gemini-key", cfg.AEO.GeminiAPIKey)
+		assert.Equal(t, "gemini-test", cfg.AEO.GeminiModel)
+		assert.Equal(t, "moonshot-key", cfg.AEO.MoonshotAPIKey)
+		assert.Equal(t, "kimi-test", cfg.AEO.KimiModel)
+		assert.Equal(t, "perplexity-key", cfg.AEO.PerplexityAPIKey)
+		assert.Equal(t, "sonar-test", cfg.AEO.PerplexityModel)
+		assert.Equal(t, "lmstudio", cfg.AEO.CustomName)
+		assert.Equal(t, "http://10.0.1.21:1234/v1", cfg.AEO.CustomBaseURL)
+		assert.Equal(t, "local/model", cfg.AEO.CustomModel)
+		assert.Equal(t, "custom-key", cfg.AEO.CustomAPIKey)
+		assert.False(t, cfg.AEO.ScheduleEnabled)
+		assert.Equal(t, 3, cfg.AEO.ScheduleHour)
+	})
+}
+
+func TestLoad_AEOScheduleHourClamped(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":        validSecret(),
+		"AEO_SCHEDULE_HOUR": "99",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, 23, cfg.AEO.ScheduleHour)
+	})
+
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":        validSecret(),
+		"AEO_SCHEDULE_HOUR": "-4",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, 0, cfg.AEO.ScheduleHour)
+	})
+
+	// A non-numeric value falls back to the default before clamping.
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":        validSecret(),
+		"AEO_SCHEDULE_HOUR": "midnight",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, 6, cfg.AEO.ScheduleHour)
+	})
+}
+
+func TestGetEnvAsBool(t *testing.T) {
+	const key = "AEO_TEST_BOOL"
+	t.Cleanup(func() { os.Unsetenv(key) })
+
+	cases := []struct {
+		value      string
+		set        bool
+		defaultVal bool
+		expected   bool
+	}{
+		{set: false, defaultVal: true, expected: true},
+		{set: false, defaultVal: false, expected: false},
+		{value: "", set: true, defaultVal: true, expected: true},
+		{value: "true", set: true, defaultVal: false, expected: true},
+		{value: "TRUE", set: true, defaultVal: false, expected: true},
+		{value: " 1 ", set: true, defaultVal: false, expected: true},
+		{value: "false", set: true, defaultVal: true, expected: false},
+		{value: "0", set: true, defaultVal: true, expected: false},
+		// Unparseable values keep the default rather than guessing.
+		{value: "yes", set: true, defaultVal: true, expected: true},
+		{value: "yes", set: true, defaultVal: false, expected: false},
+	}
+
+	for _, tc := range cases {
+		os.Unsetenv(key)
+		if tc.set {
+			os.Setenv(key, tc.value)
+		}
+		assert.Equal(t, tc.expected, getEnvAsBool(key, tc.defaultVal),
+			"value=%q set=%v default=%v", tc.value, tc.set, tc.defaultVal)
+	}
+}
+
+func TestClampHour(t *testing.T) {
+	assert.Equal(t, 0, clampHour(-1))
+	assert.Equal(t, 0, clampHour(0))
+	assert.Equal(t, 6, clampHour(6))
+	assert.Equal(t, 23, clampHour(23))
+	assert.Equal(t, 23, clampHour(24))
 }
 
 func TestParseTrustedProxies(t *testing.T) {

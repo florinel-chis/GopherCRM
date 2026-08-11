@@ -12,6 +12,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
+- 🔎 **Answer Engine Optimization (AEO)**: Track how often LLM answer engines mention your brand — daily runs across Anthropic, OpenAI, Gemini, Kimi, Perplexity and any OpenAI-compatible endpoint, with visibility, share-of-voice and citation reporting
 - 🎨 **Modern UI**: React TypeScript frontend with Material-UI
 - 📊 **Dashboard**: Analytics and activity overview
 - 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
@@ -224,6 +225,51 @@ The configuration system includes specific settings for lead conversion:
 - `leads.conversion.allowed_statuses`: Which lead statuses allow conversion to customer
 - `leads.conversion.require_notes`: Whether notes are required during conversion
 - `leads.conversion.auto_assign_owner`: Auto-assign lead owner as customer owner
+
+### Answer Engine Optimization (AEO)
+
+AEO tracks how visible your brand is in the answers large language models give to buyer questions.
+You describe the brand and its competitors once, track a list of prompts, and a daily run asks every
+configured answer engine each prompt and records what came back: whether the brand was mentioned,
+how early, which competitors appeared alongside it, and which sources were cited.
+
+Available to **admin**, **sales** and **support** under **AEO** in the sidebar; `customer` cannot
+reach it. Saving the profile, managing prompts and starting a run need admin or sales; deleting a
+prompt needs admin.
+
+1. **Settings** (`/aeo/settings`) — brand name, aliases, owned domains and competitors, plus a chip
+   per answer engine showing whether its key is present. Save the profile before anything else: a
+   run has nothing to detect without it.
+2. **Prompts** (`/aeo/prompts`) — the questions to track (up to 100 active). Add them by hand or ask
+   the Anthropic engine to suggest some. Each row shows the visibility percentage over the selected
+   window; opening a row shows the recorded answers with every brand mention highlighted.
+3. **Dashboard** (`/aeo`) — overall visibility, a per-engine timeline, share of voice against the
+   competitors and their trend, over 7, 30 or 90 days.
+4. **Citations** (`/aeo/citations`) — how often each company's domains are cited, and how often a
+   citation coincides with a brand mention.
+
+Engines are configured by environment variable, and one without a key is simply skipped:
+
+| Engine | Key | Model override |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` (also drives prompt suggestions) | `AEO_ANTHROPIC_MODEL` |
+| OpenAI | `OPENAI_API_KEY` | `AEO_OPENAI_MODEL` |
+| Gemini | `GEMINI_API_KEY` | `AEO_GEMINI_MODEL` |
+| Kimi (Moonshot) | `MOONSHOT_API_KEY` | `AEO_KIMI_MODEL` |
+| Perplexity | `PERPLEXITY_API_KEY` | `AEO_PERPLEXITY_MODEL` |
+| Any OpenAI-compatible server (e.g. LM Studio) | `AEO_CUSTOM_BASE_URL` (+ optional `AEO_CUSTOM_API_KEY`) | `AEO_CUSTOM_MODEL`, `AEO_CUSTOM_NAME` |
+
+`AEO_SCHEDULE_ENABLED` (default `true`) and `AEO_SCHEDULE_HOUR` (default `6`, server local time)
+control the daily run. With no key set at all the module still boots; starting a run then returns
+503 instead of recording a run that could never produce an answer.
+
+**Cost.** One run is *active prompts × configured engines* API calls — 25 prompts across 5 engines
+is 125 calls a day. The 100-prompt cap exists for this reason. Only one run may be in flight at a
+time; a second request is refused with 409.
+
+`scripts/aeo_live_smoke.sh` walks the whole module against real providers for manual verification.
+It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-aeo.md`. Design:
+`docs/specs/2026-08-11-aeo-design.md`.
 
 ## Development
 

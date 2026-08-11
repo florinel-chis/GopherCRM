@@ -217,6 +217,27 @@ CHANGELOG "Added" for the full behavioural description.
 | Customers | `GET /customers/export` (CSV, admin), `POST /customers/{id}/assign` (new `assigned_to_id` column, survives erasure) | handler/service/repo suites + `tests/customer_integration_test.go` (15 new tests) incl. erasure regression |
 | Erasure | password-reset tokens purged with the account | `test/integration/erasure_test.go` `TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount` |
 
+## 10c. Answer Engine Optimization (AEO) (2026-08)
+
+Tracks how often LLM answer engines mention the brand. Design spec:
+`docs/specs/2026-08-11-aeo-design.md`; catalog cases in `docs/testing/11-aeo.md`; manual
+live-provider smoke in `scripts/aeo_live_smoke.sh`. **No Playwright coverage exists yet** — every
+row below is unit/integration only, which is why none is marked *covered*.
+
+| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+|---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
+| 10c.1 | **Brand profile** | `/aeo/settings`: brand name, aliases, owned domains, competitors; single row pinned to ID 1; domains lowercased and `www.`-stripped on save | none | `aeo_handler_test.go`, `aeo_service_test.go` | `AEOSettings.test.tsx` | `aeo_repository_test.go` (SQLite, JSON-in-TEXT round-trip) | **partial** | Whitespace-only brand name returned 500 until 2026-08-11; now 400 |
+| 10c.2 | **Prompts** | `/aeo/prompts`: up to 100 active, ≤500 runes, duplicates rejected case-insensitively over live rows, soft delete keeps the answers | none | `aeo_handler_test.go`, `aeo_service_test.go` | `AEOPrompts.test.tsx` | `aeo_repository_test.go` | **partial** | No unique index on `text` by design — the soft-delete trap; uniqueness is a service-level `LOWER(text)` pre-check |
+| 10c.3 | **Providers** | Six engines behind one interface: Anthropic SDK + one OpenAI-compatible wrapper for OpenAI, Gemini, Kimi, Perplexity and any custom base URL; keyless engine skipped | none | `internal/aeo/anthropic_test.go`, `openai_compat_test.go`, `provider_test.go` (httptest servers: success, empty choices, 429, 500, malformed JSON, perplexity citations) | `AEOSettings.test.tsx` (chips) | -- | **partial** | Live credentials are exercised only by the manual smoke script |
+| 10c.4 | **Runs + engine** | `POST /aeo/runs` returns 202 and executes on a background context; worker pool of 4, 60s per query; one answer row per (prompt × provider) including failures; run ends completed/partial/failed | none | `internal/aeo/engine_test.go`, `aeo_service_test.go` | -- | `aeo_repository_test.go` | **partial** | An issued run cannot be cancelled; the overlap guard is process-local (single-process assumption, see the spec) |
+| 10c.5 | **Run recovery** | Runs stranded in `running` by a crash or a deploy are failed at startup (`ReconcileRunningRuns`) and swept by `StartRun` after 6h | none | `aeo_service_test.go` (`TestReconcileRunningRuns`, `TestStartRun_SweepsRunsStrandedByACrash`, `TestStartRun_ConcurrentCallsStartExactlyOneRun`) | -- | `aeo_repository_test.go` (`TestAEORepository_MarkStaleRunsFailed`) | **partial** | Added 2026-08-11: before it, one stranded row rejected every later run with 409 permanently |
+| 10c.6 | **Mention + citation analysis** | Unicode-aware word-boundary matching for brand/aliases/competitors, first-mention rune offset, URL extraction and domain normalisation (`www.`, port, case) | none | `internal/aeo/analysis_test.go` | `AEOPrompts.test.tsx` (highlighting) | -- | **partial** | Matching is literal: no stemming, no fuzzy matching |
+| 10c.7 | **Dashboard + citations** | `/aeo` and `/aeo/citations`: visibility, per-provider timeline with no gap days, share of voice, citation and brand-mention rates; 7/30/90 windows, range clamped to 90 days | none | `aeo_service_test.go` (arithmetic incl. zero-answer case), `aeo_handler_test.go` | `AEODashboard.test.tsx`, `AEOCitations.test.tsx` | `aeo_repository_test.go` (aggregations + a portability scan for MySQL/SQLite-only SQL) | **partial** | Per-day bucketing is done in Go; no `DATE()`/`strftime` anywhere by design |
+| 10c.8 | **Scheduler** | Daily run at `AEO_SCHEDULE_HOUR`, panic-recovered, stops with the server's background context | none | `internal/aeo/scheduler_test.go` (`NextRunAt` boundaries) | -- | -- | **partial** | Every replica would arm its own scheduler — the module assumes one API process |
+| 10c.9 | **RBAC** | Group guard admin/sales/support (customer 403 everywhere); writes admin+sales; prompt delete admin-only; SPA nav and routes mirror it | none | `aeo_handler_test.go` role matrix, `routes_test.go` static/param coexistence | -- | -- | **partial** | Sales/support paths are untestable end-to-end until a role-login helper exists |
+
+---
+
 ## 11. Cross-Cutting Concerns
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |

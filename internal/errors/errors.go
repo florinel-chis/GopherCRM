@@ -35,6 +35,17 @@ var (
 	ErrInvalidLabelName   = errors.New("label name is required")
 	ErrInvalidLabelColor  = errors.New("label color must be a hex value of the form #RRGGBB")
 	ErrLabelNotFound      = errors.New("label not found")
+
+	// AEO errors. The two conflict sentinels are answered with 409;
+	// ErrProfileNotConfigured is the exception that is answered with 404 on
+	// GET /aeo/profile (an unconfigured profile is a missing resource there)
+	// and with 409 everywhere else, where it means "configure the brand first".
+	// ErrNoProvidersConfigured is answered with 503, since it describes a
+	// missing upstream dependency rather than a bad request.
+	ErrDuplicatePrompt       = errors.New("a prompt with this text already exists")
+	ErrRunInProgress         = errors.New("an AEO run is already in progress")
+	ErrProfileNotConfigured  = errors.New("AEO brand profile is not configured")
+	ErrNoProvidersConfigured = errors.New("no AEO providers are configured")
 )
 
 // Error codes

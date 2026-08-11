@@ -2,7 +2,9 @@
 # The sqlite driver is only used by tests, so CGO stays off and the
 # binaries are fully static.
 
-FROM golang:1.24-alpine AS build
+# The builder must be at least the go directive in go.mod (1.25 since the AEO
+# provider SDKs landed), otherwise the toolchain refuses to build.
+FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 

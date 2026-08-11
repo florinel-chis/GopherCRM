@@ -269,3 +269,85 @@ type BulkRepository interface {
 
 	WithTx(tx *gorm.DB) BulkRepository
 }
+
+// AEORepository backs the answer-engine-optimization module: the brand profile,
+// the tracked prompts, the runs that query the providers, and the answers and
+// citations those runs produce.
+//
+// Every metrics method obeys the same range convention — `from` inclusive, `to`
+// exclusive — and is written to mean the same thing on MySQL 8 and SQLite. See
+// the DUAL-DATABASE CONSTRAINT comment in aeo_repository.go for what that rules
+// out (no date functions, no JSON functions, no aggregate over a time column).
+type AEORepository interface {
+	// GetProfile returns the single brand-profile row, or gorm.ErrRecordNotFound
+	// when the profile has not been configured yet.
+	GetProfile() (*models.AEOProfile, error)
+	// UpsertProfile inserts or replaces the profile row whole. The service pins
+	// its ID to 1.
+	UpsertProfile(profile *models.AEOProfile) error
+
+	CreatePrompt(prompt *models.AEOPrompt) error
+	GetPromptByID(id uint) (*models.AEOPrompt, error)
+	UpdatePrompt(prompt *models.AEOPrompt) error
+	// DeletePrompt soft-deletes the prompt and reports gorm.ErrRecordNotFound
+	// when no row matched.
+	DeletePrompt(id uint) error
+	ListPrompts(activeOnly bool, offset, limit int, sortBy, sortOrder string) ([]models.AEOPrompt, error)
+	CountPrompts(activeOnly bool) (int64, error)
+	// ListActivePrompts returns every active prompt, unpaginated: it is the run
+	// engine's input and the service caps the active set.
+	ListActivePrompts() ([]models.AEOPrompt, error)
+	// ExistsByTextInsensitive backs the service's duplicate-text pre-check over
+	// live rows. excludeID is the row an update may collide with; 0 for create.
+	ExistsByTextInsensitive(text string, excludeID uint) (bool, error)
+
+	CreateRun(run *models.AEORun) error
+	GetRunByID(id uint) (*models.AEORun, error)
+	UpdateRun(run *models.AEORun) error
+	ListRuns(offset, limit int, sortBy, sortOrder string) ([]models.AEORun, error)
+	CountRuns() (int64, error)
+	// GetLatestRun returns the most recently started run, or (nil, nil) when
+	// none exists — a fresh install is not an error condition.
+	GetLatestRun() (*models.AEORun, error)
+	// CountRunsByStatus backs the overlap guard on "running".
+	CountRunsByStatus(status string) (int64, error)
+	// MarkStaleRunsFailed fails every run left in "running" that started
+	// before cutoff, stamping completed_at, and returns the row count. It is
+	// how a run stranded by a crash or a restart stops blocking the overlap
+	// guard: the executor is in-process, so a running row older than a whole
+	// run's worst-case duration belongs to a process that is already gone.
+	MarkStaleRunsFailed(cutoff time.Time) (int64, error)
+
+	// CreateAnswerWithCitations writes the answer and its citations in one
+	// transaction, filling each citation's AnswerID from the inserted answer.
+	CreateAnswerWithCitations(answer *models.AEOAnswer, citations []models.AEOCitation) error
+	// ListAnswersByPrompt returns the prompt's answers newest first with their
+	// citations preloaded; a nil runID means every run.
+	ListAnswersByPrompt(promptID uint, runID *uint, offset, limit int) ([]models.AEOAnswer, error)
+	CountAnswersByPrompt(promptID uint, runID *uint) (int64, error)
+	// ListAnswersByRun returns one run's answers oldest first, citations
+	// preloaded.
+	ListAnswersByRun(runID uint) ([]models.AEOAnswer, error)
+
+	// ListAnswerFacts returns one projected fact per answer in the range,
+	// oldest first, INCLUDING failed answers (Errored marks them). Per-day
+	// bucketing and competitor-mention aggregation happen in Go from this.
+	ListAnswerFacts(from, to time.Time) ([]models.AEOAnswerFact, error)
+	// PromptVisibility aggregates the given prompts over the range. Answers and
+	// Mentions exclude failed answers so Mentions/Answers is the ratio directly;
+	// LastRunAt does not, because a failed run still ran. An empty promptIDs
+	// returns an empty map.
+	PromptVisibility(from, to time.Time, promptIDs []uint) (map[uint]models.AEOPromptVisibility, error)
+	// CitationDomainStats groups the citations of non-error answers in the range
+	// by domain, most-cited first.
+	CitationDomainStats(from, to time.Time) ([]models.AEOCitationAggRow, error)
+	// CountAnswersInRange returns the answers in the range and how many of them
+	// mentioned the brand. BOTH counts exclude failed answers, so total is a
+	// usable rate denominator.
+	CountAnswersInRange(from, to time.Time) (total int64, withBrandMention int64, err error)
+	// CountAnswersWithCitations counts the non-error answers in the range that
+	// carry at least one citation.
+	CountAnswersWithCitations(from, to time.Time) (int64, error)
+
+	WithTx(tx *gorm.DB) AEORepository
+}

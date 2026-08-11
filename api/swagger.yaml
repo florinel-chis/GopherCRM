@@ -1,5 +1,316 @@
 basePath: /api/v1
 definitions:
+  github_com_florinel-chis_gophercrm_internal_models.AEOAnswer:
+    properties:
+      answer_text:
+        type: string
+      attempt:
+        type: integer
+      brand_mentioned:
+        type: boolean
+      citations:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCitation'
+        type: array
+      competitor_mentions:
+        additionalProperties:
+          type: integer
+        type: object
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      error:
+        type: string
+      first_mention_pos:
+        description: |-
+          FirstMentionPos is the rune index of the earliest brand hit, -1 when the
+          brand is absent. It deliberately carries NO `default:-1` tag: GORM
+          substitutes a literal column default whenever the Go field holds its zero
+          value (callbacks.ConvertToCreateValues), so a brand named in the very
+          first rune of an answer — a common case — would be persisted as -1.
+          Writers must always set this field explicitly.
+        type: integer
+      id:
+        type: integer
+      latency_ms:
+        type: integer
+      model:
+        type: string
+      prompt_id:
+        type: integer
+      provider:
+        type: string
+      run_id:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCitation:
+    properties:
+      answer_id:
+        type: integer
+      competitor_name:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      domain:
+        type: string
+      id:
+        type: integer
+      is_owned:
+        type: boolean
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCitationCompanyStat:
+    properties:
+      brand_mention_rate:
+        type: number
+      citation_rate:
+        type: number
+      citations:
+        type: integer
+      company:
+        type: string
+      is_brand:
+        type: boolean
+      with_brand_mention:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCitationDomainStat:
+    properties:
+      brand_mention_rate:
+        type: number
+      citation_rate:
+        type: number
+      citations:
+        type: integer
+      company:
+        type: string
+      domain:
+        type: string
+      is_owned:
+        type: boolean
+      with_brand_mention:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCitationsReport:
+    properties:
+      answers_with_citations:
+        type: integer
+      by_company:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCitationCompanyStat'
+        type: array
+      from:
+        type: string
+      owned_citation_rate:
+        type: number
+      to:
+        type: string
+      top_domains:
+        description: max 20, citations desc
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCitationDomainStat'
+        type: array
+      total_answers:
+        type: integer
+      total_citations:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCompetitor:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      domain:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOCompetitorTimelinePoint:
+    properties:
+      by_company:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      day:
+        description: '"YYYY-MM-DD", UTC'
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEODashboard:
+    properties:
+      brand_mentions:
+        type: integer
+      by_provider:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOProviderVisibility'
+        type: array
+      competitor_timeline:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCompetitorTimelinePoint'
+        type: array
+      days:
+        type: integer
+      failed_answers:
+        type: integer
+      from:
+        type: string
+      last_run_at:
+        type: string
+      share_of_voice:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOShareOfVoiceEntry'
+        type: array
+      timeline:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOTimelinePoint'
+        type: array
+      to:
+        type: string
+      total_answers:
+        type: integer
+      visibility:
+        type: number
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOProfile:
+    properties:
+      brand_aliases:
+        items:
+          type: string
+        type: array
+      brand_name:
+        type: string
+      competitors:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCompetitor'
+        type: array
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      id:
+        type: integer
+      owned_domains:
+        items:
+          type: string
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOPrompt:
+    properties:
+      answer_count:
+        type: integer
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      id:
+        type: integer
+      is_active:
+        description: |-
+          IsActive defaults to true at the column level, which also means an INSERT
+          of a struct with IsActive=false stores true (GORM substitutes a literal
+          default for a zero-valued field). Prompts are always created active, and
+          deactivation goes through an UPDATE, so the substitution is harmless here.
+        type: boolean
+      last_run_at:
+        type: string
+      mention_count:
+        type: integer
+      text:
+        type: string
+      updated_at:
+        type: string
+      visibility:
+        description: Computed per request over the requested window, never stored.
+        type: number
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOProviderStatus:
+    properties:
+      configured:
+        type: boolean
+      model:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOProviderVisibility:
+    properties:
+      answers:
+        type: integer
+      mentions:
+        type: integer
+      provider:
+        type: string
+      visibility:
+        type: number
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEORun:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      failed_queries:
+        type: integer
+      id:
+        type: integer
+      started_at:
+        type: string
+      status:
+        description: '"running" | "completed" | "failed" | "partial"'
+        type: string
+      total_queries:
+        type: integer
+      trigger:
+        description: '"manual" | "scheduled"'
+        type: string
+      triggered_by_id:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOShareOfVoiceEntry:
+    properties:
+      company:
+        type: string
+      is_brand:
+        type: boolean
+      mentions:
+        type: integer
+      share:
+        type: number
+      visibility:
+        type: number
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOTimelinePoint:
+    properties:
+      by_provider:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      day:
+        description: '"YYYY-MM-DD", UTC'
+        type: string
+      overall:
+        type: number
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.APIKey:
     properties:
       created_at:
@@ -435,6 +746,22 @@ definitions:
         description: Valid is true if Time is not NULL
         type: boolean
     type: object
+  internal_handler.AEOCompetitorRequest:
+    properties:
+      aliases:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      domain:
+        maxLength: 255
+        type: string
+      name:
+        maxLength: 120
+        type: string
+    required:
+    - name
+    type: object
   internal_handler.Activity:
     properties:
       created_at:
@@ -579,6 +906,17 @@ definitions:
         type: string
       website:
         type: string
+    type: object
+  internal_handler.CreateAEOPromptsRequest:
+    properties:
+      prompts:
+        items:
+          type: string
+        maxItems: 25
+        minItems: 1
+        type: array
+    required:
+    - prompts
     type: object
   internal_handler.CreateAPIKeyRequest:
     properties:
@@ -791,6 +1129,13 @@ definitions:
       total_leads:
         type: integer
     type: object
+  internal_handler.GenerateAEOPromptsRequest:
+    properties:
+      count:
+        maximum: 25
+        minimum: 1
+        type: integer
+    type: object
   internal_handler.LoginRequest:
     properties:
       email:
@@ -853,6 +1198,32 @@ definitions:
     - last_name
     - password
     type: object
+  internal_handler.SaveAEOProfileRequest:
+    properties:
+      brand_aliases:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      brand_name:
+        maxLength: 120
+        type: string
+      competitors:
+        items:
+          $ref: '#/definitions/internal_handler.AEOCompetitorRequest'
+        maxItems: 20
+        type: array
+      description:
+        maxLength: 2000
+        type: string
+      owned_domains:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+    required:
+    - brand_name
+    type: object
   internal_handler.SetConfigurationRequest:
     properties:
       value:
@@ -861,6 +1232,14 @@ definitions:
         type: array
     required:
     - value
+    type: object
+  internal_handler.UpdateAEOPromptRequest:
+    properties:
+      is_active:
+        type: boolean
+      text:
+        maxLength: 500
+        type: string
     type: object
   internal_handler.UpdateAPIKeyRequest:
     properties:
@@ -1052,6 +1431,1219 @@ info:
   title: GopherCRM API
   version: "1.0"
 paths:
+  /aeo/citations:
+    get:
+      description: 'Which sources the answers cite over the requested window: the
+        owned-domain citation rate, the per-company citation and brand-mention rates
+        (the brand first, then each competitor in profile order) and the twenty most
+        cited domains, ordered by citation count descending. Windows are 7, 30 or
+        90 days; anything else falls back to 30.'
+      parameters:
+      - default: 30
+        description: Reporting window in days (7, 30 or 90)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Citation report retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOCitationsReport'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: The brand profile has not been configured yet
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: AEO citation report
+      tags:
+      - aeo
+  /aeo/dashboard:
+    get:
+      description: 'Aggregated visibility over the requested window: the overall percentage
+        of non-error answers mentioning the brand, the same figure per provider, a
+        daily timeline with one entry per day in range (days without answers are present
+        with an overall of 0 and no per-provider entries), the share of voice across
+        the brand and its competitors, and the competitor timeline. Windows are 7,
+        30 or 90 days; anything else falls back to 30. The upper bound is exclusive
+        and is the start of tomorrow in UTC.'
+      parameters:
+      - default: 30
+        description: Reporting window in days (7, 30 or 90)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Dashboard retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEODashboard'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: The brand profile has not been configured yet
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: AEO visibility dashboard
+      tags:
+      - aeo
+  /aeo/profile:
+    get:
+      description: 'The single brand profile that drives mention detection: brand
+        name, aliases, owned domains, business description and the tracked competitors.
+        Returns 404 until the profile has been saved for the first time. Available
+        to admin, sales and support; the customer role is rejected with 403.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Profile retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOProfile'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: The brand profile has not been configured yet
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get the AEO brand profile
+      tags:
+      - aeo
+    put:
+      consumes:
+      - application/json
+      description: Save the single brand profile (admin and sales only). Aliases and
+        domains are trimmed and de-duplicated by the service, domains are lowercased
+        and a leading "www." is stripped, so the stored form matches what the citation
+        analysis compares against. At most 20 competitors, and at most 20 aliases
+        or domains in each list.
+      parameters:
+      - description: Brand profile
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.SaveAEOProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Profile saved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOProfile'
+              type: object
+        "400":
+          description: Invalid request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create or update the AEO brand profile
+      tags:
+      - aeo
+  /aeo/prompts:
+    get:
+      description: The tracked prompts, each carrying its visibility percentage over
+        the requested window (share of non-error answers that mention the brand, 0..100
+        with one decimal), the answer and mention counts behind that figure, and the
+        timestamp of the most recent answer. The window is the same 7/30/90-day selector
+        the dashboard uses; any other value falls back to 30. The total is reported
+        in the response meta.
+      parameters:
+      - default: 30
+        description: Reporting window in days (7, 30 or 90)
+        in: query
+        name: days
+        type: integer
+      - default: false
+        description: Return only active prompts
+        in: query
+        name: active_only
+        type: boolean
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column
+        enum:
+        - id
+        - text
+        - is_active
+        - created_at
+        - updated_at
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Prompts retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOPrompt'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: Unsupported sort column
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List tracked AEO prompts
+      tags:
+      - aeo
+    post:
+      consumes:
+      - application/json
+      description: Add one or more prompts to track (admin and sales only). Up to
+        25 per request, each at most 500 characters. The batch is written in a single
+        transaction, so a duplicate anywhere in it saves nothing and answers 409.
+        Prompt text is unique case-insensitively among live prompts; a soft-deleted
+        prompt does not reserve its text. Exceeding the cap of 100 active prompts
+        is answered with 400.
+      parameters:
+      - description: Prompts to add
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateAEOPromptsRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Prompts created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOPrompt'
+                  type: array
+              type: object
+        "400":
+          description: Invalid request data or the active prompt limit has been reached
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: A prompt with this text already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Add tracked AEO prompts
+      tags:
+      - aeo
+  /aeo/prompts/{id}:
+    delete:
+      description: Soft-delete a prompt (admin only) so it is excluded from future
+        runs. The answers already collected for it are retained, which is why this
+        is a soft delete and why the prompt's text is not freed for reuse detection
+        by any unique index — uniqueness is checked against live prompts only.
+      parameters:
+      - description: Prompt ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid prompt ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Prompt not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a tracked AEO prompt
+      tags:
+      - aeo
+    put:
+      consumes:
+      - application/json
+      description: Edit a prompt's text or toggle whether it is included in future
+        runs (admin and sales only). Both fields are optional and only the ones present
+        in the body are applied, so deactivating a prompt never rewrites its text.
+        Historical answers keep pointing at the prompt whatever the edit.
+      parameters:
+      - description: Prompt ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateAEOPromptRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Prompt updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOPrompt'
+              type: object
+        "400":
+          description: Invalid prompt ID, blank text or invalid request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Prompt not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: A prompt with this text already exists
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a tracked AEO prompt
+      tags:
+      - aeo
+  /aeo/prompts/{id}/answers:
+    get:
+      description: The stored answers for one prompt, newest first, each with its
+        provider, model, latency, mention analysis and extracted citations. Failed
+        provider calls are stored too and come back with a populated error field and
+        empty text. Pass run_id to narrow the list to a single run; omit it to page
+        through every run.
+      parameters:
+      - description: Prompt ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Restrict to one run
+        in: query
+        name: run_id
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Answers retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOAnswer'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: Invalid prompt ID or run ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Prompt not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the answers collected for a prompt
+      tags:
+      - aeo
+  /aeo/prompts/generate:
+    post:
+      consumes:
+      - application/json
+      description: 'Ask the Anthropic model for buyer-style questions derived from
+        the brand profile (admin and sales only). Nothing is stored: the suggestions
+        come back as plain strings and are only tracked once POSTed to /aeo/prompts.
+        The body is optional and defaults to 10 suggestions. Requires the brand profile
+        to exist (409 otherwise) and ANTHROPIC_API_KEY to be set (503 with code PROVIDER_NOT_CONFIGURED
+        otherwise).'
+      parameters:
+      - description: How many suggestions to generate (1..25, default 10)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/internal_handler.GenerateAEOPromptsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Suggestions generated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  properties:
+                    prompts:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+              type: object
+        "400":
+          description: Invalid request data
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: The brand profile has not been configured yet
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "503":
+          description: The prompt generation provider is not configured
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Generate candidate AEO prompts
+      tags:
+      - aeo
+  /aeo/providers:
+    get:
+      description: Every supported engine with the model it would use and whether
+        it is configured. An engine without an API key is reported with configured=false
+        and is skipped by runs; keys themselves are never returned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Provider statuses retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOProviderStatus'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the AEO answer engines
+      tags:
+      - aeo
+  /aeo/runs:
+    get:
+      description: The run history, newest first by default, with the trigger, the
+        status and the query counters of each batch. The total is reported in the
+        response meta.
+      parameters:
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column
+        enum:
+        - id
+        - status
+        - trigger
+        - started_at
+        - completed_at
+        - created_at
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Runs retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEORun'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: Unsupported sort column
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List AEO runs
+      tags:
+      - aeo
+    post:
+      description: Queue every active prompt against every configured provider (admin
+        and sales only) and return immediately with the run row in status "running";
+        the work continues in the background, so poll GET /aeo/runs/{id} for progress.
+        Only one run may be in flight at a time, which is what the manual and the
+        scheduled trigger share as an overlap guard.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Run accepted and started
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEORun'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: There are no active prompts to run
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: A run is already in progress, or the brand profile has not
+            been configured
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "503":
+          description: No AEO providers are configured
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Start an AEO run
+      tags:
+      - aeo
+  /aeo/runs/{id}:
+    get:
+      description: 'A single run with its current status and counters. This is the
+        endpoint to poll after POST /aeo/runs: the status moves from "running" to
+        "completed", "partial" (some provider calls failed) or "failed" (all of them
+        did).'
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEORun'
+              type: object
+        "400":
+          description: Invalid run ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Run not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get one AEO run
+      tags:
+      - aeo
   /api-keys:
     get:
       description: List the API keys owned by the authenticated user. Scoped to the

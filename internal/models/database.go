@@ -55,5 +55,10 @@ func MigrateDatabase() error {
 		&PasswordResetToken{},
 		&BulkOperation{},
 		&BulkOperationItem{},
+		&AEOProfile{},
+		&AEOPrompt{},
+		&AEORun{},
+		&AEOAnswer{},
+		&AEOCitation{},
 	)
 }

@@ -18,6 +18,7 @@ type Config struct {
 	API      APIConfig
 	SMTP     SMTPConfig
 	App      AppConfig
+	AEO      AEOConfig
 }
 
 type DatabaseConfig struct {
@@ -81,6 +82,39 @@ type SMTPConfig struct {
 // backend must build absolute links into the frontend (e.g. reset links).
 type AppConfig struct {
 	BaseURL string
+}
+
+// AEOConfig holds the answer-engine credentials and the daily-run schedule for
+// the AEO module. Every key is optional: an engine whose key is empty is simply
+// absent, and the custom engine is absent unless CustomBaseURL is set. Load()
+// never fails because an AEO key is missing.
+type AEOConfig struct {
+	// ANTHROPIC_API_KEY is shared between the Anthropic answer engine and
+	// prompt generation.
+	AnthropicAPIKey string
+	AnthropicModel  string
+
+	OpenAIAPIKey string
+	OpenAIModel  string
+
+	GeminiAPIKey string
+	GeminiModel  string
+
+	MoonshotAPIKey string
+	KimiModel      string
+
+	PerplexityAPIKey string
+	PerplexityModel  string
+
+	// Custom is any OpenAI-compatible server (LM Studio, vLLM, Ollama, TGI).
+	// CustomAPIKey is optional; local servers usually need none.
+	CustomName    string
+	CustomBaseURL string
+	CustomModel   string
+	CustomAPIKey  string
+
+	ScheduleEnabled bool
+	ScheduleHour    int // local time, 0..23
 }
 
 type RateLimitConfig struct {
@@ -156,6 +190,24 @@ func Load() (*Config, error) {
 		App: AppConfig{
 			BaseURL: strings.TrimRight(getEnv("APP_BASE_URL", "http://localhost:5173"), "/"),
 		},
+		AEO: AEOConfig{
+			AnthropicAPIKey:  getEnv("ANTHROPIC_API_KEY", ""),
+			AnthropicModel:   getEnv("AEO_ANTHROPIC_MODEL", "claude-opus-5"),
+			OpenAIAPIKey:     getEnv("OPENAI_API_KEY", ""),
+			OpenAIModel:      getEnv("AEO_OPENAI_MODEL", "gpt-4o-mini"),
+			GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
+			GeminiModel:      getEnv("AEO_GEMINI_MODEL", "gemini-2.5-flash"),
+			MoonshotAPIKey:   getEnv("MOONSHOT_API_KEY", ""),
+			KimiModel:        getEnv("AEO_KIMI_MODEL", "moonshot-v1-8k"),
+			PerplexityAPIKey: getEnv("PERPLEXITY_API_KEY", ""),
+			PerplexityModel:  getEnv("AEO_PERPLEXITY_MODEL", "sonar"),
+			CustomName:       getEnv("AEO_CUSTOM_NAME", "custom"),
+			CustomBaseURL:    getEnv("AEO_CUSTOM_BASE_URL", ""),
+			CustomModel:      getEnv("AEO_CUSTOM_MODEL", "openai/gpt-oss-20b"),
+			CustomAPIKey:     getEnv("AEO_CUSTOM_API_KEY", ""),
+			ScheduleEnabled:  getEnvAsBool("AEO_SCHEDULE_ENABLED", true),
+			ScheduleHour:     clampHour(getEnvAsInt("AEO_SCHEDULE_HOUR", 6)),
+		},
 	}
 
 	if config.Server.Mode == "production" && !config.JWT.CookieSecure {
@@ -184,6 +236,33 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvAsBool reads a boolean env var. "true"/"1" enable it, "false"/"0"
+// disable it; anything else (including an unset or empty value) falls back to
+// the default. Comparison is case-insensitive and surrounding spaces are
+// ignored, so "True" and " 1 " behave as expected.
+func getEnvAsBool(key string, defaultValue bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		return defaultValue
+	}
+}
+
+// clampHour keeps an hour-of-day inside 0..23 instead of rejecting it, so a
+// mistyped schedule never prevents the application from starting.
+func clampHour(hour int) int {
+	if hour < 0 {
+		return 0
+	}
+	if hour > 23 {
+		return 23
+	}
+	return hour
 }
 
 // resolveCookieSecure determines the CookieSecure value.

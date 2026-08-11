@@ -8,3 +8,4 @@ export * from './labels';
 export * from './dashboard';
 export * from './apikeys';
 export * from './configurations';
+export * from './aeo';

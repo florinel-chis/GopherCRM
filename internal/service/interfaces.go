@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -219,4 +220,64 @@ type BulkOperationService interface {
 	BulkUpdateTickets(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkDeleteTickets(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionTickets(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
+}
+
+// AEOService drives the Answer Engine Optimization module: the brand profile,
+// the tracked prompts, the runs that query every configured LLM provider, and
+// the visibility/citation metrics computed over the recorded answers.
+//
+// Percentages returned by this service are 0..100 rounded to one decimal, and a
+// zero denominator always yields 0 rather than NaN. Metrics windows are
+// half-open: `from` inclusive, `to` exclusive, clamped to the most recent 90
+// days.
+//
+// Errors: ErrProfileNotConfigured, ErrDuplicatePrompt, ErrRunInProgress and
+// ErrNoProvidersConfigured come from internal/errors; the validation-flavoured
+// ErrAEOPromptLimit, ErrAEOInvalidPrompt, ErrAEOInvalidProfile,
+// ErrAEOInvalidTrigger and ErrAEOGenerationUnavailable are declared in
+// aeo_service.go. All of them are matched with errors.Is.
+type AEOService interface {
+	// GetProfile returns the single brand profile, or
+	// apperrors.ErrProfileNotConfigured when setup has not happened yet.
+	GetProfile() (*models.AEOProfile, error)
+	// SaveProfile creates or replaces the profile. Aliases and domains are
+	// trimmed and de-duplicated, domains are lowercased with any leading
+	// "www." stripped, and the row's ID is pinned so the table stays a
+	// singleton.
+	SaveProfile(profile *models.AEOProfile) (*models.AEOProfile, error)
+
+	// ListPrompts returns a page of prompts, each decorated with the answer
+	// count, mention count, visibility percentage and last-run timestamp for
+	// the [from, to) window.
+	ListPrompts(from, to time.Time, activeOnly bool, offset, limit int, sortBy, sortOrder string) ([]models.AEOPrompt, int64, error)
+	// CreatePrompts is all-or-nothing: one duplicate or one prompt over the
+	// active-prompt cap saves none of them.
+	CreatePrompts(texts []string, createdByID uint) ([]models.AEOPrompt, error)
+	// UpdatePrompt applies only the non-nil fields. Re-activating a prompt
+	// counts against the active-prompt cap.
+	UpdatePrompt(id uint, text *string, isActive *bool) (*models.AEOPrompt, error)
+	DeletePrompt(id uint) error
+	// GeneratePrompts returns AI-suggested prompts. Not implemented yet — it
+	// returns ErrAEOGenerationUnavailable until the AI-assist phase lands.
+	GeneratePrompts(ctx context.Context, count int) ([]string, error)
+
+	// StartRun records a run and hands it to the engine on a background
+	// goroutine, returning as soon as the row exists. It refuses to start
+	// while another run is still going.
+	StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error)
+	// ReconcileRunningRuns fails runs left in "running" by a process that
+	// died mid-run and returns how many it recovered. Call it once at
+	// startup, before arming the scheduler: without it a single stranded row
+	// makes the overlap guard reject every future run.
+	ReconcileRunningRuns() (int64, error)
+	ListRuns(offset, limit int, sortBy, sortOrder string) ([]models.AEORun, int64, error)
+	GetRun(id uint) (*models.AEORun, error)
+	// GetPromptAnswers returns the answer transcript for one prompt, newest
+	// first, optionally narrowed to a single run.
+	GetPromptAnswers(promptID uint, runID *uint, offset, limit int) ([]models.AEOAnswer, int64, error)
+
+	Dashboard(from, to time.Time) (*models.AEODashboard, error)
+	Citations(from, to time.Time) (*models.AEOCitationsReport, error)
+	// Providers reports the engines this instance can actually query.
+	Providers() []models.AEOProviderStatus
 }
