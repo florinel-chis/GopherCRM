@@ -40,3 +40,20 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   `SMTP_*` is configured.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
   hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
+
+## Forms module — deliberate v1 cuts
+
+The forms module (spec `docs/specs/2026-08-12-forms-design.md`) shipped without these; each is a
+candidate follow-up, not an accident:
+
+- **Multi-step forms, conditional field logic, progressive profiling** — single-step only.
+- **File-upload fields** — text-shaped field types only.
+- **HTML email templates** — confirmation/follow-up/notification mail is plaintext, like the
+  password-reset mail it reuses.
+- **CSV export of submissions, webhooks** — submissions are viewable in the UI and via the API.
+- **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing
+  else.
+- **Retention sweep for unlinked submissions** — spam and never-confirmed pending rows carry
+  visitor data (values, IP) and are outside lead erasure; they currently live forever.
+- **Field-definition migrations** — editing a form's fields does not rewrite historical
+  submission data; renamed fields simply start a new key in `data`.

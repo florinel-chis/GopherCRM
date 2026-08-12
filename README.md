@@ -13,6 +13,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
 - 🔎 **Answer Engine Optimization (AEO)**: Track how often LLM answer engines mention your brand — daily runs across Anthropic, OpenAI, Gemini, Kimi, Perplexity and any OpenAI-compatible endpoint, with visibility, share-of-voice and citation reporting
+- 📝 **Forms**: Build contact, quote-request and lead-capture forms in the CRM and embed them on any website with one script tag — submissions land in the CRM, create leads, and can require double opt-in email confirmation before delivering gated content; layered spam protection (honeypot, time trap, rate limits, optional invisible reCAPTCHA v3)
 - 🎨 **Modern UI**: React TypeScript frontend with Material-UI
 - 📊 **Dashboard**: Analytics and activity overview
 - 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
