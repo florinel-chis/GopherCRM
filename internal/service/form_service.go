@@ -54,6 +54,10 @@ const (
 	// formLeadSourceMaxLength mirrors the varchar(100) leads.source column.
 	formLeadSourceMaxLength = 100
 
+	// leadNameMaxLength mirrors the varchar(100) leads.first_name and
+	// leads.last_name columns.
+	leadNameMaxLength = 100
+
 	// Placeholders a form's mail bodies may use.
 	formConfirmationLinkPlaceholder = "{confirmation_link}"
 	formContentLinkPlaceholder      = "{content_link}"
@@ -93,8 +97,10 @@ var formSortColumns = map[string]bool{
 }
 
 // formLeadFields are the submitted field names that map onto lead columns.
-// Everything else a form collects ends up in the lead's notes.
+// Everything else a form collects ends up in the lead's notes. A lone "name"
+// field is split into the two name columns, so it belongs here too.
 var formLeadFields = map[string]bool{
+	"name":       true,
 	"first_name": true,
 	"last_name":  true,
 	"email":      true,
@@ -952,14 +958,22 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 	}
 
 	values := submission.Data
-	// leads.first_name and leads.last_name are NOT NULL, and a form is free to
-	// collect neither, so both fall back to something a salesperson can still
-	// recognise on a list.
 	firstName := values["first_name"]
+	lastName := values["last_name"]
+	if firstName == "" && lastName == "" {
+		// Most forms collect one "name" field instead of a first/last pair;
+		// split it on the first space so the lead carries the visitor's name.
+		if parts := strings.Fields(values["name"]); len(parts) > 0 {
+			firstName = truncate(parts[0], leadNameMaxLength)
+			lastName = truncate(strings.Join(parts[1:], " "), leadNameMaxLength)
+		}
+	}
+	// leads.first_name and leads.last_name are NOT NULL, and a form is free to
+	// collect no name at all, so both fall back to something a salesperson can
+	// still recognise on a list.
 	if firstName == "" {
 		firstName = "Form"
 	}
-	lastName := values["last_name"]
 	if lastName == "" {
 		lastName = emailLocalPart(submission.Email)
 	}

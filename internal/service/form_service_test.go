@@ -885,6 +885,49 @@ func TestFormServiceSubmitWithoutLeadCreation(t *testing.T) {
 	assert.Equal(t, models.FormSubmissionReceived, stored[0].Status)
 }
 
+func TestFormServiceSubmitSplitsSingleNameField(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "name", Label: "Name", Type: models.FormFieldText, Required: true},
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+	}
+	f.publish(t, form)
+
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"name": "Grace Brewster Hopper", "email": "grace@example.com"},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, "Grace", leads[0].FirstName)
+	assert.Equal(t, "Brewster Hopper", leads[0].LastName)
+	assert.NotContains(t, leads[0].Notes, "Name: Grace", "a name that became the lead's own stays out of the notes")
+}
+
+func TestFormServiceSubmitSplitsSingleWordName(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "name", Label: "Name", Type: models.FormFieldText, Required: true},
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+	}
+	f.publish(t, form)
+
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"name": "Ada", "email": "lovelace@example.com"},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, "Ada", leads[0].FirstName)
+	assert.Equal(t, "lovelace", leads[0].LastName, "the address local part stands in for a missing surname")
+}
+
 func TestFormServiceSubmitFallsBackToUsableLeadNames(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.newForm()
