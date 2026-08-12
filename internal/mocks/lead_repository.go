@@ -433,6 +433,16 @@ func (_m *LeadRepository) GetByExternalID(externalID string) (*models.Lead, erro
 	return r0, ret.Error(1)
 }
 
+// GetLatestByEmail provides a mock function with given fields: email
+func (_m *LeadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
+	ret := _m.Called(email)
+	var r0 *models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
 func (_m *LeadRepository) GetByClassification(classification models.LeadClassification, offset int, limit int) ([]models.Lead, error) {
 	ret := _m.Called(classification, offset, limit)
 	var r0 []models.Lead

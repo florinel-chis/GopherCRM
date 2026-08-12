@@ -69,6 +69,11 @@ type LeadRepository interface {
 	ListRecent(ownerID *uint, limit int) ([]models.Lead, error)
 	ListRecentlyConverted(limit int) ([]models.Lead, error)
 	ConversionTimestampsSince(since time.Time) ([]time.Time, error)
+	// GetLatestByEmail returns the most recently created live lead with this
+	// address, or gorm.ErrRecordNotFound when there is none. It backs the form
+	// module's lead deduplication: a second submission from the same person
+	// must append to the lead that already exists instead of forking a new one.
+	GetLatestByEmail(email string) (*models.Lead, error)
 	WithTx(tx *gorm.DB) LeadRepository
 }
 
@@ -350,4 +355,51 @@ type AEORepository interface {
 	CountAnswersWithCitations(from, to time.Time) (int64, error)
 
 	WithTx(tx *gorm.DB) AEORepository
+}
+
+// FormRepository backs the forms module: the form definitions, the submissions
+// they collect and the single-use tokens of the double-opt-in flow.
+//
+// Everything here is deliberately status-blind. Whether a form may be served
+// publicly, whether a submission counts as spam and whether a token has already
+// been spent are service decisions; this layer only reports what is stored —
+// with the one exception of GetConfirmationTokenByHash, whose filter is a
+// disclosure guarantee rather than a business rule.
+type FormRepository interface {
+	Create(form *models.Form) error
+	GetByID(id uint) (*models.Form, error)
+	// GetByPublicID looks the form up by its public identifier regardless of
+	// status, and reports gorm.ErrRecordNotFound when nothing matches.
+	GetByPublicID(publicID string) (*models.Form, error)
+	// List returns one page plus the total matching the same status filter. An
+	// empty status means every status; sortBy is checked against an allowlist
+	// and an unknown column is an error, never a silent fallback.
+	List(offset, limit int, status string, sortBy, sortOrder string) ([]models.Form, int64, error)
+	Update(form *models.Form) error
+	// Delete soft-deletes the form and reports gorm.ErrRecordNotFound when no
+	// row matched. Submissions are left in place.
+	Delete(id uint) error
+	// SubmissionCounts counts the submissions of every requested form, spam
+	// included. Forms without submissions are absent from the map.
+	SubmissionCounts(formIDs []uint) (map[uint]int64, error)
+
+	CreateSubmission(sub *models.FormSubmission) error
+	GetSubmissionByID(id uint) (*models.FormSubmission, error)
+	// ListSubmissions returns one page of a form's submissions newest first,
+	// plus the total matching the same status filter.
+	ListSubmissions(formID uint, offset, limit int, status string) ([]models.FormSubmission, int64, error)
+	UpdateSubmission(sub *models.FormSubmission) error
+
+	CreateConfirmationToken(t *models.FormConfirmationToken) error
+	// GetConfirmationTokenByHash returns the token only while it is still
+	// spendable: unused and unexpired. Anything else is a not-found, so used,
+	// expired and unknown tokens are indistinguishable to the caller.
+	GetConfirmationTokenByHash(hash string) (*models.FormConfirmationToken, error)
+	MarkConfirmationTokenUsed(id uint) error
+	// InvalidatePendingTokens spends every outstanding token of every pending
+	// submission of this form with this address, so only the newest
+	// confirmation link keeps working.
+	InvalidatePendingTokens(formID uint, email string) error
+
+	WithTx(tx *gorm.DB) FormRepository
 }

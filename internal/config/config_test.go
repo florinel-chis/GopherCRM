@@ -24,6 +24,8 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"PERPLEXITY_API_KEY", "AEO_PERPLEXITY_MODEL",
 		"AEO_CUSTOM_NAME", "AEO_CUSTOM_BASE_URL", "AEO_CUSTOM_MODEL", "AEO_CUSTOM_API_KEY",
 		"AEO_SCHEDULE_ENABLED", "AEO_SCHEDULE_HOUR",
+		// Forms keys, for the same reason as the AEO ones.
+		"PUBLIC_BASE_URL", "RECAPTCHA_SITE_KEY", "RECAPTCHA_SECRET_KEY", "RECAPTCHA_MIN_SCORE",
 	}
 
 	// Save originals.
@@ -344,6 +346,110 @@ func TestClampHour(t *testing.T) {
 	assert.Equal(t, 6, clampHour(6))
 	assert.Equal(t, 23, clampHour(23))
 	assert.Equal(t, 23, clampHour(24))
+}
+
+func TestLoad_FormsDefaults(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+
+		assert.Equal(t, "http://localhost:8080", cfg.Forms.PublicBaseURL)
+		assert.Empty(t, cfg.Forms.RecaptchaSiteKey)
+		assert.Empty(t, cfg.Forms.RecaptchaSecret)
+		assert.Equal(t, 0.5, cfg.Forms.RecaptchaMinScore)
+		assert.False(t, cfg.Forms.RecaptchaActive(), "no keys configured means the check is off")
+	})
+}
+
+func TestLoad_FormsOverrides(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":           validSecret(),
+		"PUBLIC_BASE_URL":      "https://crm.example.com/",
+		"RECAPTCHA_SITE_KEY":   "site-key",
+		"RECAPTCHA_SECRET_KEY": "secret-key",
+		"RECAPTCHA_MIN_SCORE":  "0.7",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+
+		assert.Equal(t, "https://crm.example.com", cfg.Forms.PublicBaseURL,
+			"a trailing slash must be trimmed so links concatenate cleanly")
+		assert.Equal(t, "site-key", cfg.Forms.RecaptchaSiteKey)
+		assert.Equal(t, "secret-key", cfg.Forms.RecaptchaSecret)
+		assert.Equal(t, 0.7, cfg.Forms.RecaptchaMinScore)
+		assert.True(t, cfg.Forms.RecaptchaActive())
+	})
+}
+
+func TestFormsConfig_RecaptchaActiveNeedsBothKeys(t *testing.T) {
+	assert.False(t, FormsConfig{}.RecaptchaActive())
+	assert.False(t, FormsConfig{RecaptchaSiteKey: "site"}.RecaptchaActive())
+	assert.False(t, FormsConfig{RecaptchaSecret: "secret"}.RecaptchaActive())
+	assert.True(t, FormsConfig{RecaptchaSiteKey: "site", RecaptchaSecret: "secret"}.RecaptchaActive())
+}
+
+func TestLoad_FormsMinScoreClamped(t *testing.T) {
+	cases := []struct {
+		value    string
+		expected float64
+	}{
+		{value: "-1", expected: 0},
+		{value: "2", expected: 1},
+		{value: "0", expected: 0},
+		{value: "1", expected: 1},
+		// Unparseable input falls back to the default rather than failing boot.
+		{value: "strict", expected: 0.5},
+	}
+
+	for _, tc := range cases {
+		withCleanEnv(t, map[string]string{
+			"JWT_SECRET":          validSecret(),
+			"RECAPTCHA_MIN_SCORE": tc.value,
+		}, func() {
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, cfg.Forms.RecaptchaMinScore, "RECAPTCHA_MIN_SCORE=%q", tc.value)
+		})
+	}
+}
+
+func TestGetEnvAsFloat(t *testing.T) {
+	const key = "FORMS_TEST_FLOAT"
+	t.Cleanup(func() { os.Unsetenv(key) })
+
+	cases := []struct {
+		value      string
+		set        bool
+		defaultVal float64
+		expected   float64
+	}{
+		{set: false, defaultVal: 0.5, expected: 0.5},
+		{value: "", set: true, defaultVal: 0.5, expected: 0.5},
+		{value: "0.9", set: true, defaultVal: 0.5, expected: 0.9},
+		{value: " 0.25 ", set: true, defaultVal: 0.5, expected: 0.25},
+		{value: "3", set: true, defaultVal: 0.5, expected: 3},
+		{value: "-2.5", set: true, defaultVal: 0.5, expected: -2.5},
+		{value: "half", set: true, defaultVal: 0.5, expected: 0.5},
+	}
+
+	for _, tc := range cases {
+		os.Unsetenv(key)
+		if tc.set {
+			os.Setenv(key, tc.value)
+		}
+		assert.Equal(t, tc.expected, getEnvAsFloat(key, tc.defaultVal),
+			"value=%q set=%v", tc.value, tc.set)
+	}
+}
+
+func TestClampUnitInterval(t *testing.T) {
+	assert.Equal(t, 0.0, clampUnitInterval(-0.1))
+	assert.Equal(t, 0.0, clampUnitInterval(0))
+	assert.Equal(t, 0.5, clampUnitInterval(0.5))
+	assert.Equal(t, 1.0, clampUnitInterval(1))
+	assert.Equal(t, 1.0, clampUnitInterval(1.5))
 }
 
 func TestParseTrustedProxies(t *testing.T) {

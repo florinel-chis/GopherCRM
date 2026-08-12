@@ -60,5 +60,8 @@ func MigrateDatabase() error {
 		&AEORun{},
 		&AEOAnswer{},
 		&AEOCitation{},
+		&Form{},
+		&FormSubmission{},
+		&FormConfirmationToken{},
 	)
 }

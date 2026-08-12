@@ -19,6 +19,7 @@ type Config struct {
 	SMTP     SMTPConfig
 	App      AppConfig
 	AEO      AEOConfig
+	Forms    FormsConfig
 }
 
 type DatabaseConfig struct {
@@ -122,6 +123,32 @@ type AEOConfig struct {
 	QueryTimeoutSeconds int
 }
 
+// FormsConfig holds the settings of the forms module. Every key is optional:
+// with no reCAPTCHA pair configured the check is simply unavailable and forms
+// that ask for it fall back to the remaining spam layers. Load() never fails
+// because a forms key is missing.
+type FormsConfig struct {
+	// PublicBaseURL is the externally reachable base URL of this backend. It
+	// is what external visitors hit, so it differs from AppConfig.BaseURL
+	// (the CRM frontend). Used to build confirmation links, the hosted form
+	// page URL and the embed snippet. Stored without a trailing slash.
+	PublicBaseURL string
+
+	RecaptchaSiteKey string
+	RecaptchaSecret  string
+
+	// RecaptchaMinScore is the lowest v3 score still treated as human,
+	// clamped to [0,1] so a mistyped value cannot disable or block everything.
+	RecaptchaMinScore float64
+}
+
+// RecaptchaActive reports whether the reCAPTCHA check can run at all. Both
+// halves of the key pair are needed: the site key for the browser, the secret
+// for the server-side verification.
+func (f FormsConfig) RecaptchaActive() bool {
+	return f.RecaptchaSiteKey != "" && f.RecaptchaSecret != ""
+}
+
 type RateLimitConfig struct {
 	PublicEndpoints  int
 	AuthenticatedAPI int
@@ -214,6 +241,12 @@ func Load() (*Config, error) {
 			ScheduleHour:        clampHour(getEnvAsInt("AEO_SCHEDULE_HOUR", 6)),
 			QueryTimeoutSeconds: getEnvAsInt("AEO_QUERY_TIMEOUT_SECONDS", 60),
 		},
+		Forms: FormsConfig{
+			PublicBaseURL:     strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+			RecaptchaSiteKey:  getEnv("RECAPTCHA_SITE_KEY", ""),
+			RecaptchaSecret:   getEnv("RECAPTCHA_SECRET_KEY", ""),
+			RecaptchaMinScore: clampUnitInterval(getEnvAsFloat("RECAPTCHA_MIN_SCORE", 0.5)),
+		},
 	}
 
 	if config.Server.Mode == "production" && !config.JWT.CookieSecure {
@@ -244,6 +277,16 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+// getEnvAsFloat reads a float env var, falling back to the default when the
+// value is unset or cannot be parsed. Surrounding spaces are ignored.
+func getEnvAsFloat(key string, defaultValue float64) float64 {
+	valueStr := strings.TrimSpace(getEnv(key, ""))
+	if value, err := strconv.ParseFloat(valueStr, 64); err == nil {
+		return value
+	}
+	return defaultValue
+}
+
 // getEnvAsBool reads a boolean env var. "true"/"1" enable it, "false"/"0"
 // disable it; anything else (including an unset or empty value) falls back to
 // the default. Comparison is case-insensitive and surrounding spaces are
@@ -269,6 +312,19 @@ func clampHour(hour int) int {
 		return 23
 	}
 	return hour
+}
+
+// clampUnitInterval keeps a probability-like setting inside [0,1] instead of
+// rejecting it, so a mistyped threshold never prevents the application from
+// starting.
+func clampUnitInterval(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 // resolveCookieSecure determines the CookieSecure value.

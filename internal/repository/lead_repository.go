@@ -290,6 +290,28 @@ func (r *leadRepository) ConversionTimestampsSince(since time.Time) ([]time.Time
 	return timestamps, err
 }
 
+// GetLatestByEmail returns the newest live lead with this address.
+//
+// Leads carry no unique index on email — the same person can legitimately be
+// captured twice — so "the lead for this address" is defined as the most
+// recently created one, with the id as a tie-breaker for rows created inside
+// the same clock tick. Soft-deleted leads are excluded by the default scope,
+// which matters here: an erased lead's address was overwritten with a random
+// .invalid one anyway, and resurrecting it would undo the erasure.
+//
+// Take is used rather than First because First would append its own ordering
+// on the primary key to the one asked for here.
+func (r *leadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
+	var lead models.Lead
+	err := r.db.Where("email = ?", email).
+		Order("`created_at` desc, `id` desc").
+		Take(&lead).Error
+	if err != nil {
+		return nil, err
+	}
+	return &lead, nil
+}
+
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
 	return &leadRepository{db: tx}
 }
