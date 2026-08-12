@@ -7,7 +7,6 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 
 **Sources**
 
-- `docs/specs/2026-08-11-aeo-design.md`
 - `internal/models/aeo.go`, `internal/models/database.go`
 - `internal/handler/aeo_handler.go`, `internal/handler/aeo_routes.go`, `cmd/main.go`
 - `internal/service/aeo_service.go`, `internal/service/interfaces.go`

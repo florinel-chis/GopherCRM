@@ -43,7 +43,7 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 
 ## Forms module — deliberate v1 cuts
 
-The forms module (spec `docs/specs/2026-08-12-forms-design.md`) shipped without these; each is a
+The forms module shipped without these; each is a
 candidate follow-up, not an accident:
 
 - **Multi-step forms, conditional field logic, progressive profiling** — single-step only.
