@@ -53,6 +53,10 @@ var (
 	ErrRunInProgress         = errors.New("an AEO run is already in progress")
 	ErrProfileNotConfigured  = errors.New("AEO brand profile is not configured")
 	ErrNoProvidersConfigured = errors.New("no AEO providers are configured")
+	// ErrGenerationProviderNotConfigured is the generation-specific variant:
+	// prompt generation runs on one named engine (Anthropic), so other
+	// configured providers do not help. Also answered with 503.
+	ErrGenerationProviderNotConfigured = errors.New("prompt generation runs on the Anthropic engine and no Anthropic API key is configured")
 )
 
 // Error codes

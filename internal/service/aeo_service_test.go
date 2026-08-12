@@ -520,7 +520,7 @@ func (suite *AEOServiceTestSuite) TestGeneratePrompts_WithoutGenerationProvider(
 	prompts, err := svc.GeneratePrompts(context.Background(), 10)
 
 	assert.Nil(suite.T(), prompts)
-	assert.True(suite.T(), errors.Is(err, apperrors.ErrNoProvidersConfigured))
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrGenerationProviderNotConfigured))
 }
 
 func (suite *AEOServiceTestSuite) TestGeneratePrompts_ProviderError() {

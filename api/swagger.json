@@ -921,7 +921,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Ask the Anthropic model for buyer-style questions derived from the brand profile (admin and sales only). Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise) and ANTHROPIC_API_KEY to be set (503 with code PROVIDER_NOT_CONFIGURED otherwise).",
+                "description": "Ask the Anthropic model for buyer-style questions derived from the brand profile (admin and sales only). Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise) and an Anthropic API key, from the admin key settings or ANTHROPIC_API_KEY (503 with code PROVIDER_NOT_CONFIGURED otherwise).",
                 "consumes": [
                     "application/json"
                 ],
