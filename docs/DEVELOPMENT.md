@@ -48,6 +48,19 @@ npm run test:e2e:report# Open the last Playwright HTML report
 npx playwright test e2e/tests/login.spec.ts
 ```
 
+## Repository hooks
+
+Activate the repository's guardrails once per clone:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+The pre-commit hook keeps the documentation tree deliberate: new folders under `docs/` are
+refused unless added to the allowlist inside the hook, and local working papers
+(`docs/specs/`, `docs/plans/` — gitignored) are refused even when force-added. It also runs an
+optional content sweep driven by a machine-local term list when one is present.
+
 ## Architecture
 
 Clean architecture with four layers, all behind interfaces for testability:
