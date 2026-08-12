@@ -518,11 +518,13 @@ func (suite *AEOHandlerTestSuite) TestGeneratePrompts_OutOfRangeCountIs400() {
 // with its own code rather than the module-wide PROVIDERS_UNAVAILABLE.
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProviderIs503() {
 	suite.mockService.On("GeneratePrompts", mock.Anything, 10).
-		Return(nil, apperrors.ErrNoProvidersConfigured)
+		Return(nil, apperrors.ErrGenerationProviderNotConfigured)
 
 	w := suite.do(http.MethodPost, "/aeo/prompts/generate", nil)
 	assert.Equal(suite.T(), http.StatusServiceUnavailable, w.Code)
-	assert.Equal(suite.T(), "PROVIDER_NOT_CONFIGURED", decodeResponse(suite.T(), w).Error.Code)
+	resp := decodeResponse(suite.T(), w)
+	assert.Equal(suite.T(), "PROVIDER_NOT_CONFIGURED", resp.Error.Code)
+	assert.Contains(suite.T(), resp.Error.Message, "Anthropic")
 }
 
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProfileIs409() {

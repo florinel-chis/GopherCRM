@@ -441,8 +441,10 @@ func (s *aeoService) DeletePrompt(id uint) error {
 // Generation deliberately runs on one named engine rather than "whatever is
 // configured": the wording of the meta-prompt is tuned for it, and a silent
 // fallback to another engine would change the shape of the output without the
-// operator noticing. A missing key is therefore ErrNoProvidersConfigured, which
-// the handler reports as 503 PROVIDER_NOT_CONFIGURED.
+// operator noticing. A missing key is therefore
+// ErrGenerationProviderNotConfigured, which the handler reports as 503
+// PROVIDER_NOT_CONFIGURED and which names the engine so the operator knows
+// which key to add.
 func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("count", count), "AEOService", "GeneratePrompts")
 
@@ -464,7 +466,7 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 
 	provider := s.generationProvider()
 	if provider == nil {
-		return nil, apperrors.ErrNoProvidersConfigured
+		return nil, apperrors.ErrGenerationProviderNotConfigured
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, aeoGenerationTimeout)

@@ -345,7 +345,7 @@ func (h *AEOHandler) DeletePrompt(c *gin.Context) {
 
 // GeneratePrompts godoc
 // @Summary Generate candidate AEO prompts
-// @Description Ask the Anthropic model for buyer-style questions derived from the brand profile (admin and sales only). Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise) and ANTHROPIC_API_KEY to be set (503 with code PROVIDER_NOT_CONFIGURED otherwise).
+// @Description Ask the Anthropic model for buyer-style questions derived from the brand profile (admin and sales only). Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise) and an Anthropic API key, from the admin key settings or ANTHROPIC_API_KEY (503 with code PROVIDER_NOT_CONFIGURED otherwise).
 // @Tags aeo
 // @Accept json
 // @Produce json
@@ -377,10 +377,10 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 
 	texts, err := h.aeoService.GeneratePrompts(c.Request.Context(), count)
 	if err != nil {
-		// Generation runs on one specific provider, so "no providers" here
-		// means that provider's key is missing rather than that the whole
-		// module is unusable; it gets its own code.
-		if errors.Is(err, apperrors.ErrNoProvidersConfigured) {
+		// Generation runs on one specific provider, so a missing key there
+		// gets its own code and an error that names the engine, rather than
+		// the module-wide "no providers" answer.
+		if errors.Is(err, apperrors.ErrGenerationProviderNotConfigured) {
 			logger.WithError(err).Warn("Prompt generation provider not configured")
 			utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
 			return
@@ -665,6 +665,9 @@ func (h *AEOHandler) respondError(c *gin.Context, logger *logrus.Entry, err erro
 	case errors.Is(err, apperrors.ErrNoProvidersConfigured):
 		logger.WithError(err).Warn("No AEO providers configured")
 		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDERS_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, apperrors.ErrGenerationProviderNotConfigured):
+		logger.WithError(err).Warn("Prompt generation provider not configured")
+		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
 	case errors.Is(err, service.ErrAEOPromptLimit):
 		logger.WithError(err).Warn("AEO active prompt limit reached")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, err.Error(), nil)
