@@ -4,7 +4,7 @@
         "description": "CRM API for managing users, leads, customers, tickets, tasks and API keys.",
         "title": "GopherCRM API",
         "contact": {},
-        "version": "1.0"
+        "version": "1.1.0"
     },
     "basePath": "/api/v1",
     "paths": {
