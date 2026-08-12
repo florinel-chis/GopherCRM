@@ -25,6 +25,7 @@ func SetupAEORoutes(router *gin.RouterGroup, h *AEOHandler) {
 		group.GET("/prompts/:id/answers", h.ListPromptAnswers)
 		group.PUT("/prompts/:id", write, h.UpdatePrompt)
 		group.DELETE("/prompts/:id", middleware.RequireRole(models.RoleAdmin), h.DeletePrompt)
+		group.POST("/prompts/:id/run", write, h.RunPrompt)
 		group.POST("/runs", write, h.CreateRun)
 		group.GET("/runs", h.ListRuns)
 		group.GET("/runs/:id", h.GetRun)

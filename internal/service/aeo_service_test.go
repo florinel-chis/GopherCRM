@@ -676,6 +676,52 @@ func (suite *AEOServiceTestSuite) TestStartRun_Success() {
 	}
 }
 
+// A single-prompt run bypasses the active filter — that is how a draft prompt
+// gets tested before joining the daily run — and hands the engine exactly one
+// prompt.
+func (suite *AEOServiceTestSuite) TestStartPromptRun_RunsOneInactivePrompt() {
+	profile := testAEOProfile()
+	prompt := models.AEOPrompt{Text: "Draft question?", IsActive: false}
+	prompt.ID = 7
+
+	suite.mockRepo.On("GetProfile").Return(profile, nil)
+	suite.expectStaleSweep()
+	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
+	suite.mockRepo.On("GetPromptByID", uint(7)).Return(&prompt, nil)
+	suite.mockRepo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
+		Run(func(args mock.Arguments) {
+			args.Get(0).(*models.AEORun).ID = 12
+		})
+
+	run, err := suite.service.StartPromptRun(context.Background(), 7, nil)
+
+	suite.Require().NoError(err)
+	assert.Equal(suite.T(), "manual", run.Trigger)
+	assert.Equal(suite.T(), 2, run.TotalQueries, "one prompt times two configured providers")
+	suite.mockRepo.AssertNotCalled(suite.T(), "ListActivePrompts")
+
+	select {
+	case call := <-suite.executor.calls:
+		assert.Len(suite.T(), call.prompts, 1)
+		assert.Equal(suite.T(), "Draft question?", call.prompts[0].Text)
+	case <-time.After(2 * time.Second):
+		suite.Fail("executor was never handed the run")
+	}
+}
+
+func (suite *AEOServiceTestSuite) TestStartPromptRun_UnknownPromptIsNotFound() {
+	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
+	suite.expectStaleSweep()
+	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
+	suite.mockRepo.On("GetPromptByID", uint(99)).Return(nil, gorm.ErrRecordNotFound)
+
+	run, err := suite.service.StartPromptRun(context.Background(), 99, nil)
+
+	assert.Nil(suite.T(), run)
+	assert.True(suite.T(), apperrors.IsNotFound(err))
+	suite.mockRepo.AssertNotCalled(suite.T(), "CreateRun")
+}
+
 func (suite *AEOServiceTestSuite) TestStartRun_NoProfile() {
 	suite.mockRepo.On("GetProfile").Return(nil, gorm.ErrRecordNotFound)
 

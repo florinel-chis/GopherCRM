@@ -122,6 +122,7 @@ func aeoRoutes() []aeoRoute {
 		{http.MethodGet, "/aeo/prompts/1/answers", nil, read},
 		{http.MethodPut, "/aeo/prompts/1", gin.H{"is_active": false}, write},
 		{http.MethodDelete, "/aeo/prompts/1", nil, adminOnly},
+		{http.MethodPost, "/aeo/prompts/1/run", nil, write},
 		{http.MethodPost, "/aeo/runs", nil, write},
 		{http.MethodGet, "/aeo/runs", nil, read},
 		{http.MethodGet, "/aeo/runs/1", nil, read},
@@ -148,6 +149,7 @@ func (suite *AEOHandlerTestSuite) allowEverything() {
 	m.On("GetPromptAnswers", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return([]models.AEOAnswer{}, int64(0), nil).Maybe()
 	m.On("StartRun", mock.Anything, mock.Anything, mock.Anything).Return(&models.AEORun{}, nil).Maybe()
+	m.On("StartPromptRun", mock.Anything, mock.Anything, mock.Anything).Return(&models.AEORun{}, nil).Maybe()
 	m.On("ListRuns", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return([]models.AEORun{}, int64(0), nil).Maybe()
 	m.On("GetRun", mock.Anything).Return(&models.AEORun{}, nil).Maybe()
@@ -545,6 +547,29 @@ func (suite *AEOHandlerTestSuite) TestGeneratePrompts_ProviderRejectionIs503() {
 	assert.Equal(suite.T(), "PROVIDER_REJECTED", resp.Error.Code)
 	assert.Contains(suite.T(), resp.Error.Message, "API key")
 	assert.Contains(suite.T(), resp.Error.Message, "400")
+}
+
+func (suite *AEOHandlerTestSuite) TestRunPrompt_Accepted() {
+	run := &models.AEORun{Trigger: "manual", Status: "running", TotalQueries: 1}
+	run.ID = 3
+	suite.mockService.On("StartPromptRun", mock.Anything, uint(5), mock.Anything).Return(run, nil)
+
+	w := suite.do(http.MethodPost, "/aeo/prompts/5/run", nil)
+	assert.Equal(suite.T(), http.StatusAccepted, w.Code)
+}
+
+func (suite *AEOHandlerTestSuite) TestRunPrompt_UnknownPromptIs404() {
+	suite.mockService.On("StartPromptRun", mock.Anything, uint(99), mock.Anything).
+		Return(nil, fmt.Errorf("prompt 99 not found: %w", apperrors.ErrNotFound))
+
+	w := suite.do(http.MethodPost, "/aeo/prompts/99/run", nil)
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+func (suite *AEOHandlerTestSuite) TestRunPrompt_BadIDIs400() {
+	w := suite.do(http.MethodPost, "/aeo/prompts/zero/run", nil)
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "StartPromptRun")
 }
 
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProfileIs409() {

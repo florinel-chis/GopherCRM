@@ -265,6 +265,9 @@ type AEOService interface {
 	// goroutine, returning as soon as the row exists. It refuses to start
 	// while another run is still going.
 	StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error)
+	// StartPromptRun runs one prompt (active or not) against every configured
+	// engine, under the same overlap guard as a full run.
+	StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error)
 	// ReconcileRunningRuns fails runs left in "running" by a process that
 	// died mid-run and returns how many it recovered. Call it once at
 	// startup, before arming the scheduler: without it a single stranded row

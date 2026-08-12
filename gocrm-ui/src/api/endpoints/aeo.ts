@@ -227,6 +227,13 @@ export const aeoApi = {
     return response.data;
   },
 
+  // Runs one prompt (active or not) against every configured engine, under the
+  // same single-run-in-flight guard as a full run.
+  runPrompt: async (id: number): Promise<AEORun> => {
+    const response = await api.post<AEORun>(`/aeo/prompts/${id}/run`);
+    return response.data;
+  },
+
   getRuns: async (params?: { offset?: number; limit?: number }): Promise<AEORun[]> => {
     const response = await api.get<AEORun[]>('/aeo/runs', { params });
     return Array.isArray(response.data) ? response.data : [];
