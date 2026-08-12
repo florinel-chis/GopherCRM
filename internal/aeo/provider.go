@@ -53,8 +53,13 @@ const (
 )
 
 // maxAnswerTokens caps every provider response. Answers are analyzed for brand
-// mentions, not read end to end, so a modest cap keeps runs cheap.
-const maxAnswerTokens = 1024
+// mentions, not read end to end, so the cap exists only to bound cost — but it
+// bounds the WHOLE completion, and reasoning-class models (Gemini 3.x, o-series)
+// spend their internal thinking from the same budget before any visible text
+// appears. At 1024 a thinking model returned 40-token fragments cut mid-
+// sentence; 4096 leaves room for a couple of thousand thought tokens plus a
+// complete visible answer.
+const maxAnswerTokens = 4096
 
 // providerMaxRetries is handed to both SDKs. Both retry 429 and 5xx with
 // exponential backoff internally, which is why the engine does NOT wrap Query
