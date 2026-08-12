@@ -8,7 +8,6 @@ where the behaviour is surprising a **Known issue** line names it.
 
 **Sources**
 
-- `docs/specs/2026-08-07-task-labels-design.md`
 - `internal/models/label.go`, `internal/models/task.go`, `internal/models/database.go`
 - `internal/handler/label_handler.go`, `internal/handler/task_handler.go`,
   `internal/handler/routes.go`, `cmd/main.go`

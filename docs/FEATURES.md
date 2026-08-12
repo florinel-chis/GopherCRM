@@ -134,8 +134,7 @@ Status meanings:
 
 ## 6b. Task Labels (2026-08)
 
-Free-form colored labels group tasks without a project hierarchy. Design spec:
-`docs/specs/2026-08-07-task-labels-design.md`; screenshots under
+Free-form colored labels group tasks without a project hierarchy. Screenshots under
 `docs/screenshots/labels/`; catalog cases in `docs/testing/10-labels.md`.
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
@@ -219,8 +218,7 @@ CHANGELOG "Added" for the full behavioural description.
 
 ## 10c. Answer Engine Optimization (AEO) (2026-08)
 
-Tracks how often LLM answer engines mention the brand. Design spec:
-`docs/specs/2026-08-11-aeo-design.md`; catalog cases in `docs/testing/11-aeo.md`; manual
+Tracks how often LLM answer engines mention the brand. Catalog cases in `docs/testing/11-aeo.md`; manual
 live-provider smoke in `scripts/aeo_live_smoke.sh`. **No Playwright coverage exists yet** — every
 row below is unit/integration only, which is why none is marked *covered*.
 

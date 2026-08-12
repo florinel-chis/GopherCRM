@@ -277,8 +277,7 @@ is 125 calls a day. The 100-prompt cap exists for this reason. Only one run may 
 time; a second request is refused with 409.
 
 `scripts/aeo_live_smoke.sh` walks the whole module against real providers for manual verification.
-It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-aeo.md`. Design:
-`docs/specs/2026-08-11-aeo-design.md`.
+It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-aeo.md`.
 
 ## Development
 

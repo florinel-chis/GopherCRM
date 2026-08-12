@@ -7,7 +7,6 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 
 **Sources**
 
-- `docs/specs/2026-08-12-forms-design.md`
 - `internal/models/form.go`, `internal/models/database.go`
 - `internal/repository/form_repository.go`, `internal/repository/erasure_cascade.go`
 - `internal/service/form_service.go`, `internal/service/interfaces.go`

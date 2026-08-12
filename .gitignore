@@ -140,3 +140,7 @@ docs/_build/
 
 # Machine-local notes (model evaluations, environment quirks) - never shipped
 docs/local/
+
+# Design documents are working papers, not product content.
+docs/specs/
+docs/plans/
