@@ -281,3 +281,41 @@ type AEOService interface {
 	// Providers reports the engines this instance can actually query.
 	Providers() []models.AEOProviderStatus
 }
+
+// FormService drives the forms module: the CRM-side definitions, the public
+// rendering and submission pipeline, and the double-opt-in confirmation.
+//
+// The three public methods are the ones an unauthenticated visitor reaches, and
+// they are deliberately tight-lipped. An unknown, unpublished or
+// origin-restricted form is apperrors.ErrNotFound with no further explanation;
+// a submission that fails a spam layer is stored and answered exactly like a
+// genuine one; every confirmation-token rejection is
+// ErrInvalidConfirmationToken. Only field-level validation talks back, as
+// FieldErrors, which unwraps to apperrors.ErrValidation.
+type FormService interface {
+	// Create allocates the public identifier, records the author and validates
+	// the definition and the lead owner.
+	Create(form *models.Form, actorID uint) error
+	GetByID(id uint) (*models.Form, error)
+	// List returns one page of forms, the per-form submission counts of that
+	// page (forms without submissions are absent from the map) and the total
+	// matching the status filter.
+	List(offset, limit int, status, sortBy, sortOrder string) ([]models.Form, map[uint]int64, int64, error)
+	// Update replaces the definition and settings wholesale; the public
+	// identifier and the author are immutable and carried over from the stored
+	// row.
+	Update(id uint, form *models.Form) error
+	Delete(id uint) error
+	ListSubmissions(formID uint, offset, limit int, status string) ([]models.FormSubmission, int64, error)
+	GetSubmission(id uint) (*models.FormSubmission, error)
+
+	// PublicDefinition returns what a visitor's browser needs to render a
+	// published form, including a freshly minted time-trap challenge.
+	PublicDefinition(publicID, origin string) (*PublicFormDefinition, error)
+	// SubmitPublic validates, spam-checks and stores a submission, then creates
+	// the lead and sends the mail the form configures — or, for a double-opt-in
+	// form, defers all of that to ConfirmSubmission.
+	SubmitPublic(publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error)
+	// ConfirmSubmission spends a confirmation token exactly once.
+	ConfirmSubmission(rawToken string) error
+}

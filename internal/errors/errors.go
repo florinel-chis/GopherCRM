@@ -28,6 +28,13 @@ var (
 	ErrCompletedTaskModify     = errors.New("cannot change status of completed task")
 	ErrTaskLeadCustomerConflict = errors.New("task cannot be linked to both lead and customer")
 
+	// ErrValidation is the generic validation sentinel: the request was
+	// understood but describes something the domain refuses. Services wrap
+	// their own validation failures in it — including the typed ones, such as
+	// models.ErrInvalidFormDefinition — so a handler can answer 400 without
+	// knowing every rule that could have failed.
+	ErrValidation = errors.New("validation failed")
+
 	// Label errors. ErrDuplicateLabelName is the label counterpart of
 	// ErrDuplicateEmail and is answered with 409; the two validation sentinels
 	// are answered with 400.
