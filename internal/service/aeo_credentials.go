@@ -13,6 +13,11 @@ const (
 	ConfigAEOGeminiKey     = "integration.aeo.gemini_api_key"
 	ConfigAEOMoonshotKey   = "integration.aeo.moonshot_api_key"
 	ConfigAEOPerplexityKey = "integration.aeo.perplexity_api_key"
+
+	// ConfigAEOGenerationEngine names the engine prompt generation runs on.
+	// Unlike the key entries above it is not sensitive: it holds a provider
+	// name, not a credential.
+	ConfigAEOGenerationEngine = "integration.aeo.generation_engine"
 )
 
 // EffectiveAEOConfig overlays the administrator-stored provider keys on the

@@ -364,5 +364,15 @@ func DefaultConfigurations() []Configuration {
 			IsSystem:    true,
 			IsSensitive: true,
 		},
+		{
+			Key:          "integration.aeo.generation_engine",
+			Value:        "anthropic",
+			Type:         ConfigTypeString,
+			Category:     CategoryIntegration,
+			Description:  "Answer engine used to generate prompt suggestions; it needs its API key configured",
+			DefaultValue: "anthropic",
+			IsSystem:     true,
+			ValidValues:  `["anthropic", "openai", "gemini", "kimi", "perplexity"]`,
+		},
 	}
 }
