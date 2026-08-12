@@ -6,7 +6,20 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/utils"
+
+	"github.com/sirupsen/logrus"
 )
+
+// configLogger returns the application logger, falling back to the logrus
+// standard logger when the application has not initialized one (unit tests).
+func configLogger() *logrus.Entry {
+	base := utils.Logger
+	if base == nil {
+		base = logrus.StandardLogger()
+	}
+	return base.WithField("component", "configuration")
+}
 
 type ConfigurationService interface {
 	GetByKey(key string) (*models.Configuration, error)
@@ -14,6 +27,13 @@ type ConfigurationService interface {
 	GetAll() ([]models.Configuration, error)
 	Set(key string, value interface{}) error
 	Get(key string) (interface{}, error)
+	// GetSecret decrypts a sensitive configuration. It returns "" for an
+	// entry that was never set or has been cleared, and also for one whose
+	// stored value cannot be decrypted — a rotated master secret orphans
+	// stored secrets, and the caller's fallback is a better answer than a
+	// failure. A key that is not marked sensitive is an error: plain values
+	// are read through Get.
+	GetSecret(key string) (string, error)
 	GetString(key string) (string, error)
 	GetBool(key string) (bool, error)
 	GetInt(key string) (int, error)
@@ -32,10 +52,14 @@ type ConfigurationService interface {
 
 type configurationService struct {
 	configRepo repository.ConfigurationRepository
+	// secretBox encrypts the values of entries marked sensitive. A nil box
+	// means no key material was configured: sensitive writes are refused
+	// rather than stored in the clear, and sensitive reads report "unset".
+	secretBox *utils.SecretBox
 }
 
-func NewConfigurationService(configRepo repository.ConfigurationRepository) ConfigurationService {
-	return &configurationService{configRepo: configRepo}
+func NewConfigurationService(configRepo repository.ConfigurationRepository, secretBox *utils.SecretBox) ConfigurationService {
+	return &configurationService{configRepo: configRepo, secretBox: secretBox}
 }
 
 // GetByKey is the single lookup every other method funnels through, so that a
@@ -82,15 +106,66 @@ func (s *configurationService) Set(key string, value interface{}) error {
 		return fmt.Errorf("invalid value for configuration %q: %v: %w", key, err, apperrors.ErrConfigurationInvalidValue)
 	}
 
+	if err := s.sealSensitive(config); err != nil {
+		return err
+	}
+
 	return s.configRepo.Update(config)
 }
 
+// sealSensitive encrypts a sensitive entry's value in place, so that the row
+// handed to the repository never carries a plaintext secret. Clearing an entry
+// (an empty value) needs no key material and stays an empty column.
+func (s *configurationService) sealSensitive(config *models.Configuration) error {
+	if !config.IsSensitive || config.Value == "" {
+		return nil
+	}
+	sealed, err := s.secretBox.Seal(config.Value)
+	if err != nil {
+		// Deliberately vague: the value must not reach a log line, and the
+		// only cause is missing key material.
+		return fmt.Errorf("cannot store configuration %q: %w", config.Key, err)
+	}
+	config.Value = sealed
+	return nil
+}
+
+// Get returns a plain configuration value. A sensitive entry is refused: its
+// stored form is ciphertext, and handing it to a caller that serialises values
+// is exactly the leak the flag exists to prevent. Use GetSecret.
 func (s *configurationService) Get(key string) (interface{}, error) {
 	config, err := s.GetByKey(key)
 	if err != nil {
 		return nil, err
 	}
+	if config.IsSensitive {
+		return nil, fmt.Errorf("configuration %q is a sensitive configuration and cannot be read as a value", key)
+	}
 	return config.GetValueAs(), nil
+}
+
+func (s *configurationService) GetSecret(key string) (string, error) {
+	config, err := s.GetByKey(key)
+	if err != nil {
+		return "", err
+	}
+	if !config.IsSensitive {
+		return "", fmt.Errorf("configuration %q is not a sensitive configuration", key)
+	}
+	if config.Value == "" {
+		return "", nil
+	}
+
+	plaintext, err := s.secretBox.Open(config.Value)
+	if err != nil {
+		// An unreadable secret is treated as unset: the master secret was
+		// rotated, or the row was written by hand. The operator re-enters the
+		// value; nothing here is fatal, and nothing about the value is logged.
+		configLogger().WithField("config_key", key).
+			Warn("Stored configuration secret could not be decrypted and is treated as unset")
+		return "", nil
+	}
+	return plaintext, nil
 }
 
 func (s *configurationService) GetString(key string) (string, error) {
@@ -183,6 +258,9 @@ func (s *configurationService) Reset(key string) error {
 	}
 
 	config.Value = config.DefaultValue
+	if err := s.sealSensitive(config); err != nil {
+		return err
+	}
 	return s.configRepo.Update(config)
 }
 

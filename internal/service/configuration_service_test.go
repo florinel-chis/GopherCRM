@@ -7,6 +7,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -21,7 +22,13 @@ type ConfigurationServiceTestSuite struct {
 
 func (suite *ConfigurationServiceTestSuite) SetupTest() {
 	suite.mockRepo = new(mocks.ConfigurationRepository)
-	suite.service = NewConfigurationService(suite.mockRepo)
+	suite.service = NewConfigurationService(suite.mockRepo, testConfigurationSecretBox())
+}
+
+// testConfigurationSecretBox builds the box the service seals sensitive values
+// with. The master secret is obviously fake and exists only for these tests.
+func testConfigurationSecretBox() *utils.SecretBox {
+	return utils.NewSecretBox("configuration-service-unit-test-secret", "configuration-secret")
 }
 
 func (suite *ConfigurationServiceTestSuite) TearDownTest() {
@@ -220,7 +227,7 @@ func (suite *ConfigurationServiceTestSuite) TestSet_TypeMismatchIsInvalidValueSe
 		suite.Run(tc.name, func() {
 			repo := new(mocks.ConfigurationRepository)
 			repo.On("GetByKey", tc.config.Key).Return(tc.config, nil)
-			svc := NewConfigurationService(repo)
+			svc := NewConfigurationService(repo, testConfigurationSecretBox())
 
 			err := svc.Set(tc.config.Key, tc.value)
 
@@ -274,6 +281,189 @@ func (suite *ConfigurationServiceTestSuite) TestReset_RestoresDefaultValue() {
 	})).Return(nil)
 
 	suite.NoError(suite.service.Reset("general.company_name"))
+}
+
+// --- Sensitive configurations ---
+
+// testSecretValue is an obviously fake credential: no test in this package ever
+// carries a real one.
+const testSecretValue = "not-a-real-provider-key-0001"
+
+func sensitiveConfig() *models.Configuration {
+	return &models.Configuration{
+		Key:         "integration.aeo.gemini_api_key",
+		Type:        models.ConfigTypeString,
+		Category:    models.CategoryIntegration,
+		Description: "Gemini API key for the answer-engine module",
+		IsSystem:    true,
+		IsSensitive: true,
+	}
+}
+
+// The row handed to the repository must never hold the plaintext: what lands in
+// the database is the sealed form, and nothing else.
+func (suite *ConfigurationServiceTestSuite) TestSet_SensitiveValueIsEncryptedAtRest() {
+	config := sensitiveConfig()
+	var stored string
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Configuration) bool {
+		stored = c.Value
+		return true
+	})).Return(nil)
+
+	suite.NoError(suite.service.Set(config.Key, testSecretValue))
+
+	assert.True(suite.T(), utils.IsSealed(stored), "stored value is not sealed: %q", stored)
+	assert.NotContains(suite.T(), stored, testSecretValue)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_RoundTripsTheStoredValue() {
+	config := sensitiveConfig()
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+	suite.mockRepo.On("Update", mock.Anything).Return(nil)
+
+	suite.NoError(suite.service.Set(config.Key, testSecretValue))
+
+	// The mock hands back the same row the service just sealed, which is
+	// exactly what a re-read from the database would return.
+	secret, err := suite.service.GetSecret(config.Key)
+	suite.NoError(err)
+	assert.Equal(suite.T(), testSecretValue, secret)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_ClearedKeyIsEmpty() {
+	config := sensitiveConfig()
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Configuration) bool {
+		return c.Value == ""
+	})).Return(nil)
+
+	suite.NoError(suite.service.Set(config.Key, ""))
+
+	secret, err := suite.service.GetSecret(config.Key)
+	suite.NoError(err)
+	assert.Equal(suite.T(), "", secret)
+}
+
+// A value sealed under a different master secret — the rotation case — is
+// treated as unset rather than as a failure, so the caller falls back instead
+// of the module breaking.
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_UndecryptableValueIsUnset() {
+	sealed, err := utils.NewSecretBox("a-different-master-secret", "configuration-secret").Seal(testSecretValue)
+	suite.Require().NoError(err)
+
+	config := sensitiveConfig()
+	config.Value = sealed
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+
+	secret, err := suite.service.GetSecret(config.Key)
+	suite.NoError(err)
+	assert.Equal(suite.T(), "", secret)
+}
+
+// A plaintext value that predates encryption is not handed back either: only
+// this box's ciphertext is ever decrypted.
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_PlaintextValueIsUnset() {
+	config := sensitiveConfig()
+	config.Value = testSecretValue
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+
+	secret, err := suite.service.GetSecret(config.Key)
+	suite.NoError(err)
+	assert.Equal(suite.T(), "", secret)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_UnknownKeyIsNotFoundSentinel() {
+	suite.mockRepo.On("GetByKey", "no.such.key").Return(nil, gorm.ErrRecordNotFound)
+
+	secret, err := suite.service.GetSecret("no.such.key")
+
+	suite.Error(err)
+	assert.True(suite.T(), apperrors.IsNotFound(err), "expected ErrNotFound, got %v", err)
+	assert.Equal(suite.T(), "", secret)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestGetSecret_NonSensitiveKeyIsRefused() {
+	suite.mockRepo.On("GetByKey", "general.company_name").Return(writableStringConfig(), nil)
+
+	secret, err := suite.service.GetSecret("general.company_name")
+
+	suite.Error(err)
+	assert.Equal(suite.T(), "", secret)
+}
+
+// The typed getters must refuse a sensitive key: they are the paths that hand a
+// value to callers which serialise it.
+func (suite *ConfigurationServiceTestSuite) TestTypedGetters_RefuseSensitiveKeys() {
+	config := sensitiveConfig()
+	sealed, err := testConfigurationSecretBox().Seal(testSecretValue)
+	suite.Require().NoError(err)
+	config.Value = sealed
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+
+	value, err := suite.service.Get(config.Key)
+	suite.Error(err)
+	assert.Nil(suite.T(), value)
+	assert.Contains(suite.T(), err.Error(), "sensitive")
+
+	str, err := suite.service.GetString(config.Key)
+	suite.Error(err)
+	assert.Equal(suite.T(), "", str)
+
+	_, err = suite.service.GetBool(config.Key)
+	suite.Error(err)
+	_, err = suite.service.GetInt(config.Key)
+	suite.Error(err)
+	_, err = suite.service.GetFloat(config.Key)
+	suite.Error(err)
+	_, err = suite.service.GetArray(config.Key)
+	suite.Error(err)
+	_, err = suite.service.GetJSON(config.Key)
+	suite.Error(err)
+}
+
+// Resetting a sensitive entry clears it: the seeded default is empty, and an
+// empty value is stored as an empty column rather than as ciphertext.
+func (suite *ConfigurationServiceTestSuite) TestReset_SensitiveKeyClearsTheValue() {
+	config := sensitiveConfig()
+	config.Value = "enc:v1:whatever-was-there-before"
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Configuration) bool {
+		return c.Value == ""
+	})).Return(nil)
+
+	suite.NoError(suite.service.Reset(config.Key))
+}
+
+// Without key material a sensitive write fails rather than storing plaintext.
+func (suite *ConfigurationServiceTestSuite) TestSet_SensitiveValueWithoutABoxIsRefused() {
+	repo := new(mocks.ConfigurationRepository)
+	config := sensitiveConfig()
+	repo.On("GetByKey", config.Key).Return(config, nil)
+	svc := NewConfigurationService(repo, nil)
+
+	err := svc.Set(config.Key, testSecretValue)
+
+	suite.Error(err)
+	assert.NotContains(suite.T(), err.Error(), testSecretValue)
+	repo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+	repo.AssertExpectations(suite.T())
+}
+
+// A non-sensitive entry is untouched by any of this: it is stored verbatim and
+// read back through the typed getters as before.
+func (suite *ConfigurationServiceTestSuite) TestSet_NonSensitiveValueIsStoredVerbatim() {
+	config := writableStringConfig()
+	suite.mockRepo.On("GetByKey", config.Key).Return(config, nil)
+	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Configuration) bool {
+		return c.Value == "Acme Industries"
+	})).Return(nil)
+
+	suite.NoError(suite.service.Set(config.Key, "Acme Industries"))
+
+	value, err := suite.service.GetString(config.Key)
+	suite.NoError(err)
+	assert.Equal(suite.T(), "Acme Industries", value)
 }
 
 func TestConfigurationServiceTestSuite(t *testing.T) {
