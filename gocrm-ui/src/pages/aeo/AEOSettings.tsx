@@ -29,6 +29,19 @@ import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { aeoApi, type AEOProfile, type SaveAEOProfileData } from '@/api/endpoints/aeo';
+import { configurationsApi } from '@/api/endpoints/configurations';
+
+// The provider keys live in the configurations system as sensitive values: the
+// API never echoes them back, it only reports whether one is stored.
+const PROVIDER_KEYS = [
+  { key: 'integration.aeo.anthropic_api_key', name: 'Anthropic' },
+  { key: 'integration.aeo.openai_api_key', name: 'OpenAI' },
+  { key: 'integration.aeo.gemini_api_key', name: 'Gemini' },
+  { key: 'integration.aeo.moonshot_api_key', name: 'Kimi' },
+  { key: 'integration.aeo.perplexity_api_key', name: 'Perplexity' },
+] as const;
+
+const INTEGRATION_CONFIG_KEY = ['configurations', 'category', 'integration'];
 
 // Mirrors the API binding tags on PUT /aeo/profile: brand_name required and
 // ≤120 chars, description ≤2000, at most 20 aliases, domains and competitors.
@@ -178,6 +191,122 @@ const CompetitorAliases: React.FC<CompetitorAliasesProps> = ({ index, disabled }
   );
 };
 
+// Admin-only editor for the answer-engine API keys. Inputs start empty and are
+// cleared again after every write — a stored key is never rendered.
+const ProviderKeysCard: React.FC = () => {
+  const queryClient = useQueryClient();
+  const { showSuccess, showError } = useSnackbar();
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const {
+    data: configurations,
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: INTEGRATION_CONFIG_KEY,
+    queryFn: () => configurationsApi.getByCategory('integration'),
+  });
+
+  const keyMutation = useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) =>
+      configurationsApi.set(key, { value }),
+    onSuccess: (_result, variables) => {
+      setDrafts((current) => ({ ...current, [variables.key]: '' }));
+      showSuccess(variables.value === '' ? 'API key cleared' : 'API key saved');
+      queryClient.invalidateQueries({ queryKey: INTEGRATION_CONFIG_KEY });
+      // The provider roster reflects the new key without a restart.
+      queryClient.invalidateQueries({ queryKey: ['aeo', 'providers'] });
+    },
+    onError: (_error, variables) => {
+      showError(
+        variables.value === '' ? 'Failed to clear the API key' : 'Failed to save the API key'
+      );
+    },
+  });
+
+  const pendingKey = keyMutation.isPending ? keyMutation.variables?.key : undefined;
+
+  return (
+    <Paper sx={{ p: 3, mb: 3 }}>
+      <Typography variant="h6" gutterBottom>
+        API keys
+      </Typography>
+      <Typography variant="body2" color="text.secondary" mb={2}>
+        Keys are stored encrypted and never shown again. Saving one takes effect immediately; an
+        empty key falls back to the server environment.
+      </Typography>
+
+      {isError ? (
+        <Alert severity="error">Failed to load the stored API keys</Alert>
+      ) : isLoading ? (
+        <Typography variant="body2" color="text.secondary">
+          Loading stored keys…
+        </Typography>
+      ) : (
+        <Stack spacing={2}>
+          {PROVIDER_KEYS.map((provider) => {
+            const config = (configurations || []).find((c) => c.key === provider.key);
+            const isSet = Boolean(config?.is_set);
+            const draft = drafts[provider.key] ?? '';
+            const busy = pendingKey === provider.key;
+
+            return (
+              <Stack
+                key={provider.key}
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+              >
+                <Typography variant="body2" sx={{ minWidth: 96 }}>
+                  {provider.name}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={isSet ? 'Configured' : 'Not configured'}
+                  color={isSet ? 'success' : 'default'}
+                  variant={isSet ? 'filled' : 'outlined'}
+                  data-testid={`api-key-chip-${provider.name.toLowerCase()}`}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  type="password"
+                  autoComplete="new-password"
+                  label={`${provider.name} API key`}
+                  placeholder="enter new key"
+                  value={draft}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setDrafts((current) => ({ ...current, [provider.key]: event.target.value }))
+                  }
+                />
+                <Button
+                  variant="outlined"
+                  aria-label={`Save ${provider.name} API key`}
+                  disabled={busy || draft.trim() === ''}
+                  onClick={() =>
+                    keyMutation.mutate({ key: provider.key, value: draft.trim() })
+                  }
+                >
+                  Save
+                </Button>
+                <Button
+                  color="error"
+                  aria-label={`Clear ${provider.name} API key`}
+                  disabled={busy || !isSet}
+                  onClick={() => keyMutation.mutate({ key: provider.key, value: '' })}
+                >
+                  Clear
+                </Button>
+              </Stack>
+            );
+          })}
+        </Stack>
+      )}
+    </Paper>
+  );
+};
+
 export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -186,6 +315,8 @@ export const Component: React.FC = () => {
   // The API allows admin and sales to write the profile and to start a run;
   // support is read-only here, and customers never reach the route at all.
   const canManage = user?.role === 'admin' || user?.role === 'sales';
+  // Only admins may read or write configurations, so only they get the key card.
+  const isAdmin = user?.role === 'admin';
 
   const {
     data: profile,
@@ -339,11 +470,14 @@ export const Component: React.FC = () => {
             </Box>
             <Typography variant="body2" color="text.secondary">
               {configuredCount} of {providerList.length} engines configured. Keys come from the
-              server environment; an engine without a key is skipped by every run.
+              admin key settings or the server environment; an engine without a key is skipped by
+              every run.
             </Typography>
           </>
         )}
       </Paper>
+
+      {isAdmin && <ProviderKeysCard />}
 
       {!profile && (
         <Alert severity="info" sx={{ mb: 3 }}>

@@ -10,6 +10,10 @@ export interface Configuration {
   default_value: string;
   is_system: boolean;
   is_read_only: boolean;
+  // Sensitive rows are never echoed back: the API replaces `value` with an
+  // empty string and reports whether something is stored through `is_set`.
+  is_sensitive?: boolean;
+  is_set?: boolean;
   valid_values: string;
   created_at: string;
   updated_at: string;
