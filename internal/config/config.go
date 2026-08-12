@@ -228,7 +228,7 @@ func Load() (*Config, error) {
 			OpenAIAPIKey:        getEnv("OPENAI_API_KEY", ""),
 			OpenAIModel:         getEnv("AEO_OPENAI_MODEL", "gpt-4o-mini"),
 			GeminiAPIKey:        getEnv("GEMINI_API_KEY", ""),
-			GeminiModel:         getEnv("AEO_GEMINI_MODEL", "gemini-2.5-flash"),
+			GeminiModel:         getEnv("AEO_GEMINI_MODEL", "gemini-flash-latest"),
 			MoonshotAPIKey:      getEnv("MOONSHOT_API_KEY", ""),
 			KimiModel:           getEnv("AEO_KIMI_MODEL", "moonshot-v1-8k"),
 			PerplexityAPIKey:    getEnv("PERPLEXITY_API_KEY", ""),

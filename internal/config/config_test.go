@@ -224,7 +224,7 @@ func TestLoad_AEODefaults(t *testing.T) {
 		// Models fall back to the documented defaults.
 		assert.Equal(t, "claude-opus-5", cfg.AEO.AnthropicModel)
 		assert.Equal(t, "gpt-4o-mini", cfg.AEO.OpenAIModel)
-		assert.Equal(t, "gemini-2.5-flash", cfg.AEO.GeminiModel)
+		assert.Equal(t, "gemini-flash-latest", cfg.AEO.GeminiModel)
 		assert.Equal(t, "moonshot-v1-8k", cfg.AEO.KimiModel)
 		assert.Equal(t, "sonar", cfg.AEO.PerplexityModel)
 		assert.Equal(t, "custom", cfg.AEO.CustomName)
