@@ -515,16 +515,20 @@ func (suite *AEOHandlerTestSuite) TestGeneratePrompts_OutOfRangeCountIs400() {
 }
 
 // Generation runs on one specific provider, so a missing key here is reported
-// with its own code rather than the module-wide PROVIDERS_UNAVAILABLE.
+// with its own code rather than the module-wide PROVIDERS_UNAVAILABLE. The
+// service names the selected engine in its wrap; the handler must pass that
+// message through verbatim.
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProviderIs503() {
 	suite.mockService.On("GeneratePrompts", mock.Anything, 10).
-		Return(nil, apperrors.ErrGenerationProviderNotConfigured)
+		Return(nil, fmt.Errorf(
+			"prompt generation runs on the gemini engine and no gemini API key is configured: %w",
+			apperrors.ErrGenerationProviderNotConfigured))
 
 	w := suite.do(http.MethodPost, "/aeo/prompts/generate", nil)
 	assert.Equal(suite.T(), http.StatusServiceUnavailable, w.Code)
 	resp := decodeResponse(suite.T(), w)
 	assert.Equal(suite.T(), "PROVIDER_NOT_CONFIGURED", resp.Error.Code)
-	assert.Contains(suite.T(), resp.Error.Message, "Anthropic")
+	assert.Contains(suite.T(), resp.Error.Message, "gemini")
 }
 
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProfileIs409() {

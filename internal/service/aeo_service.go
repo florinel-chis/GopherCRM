@@ -130,6 +130,10 @@ type aeoService struct {
 	// so a key entered in the UI takes effect on the next run without a
 	// restart. It is assigned once at construction and only read afterwards.
 	configSource func() config.AEOConfig
+
+	// generationEngineSource, when set, names the engine prompt generation
+	// runs on (admin-configurable). Empty answers fall back to Anthropic.
+	generationEngineSource func() string
 }
 
 // AEOServiceOption customizes the service at construction time.
@@ -141,6 +145,15 @@ type AEOServiceOption func(*aeoService)
 // service falls back to reporting just the configured engines.
 func WithAEOProviderStatuses(statuses []models.AEOProviderStatus) AEOServiceOption {
 	return func(s *aeoService) { s.providerStatuses = statuses }
+}
+
+// WithAEOGenerationEngineSource makes prompt generation run on the engine the
+// source names (a provider name such as "gemini") instead of the built-in
+// Anthropic default. An empty or errored answer falls back to the default, so
+// a missing configuration row can never break generation for a deployment
+// that relies on environment keys.
+func WithAEOGenerationEngineSource(source func() string) AEOServiceOption {
+	return func(s *aeoService) { s.generationEngineSource = source }
 }
 
 // WithAEOConfigSource makes the service resolve its engines from the current
@@ -434,17 +447,17 @@ func (s *aeoService) DeletePrompt(id uint) error {
 	return nil
 }
 
-// GeneratePrompts asks the Anthropic engine for buyer-style questions derived
-// from the brand profile. Nothing is stored: the caller reviews the suggestions
-// and POSTs the ones worth tracking to /aeo/prompts.
+// GeneratePrompts asks the configured generation engine (Anthropic unless the
+// administrator selects another) for buyer-style questions derived from the
+// brand profile. Nothing is stored: the caller reviews the suggestions and
+// POSTs the ones worth tracking to /aeo/prompts.
 //
-// Generation deliberately runs on one named engine rather than "whatever is
-// configured": the wording of the meta-prompt is tuned for it, and a silent
-// fallback to another engine would change the shape of the output without the
-// operator noticing. A missing key is therefore
-// ErrGenerationProviderNotConfigured, which the handler reports as 503
-// PROVIDER_NOT_CONFIGURED and which names the engine so the operator knows
-// which key to add.
+// Generation deliberately runs on ONE named engine rather than "whatever is
+// configured": a silent fallback to another engine would change the shape of
+// the output without the operator noticing. A missing key on the selected
+// engine is therefore ErrGenerationProviderNotConfigured, which the handler
+// reports as 503 PROVIDER_NOT_CONFIGURED with a message naming the engine so
+// the operator knows which key to add.
 func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("count", count), "AEOService", "GeneratePrompts")
 
@@ -464,9 +477,11 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 		return nil, err
 	}
 
-	provider := s.generationProvider()
+	provider, engine := s.generationProvider()
 	if provider == nil {
-		return nil, apperrors.ErrGenerationProviderNotConfigured
+		return nil, fmt.Errorf(
+			"prompt generation runs on the %s engine and no %s API key is configured: %w",
+			engine, engine, apperrors.ErrGenerationProviderNotConfigured)
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, aeoGenerationTimeout)
@@ -489,15 +504,23 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 	return texts, nil
 }
 
-// generationProvider returns the engine used for prompt generation, or nil when
-// it has no credentials.
-func (s *aeoService) generationProvider() aeo.Provider {
-	for _, p := range s.currentProviders() {
-		if p != nil && p.Name() == aeo.ProviderAnthropic {
-			return p
+// generationProvider returns the engine used for prompt generation together
+// with its name, or a nil provider when the selected engine has no
+// credentials. The selection comes from the admin configuration when a source
+// is wired, defaulting to Anthropic.
+func (s *aeoService) generationProvider() (aeo.Provider, string) {
+	engine := aeo.ProviderAnthropic
+	if s.generationEngineSource != nil {
+		if v := strings.TrimSpace(s.generationEngineSource()); v != "" {
+			engine = v
 		}
 	}
-	return nil
+	for _, p := range s.currentProviders() {
+		if p != nil && p.Name() == engine {
+			return p, engine
+		}
+	}
+	return nil, engine
 }
 
 // buildAEOGenerationPrompt renders the meta-prompt. It asks for a bare JSON

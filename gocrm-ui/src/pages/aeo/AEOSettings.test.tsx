@@ -84,6 +84,13 @@ const integrationConfigs = [
   sensitiveConfig('integration.aeo.gemini_api_key', false),
   sensitiveConfig('integration.aeo.moonshot_api_key', false),
   sensitiveConfig('integration.aeo.perplexity_api_key', false),
+  {
+    ...sensitiveConfig('integration.aeo.generation_engine', true),
+    is_sensitive: false,
+    value: 'anthropic',
+    default_value: 'anthropic',
+    valid_values: '["anthropic", "openai", "gemini", "kimi", "perplexity"]',
+  },
 ];
 
 const axiosErrorWithStatus =(status: number, message?: string): AxiosError => {
@@ -381,6 +388,21 @@ describe('AEOSettings', () => {
       expect(input).toHaveValue('');
       // Nothing is configured yet, so there is nothing to clear.
       expect(screen.getByRole('button', { name: 'Clear Gemini API key' })).toBeDisabled();
+    });
+
+    it('shows the stored generation engine and saves a new selection', async () => {
+      render(<AEOSettings />);
+
+      const select = await screen.findByTestId('generation-engine-select');
+      expect(select).toHaveValue('anthropic');
+
+      fireEvent.change(select, { target: { value: 'gemini' } });
+
+      await waitFor(() => {
+        expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.generation_engine', {
+          value: 'gemini',
+        });
+      });
     });
 
     it('sends the typed key once and clears the input afterwards', async () => {

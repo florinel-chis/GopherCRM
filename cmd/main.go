@@ -200,6 +200,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		// takes effect without a restart.
 		service.WithAEOConfigSource(func() config.AEOConfig {
 			return service.EffectiveAEOConfig(cfg.AEO, configService)
+		}),
+		service.WithAEOGenerationEngineSource(func() string {
+			engine, err := configService.GetString(service.ConfigAEOGenerationEngine)
+			if err != nil {
+				return ""
+			}
+			return engine
 		}))
 
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,

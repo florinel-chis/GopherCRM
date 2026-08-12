@@ -521,6 +521,57 @@ func (suite *AEOServiceTestSuite) TestGeneratePrompts_WithoutGenerationProvider(
 
 	assert.Nil(suite.T(), prompts)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrGenerationProviderNotConfigured))
+	assert.Contains(suite.T(), err.Error(), "anthropic",
+		"the default engine must be named so the operator knows which key to add")
+}
+
+// The administrator can point generation at another engine; the selection is
+// honoured and the not-configured error names the selected engine, not the
+// default.
+func (suite *AEOServiceTestSuite) TestGeneratePrompts_ConfiguredEngine() {
+	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
+	generator := &scriptedAEOProvider{name: "gemini", reply: `["Which CRM is best?"]`}
+	svc := NewAEOService(suite.mockRepo, suite.executor,
+		[]aeo.Provider{
+			&scriptedAEOProvider{name: "anthropic", reply: `["wrong engine answered"]`},
+			generator,
+		}, suite.txManager,
+		WithAEOGenerationEngineSource(func() string { return "gemini" }))
+
+	prompts, err := svc.GeneratePrompts(context.Background(), 10)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), []string{"Which CRM is best?"}, prompts)
+	assert.NotEmpty(suite.T(), generator.asked)
+}
+
+func (suite *AEOServiceTestSuite) TestGeneratePrompts_ConfiguredEngineWithoutKey() {
+	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
+	svc := NewAEOService(suite.mockRepo, suite.executor,
+		[]aeo.Provider{fakeAEOProvider{name: "anthropic", model: "m"}}, suite.txManager,
+		WithAEOGenerationEngineSource(func() string { return "gemini" }))
+
+	prompts, err := svc.GeneratePrompts(context.Background(), 10)
+
+	assert.Nil(suite.T(), prompts)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrGenerationProviderNotConfigured))
+	assert.Contains(suite.T(), err.Error(), "gemini")
+	assert.NotContains(suite.T(), err.Error(), "anthropic")
+}
+
+// A blank or errored source (missing configuration row) must fall back to the
+// Anthropic default rather than disable generation.
+func (suite *AEOServiceTestSuite) TestGeneratePrompts_BlankEngineSourceFallsBack() {
+	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
+	generator := &scriptedAEOProvider{name: "anthropic", reply: `["Which CRM is best?"]`}
+	svc := NewAEOService(suite.mockRepo, suite.executor,
+		[]aeo.Provider{generator}, suite.txManager,
+		WithAEOGenerationEngineSource(func() string { return "  " }))
+
+	prompts, err := svc.GeneratePrompts(context.Background(), 10)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), []string{"Which CRM is best?"}, prompts)
 }
 
 func (suite *AEOServiceTestSuite) TestGeneratePrompts_ProviderError() {
