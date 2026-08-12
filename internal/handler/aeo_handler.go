@@ -505,6 +505,48 @@ func (h *AEOHandler) CreateRun(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusAccepted, run)
 }
 
+// RunPrompt godoc
+// @Summary Run a single AEO prompt
+// @Description Queue ONE prompt — active or not, which is how a draft prompt gets tested before joining the daily run — against every configured provider (admin and sales only). Returns immediately with the run row in status "running"; the same single-run-in-flight overlap guard applies as for a full run.
+// @Tags aeo
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Prompt ID"
+// @Success 202 {object} utils.APIResponse{data=models.AEORun} "Run accepted and started"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid prompt id"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or sales role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Prompt not found"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A run is already in progress, or the brand profile has not been configured"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Failure 503 {object} utils.APIResponse{error=utils.APIError} "No AEO providers are configured"
+// @Router /aeo/prompts/{id}/run [post]
+func (h *AEOHandler) RunPrompt(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "AEOHandler.RunPrompt")
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		utils.RespondValidationError(c, "Invalid prompt id")
+		return
+	}
+
+	var triggeredByID *uint
+	if userID := c.GetUint("user_id"); userID != 0 {
+		triggeredByID = &userID
+	}
+
+	run, err := h.aeoService.StartPromptRun(c.Request.Context(), uint(id), triggeredByID)
+	if err != nil {
+		h.respondError(c, logger, err, "Prompt not found")
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusAccepted, run)
+	utils.RespondSuccess(c, http.StatusAccepted, run)
+}
+
 // ListRuns godoc
 // @Summary List AEO runs
 // @Description The run history, newest first by default, with the trigger, the status and the query counters of each batch. The total is reported in the response meta.

@@ -626,6 +626,37 @@ func cleanGeneratedPromptText(raw string) string {
 // ------------------------------------------------------------------- runs ---
 
 func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error) {
+	return s.startRun(ctx, trigger, triggeredByID, func() ([]models.AEOPrompt, error) {
+		prompts, err := s.repo.ListActivePrompts()
+		if err != nil {
+			return nil, err
+		}
+		if len(prompts) == 0 {
+			return nil, fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound)
+		}
+		return prompts, nil
+	})
+}
+
+// StartPromptRun runs a single prompt against every configured engine — the
+// "try just this one" button on the prompt detail. The prompt does not have to
+// be active: running an inactive prompt on demand is how a draft gets tested
+// before it joins the daily run. Everything else — the overlap guard, the
+// stale-run sweep, background execution — matches a full manual run.
+func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error) {
+	return s.startRun(ctx, aeoTriggerManual, triggeredByID, func() ([]models.AEOPrompt, error) {
+		prompt, err := s.repo.GetPromptByID(promptID)
+		if err != nil {
+			if isNotFound(err) {
+				return nil, fmt.Errorf("prompt %d not found: %w", promptID, apperrors.ErrNotFound)
+			}
+			return nil, err
+		}
+		return []models.AEOPrompt{*prompt}, nil
+	})
+}
+
+func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID *uint, selectPrompts func() ([]models.AEOPrompt, error)) (*models.AEORun, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("trigger", trigger), "AEOService", "StartRun")
 
 	trigger = strings.ToLower(strings.TrimSpace(trigger))
@@ -685,13 +716,10 @@ func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID
 		return nil, apperrors.ErrRunInProgress
 	}
 
-	prompts, err := s.repo.ListActivePrompts()
+	prompts, err := selectPrompts()
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return nil, err
-	}
-	if len(prompts) == 0 {
-		return nil, fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound)
 	}
 
 	run := &models.AEORun{

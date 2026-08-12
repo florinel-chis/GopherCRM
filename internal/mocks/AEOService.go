@@ -107,6 +107,17 @@ func (_m *AEOService) StartRun(ctx context.Context, trigger string, triggeredByI
 	return r0, ret.Error(1)
 }
 
+// StartPromptRun provides a mock function with given fields: ctx, promptID, triggeredByID
+func (_m *AEOService) StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error) {
+	ret := _m.Called(ctx, promptID, triggeredByID)
+
+	var r0 *models.AEORun
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.AEORun)
+	}
+	return r0, ret.Error(1)
+}
+
 // ReconcileRunningRuns provides a mock function with given fields:
 func (_m *AEOService) ReconcileRunningRuns() (int64, error) {
 	ret := _m.Called()

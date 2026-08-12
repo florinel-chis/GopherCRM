@@ -28,6 +28,7 @@ vi.mock('@/api/endpoints/aeo', () => ({
     updatePrompt: vi.fn(),
     deletePrompt: vi.fn(),
     generatePrompts: vi.fn(),
+    runPrompt: vi.fn(),
   },
 }));
 
@@ -256,6 +257,26 @@ describe('AEOPrompts', () => {
     expect(screen.getByTestId('answer-transcript')).toHaveTextContent(
       'Acme is a solid CRM, while Acmerica is unrelated.'
     );
+  });
+
+  it('runs a single prompt from the drawer', async () => {
+    (aeoApi.runPrompt as any).mockResolvedValue({ id: 42, status: 'running' });
+    render(<AEOPrompts />);
+
+    await openDrawer();
+    fireEvent.click(screen.getByTestId('run-single-prompt'));
+
+    await waitFor(() => {
+      expect(aeoApi.runPrompt).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it('hides the single-prompt run button from support', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 2, role: 'support' })));
+    render(<AEOPrompts />);
+
+    await openDrawer();
+    expect(screen.queryByTestId('run-single-prompt')).not.toBeInTheDocument();
   });
 
   it('narrows the answers to a single run', async () => {

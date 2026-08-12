@@ -46,6 +46,7 @@ import {
   Close as CloseIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
 import { AxiosError } from 'axios';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -54,6 +55,9 @@ import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { aeoApi, type AEOAnswer, type AEOPrompt } from '@/api/endpoints/aeo';
+import AnswerMarkdown from './AnswerMarkdown';
+export { segmentMentions } from './mentions';
+
 
 const DAY_WINDOWS = [7, 30, 90] as const;
 const MAX_PROMPTS_PER_BATCH = 25;
@@ -62,90 +66,6 @@ const MAX_PROMPT_LENGTH = 500;
 // Word boundary as the backend defines it: the neighbouring rune must not be a
 // letter, a digit or an underscore. Deliberately not \b, so "café" and "Ştefan"
 // behave and "Acme" does not match inside "Acmerica".
-const isWordRune = (rune: string | undefined): boolean =>
-  rune !== undefined && /[\p{L}\p{N}_]/u.test(rune);
-
-interface Segment {
-  text: string;
-  match: boolean;
-}
-
-// Splits `text` into plain and matched segments for every brand term. Used to
-// mark the brand up inside an answer transcript; matching mirrors the Go
-// detector so what is highlighted is what was counted.
-export const segmentMentions = (text: string, terms: string[]): Segment[] => {
-  const cleaned = terms.map((term) => term.trim()).filter((term) => term.length > 0);
-  if (!text || cleaned.length === 0) {
-    return [{ text, match: false }];
-  }
-
-  const haystack = text.toLowerCase();
-  const hits: Array<{ start: number; end: number }> = [];
-
-  for (const term of cleaned) {
-    const needle = term.toLowerCase();
-    let from = 0;
-    for (;;) {
-      const at = haystack.indexOf(needle, from);
-      if (at === -1) {
-        break;
-      }
-      const end = at + needle.length;
-      if (!isWordRune(text[at - 1]) && !isWordRune(text[end])) {
-        hits.push({ start: at, end });
-      }
-      from = at + 1;
-    }
-  }
-
-  if (hits.length === 0) {
-    return [{ text, match: false }];
-  }
-
-  hits.sort((a, b) => a.start - b.start || b.end - a.end);
-
-  const segments: Segment[] = [];
-  let cursor = 0;
-  for (const hit of hits) {
-    if (hit.start < cursor) {
-      continue; // overlapping alias, the longer earlier match already covers it
-    }
-    if (hit.start > cursor) {
-      segments.push({ text: text.slice(cursor, hit.start), match: false });
-    }
-    segments.push({ text: text.slice(hit.start, hit.end), match: true });
-    cursor = hit.end;
-  }
-  if (cursor < text.length) {
-    segments.push({ text: text.slice(cursor), match: false });
-  }
-  return segments;
-};
-
-const Transcript: React.FC<{ text: string; terms: string[] }> = ({ text, terms }) => (
-  <Typography
-    variant="body2"
-    component="p"
-    sx={{ whiteSpace: 'pre-wrap' }}
-    data-testid="answer-transcript"
-  >
-    {segmentMentions(text, terms).map((segment, index) =>
-      segment.match ? (
-        <Box
-          key={index}
-          component="mark"
-          data-testid="brand-mention"
-          sx={{ backgroundColor: 'warning.light', px: 0.25, borderRadius: '2px' }}
-        >
-          {segment.text}
-        </Box>
-      ) : (
-        <React.Fragment key={index}>{segment.text}</React.Fragment>
-      )
-    )}
-  </Typography>
-);
-
 const formatDateTime = (value?: string): string =>
   value ? new Date(value).toLocaleString() : '—';
 
@@ -326,6 +246,29 @@ export const Component: React.FC = () => {
       setSelected((current) => (current && current.id === id ? null : current));
     },
     onError: () => showError('Failed to delete the prompt'),
+  });
+
+  const runPromptMutation = useMutation({
+    mutationFn: (id: number) => aeoApi.runPrompt(id),
+    onSuccess: (run) => {
+      showSuccess(`Run #${run.id} started — answers appear here when it completes`);
+      queryClient.invalidateQueries({ queryKey: ['aeo', 'runs'] });
+    },
+    onError: (mutationError) => {
+      if (mutationError instanceof AxiosError) {
+        const message = (mutationError.response?.data as { message?: string } | undefined)
+          ?.message;
+        if (mutationError.response?.status === 409) {
+          showError(message || 'A run is already in progress');
+          return;
+        }
+        if (mutationError.response?.status === 503) {
+          showError(message || 'No AEO providers are configured');
+          return;
+        }
+      }
+      showError('Failed to start the run');
+    },
   });
 
   const generateMutation = useMutation({
@@ -546,10 +489,22 @@ export const Component: React.FC = () => {
               </IconButton>
             </Box>
 
-            <Stack direction="row" spacing={1} mb={2} flexWrap="wrap">
+            <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" alignItems="center">
               <Chip label={`Visibility ${selected.visibility.toFixed(1)}%`} color="primary" />
               <Chip label={`${selected.answer_count} answers`} variant="outlined" />
               <Chip label={`${selected.mention_count} mentions`} variant="outlined" />
+              {canManage && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<PlayArrowIcon />}
+                  disabled={runPromptMutation.isPending}
+                  onClick={() => runPromptMutation.mutate(selected.id)}
+                  data-testid="run-single-prompt"
+                >
+                  Run this prompt
+                </Button>
+              )}
             </Stack>
 
             <FormControl size="small" fullWidth sx={{ mb: 2 }}>
@@ -608,7 +563,7 @@ export const Component: React.FC = () => {
                         </Alert>
                       ) : (
                         <Box mt={2}>
-                          <Transcript text={answer.answer_text} terms={brandTerms} />
+                          <AnswerMarkdown text={answer.answer_text} terms={brandTerms} />
                         </Box>
                       )}
 
