@@ -37,6 +37,7 @@ import {
   ChevronLeft,
   Tune,
   LocalOffer,
+  DynamicForm,
   Insights,
   Timeline,
   QuestionAnswer,
@@ -87,6 +88,14 @@ const navItems: NavItem[] = [
     title: 'Labels',
     path: '/labels',
     icon: <LocalOffer />,
+  },
+  {
+    // Web forms served to external sites. Staff-only, mirroring the API group
+    // guard; support sees the pages read-only.
+    title: 'Forms',
+    path: '/forms',
+    icon: <DynamicForm />,
+    roles: ['admin', 'sales', 'support'],
   },
   {
     // Answer Engine Optimization. Staff-only, mirroring the API group guard;

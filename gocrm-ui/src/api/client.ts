@@ -1,6 +1,21 @@
 import axios, { AxiosError } from 'axios';
-import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import type { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import type { APIError } from '@/types';
+
+// The `meta` block of the backend envelope. Only paginated list endpoints fill
+// anything beyond the request id.
+export interface ApiMeta {
+  request_id?: string;
+  page?: number;
+  per_page?: number;
+  total?: number;
+  total_pages?: number;
+}
+
+// The response interceptor replaces `response.data` with the envelope payload,
+// which would otherwise throw the pagination totals away. They are re-attached
+// to the response itself; endpoint modules that need them cast to this type.
+export type ApiResponseWithMeta<T> = AxiosResponse<T> & { meta?: ApiMeta };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1';
 const API_TIMEOUT = Number(import.meta.env.VITE_API_TIMEOUT) || 30000;
@@ -45,7 +60,11 @@ class ApiClient {
       (response) => {
         // Unwrap the data from the backend's response format
         if (response.data && response.data.success && response.data.data !== undefined) {
-          response.data = response.data.data;
+          const envelope = response.data as { data: unknown; meta?: ApiMeta };
+          response.data = envelope.data;
+          // Keep the envelope metadata reachable: list endpoints report their
+          // total row count there and nowhere else.
+          (response as ApiResponseWithMeta<unknown>).meta = envelope.meta;
         }
         return response;
       },
