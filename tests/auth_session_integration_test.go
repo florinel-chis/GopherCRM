@@ -24,13 +24,22 @@ import (
 // capturingMailer implements mailer.Mailer and records the last reset link so
 // the test can walk the full password-reset round trip.
 type capturingMailer struct {
-	lastTo  string
-	lastURL string
+	lastTo      string
+	lastURL     string
+	lastSubject string
+	lastBody    string
 }
 
 func (m *capturingMailer) SendPasswordReset(to, resetURL string) error {
 	m.lastTo = to
 	m.lastURL = resetURL
+	return nil
+}
+
+func (m *capturingMailer) Send(to, subject, body string) error {
+	m.lastTo = to
+	m.lastSubject = subject
+	m.lastBody = body
 	return nil
 }
 

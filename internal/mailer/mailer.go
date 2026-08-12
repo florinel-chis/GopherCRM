@@ -13,12 +13,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Mailer delivers account-security mail.
+// Mailer delivers transactional mail.
 type Mailer interface {
 	// SendPasswordReset delivers a password-reset link to the recipient.
 	// resetURL contains the raw single-use token; implementations must never
 	// log it — only the mail transport may see the full link.
 	SendPasswordReset(to, resetURL string) error
+
+	// Send delivers a plaintext message. Bodies may embed single-use links,
+	// so implementations must never log the body — only the recipient and
+	// the subject.
+	Send(to, subject, body string) error
 }
 
 // NewFromConfig picks the implementation from configuration: SMTP when

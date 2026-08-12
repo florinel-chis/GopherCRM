@@ -26,6 +26,11 @@ func (m *mockMailer) SendPasswordReset(to, resetURL string) error {
 	return args.Error(0)
 }
 
+func (m *mockMailer) Send(to, subject, body string) error {
+	args := m.Called(to, subject, body)
+	return args.Error(0)
+}
+
 type sessionTestDeps struct {
 	userRepo    *mocks.UserRepository
 	apiKeyRepo  *mocks.APIKeyRepository
