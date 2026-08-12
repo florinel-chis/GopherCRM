@@ -117,7 +117,12 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine 
 		log.Fatalf("Failed to set trusted proxies: %v", err)
 	}
 
-	router.Use(middleware.CORS(cfg.Server.CORSExtraOrigins...))
+	// Public form endpoints are embedded on arbitrary third-party sites, so
+	// they get permissive credential-less CORS; every other route keeps the
+	// strict allowlist.
+	router.Use(middleware.CORSWithPublicPrefixes(
+		[]string{cfg.API.Prefix + "/forms/public"},
+		cfg.Server.CORSExtraOrigins...))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
@@ -157,6 +162,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	bulkOperationRepo := repository.NewBulkOperationRepository(models.DB)
 	bulkRepo := repository.NewBulkRepository(models.DB)
 	aeoRepo := repository.NewAEORepository(models.DB)
+	formRepo := repository.NewFormRepository(models.DB)
 
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 
@@ -189,6 +195,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager,
 		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)))
 
+	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
+		txManager, cfg.Forms, cfg.API.Prefix)
+
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
 	leadHandler := handler.NewLeadHandler(leadService)
@@ -201,6 +210,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
 	bulkHandler := handler.NewBulkHandler(bulkService)
 	aeoHandler := handler.NewAEOHandler(aeoService)
+	formHandler := handler.NewFormHandler(formService)
+	formPublicHandler := handler.NewFormPublicHandler(formService, cfg.Forms, cfg.API.Prefix)
 
 	// Recover runs stranded by the previous process before anything can start a
 	// new one. The engine runs in-process and writes the terminal status itself,
@@ -243,6 +254,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			authRoutes.POST("/password-reset", authHandler.RequestPasswordReset)
 			authRoutes.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
 		}
+
+		// Embedded forms: definition, submission intake and the email-confirm
+		// pages. Per-route rate tiers are set inside (generous on reads, strict
+		// on submits and confirms).
+		handler.SetupFormPublicRoutes(public, formPublicHandler)
 	}
 
 	// Protected routes with moderate rate limiting
@@ -261,6 +277,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupDashboardRoutes(protected, dashboardHandler)
 		handler.SetupBulkStatusRoutes(protected, bulkHandler)
 		handler.SetupAEORoutes(protected, aeoHandler)
+		handler.SetupFormRoutes(protected, formHandler)
 
 		protectedAuth := protected.Group("/auth")
 		{

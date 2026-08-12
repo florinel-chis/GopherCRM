@@ -41,6 +41,9 @@ func setupLeadErasureDB(t *testing.T) *gorm.DB {
 		&models.PasswordResetToken{},
 		&models.Ticket{},
 		&models.Task{},
+		&models.Form{},
+		&models.FormSubmission{},
+		&models.FormConfirmationToken{},
 	))
 	return db
 }
