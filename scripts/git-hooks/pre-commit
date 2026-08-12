@@ -1,0 +1,60 @@
+#!/bin/sh
+# Repository guardrails, run on every commit.
+#
+# 1. docs/ may not grow new folders: design working papers and scratch
+#    directories belong outside the tracked tree. Extend ALLOWED_DOCS_DIRS
+#    deliberately when a new documentation area is a real product decision.
+# 2. docs/specs and docs/plans are refused outright, even when force-added
+#    past .gitignore — they were purged from history once and must not return.
+# 3. When docs/local/forbidden-terms.txt exists (it is untracked on purpose),
+#    staged content and paths are swept for those terms before the commit is
+#    accepted.
+#
+# Activate with: git config core.hooksPath scripts/git-hooks
+
+set -e
+
+ALLOWED_DOCS_DIRS="img screenshots testing"
+
+fail() {
+    echo "pre-commit: $1" >&2
+    exit 1
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACR)
+[ -z "$staged" ] && exit 0
+
+for path in $staged; do
+    case "$path" in
+        docs/specs/*|docs/plans/*)
+            fail "refusing '$path': docs/specs and docs/plans are local working papers and never committed"
+            ;;
+        docs/*/*)
+            dir=${path#docs/}
+            dir=${dir%%/*}
+            ok=0
+            for allowed in $ALLOWED_DOCS_DIRS; do
+                [ "$dir" = "$allowed" ] && ok=1
+            done
+            [ "$ok" = "1" ] || fail "refusing '$path': new folder 'docs/$dir/' — docs/ subfolders are added deliberately (edit ALLOWED_DOCS_DIRS in scripts/git-hooks/pre-commit if this one is intended)"
+            ;;
+    esac
+done
+
+terms_file="docs/local/forbidden-terms.txt"
+if [ -f "$terms_file" ]; then
+    while IFS= read -r term; do
+        [ -z "$term" ] && continue
+        case "$term" in \#*) continue ;; esac
+        if printf '%s\n' "$staged" | grep -iq -- "$term"; then
+            fail "a staged file PATH matches forbidden term '$term'"
+        fi
+        for path in $staged; do
+            if git show ":$path" 2>/dev/null | grep -iq -- "$term"; then
+                fail "staged content of '$path' matches forbidden term '$term'"
+            fi
+        done
+    done < "$terms_file"
+fi
+
+exit 0
