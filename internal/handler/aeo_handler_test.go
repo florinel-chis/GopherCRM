@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	openai "github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -529,6 +530,21 @@ func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProviderIs503() {
 	resp := decodeResponse(suite.T(), w)
 	assert.Equal(suite.T(), "PROVIDER_NOT_CONFIGURED", resp.Error.Code)
 	assert.Contains(suite.T(), resp.Error.Message, "gemini")
+}
+
+// A wrong or out-of-quota key on a configured engine answers 503 with a
+// message pointing at the key, not a bare 500. 503 rather than 502 because
+// fronting proxies replace origin 502 bodies with their own error page.
+func (suite *AEOHandlerTestSuite) TestGeneratePrompts_ProviderRejectionIs503() {
+	suite.mockService.On("GeneratePrompts", mock.Anything, 10).
+		Return(nil, fmt.Errorf("gemini: %w", &openai.Error{StatusCode: 400}))
+
+	w := suite.do(http.MethodPost, "/aeo/prompts/generate", nil)
+	assert.Equal(suite.T(), http.StatusServiceUnavailable, w.Code)
+	resp := decodeResponse(suite.T(), w)
+	assert.Equal(suite.T(), "PROVIDER_REJECTED", resp.Error.Code)
+	assert.Contains(suite.T(), resp.Error.Message, "API key")
+	assert.Contains(suite.T(), resp.Error.Message, "400")
 }
 
 func (suite *AEOHandlerTestSuite) TestGeneratePrompts_MissingProfileIs409() {
