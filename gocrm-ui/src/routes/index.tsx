@@ -145,6 +145,36 @@ export const router = createBrowserRouter([
         ],
       },
       {
+        // Forms are staff-only, matching the RequireRole(admin, sales, support)
+        // on the API group. Support is read-only: the builder renders without
+        // its save affordances, and the API refuses the write anyway. Same
+        // pathless-layout shape as the AEO block above — a static `element` on
+        // the children themselves would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'forms',
+            lazy: () => import('@/pages/forms/FormList'),
+          },
+          {
+            path: 'forms/new',
+            lazy: () => import('@/pages/forms/FormBuilder'),
+          },
+          {
+            path: 'forms/:id',
+            lazy: () => import('@/pages/forms/FormDetail'),
+          },
+          {
+            path: 'forms/:id/edit',
+            lazy: () => import('@/pages/forms/FormBuilder'),
+          },
+        ],
+      },
+      {
         // Pathless layout route: applies the admin guard to every child below.
         // The guard must not live on the child routes themselves — a statically
         // defined `element` takes precedence over `lazy`, which would silently
