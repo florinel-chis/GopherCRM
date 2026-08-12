@@ -26,6 +26,22 @@ type Executor interface {
 	Execute(ctx context.Context, run *models.AEORun, prompts []models.AEOPrompt, profile *models.AEOProfile) error
 }
 
+// ProviderSetExecutor is an Executor that can be rebound to a different set of
+// engines. Provider credentials are administrator-editable, so the service
+// resolves them when a run starts and hands the executor the set that was
+// configured at that moment rather than the one loaded at boot.
+//
+// It is a separate interface so that an Executor which does not care about the
+// provider set — a test double, most obviously — keeps satisfying Executor.
+type ProviderSetExecutor interface {
+	Executor
+	// WithProviders returns an executor equivalent to this one but running
+	// against the given engines. The receiver is left untouched.
+	WithProviders(providers []Provider) Executor
+}
+
+var _ ProviderSetExecutor = (*Engine)(nil)
+
 // EngineOptions tunes the executor. Zero values select the defaults.
 type EngineOptions struct {
 	Concurrency  int
@@ -49,6 +65,18 @@ func NewEngine(repo repository.AEORepository, providers []Provider, opts EngineO
 		opts.QueryTimeout = defaultQueryTimeout
 	}
 	return &Engine{repo: repo, providers: providers, opts: opts}
+}
+
+// WithProviders returns a copy of the engine bound to another provider set. The
+// repository handle and the tuning options are shared; only the engines differ,
+// which is what makes a run pick up a key added since boot.
+func (e *Engine) WithProviders(providers []Provider) Executor {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	clone.providers = providers
+	return &clone
 }
 
 // engineTask is one (prompt × provider) pair.

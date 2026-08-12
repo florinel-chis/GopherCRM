@@ -146,6 +146,28 @@ func TestLoadProvidersCarriesModelsAndCitationMode(t *testing.T) {
 	assert.True(t, isAnthropic)
 }
 
+// The AEOConfig-taking variants are what the service calls once administrator
+// stored keys are overlaid; they must build exactly what the boot-time entry
+// points build.
+func TestLoadProvidersForMatchesLoadProviders(t *testing.T) {
+	aeoCfg := fullyConfiguredAEO()
+
+	assert.Equal(t,
+		providerNames(LoadProviders(&config.Config{AEO: aeoCfg})),
+		providerNames(LoadProvidersFor(aeoCfg)))
+
+	assert.Empty(t, providerNames(LoadProvidersFor(config.AEOConfig{})))
+}
+
+func TestProviderStatusesForMatchesProviderStatuses(t *testing.T) {
+	aeoCfg := fullyConfiguredAEO()
+	aeoCfg.GeminiAPIKey = ""
+
+	assert.Equal(t,
+		ProviderStatuses(&config.Config{AEO: aeoCfg}),
+		ProviderStatusesFor(aeoCfg))
+}
+
 func TestProviderStatuses(t *testing.T) {
 	t.Run("reports every engine, configured or not", func(t *testing.T) {
 		aeoCfg := fullyConfiguredAEO()

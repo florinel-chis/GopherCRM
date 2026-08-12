@@ -515,3 +515,17 @@ func TestRunStatus(t *testing.T) {
 		assert.Equal(t, tc.want, runStatus(tc.total, tc.failed))
 	}
 }
+
+// WithProviders is how a run picks up a key stored since boot: the clone runs
+// against the new engine set while the original is left as it was.
+func TestEngineWithProvidersRebindsWithoutMutating(t *testing.T) {
+	original := NewEngine(nil, []Provider{&fakeProvider{name: "one"}}, EngineOptions{Concurrency: 3})
+
+	rebound, ok := original.WithProviders([]Provider{&fakeProvider{name: "two"}, &fakeProvider{name: "three"}}).(*Engine)
+	require.True(t, ok)
+
+	assert.Equal(t, []string{"one"}, providerNames(original.providers))
+	assert.Equal(t, []string{"two", "three"}, providerNames(rebound.providers))
+	assert.Equal(t, original.repo, rebound.repo)
+	assert.Equal(t, original.opts, rebound.opts)
+}

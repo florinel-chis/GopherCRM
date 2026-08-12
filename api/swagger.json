@@ -3706,7 +3706,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve every configuration entry, ordered by category and key (admin only)",
+                "description": "Retrieve every configuration entry, ordered by category and key (admin only). A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
                 "produces": [
                     "application/json"
                 ],
@@ -3731,7 +3731,7 @@
                                                 "configurations": {
                                                     "type": "array",
                                                     "items": {
-                                                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                                        "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                                     }
                                                 }
                                             }
@@ -3826,7 +3826,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve all configurations belonging to a category (admin only). An unrecognised category yields an empty list rather than an error.",
+                "description": "Retrieve all configurations belonging to a category (admin only). An unrecognised category yields an empty list rather than an error. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
                 "produces": [
                     "application/json"
                 ],
@@ -3870,7 +3870,7 @@
                                                 "configurations": {
                                                     "type": "array",
                                                     "items": {
-                                                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                                        "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                                     }
                                                 }
                                             }
@@ -3965,7 +3965,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, and a synthetic leads.conversion.allowed_statuses entry. Available to any authenticated user.",
+                "description": "Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, and a synthetic leads.conversion.allowed_statuses entry. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
                 "produces": [
                     "application/json"
                 ],
@@ -3990,7 +3990,7 @@
                                                 "configurations": {
                                                     "type": "array",
                                                     "items": {
-                                                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                                        "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                                     }
                                                 }
                                             }
@@ -4067,7 +4067,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve a single configuration entry by its key (admin only)",
+                "description": "Retrieve a single configuration entry by its key (admin only). A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
                 "produces": [
                     "application/json"
                 ],
@@ -4096,7 +4096,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                            "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                         }
                                     }
                                 }
@@ -4204,7 +4204,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Set the value of an existing configuration and return the updated entry (admin only). The value must match the entry's declared type — a boolean entry takes only true/false, an integer entry only a whole number, a string entry only a string — and a mismatch is rejected rather than coerced. Read-only configurations are rejected, as are values outside the entry's valid_values constraint.",
+                "description": "Set the value of an existing configuration and return the updated entry (admin only). A sensitive entry (is_sensitive) takes its new value in plaintext, stores it encrypted and is returned masked — send an empty string to clear it. The value must match the entry's declared type — a boolean entry takes only true/false, an integer entry only a whole number, a string entry only a string — and a mismatch is rejected rather than coerced. Read-only configurations are rejected, as are values outside the entry's valid_values constraint.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4245,7 +4245,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                            "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                         }
                                     }
                                 }
@@ -4373,7 +4373,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Restore a configuration's value from its stored default and return the updated entry (admin only). Read-only configurations are rejected.",
+                "description": "Restore a configuration's value from its stored default and return the updated entry (admin only). Read-only configurations are rejected. A sensitive entry is returned masked; resetting one clears it, since sensitive entries carry no default.",
                 "produces": [
                     "application/json"
                 ],
@@ -4402,7 +4402,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Configuration"
+                                            "$ref": "#/definitions/internal_handler.ConfigurationResponse"
                                         }
                                     }
                                 }
@@ -13745,53 +13745,6 @@
                 }
             }
         },
-        "github_com_florinel-chis_gophercrm_internal_models.Configuration": {
-            "type": "object",
-            "properties": {
-                "category": {
-                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationCategory"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "default_value": {
-                    "type": "string"
-                },
-                "deleted_at": {
-                    "$ref": "#/definitions/gorm.DeletedAt"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "is_read_only": {
-                    "description": "Read-only configs cannot be modified via API",
-                    "type": "boolean"
-                },
-                "is_system": {
-                    "description": "System configs cannot be deleted",
-                    "type": "boolean"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "type": {
-                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationType"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "valid_values": {
-                    "description": "JSON array of valid values for validation",
-                    "type": "string"
-                },
-                "value": {
-                    "type": "string"
-                }
-            }
-        },
         "github_com_florinel-chis_gophercrm_internal_models.ConfigurationCategory": {
             "type": "string",
             "enum": [
@@ -14801,6 +14754,61 @@
                     }
                 },
                 "label": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.ConfigurationResponse": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationCategory"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_value": {
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "$ref": "#/definitions/gorm.DeletedAt"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_read_only": {
+                    "description": "Read-only configs cannot be modified via API",
+                    "type": "boolean"
+                },
+                "is_sensitive": {
+                    "description": "IsSensitive marks a secret: the value is encrypted at rest, is read\nback only through the service's GetSecret, and is never included in an\nAPI response — reads report whether it is set, not what it is.",
+                    "type": "boolean"
+                },
+                "is_set": {
+                    "description": "IsSet reports whether the entry currently holds a value. For a\nsensitive entry it is the only evidence of its content.",
+                    "type": "boolean"
+                },
+                "is_system": {
+                    "description": "System configs cannot be deleted",
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.ConfigurationType"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "valid_values": {
+                    "description": "JSON array of valid values for validation",
+                    "type": "string"
+                },
+                "value": {
                     "type": "string"
                 }
             }

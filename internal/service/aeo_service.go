@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
+	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -122,6 +123,13 @@ type aeoService struct {
 	// credentials. The service cannot derive it from providers — an engine with
 	// no key is simply absent there — so main.go supplies it.
 	providerStatuses []models.AEOProviderStatus
+
+	// configSource, when set, returns the AEO configuration in force right
+	// now — environment values with the administrator-stored keys overlaid.
+	// The service consults it instead of its boot-time providers and statuses
+	// so a key entered in the UI takes effect on the next run without a
+	// restart. It is assigned once at construction and only read afterwards.
+	configSource func() config.AEOConfig
 }
 
 // AEOServiceOption customizes the service at construction time.
@@ -133,6 +141,40 @@ type AEOServiceOption func(*aeoService)
 // service falls back to reporting just the configured engines.
 func WithAEOProviderStatuses(statuses []models.AEOProviderStatus) AEOServiceOption {
 	return func(s *aeoService) { s.providerStatuses = statuses }
+}
+
+// WithAEOConfigSource makes the service resolve its engines from the current
+// configuration rather than from the set handed to the constructor.
+//
+// The source is called on every run creation — manual and scheduled alike — and
+// on every provider-status read, so a provider key stored through the
+// configuration API is in force from the next run onwards, without restarting
+// the process. Without this option the service keeps using the providers and
+// statuses it was constructed with.
+func WithAEOConfigSource(source func() config.AEOConfig) AEOServiceOption {
+	return func(s *aeoService) { s.configSource = source }
+}
+
+// currentProviders returns the engines that have credentials right now. Without
+// a configuration source it is the boot-time set.
+func (s *aeoService) currentProviders() []aeo.Provider {
+	if s.configSource == nil {
+		return s.providers
+	}
+	return aeo.LoadProvidersFor(s.configSource())
+}
+
+// currentExecutor binds the executor to the engines a run is about to use. An
+// executor that cannot be rebound — a test double — is returned unchanged, so
+// the provider set it was built with stays in force.
+func (s *aeoService) currentExecutor(providers []aeo.Provider) aeo.Executor {
+	if s.configSource == nil {
+		return s.executor
+	}
+	if rebindable, ok := s.executor.(aeo.ProviderSetExecutor); ok {
+		return rebindable.WithProviders(providers)
+	}
+	return s.executor
 }
 
 // NewAEOService wires the AEO service. providers is the ordered list of engines
@@ -448,7 +490,7 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 // generationProvider returns the engine used for prompt generation, or nil when
 // it has no credentials.
 func (s *aeoService) generationProvider() aeo.Provider {
-	for _, p := range s.providers {
+	for _, p := range s.currentProviders() {
 		if p != nil && p.Name() == aeo.ProviderAnthropic {
 			return p
 		}
@@ -581,12 +623,17 @@ func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID
 		return nil, err
 	}
 
-	if len(s.providers) == 0 {
+	// Credentials are administrator-editable, so the engine set is resolved
+	// here rather than reused from boot: a key stored since the process
+	// started is in force from this run on.
+	providers := s.currentProviders()
+	if len(providers) == 0 {
 		return nil, apperrors.ErrNoProvidersConfigured
 	}
 	if s.executor == nil {
 		return nil, apperrors.ErrNoProvidersConfigured
 	}
+	executor := s.currentExecutor(providers)
 
 	// The guard, the prompt read and the insert are one critical section: see
 	// startMu. Sweeping stale rows first means a run stranded by a crash
@@ -626,7 +673,7 @@ func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID
 		Trigger:       trigger,
 		Status:        aeoRunStatusRunning,
 		StartedAt:     time.Now().UTC(),
-		TotalQueries:  len(prompts) * len(s.providers),
+		TotalQueries:  len(prompts) * len(providers),
 		TriggeredByID: triggeredByID,
 	}
 	if err := s.repo.CreateRun(run); err != nil {
@@ -637,7 +684,7 @@ func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID
 	// The run outlives the HTTP request that asked for it, so the executor gets
 	// a fresh background context. Cancelling the request must not abort a run
 	// that is already writing answers.
-	go s.executor.Execute(context.Background(), run, prompts, profile)
+	go executor.Execute(context.Background(), run, prompts, profile)
 
 	logger.WithFields(map[string]interface{}{
 		"run_id":        run.ID,
@@ -1024,6 +1071,11 @@ func (s *aeoService) Citations(from, to time.Time) (*models.AEOCitationsReport, 
 const aeoTopDomainLimit = 20
 
 func (s *aeoService) Providers() []models.AEOProviderStatus {
+	// Resolved on every read: the settings page is how an administrator sees
+	// a key they just stored take effect.
+	if s.configSource != nil {
+		return aeo.ProviderStatusesFor(s.configSource())
+	}
 	if s.providerStatuses != nil {
 		return s.providerStatuses
 	}
