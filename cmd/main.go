@@ -177,7 +177,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
-	configService := service.NewConfigurationService(configRepo)
+	configService := service.NewConfigurationService(configRepo,
+		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	bulkService := service.NewBulkOperationService(
 		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
 		taskRepo, ticketRepo, txManager, utils.Logger,
@@ -193,7 +194,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		QueryTimeout: time.Duration(cfg.AEO.QueryTimeoutSeconds) * time.Second,
 	})
 	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager,
-		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)))
+		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)),
+		// Admin-stored provider keys win over the environment, resolved freshly
+		// at each run start and status read so a key saved in the settings UI
+		// takes effect without a restart.
+		service.WithAEOConfigSource(func() config.AEOConfig {
+			return service.EffectiveAEOConfig(cfg.AEO, configService)
+		}))
 
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
 		txManager, cfg.Forms, cfg.API.Prefix)

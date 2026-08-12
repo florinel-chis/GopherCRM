@@ -78,15 +78,29 @@ type Provider interface {
 	Query(ctx context.Context, prompt string) (ProviderAnswer, error)
 }
 
-// LoadProviders builds the ordered set of configured engines. An engine with no
-// API key is absent (for the custom engine, an empty base URL means absent), so
-// a deployment that configures nothing gets an empty slice and the service
-// answers ErrNoProvidersConfigured.
+// LoadProviders builds the ordered set of configured engines from the whole
+// application configuration. It is the boot-time entry point and logs the
+// resulting roster once.
 func LoadProviders(cfg *config.Config) []Provider {
 	if cfg == nil {
 		return nil
 	}
-	a := cfg.AEO
+	providers := LoadProvidersFor(cfg.AEO)
+	logProvider().WithField("providers", providerNames(providers)).
+		Info("AEO providers loaded")
+	return providers
+}
+
+// LoadProvidersFor builds the ordered set of configured engines from an AEO
+// configuration resolved at call time. An engine with no API key is absent (for
+// the custom engine, an empty base URL means absent), so a deployment that
+// configures nothing gets an empty slice and the service answers
+// ErrNoProvidersConfigured.
+//
+// This is the variant the service calls per run and per status read, once
+// administrator-stored keys are overlaid on the environment, so it logs at debug
+// level: at info it would narrate every poll of the settings page.
+func LoadProvidersFor(a config.AEOConfig) []Provider {
 	providers := make([]Provider, 0, 6)
 
 	if a.AnthropicAPIKey != "" {
@@ -137,7 +151,7 @@ func LoadProviders(cfg *config.Config) []Provider {
 	}
 
 	logProvider().WithField("providers", providerNames(providers)).
-		Info("AEO providers loaded")
+		Debug("AEO providers resolved")
 
 	return providers
 }
@@ -148,7 +162,12 @@ func ProviderStatuses(cfg *config.Config) []models.AEOProviderStatus {
 	if cfg == nil {
 		return []models.AEOProviderStatus{}
 	}
-	a := cfg.AEO
+	return ProviderStatusesFor(cfg.AEO)
+}
+
+// ProviderStatusesFor is ProviderStatuses against an AEO configuration resolved
+// at call time.
+func ProviderStatusesFor(a config.AEOConfig) []models.AEOProviderStatus {
 	return []models.AEOProviderStatus{
 		{Name: ProviderAnthropic, Model: a.AnthropicModel, Configured: a.AnthropicAPIKey != ""},
 		{Name: ProviderOpenAI, Model: a.OpenAIModel, Configured: a.OpenAIAPIKey != ""},
