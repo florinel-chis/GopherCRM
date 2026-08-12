@@ -64,7 +64,59 @@ func leadErasurePlan() erasurePlan {
 			"notes":       "",
 			"external_id": "",
 		},
+		AfterScrub: scrubLeadFormSubmissions,
 	}
+}
+
+// scrubLeadFormSubmissions extends a lead's erasure to the form submissions
+// that produced or fed it. A submission duplicates the person's data — the
+// submitted values verbatim, the email address, the visitor's IP, user agent
+// and the page they submitted from — so leaving it behind would undo the
+// erasure the same way a surviving conversion twin would.
+//
+// It runs as the lead plan's AfterScrub: same transaction, after the lead's
+// columns are overwritten (so the placeholder address is already on the row)
+// and before the soft delete. The submission keeps the lead's placeholder
+// email rather than a blank so the two rows stay visibly linked without either
+// identifying anybody. Confirmation tokens are hard-deleted outright: they
+// exist only to prove control of an address the erasure just destroyed.
+//
+// Submissions with no lead_id (spam, never-confirmed opt-ins, forms configured
+// not to create leads) are outside any lead's erasure and are deliberately not
+// touched here; their clean-up is a retention concern, not an Article 17 one.
+func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
+	var lead models.Lead
+	if err := tx.Unscoped().Select("email").First(&lead, leadID).Error; err != nil {
+		return fmt.Errorf("loading erased lead %d for submission scrub: %w", leadID, err)
+	}
+
+	var submissionIDs []uint
+	if err := tx.Unscoped().Model(&models.FormSubmission{}).
+		Where("lead_id = ?", leadID).Pluck("id", &submissionIDs).Error; err != nil {
+		return fmt.Errorf("listing form submissions of lead %d: %w", leadID, err)
+	}
+	if len(submissionIDs) == 0 {
+		return nil
+	}
+
+	err := tx.Unscoped().Model(&models.FormSubmission{}).
+		Where("id IN ?", submissionIDs).
+		Updates(map[string]interface{}{
+			"data":       "{}",
+			"email":      lead.Email,
+			"ip_address": "",
+			"user_agent": "",
+			"referrer":   "",
+		}).Error
+	if err != nil {
+		return fmt.Errorf("scrubbing form submissions of lead %d: %w", leadID, err)
+	}
+
+	if err := tx.Unscoped().Where("submission_id IN ?", submissionIDs).
+		Delete(&models.FormConfirmationToken{}).Error; err != nil {
+		return fmt.Errorf("purging confirmation tokens of lead %d: %w", leadID, err)
+	}
+	return nil
 }
 
 // erasureCascade erases a person out of both the lead and the customer half of

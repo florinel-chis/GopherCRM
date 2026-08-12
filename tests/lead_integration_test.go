@@ -49,7 +49,8 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	suite.NoError(err)
 	
 	// Migrate the schema
-	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Lead{}, &models.Customer{})
+	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Lead{}, &models.Customer{},
+		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 	suite.NoError(err)
 	
 	suite.db = db

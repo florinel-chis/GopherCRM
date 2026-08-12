@@ -52,6 +52,9 @@ func (s *BulkOperationPersistenceSuite) SetupTest() {
 		&models.PasswordResetToken{},
 		&models.BulkOperation{},
 		&models.BulkOperationItem{},
+		&models.Form{},
+		&models.FormSubmission{},
+		&models.FormConfirmationToken{},
 	))
 	s.db = db
 
