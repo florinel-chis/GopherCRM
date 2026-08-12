@@ -75,7 +75,7 @@ func seedLead(t *testing.T, db *gorm.DB, ownerID uint, email string) *models.Lea
 		Source:         "trade show",
 		Status:         models.LeadStatusQualified,
 		Classification: models.LeadClassificationHotLead,
-		ExternalID:     "hubspot-contact-99182",
+		ExternalID:     "legacy-crm-contact-99182",
 		Notes:          "Met Ingrid at the Bucharest expo; call her mobile after 18:00.",
 		OwnerID:        ownerID,
 	}
