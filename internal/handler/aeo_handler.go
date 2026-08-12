@@ -2,12 +2,14 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/aeo"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
@@ -383,6 +385,23 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 		if errors.Is(err, apperrors.ErrGenerationProviderNotConfigured) {
 			logger.WithError(err).Warn("Prompt generation provider not configured")
 			utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
+			return
+		}
+		// A configured engine that answers is a different failure from a
+		// missing one: a 4xx from the engine almost always means the stored
+		// key is wrong (or out of quota), and saying so beats a bare 500.
+		// Answered as 503, not 502: proxies (Cloudflare included) replace an
+		// origin 502 body with their own error page, which would swallow
+		// this message.
+		if status := aeo.ProviderHTTPStatus(err); status != 0 {
+			logger.WithError(err).WithField("provider_status", status).
+				Warn("Prompt generation rejected by the engine")
+			message := fmt.Sprintf("the generation engine is unavailable (HTTP %d); try again later", status)
+			if status >= 400 && status < 500 {
+				message = fmt.Sprintf(
+					"the generation engine rejected the request (HTTP %d) — check its API key in the AEO settings", status)
+			}
+			utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_REJECTED", message, nil)
 			return
 		}
 		h.respondError(c, logger, err, "AEO profile not found")
