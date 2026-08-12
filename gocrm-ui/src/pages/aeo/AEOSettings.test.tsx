@@ -3,6 +3,7 @@ import { AxiosError } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as AEOSettings } from './AEOSettings';
 import { aeoApi } from '@/api/endpoints/aeo';
+import { configurationsApi } from '@/api/endpoints/configurations';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 
@@ -24,6 +25,15 @@ vi.mock('@/api/endpoints/aeo', () => ({
     saveProfile: vi.fn(),
     getProviders: vi.fn(),
     createRun: vi.fn(),
+  },
+}));
+
+vi.mock('@/api/endpoints/configurations', () => ({
+  configurationsApi: {
+    getByCategory: vi.fn(),
+    set: vi.fn(),
+    getUIConfigurations: vi.fn(),
+    getValue: vi.fn(),
   },
 }));
 
@@ -51,7 +61,32 @@ const providers = [
   { name: 'openai', model: 'gpt-4o-mini', configured: false },
 ];
 
-const axiosErrorWithStatus = (status: number, message?: string): AxiosError => {
+const sensitiveConfig = (key: string, isSet: boolean) => ({
+  id: 1,
+  key,
+  value: '',
+  type: 'string',
+  category: 'integration',
+  description: '',
+  default_value: '',
+  is_system: true,
+  is_read_only: false,
+  is_sensitive: true,
+  is_set: isSet,
+  valid_values: '',
+  created_at: '2026-08-12T00:00:00Z',
+  updated_at: '2026-08-12T00:00:00Z',
+});
+
+const integrationConfigs = [
+  sensitiveConfig('integration.aeo.anthropic_api_key', true),
+  sensitiveConfig('integration.aeo.openai_api_key', false),
+  sensitiveConfig('integration.aeo.gemini_api_key', false),
+  sensitiveConfig('integration.aeo.moonshot_api_key', false),
+  sensitiveConfig('integration.aeo.perplexity_api_key', false),
+];
+
+const axiosErrorWithStatus =(status: number, message?: string): AxiosError => {
   const error = new AxiosError('request failed');
   error.response = {
     status,
@@ -69,6 +104,10 @@ describe('AEOSettings', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
     (aeoApi.getProfile as any).mockResolvedValue(profile);
     (aeoApi.getProviders as any).mockResolvedValue(providers);
+    (configurationsApi.getByCategory as any).mockResolvedValue(integrationConfigs);
+    (configurationsApi.set as any).mockResolvedValue(
+      sensitiveConfig('integration.aeo.anthropic_api_key', true)
+    );
   });
 
   afterEach(() => {
@@ -306,5 +345,119 @@ describe('AEOSettings', () => {
     // A read-only viewer must not be able to strip a chip either.
     const aliasChip = screen.getByText('Acme Inc').closest('.MuiChip-root') as HTMLElement;
     expect(within(aliasChip).queryByTestId('CancelIcon')).not.toBeInTheDocument();
+  });
+
+  describe('API keys card', () => {
+    it.each(['sales', 'support'] as const)('stays hidden for the %s role', async (role) => {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role })));
+
+      render(<AEOSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/^Brand name/)).toHaveValue('Acme');
+      });
+
+      expect(screen.queryByRole('heading', { name: 'API keys' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Anthropic API key/)).not.toBeInTheDocument();
+      expect(configurationsApi.getByCategory).not.toHaveBeenCalled();
+    });
+
+    it('renders one row per provider with the stored state', async () => {
+      render(<AEOSettings />);
+
+      expect(await screen.findByRole('heading', { name: 'API keys' })).toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('api-key-chip-anthropic')).toHaveTextContent('Configured');
+      });
+
+      for (const name of ['openai', 'gemini', 'kimi', 'perplexity']) {
+        expect(screen.getByTestId(`api-key-chip-${name}`)).toHaveTextContent('Not configured');
+      }
+
+      const input = screen.getByLabelText(/^Anthropic API key/);
+      expect(input).toHaveAttribute('type', 'password');
+      expect(input).toHaveAttribute('autocomplete', 'new-password');
+      expect(input).toHaveValue('');
+      // Nothing is configured yet, so there is nothing to clear.
+      expect(screen.getByRole('button', { name: 'Clear Gemini API key' })).toBeDisabled();
+    });
+
+    it('sends the typed key once and clears the input afterwards', async () => {
+      render(<AEOSettings />);
+
+      const input = await screen.findByLabelText(/^Gemini API key/);
+      fireEvent.change(input, { target: { value: 'top-secret-value' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini API key' }));
+
+      await waitFor(() => {
+        expect(configurationsApi.set).toHaveBeenCalledTimes(1);
+      });
+      expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.gemini_api_key', {
+        value: 'top-secret-value',
+      });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/^Gemini API key/)).toHaveValue('');
+      });
+      expect(screen.queryByDisplayValue('top-secret-value')).not.toBeInTheDocument();
+      expect(showSuccess).toHaveBeenCalledWith('API key saved');
+    });
+
+    it('refreshes the provider roster after a save', async () => {
+      render(<AEOSettings />);
+
+      const input = await screen.findByLabelText(/^Gemini API key/);
+      fireEvent.change(input, { target: { value: 'another-secret' } });
+
+      const callsBefore = (aeoApi.getProviders as any).mock.calls.length;
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini API key' }));
+
+      await waitFor(() => {
+        expect((aeoApi.getProviders as any).mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+      await waitFor(() => {
+        expect(configurationsApi.getByCategory).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('clears a configured key with an empty value', async () => {
+      render(<AEOSettings />);
+
+      const clear = await screen.findByRole('button', { name: 'Clear Anthropic API key' });
+      fireEvent.click(clear);
+
+      await waitFor(() => {
+        expect(configurationsApi.set).toHaveBeenCalledWith(
+          'integration.aeo.anthropic_api_key',
+          { value: '' }
+        );
+      });
+      await waitFor(() => {
+        expect(showSuccess).toHaveBeenCalledWith('API key cleared');
+      });
+    });
+
+    it('reports a failed save', async () => {
+      (configurationsApi.set as any).mockRejectedValue(new Error('nope'));
+
+      render(<AEOSettings />);
+
+      const input = await screen.findByLabelText(/^Kimi API key/);
+      fireEvent.change(input, { target: { value: 'secret' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Kimi API key' }));
+
+      await waitFor(() => {
+        expect(showError).toHaveBeenCalledWith('Failed to save the API key');
+      });
+    });
+
+    it('surfaces a failed configuration load', async () => {
+      (configurationsApi.getByCategory as any).mockRejectedValue(new Error('boom'));
+
+      render(<AEOSettings />);
+
+      expect(await screen.findByText('Failed to load the stored API keys')).toBeInTheDocument();
+    });
   });
 });

@@ -102,7 +102,10 @@ const ConfigurationSettings: React.FC = () => {
 
   const handleEdit = (config: Configuration) => {
     setEditingConfig(config);
-    setEditValue(configurationsApi.getValue(config));
+    // A sensitive value is never sent back by the API, so the editor starts
+    // empty: the operator either types a new value or saves an empty one to
+    // clear it.
+    setEditValue(config.is_sensitive ? '' : configurationsApi.getValue(config));
     setShowEditDialog(true);
   };
 
@@ -135,8 +138,20 @@ const ConfigurationSettings: React.FC = () => {
   };
 
   const renderConfigValue = (config: Configuration) => {
+    if (config.is_sensitive) {
+      return (
+        <Chip
+          label={config.is_set ? 'Configured' : 'Not configured'}
+          color={config.is_set ? 'success' : 'default'}
+          variant={config.is_set ? 'filled' : 'outlined'}
+          size="small"
+          data-testid={`sensitive-chip-${config.key}`}
+        />
+      );
+    }
+
     const value = configurationsApi.getValue(config);
-    
+
     switch (config.type) {
       case 'boolean':
         return (
@@ -168,7 +183,22 @@ const ConfigurationSettings: React.FC = () => {
   const renderEditField = () => {
     if (!editingConfig) return null;
 
-    const validValues = editingConfig.valid_values ? 
+    if (editingConfig.is_sensitive) {
+      return (
+        <TextField
+          fullWidth
+          type="password"
+          autoComplete="new-password"
+          label="New value"
+          placeholder="enter new value"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          helperText="Stored encrypted and never shown again. Save an empty value to clear it."
+        />
+      );
+    }
+
+    const validValues = editingConfig.valid_values ?
       JSON.parse(editingConfig.valid_values) : null;
 
     switch (editingConfig.type) {
