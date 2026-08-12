@@ -181,7 +181,7 @@ func TestBulkLeadErasureNeverReportsAnIntactLeadAsErased(t *testing.T) {
 
 	assertColumnsFreeOf(t, db, "leads",
 		"shared-customer-2@example.com", "shared-customer-3@example.com",
-		"Ingrid", "Vasilescu", "hubspot-contact-99182")
+		"Ingrid", "Vasilescu", "legacy-crm-contact-99182")
 }
 
 // The mirror image, entered from the customer end: one customer, several leads,

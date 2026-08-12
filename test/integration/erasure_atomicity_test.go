@@ -245,7 +245,7 @@ func TestLeadErasureRollsBackWhenTheSoftDeleteFails(t *testing.T) {
 	assert.Equal(t, "Ingrid", reloaded.FirstName)
 	assert.Equal(t, "Vasilescu", reloaded.LastName)
 	assert.Equal(t, "+40 722 333 444", reloaded.Phone)
-	assert.Equal(t, "hubspot-contact-99182", reloaded.ExternalID)
+	assert.Equal(t, "legacy-crm-contact-99182", reloaded.ExternalID)
 	assert.Equal(t, "Met Ingrid at the Bucharest expo; call her mobile after 18:00.", reloaded.Notes)
 }
 
