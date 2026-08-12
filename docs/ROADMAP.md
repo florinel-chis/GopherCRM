@@ -57,3 +57,11 @@ candidate follow-up, not an accident:
   visitor data (values, IP) and are outside lead erasure; they currently live forever.
 - **Field-definition migrations** — editing a form's fields does not rewrite historical
   submission data; renamed fields simply start a new key in `data`.
+
+## Sensitive settings — follow-ups
+
+- **reCAPTCHA and SMTP credentials** are the next candidates for the sensitive-configuration
+  mechanism (admin-editable, encrypted at rest, env fallback) that the AEO provider keys use.
+- **Master-secret rotation orphans stored secrets**: sensitive values are sealed with a key
+  derived from `API_KEY_SECRET` (falling back to `JWT_SECRET`); rotating it makes stored secrets
+  undecryptable — they read as unset and must be re-entered in the UI.
