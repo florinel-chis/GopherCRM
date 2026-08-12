@@ -465,6 +465,151 @@ definitions:
       user_id:
         type: integer
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.Form:
+    properties:
+      allowed_domains:
+        items:
+          type: string
+        type: array
+      captcha_enabled:
+        type: boolean
+      confirmation_body:
+        type: string
+      confirmation_subject:
+        type: string
+      consent_text:
+        type: string
+      content_url:
+        type: string
+      create_lead:
+        description: |-
+          CreateLead deliberately carries NO `default:true` column tag. GORM
+          substitutes a literal column default whenever the Go field holds its zero
+          value (callbacks.ConvertToCreateValues), so a form explicitly configured
+          not to create leads would be persisted with create_lead = true. The
+          "new forms create leads" default therefore belongs to the API layer,
+          which knows whether the client sent the flag at all.
+        type: boolean
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      default_owner_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      double_opt_in:
+        type: boolean
+      fields:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormFieldDef'
+        type: array
+      follow_up_body:
+        type: string
+      follow_up_subject:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      notify_emails:
+        items:
+          type: string
+        type: array
+      public_id:
+        description: |-
+          PublicID is the only identifier ever exposed publicly. It is random
+          rather than the primary key so the public endpoints cannot be enumerated.
+        type: string
+      redirect_url:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormStatus'
+      submit_action:
+        type: string
+      thank_you_message:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.FormFieldDef:
+    properties:
+      help_text:
+        type: string
+      label:
+        type: string
+      max_length:
+        type: integer
+      name:
+        type: string
+      options:
+        items:
+          type: string
+        type: array
+      placeholder:
+        type: string
+      required:
+        type: boolean
+      type:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.FormStatus:
+    enum:
+    - draft
+    - published
+    - archived
+    type: string
+    x-enum-varnames:
+    - FormStatusDraft
+    - FormStatusPublished
+    - FormStatusArchived
+  github_com_florinel-chis_gophercrm_internal_models.FormSubmission:
+    properties:
+      confirmed_at:
+        type: string
+      created_at:
+        type: string
+      data:
+        additionalProperties:
+          type: string
+        type: object
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      email:
+        type: string
+      form_id:
+        type: integer
+      id:
+        type: integer
+      ip_address:
+        type: string
+      lead_id:
+        type: integer
+      referrer:
+        type: string
+      spam_reason:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormSubmissionStatus'
+      updated_at:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.FormSubmissionStatus:
+    enum:
+    - received
+    - pending
+    - confirmed
+    - spam
+    type: string
+    x-enum-varnames:
+    - FormSubmissionReceived
+    - FormSubmissionPending
+    - FormSubmissionConfirmed
+    - FormSubmissionSpam
   github_com_florinel-chis_gophercrm_internal_models.Label:
     properties:
       color:
@@ -707,6 +852,64 @@ definitions:
     - RoleSales
     - RoleSupport
     - RoleCustomer
+  github_com_florinel-chis_gophercrm_internal_service.PublicFormDefinition:
+    properties:
+      challenge:
+        description: |-
+          Challenge pins the moment this definition was handed out; the submission
+          carries it back so the server can tell a filled-in form from an instant
+          replay.
+        type: string
+      consent_text:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormFieldDef'
+        type: array
+      honeypot_field:
+        description: HoneypotField is the name of the decoy input the renderer must
+          include.
+        type: string
+      name:
+        type: string
+      public_id:
+        type: string
+      recaptcha_site_key:
+        description: |-
+          RecaptchaSiteKey is present only when the form asks for the check and
+          the server has the key pair to run it.
+        type: string
+      submit_action:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_service.PublicSubmissionRequest:
+    properties:
+      captcha_token:
+        type: string
+      challenge:
+        type: string
+      consent:
+        type: boolean
+      page_url:
+        type: string
+      values:
+        additionalProperties:
+          type: string
+        type: object
+      website_url_confirm:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_service.SubmitOutcome:
+    properties:
+      action:
+        type: string
+      message:
+        type: string
+      pending_confirmation:
+        type: boolean
+      redirect_url:
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_utils.APIError:
     properties:
       code:
@@ -972,6 +1175,72 @@ definitions:
     - first_name
     - last_name
     type: object
+  internal_handler.CreateFormRequest:
+    properties:
+      allowed_domains:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      captcha_enabled:
+        type: boolean
+      confirmation_body:
+        type: string
+      confirmation_subject:
+        maxLength: 255
+        type: string
+      consent_text:
+        type: string
+      content_url:
+        maxLength: 512
+        type: string
+      create_lead:
+        type: boolean
+      default_owner_id:
+        type: integer
+      description:
+        type: string
+      double_opt_in:
+        type: boolean
+      fields:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormFieldDef'
+        maxItems: 50
+        minItems: 1
+        type: array
+      follow_up_body:
+        type: string
+      follow_up_subject:
+        maxLength: 255
+        type: string
+      name:
+        maxLength: 255
+        type: string
+      notify_emails:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      redirect_url:
+        maxLength: 512
+        type: string
+      status:
+        enum:
+        - draft
+        - published
+        - archived
+        type: string
+      submit_action:
+        enum:
+        - message
+        - redirect
+        type: string
+      thank_you_message:
+        type: string
+    required:
+    - fields
+    - name
+    type: object
   internal_handler.CreateLabelRequest:
     properties:
       color:
@@ -1129,6 +1398,77 @@ definitions:
       total_leads:
         type: integer
     type: object
+  internal_handler.FormListItem:
+    properties:
+      allowed_domains:
+        items:
+          type: string
+        type: array
+      captcha_enabled:
+        type: boolean
+      confirmation_body:
+        type: string
+      confirmation_subject:
+        type: string
+      consent_text:
+        type: string
+      content_url:
+        type: string
+      create_lead:
+        description: |-
+          CreateLead deliberately carries NO `default:true` column tag. GORM
+          substitutes a literal column default whenever the Go field holds its zero
+          value (callbacks.ConvertToCreateValues), so a form explicitly configured
+          not to create leads would be persisted with create_lead = true. The
+          "new forms create leads" default therefore belongs to the API layer,
+          which knows whether the client sent the flag at all.
+        type: boolean
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      default_owner_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      double_opt_in:
+        type: boolean
+      fields:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormFieldDef'
+        type: array
+      follow_up_body:
+        type: string
+      follow_up_subject:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      notify_emails:
+        items:
+          type: string
+        type: array
+      public_id:
+        description: |-
+          PublicID is the only identifier ever exposed publicly. It is random
+          rather than the primary key so the public endpoints cannot be enumerated.
+        type: string
+      redirect_url:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormStatus'
+      submission_count:
+        type: integer
+      submit_action:
+        type: string
+      thank_you_message:
+        type: string
+      updated_at:
+        type: string
+    type: object
   internal_handler.GenerateAEOPromptsRequest:
     properties:
       count:
@@ -1276,6 +1616,72 @@ definitions:
         type: string
       state:
         type: string
+    type: object
+  internal_handler.UpdateFormRequest:
+    properties:
+      allowed_domains:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      captcha_enabled:
+        type: boolean
+      confirmation_body:
+        type: string
+      confirmation_subject:
+        maxLength: 255
+        type: string
+      consent_text:
+        type: string
+      content_url:
+        maxLength: 512
+        type: string
+      create_lead:
+        type: boolean
+      default_owner_id:
+        type: integer
+      description:
+        type: string
+      double_opt_in:
+        type: boolean
+      fields:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormFieldDef'
+        maxItems: 50
+        minItems: 1
+        type: array
+      follow_up_body:
+        type: string
+      follow_up_subject:
+        maxLength: 255
+        type: string
+      name:
+        maxLength: 255
+        type: string
+      notify_emails:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      redirect_url:
+        maxLength: 512
+        type: string
+      status:
+        enum:
+        - draft
+        - published
+        - archived
+        type: string
+      submit_action:
+        enum:
+        - message
+        - redirect
+        type: string
+      thank_you_message:
+        type: string
+    required:
+    - fields
+    - name
     type: object
   internal_handler.UpdateLabelRequest:
     properties:
@@ -5272,6 +5678,773 @@ paths:
       summary: Tasks due soonest
       tags:
       - dashboard
+  /forms:
+    get:
+      description: Paginated list of form definitions, each carrying the number of
+        submissions it has collected. Available to admin, sales and support; the customer
+        role is rejected with 403. Sorting accepts id, name, status, created_at and
+        updated_at; an unknown column is answered with 400 rather than silently ignored,
+        and so is an unknown status filter. The default order is newest first.
+      parameters:
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Page size (default 20, maximum 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by publication state
+        enum:
+        - draft
+        - published
+        - archived
+        in: query
+        name: status
+        type: string
+      - description: Sort column
+        enum:
+        - id
+        - name
+        - status
+        - created_at
+        - updated_at
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort direction (default desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Forms retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.FormListItem'
+                  type: array
+              type: object
+        "400":
+          description: Invalid status filter or sort column
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List forms
+      tags:
+      - forms
+    post:
+      consumes:
+      - application/json
+      description: 'Create a form definition (admin and sales only). The server assigns
+        the public identifier used by the embed script and records the author. The
+        definition is validated before it is stored: 1 to 50 fields with unique machine
+        names matching ^[a-z][a-z0-9_]{0,49}$, exactly one field of type email named
+        "email", select fields carrying 1 to 50 options, hidden fields never required,
+        a redirect action requiring an http(s) redirect_url, and a create_lead form
+        requiring a default_owner_id that names an active admin or sales user. Omitting
+        create_lead means true. A rejected definition is answered with 400, with the
+        offending fields in error.details when the service could attribute the failure.'
+      parameters:
+      - description: Form definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateFormRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Form created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Form'
+              type: object
+        "400":
+          description: Invalid request data or invalid form definition
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a form
+      tags:
+      - forms
+  /forms/{id}:
+    delete:
+      description: Soft-delete a form (admin role only). The public endpoints stop
+        serving it immediately, while its submissions are retained so the leads they
+        produced keep their provenance.
+      parameters:
+      - description: Form ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid form ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Form not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a form
+      tags:
+      - forms
+    get:
+      description: Get a single form definition by ID, including its notification
+        recipients, mail bodies and origin allowlist. Available to admin, sales and
+        support; the customer role is rejected with 403.
+      parameters:
+      - description: Form ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Form retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Form'
+              type: object
+        "400":
+          description: Invalid form ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Form not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a form
+      tags:
+      - forms
+    put:
+      consumes:
+      - application/json
+      description: 'Replace a form definition wholesale (admin and sales only), including
+        its publication status. The body carries the complete document: a field left
+        out is cleared, not kept. The public identifier and the author are immutable
+        and are carried over from the stored row, so an embedded form keeps working
+        across edits. Omitting create_lead means true. Validation is identical to
+        creation.'
+      parameters:
+      - description: Form ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Complete form definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateFormRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Form updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Form'
+              type: object
+        "400":
+          description: Invalid form ID, request data or form definition
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Form not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a form
+      tags:
+      - forms
+  /forms/{id}/submissions:
+    get:
+      description: Paginated list of the submissions one form collected, newest first.
+        Available to admin, sales and support; the customer role is rejected with
+        403. Spam submissions are listed alongside genuine ones with their status
+        and the protection layer that caught them, so the filters can be audited.
+      parameters:
+      - description: Form ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Page size (default 20, maximum 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by submission state
+        enum:
+        - received
+        - pending
+        - confirmed
+        - spam
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Submissions retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormSubmission'
+                  type: array
+              type: object
+        "400":
+          description: Invalid form ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Form not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the submissions of a form
+      tags:
+      - forms
+  /forms/public/{key}:
+    get:
+      description: 'Everything a visitor''s browser needs to render a published form:
+        its name, the ordered field definitions, the consent text, the submit action,
+        the reCAPTCHA site key when the form uses it, the name of the honeypot input
+        and a short-lived signed challenge that the submission must carry back. Unauthenticated
+        and cross-origin. Unknown, unpublished and origin-restricted forms are all
+        a plain 404 — the response never distinguishes them.'
+      parameters:
+      - description: Public form identifier
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Form definition retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_service.PublicFormDefinition'
+              type: object
+        "404":
+          description: No published form with this identifier is available to this
+            origin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Get a public form definition
+      tags:
+      - forms
+  /forms/public/{key}/submissions:
+    post:
+      consumes:
+      - application/json
+      description: Accepts a submission for a published form. The body carries the
+        field values, the consent flag, the challenge handed out with the definition,
+        the honeypot input and, when the form uses reCAPTCHA, the client token. Field-level
+        problems come back as 400 with a field name to message map in error.details.
+        A submission caught by a spam layer is answered exactly like a genuine one,
+        so the response says nothing about which layers exist. Unauthenticated and
+        cross-origin; bodies are capped at 64 KB.
+      parameters:
+      - description: Public form identifier
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Submitted values
+        in: body
+        name: submission
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_service.PublicSubmissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Submission accepted; the outcome says whether to show a message
+            or redirect
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_service.SubmitOutcome'
+              type: object
+        "400":
+          description: Validation failed - error.details maps field names to messages
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: No published form with this identifier is available to this
+            origin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "413":
+          description: Submission body exceeds 64 KB
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Submit a public form
+      tags:
+      - forms
+  /forms/submissions/{id}:
+    get:
+      description: Get a single submission with the values it carried, the address
+        it came from and the lead it produced, if any. Available to admin, sales and
+        support; the customer role is rejected with 403.
+      parameters:
+      - description: Submission ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Submission retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormSubmission'
+              type: object
+        "400":
+          description: Invalid submission ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - Admin, sales or support role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Submission not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a submission
+      tags:
+      - forms
   /labels:
     get:
       description: Every label, ordered by name ascending, as a bare array. Each label
