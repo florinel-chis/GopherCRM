@@ -23,7 +23,7 @@ import (
 )
 
 // @title GopherCRM API
-// @version 1.0
+// @version 1.1.0
 // @description CRM API for managing users, leads, customers, tickets, tasks and API keys.
 // @BasePath /api/v1
 
