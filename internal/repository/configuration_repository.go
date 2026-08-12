@@ -62,7 +62,7 @@ func (r *configurationRepository) BulkUpsert(configs []models.Configuration) err
 		for _, config := range configs {
 			var existing models.Configuration
 			err := tx.Where("config_key = ?", config.Key).First(&existing).Error
-			
+
 			if err == gorm.ErrRecordNotFound {
 				// Create new configuration
 				if err := tx.Create(&config).Error; err != nil {
@@ -73,8 +73,15 @@ func (r *configurationRepository) BulkUpsert(configs []models.Configuration) err
 			} else {
 				// Update existing configuration if not read-only
 				if !existing.IsReadOnly {
+					// Re-seeding refreshes an entry's metadata — description,
+					// type, category, default, flags — but never its value.
+					// InitializeDefaults runs on every boot, so overwriting the
+					// value here reset whatever an administrator had configured,
+					// and for a sensitive entry it would discard a stored secret
+					// on the next restart.
 					config.ID = existing.ID
 					config.CreatedAt = existing.CreatedAt
+					config.Value = existing.Value
 					if err := tx.Save(&config).Error; err != nil {
 						return err
 					}

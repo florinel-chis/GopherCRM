@@ -40,9 +40,13 @@ type Configuration struct {
 	Category     ConfigurationCategory `gorm:"not null;type:varchar(50)" json:"category"`
 	Description  string                `gorm:"type:varchar(500)" json:"description"`
 	DefaultValue string                `gorm:"type:text" json:"default_value"`
-	IsSystem     bool                  `gorm:"default:false" json:"is_system"`     // System configs cannot be deleted
+	IsSystem     bool                  `gorm:"default:false" json:"is_system"`    // System configs cannot be deleted
 	IsReadOnly   bool                  `gorm:"default:false" json:"is_read_only"` // Read-only configs cannot be modified via API
 	ValidValues  string                `gorm:"type:text" json:"valid_values"`     // JSON array of valid values for validation
+	// IsSensitive marks a secret: the value is encrypted at rest, is read
+	// back only through the service's GetSecret, and is never included in an
+	// API response — reads report whether it is set, not what it is.
+	IsSensitive bool `gorm:"default:false" json:"is_sensitive"`
 }
 
 // GetValueAs returns the configuration value parsed as the specified type
@@ -316,6 +320,49 @@ func DefaultConfigurations() []Configuration {
 			DefaultValue: "false",
 			IsSystem:     false,
 			IsReadOnly:   false,
+		},
+		// Answer-engine credentials. They ship empty: an engine stays on its
+		// environment key until an administrator stores one here, and a stored
+		// key wins from the next run onwards without a restart.
+		{
+			Key:         "integration.aeo.anthropic_api_key",
+			Type:        ConfigTypeString,
+			Category:    CategoryIntegration,
+			Description: "Anthropic API key for the answer-engine module (also used for prompt generation)",
+			IsSystem:    true,
+			IsSensitive: true,
+		},
+		{
+			Key:         "integration.aeo.openai_api_key",
+			Type:        ConfigTypeString,
+			Category:    CategoryIntegration,
+			Description: "OpenAI API key for the answer-engine module",
+			IsSystem:    true,
+			IsSensitive: true,
+		},
+		{
+			Key:         "integration.aeo.gemini_api_key",
+			Type:        ConfigTypeString,
+			Category:    CategoryIntegration,
+			Description: "Gemini API key for the answer-engine module",
+			IsSystem:    true,
+			IsSensitive: true,
+		},
+		{
+			Key:         "integration.aeo.moonshot_api_key",
+			Type:        ConfigTypeString,
+			Category:    CategoryIntegration,
+			Description: "Moonshot API key for the Kimi answer engine",
+			IsSystem:    true,
+			IsSensitive: true,
+		},
+		{
+			Key:         "integration.aeo.perplexity_api_key",
+			Type:        ConfigTypeString,
+			Category:    CategoryIntegration,
+			Description: "Perplexity API key for the answer-engine module",
+			IsSystem:    true,
+			IsSensitive: true,
 		},
 	}
 }

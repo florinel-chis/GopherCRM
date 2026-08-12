@@ -101,3 +101,43 @@ func TestConfigurationSetValue_RoundTripsThroughGetValueAs(t *testing.T) {
 	require.NoError(t, stringConfig.SetValue(""))
 	assert.Equal(t, "", stringConfig.GetValueAs())
 }
+
+// The answer-engine keys ship as empty, system-owned, sensitive string entries:
+// empty so an engine keeps using its environment key until an administrator
+// stores one, system so they cannot be deleted, sensitive so the value is
+// encrypted at rest and never returned by the API.
+func TestDefaultConfigurations_SeedsAnswerEngineKeys(t *testing.T) {
+	byKey := map[string]Configuration{}
+	for _, config := range DefaultConfigurations() {
+		byKey[config.Key] = config
+	}
+
+	for _, key := range []string{
+		"integration.aeo.anthropic_api_key",
+		"integration.aeo.openai_api_key",
+		"integration.aeo.gemini_api_key",
+		"integration.aeo.moonshot_api_key",
+		"integration.aeo.perplexity_api_key",
+	} {
+		config, ok := byKey[key]
+		require.True(t, ok, "default configuration %q is missing", key)
+		assert.True(t, config.IsSensitive, "%s must be sensitive", key)
+		assert.True(t, config.IsSystem, "%s must be a system configuration", key)
+		assert.False(t, config.IsReadOnly, "%s must stay writable from the API", key)
+		assert.Equal(t, ConfigTypeString, config.Type)
+		assert.Equal(t, CategoryIntegration, config.Category)
+		assert.Equal(t, "", config.Value)
+		assert.Equal(t, "", config.DefaultValue)
+		assert.NotEmpty(t, config.Description)
+	}
+}
+
+// Nothing else becomes sensitive by accident: the flag changes how a value is
+// stored, so it must be a deliberate per-entry decision.
+func TestDefaultConfigurations_OnlyAnswerEngineKeysAreSensitive(t *testing.T) {
+	for _, config := range DefaultConfigurations() {
+		if config.IsSensitive {
+			assert.Contains(t, config.Key, "integration.aeo.", "unexpected sensitive default %q", config.Key)
+		}
+	}
+}
