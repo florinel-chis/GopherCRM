@@ -29,6 +29,14 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupDashboardRoutes(group, &DashboardHandler{})
 	SetupBulkStatusRoutes(group, &BulkHandler{})
 	SetupAEORoutes(group, &AEOHandler{})
+	SetupFormRoutes(group, &FormHandler{})
+	// The forms module registers two groups on the same mount point from two
+	// different files: the CRM routes above and the unauthenticated ones here.
+	// Between them they put a static segment (/forms/public), a parameter
+	// (/forms/:id) and a static-then-parameter path (/forms/submissions/:id)
+	// side by side, which is the arrangement most likely to blow up at
+	// registration.
+	SetupFormPublicRoutes(group, &FormPublicHandler{})
 
 	// A request to a static path that shares a prefix with a parameter route
 	// must dispatch without a panic; the nil-service handler may then blow up,
@@ -42,6 +50,11 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		// Static segment registered next to /aeo/prompts/:id.
 		"/api/v1/aeo/prompts/generate",
 		"/api/v1/aeo/runs",
+		// The public form group sits under the static /forms/public segment
+		// while the CRM group claims /forms/:id.
+		"/api/v1/forms",
+		"/api/v1/forms/public/confirm",
+		"/api/v1/forms/public/abc/submissions",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		w := httptest.NewRecorder()
@@ -77,6 +90,17 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/aeo/providers"},
 		{http.MethodGet, "/api/v1/aeo/profile"},
 		{http.MethodPut, "/api/v1/aeo/profile"},
+		// Forms: the public key parameter and the CRM id parameter share a
+		// parent, and both carry a deeper path of their own.
+		{http.MethodGet, "/api/v1/forms/public/embed.js"},
+		{http.MethodGet, "/api/v1/forms/public/confirm"},
+		{http.MethodGet, "/api/v1/forms/public/abc"},
+		{http.MethodGet, "/api/v1/forms/public/abc/view"},
+		{http.MethodGet, "/api/v1/forms/123"},
+		{http.MethodPut, "/api/v1/forms/123"},
+		{http.MethodDelete, "/api/v1/forms/123"},
+		{http.MethodGet, "/api/v1/forms/123/submissions"},
+		{http.MethodGet, "/api/v1/forms/submissions/5"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()
