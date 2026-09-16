@@ -89,3 +89,30 @@ func TestInitializeDefaultsRefreshesMetadata(t *testing.T) {
 	assert.True(t, refreshed.IsSystem)
 	assert.Equal(t, "enc:v1:stored-ciphertext-stand-in", refreshed.Value)
 }
+
+// Rows seeded before the model carried timestamps hold a NULL created_at, which
+// reads back as the zero time. Re-writing that zero into the row is rejected by
+// MySQL under NO_ZERO_DATE (Error 1292), which aborted the whole seeding
+// transaction on boot and left every default unrefreshed.
+func TestInitializeDefaultsRepairsMissingCreatedAt(t *testing.T) {
+	db := setupConfigurationDB(t)
+	repo := NewConfigurationRepository(db)
+
+	legacy := models.Configuration{
+		Key:         "general.company_name",
+		Value:       "Acme Industries",
+		Type:        models.ConfigTypeString,
+		Category:    models.CategoryGeneral,
+		Description: "seeded before timestamps existed",
+	}
+	require.NoError(t, repo.Create(&legacy))
+	require.NoError(t, db.Model(&models.Configuration{}).Where("id = ?", legacy.ID).
+		UpdateColumns(map[string]any{"created_at": nil, "updated_at": nil}).Error)
+
+	require.NoError(t, repo.InitializeDefaults())
+
+	repaired, err := repo.GetByKey("general.company_name")
+	require.NoError(t, err)
+	assert.False(t, repaired.CreatedAt.IsZero(), "created_at must be populated, not written back as zero")
+	assert.Equal(t, "Acme Industries", repaired.Value, "the administrator's value must survive the repair")
+}
