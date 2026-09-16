@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
 )
@@ -80,7 +82,15 @@ func (r *configurationRepository) BulkUpsert(configs []models.Configuration) err
 					// and for a sensitive entry it would discard a stored secret
 					// on the next restart.
 					config.ID = existing.ID
-					config.CreatedAt = existing.CreatedAt
+					// Rows predating the timestamp columns carry a NULL
+					// created_at, which reads back as the zero time. Writing
+					// that back fails on MySQL under NO_ZERO_DATE and aborts
+					// the seeding transaction, so stamp those rows instead.
+					if existing.CreatedAt.IsZero() {
+						config.CreatedAt = time.Now()
+					} else {
+						config.CreatedAt = existing.CreatedAt
+					}
 					config.Value = existing.Value
 					if err := tx.Save(&config).Error; err != nil {
 						return err
