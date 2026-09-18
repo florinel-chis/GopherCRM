@@ -3,42 +3,38 @@ package models
 import (
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
-	"gorm.io/driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/database"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
 
 func InitDatabase(cfg *config.DatabaseConfig) error {
-	var err error
-	
-	dsn := cfg.DSN()
-	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-		NowFunc: func() time.Time {
-			return time.Now().UTC()
-		},
-	})
-	
+	db, err := database.Open(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
+		return err
+	}
+
+	DB = db
+	log.Println("Database connection established successfully")
+	return nil
+}
+
+// CloseDatabase releases the pooled connections. It is safe to call when no
+// database was ever opened. Closing matters beyond tidiness on SQLite: the
+// final close checkpoints the write-ahead log into the database file.
+func CloseDatabase() error {
+	if DB == nil {
+		return nil
 	}
 
 	sqlDB, err := DB.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get database instance: %w", err)
 	}
-
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
-
-	log.Println("Database connection established successfully")
-	return nil
+	return sqlDB.Close()
 }
 
 func MigrateDatabase() error {

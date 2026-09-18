@@ -27,10 +27,27 @@ func main() {
 	)
 	flag.Parse()
 
+	// Authoring a migration only touches the filesystem, so it runs before any
+	// configuration or database is required.
+	if *command == "create" {
+		if *name == "" {
+			log.Fatal("Name must be specified with create command")
+		}
+		createNewMigration(*name, *migrateDir)
+		return
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// The files in migrations/ are MySQL DDL; SQLite deployments get their
+	// schema from auto-migration when the server starts.
+	if cfg.Database.Driver == config.DriverSQLite {
+		fmt.Fprintln(os.Stderr, "SQL migrations are MySQL-only; SQLite schemas are created by auto-migration at startup")
+		os.Exit(1)
 	}
 
 	// Setup database connection for migrate library
@@ -107,13 +124,6 @@ func main() {
 			}
 			fmt.Printf("Database version: %d (%s)\n", ver, status)
 		}
-		return
-
-	case "create":
-		if *name == "" {
-			log.Fatal("Name must be specified with create command")
-		}
-		createNewMigration(*name, *migrateDir)
 		return
 
 	default:

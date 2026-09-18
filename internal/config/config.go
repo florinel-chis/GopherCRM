@@ -22,13 +22,26 @@ type Config struct {
 	Forms    FormsConfig
 }
 
+// Supported values of DB_DRIVER. MySQL is the default and the only driver the
+// SQL migrations in migrations/ target.
+const (
+	DriverMySQL  = "mysql"
+	DriverSQLite = "sqlite"
+)
+
 type DatabaseConfig struct {
+	// Driver selects the storage backend: DriverMySQL or DriverSQLite.
+	Driver   string
 	Host     string
 	Port     int
 	Name     string
 	User     string
 	Password string
 	SSLMode  string
+	// Path is the SQLite database file, used only when Driver is
+	// DriverSQLite. It is a bare filesystem path: the connector appends the
+	// pragma query string itself, so a "?" here would be ambiguous.
+	Path string
 }
 
 type ServerConfig struct {
@@ -179,6 +192,8 @@ func Load() (*Config, error) {
 
 	config := &Config{
 		Database: DatabaseConfig{
+			Driver:   getEnv("DB_DRIVER", DriverMySQL),
+			Path:     getEnv("DB_PATH", "gophercrm.db"),
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnvAsInt("DB_PORT", 3306),
 			Name:     getEnv("DB_NAME", "gocrm"),
@@ -247,6 +262,19 @@ func Load() (*Config, error) {
 			RecaptchaSecret:   getEnv("RECAPTCHA_SECRET_KEY", ""),
 			RecaptchaMinScore: clampUnitInterval(getEnvAsFloat("RECAPTCHA_MIN_SCORE", 0.5)),
 		},
+	}
+
+	switch config.Database.Driver {
+	case DriverMySQL:
+	case DriverSQLite:
+		// The connector builds the DSN as path + pragma query string, so a
+		// path that already carries a query would silently produce a broken
+		// or attacker-influenced DSN.
+		if strings.Contains(config.Database.Path, "?") {
+			return nil, fmt.Errorf("invalid DB_PATH %q: the SQLite path must not contain %q", config.Database.Path, "?")
+		}
+	default:
+		return nil, fmt.Errorf("invalid DB_DRIVER %q: valid values are mysql, sqlite", config.Database.Driver)
 	}
 
 	if config.Server.Mode == "production" && !config.JWT.CookieSecure {

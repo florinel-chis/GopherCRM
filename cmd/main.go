@@ -94,8 +94,17 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+	shutdownErr := srv.Shutdown(ctx)
+
+	// Closed once no request can still be in flight, and before any fatal exit:
+	// on SQLite the final close is what checkpoints the write-ahead log into
+	// the database file.
+	if err := models.CloseDatabase(); err != nil {
+		utils.Logger.Errorf("Failed to close database: %v", err)
+	}
+
+	if shutdownErr != nil {
+		log.Fatal("Server forced to shutdown:", shutdownErr)
 	}
 
 	utils.Logger.Info("Server exiting")
