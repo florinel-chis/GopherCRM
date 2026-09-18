@@ -26,7 +26,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (err error) {
 	// Define flags
 	var (
 		email          = flag.String("email", "", "Admin email address")
@@ -46,9 +46,13 @@ func run() error {
 	if err := models.InitDatabase(&cfg.Database); err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
+	// A failing close is a real failure — on SQLite it means the write-ahead log
+	// was not checkpointed — so it becomes the command's exit status instead of a
+	// log line the caller cannot see. An error already on its way out wins: it is
+	// the cause, and the close failure is usually its consequence.
 	defer func() {
-		if closeErr := models.CloseDatabase(); closeErr != nil {
-			log.Printf("Failed to close database: %v", closeErr)
+		if closeErr := models.CloseDatabase(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close database: %w", closeErr)
 		}
 	}()
 
