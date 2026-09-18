@@ -96,15 +96,21 @@ func main() {
 
 	shutdownErr := srv.Shutdown(ctx)
 
-	// Closed once no request can still be in flight, and before any fatal exit:
-	// on SQLite the final close is what checkpoints the write-ahead log into
-	// the database file.
-	if err := models.CloseDatabase(); err != nil {
-		utils.Logger.Errorf("Failed to close database: %v", err)
+	if shutdownErr != nil {
+		// The drain deadline expired, so handlers may still be running queries.
+		// sql.DB.Close() waits for every in-flight query with no deadline of its
+		// own, which would hang the process well past the timeout it just blew.
+		// Skip the close and exit: the WAL is recovered on the next open, so at
+		// worst we forfeit the checkpoint, never the committed data.
+		utils.Logger.Warn("Skipping database close: shutdown timed out with requests still in flight")
+		log.Fatal("Server forced to shutdown:", shutdownErr)
 	}
 
-	if shutdownErr != nil {
-		log.Fatal("Server forced to shutdown:", shutdownErr)
+	// Reached only after a clean drain, so no request can still be in flight,
+	// and before any fatal exit: on SQLite the final close is what checkpoints
+	// the write-ahead log into the database file.
+	if err := models.CloseDatabase(); err != nil {
+		utils.Logger.Errorf("Failed to close database: %v", err)
 	}
 
 	utils.Logger.Info("Server exiting")

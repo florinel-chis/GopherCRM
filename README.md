@@ -48,7 +48,7 @@ Full rationale, the cascade rules for converted leads, and the operational cavea
 ## Tech Stack
 
 ### Backend
-- **Go 1.24+** - Main backend language
+- **Go 1.25+** - Main backend language
 - **Gin 1.10** - HTTP web framework
 - **GORM 1.30** - ORM for database operations
 - **MySQL 8.0+** - Default database; **SQLite** is a supported alternative via
@@ -72,7 +72,7 @@ Full rationale, the cascade rules for converted leads, and the operational cavea
 ## Prerequisites
 
 ### Backend
-- Go 1.24 or higher
+- Go 1.25 or higher
 - MySQL 8.0 or higher — or nothing at all, if you run on SQLite
   (`DB_DRIVER=sqlite`, see [Choosing a database](#choosing-a-database))
 - Make (optional, for using Makefile commands)

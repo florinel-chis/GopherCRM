@@ -52,7 +52,9 @@ func TestTransactionManager_WithTransaction(t *testing.T) {
 		assert.Equal(t, expectedErr, err)
 	})
 
-	t.Run("transaction timeout", func(t *testing.T) {
+	// The callback does its own deadline handling here; this only proves the
+	// context reaches fn, not that the manager itself honours it.
+	t.Run("callback observes the context deadline", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 		defer cancel()
 
@@ -68,6 +70,39 @@ func TestTransactionManager_WithTransaction(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "context deadline exceeded")
+	})
+
+	// The manager must refuse to open a transaction on a dead context without
+	// any help from the callback: BEGIN is bound to ctx, so it fails before fn
+	// ever runs instead of blocking on the connection pool.
+	t.Run("cancelled context fails before the callback runs", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		called := false
+		err := tm.WithTransaction(ctx, func(ctx context.Context) error {
+			called = true
+			return nil
+		})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.False(t, called, "callback must not run once the context is dead")
+	})
+
+	t.Run("expired deadline fails before the callback runs", func(t *testing.T) {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		called := false
+		err := tm.WithTransaction(ctx, func(ctx context.Context) error {
+			called = true
+			return nil
+		})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.False(t, called, "callback must not run once the deadline has passed")
 	})
 }
 
@@ -175,8 +210,14 @@ func TestIsRetryableError(t *testing.T) {
 		{"mysql deadlock code", errors.New("Error 1213: Deadlock"), true},
 		{"mysql lock timeout code", errors.New("Error 1205: Lock wait timeout"), true},
 		{"generic deadlock", errors.New("deadlock detected"), true},
+		{"sqlite busy", errors.New("database is locked (5) (SQLITE_BUSY)"), true},
+		{"sqlite table locked", errors.New("database table is locked: leads"), true},
+		{"sqlite busy code only", errors.New("sqlite_busy"), true},
+		{"sqlite locked code only", errors.New("SQLITE_LOCKED"), true},
+		{"sqlite mixed case message", errors.New("Database Is Locked"), true},
 		{"validation error", errors.New("validation failed"), false},
 		{"connection error", errors.New("connection refused"), false},
+		{"sqlite constraint error", errors.New("UNIQUE constraint failed: users.email"), false},
 	}
 
 	for _, tt := range tests {
