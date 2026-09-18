@@ -19,15 +19,24 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { useAuth } from '@/hooks/useAuth';
 import { leadsApi, type CreateLeadData, type UpdateLeadData } from '@/api/endpoints';
 
-const leadSchema = z.object({
-  company_name: z.string().min(1, 'Company name is required'),
-  contact_name: z.string().min(1, 'Contact name is required'),
-  email: z.string().email('Invalid email address'),
-  phone: z.string().min(1, 'Phone number is required'),
-  status: z.enum(['new', 'contacted', 'qualified', 'converted', 'lost']),
-  source: z.string().min(1, 'Lead source is required'),
-  notes: z.string().optional(),
-});
+const leadSchema = z
+  .object({
+    company_name: z.string().min(1, 'Company name is required'),
+    contact_name: z.string().min(1, 'Contact name is required'),
+    email: z.string().email('Invalid email address').or(z.literal('')),
+    phone: z.string(),
+    status: z.enum(['new', 'contacted', 'qualified', 'converted', 'lost']),
+    source: z.string().min(1, 'Lead source is required'),
+    notes: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Either contact channel is enough; only both missing is an error.
+    if (data.email === '' && data.phone.trim() === '') {
+      const message = 'Provide an email address or a phone number';
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['email'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['phone'] });
+    }
+  });
 
 type LeadFormData = z.infer<typeof leadSchema>;
 
@@ -212,12 +221,11 @@ export const Component: React.FC = () => {
                   name="email"
                   label="Email"
                   type="email"
-                  required
+                  helperText="Email or phone — at least one is required"
                 />
                 <FormTextField
                   name="phone"
                   label="Phone"
-                  required
                 />
               </Box>
 
