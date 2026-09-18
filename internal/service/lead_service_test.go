@@ -11,10 +11,10 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 

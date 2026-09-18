@@ -5,8 +5,8 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
