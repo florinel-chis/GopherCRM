@@ -160,10 +160,24 @@ export class LeadsPage {
     }
   }
 
+  /**
+   * The delete confirmation. Addressed by its accessible name, not by
+   * `[role="dialog"]`: the navigation Drawer also reports that role, so the
+   * bare selector matches two elements and trips strict mode.
+   */
+  get deleteDialog() {
+    return this.page.getByRole('dialog', { name: 'Delete Lead' });
+  }
+
   async confirmDelete() {
-    const dialog = this.page.locator('[role="dialog"]');
-    await dialog.waitFor({ state: 'visible' });
-    await dialog.locator('button:has-text("Delete")').click();
+    await this.deleteDialog.waitFor({ state: 'visible' });
+    await this.deleteDialog.getByRole('button', { name: 'Delete' }).click();
+  }
+
+  async cancelDelete() {
+    await this.deleteDialog.waitFor({ state: 'visible' });
+    await this.deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+    await this.deleteDialog.waitFor({ state: 'hidden' });
   }
 
   async deleteLead(rowIndex: number = 0) {

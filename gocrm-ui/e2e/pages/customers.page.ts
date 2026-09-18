@@ -150,8 +150,23 @@ export class CustomersPage {
     await this.page.waitForURL('**/customers/**/edit');
   }
 
+  /**
+   * Opens the detail view for a row.
+   *
+   * Clicking the row itself is not reliable — the click lands on whichever cell
+   * sits under the row centre (checkbox / action buttons), which swallows it —
+   * so the row's view (visibility) icon is used, the same mechanism the leads
+   * and tasks page objects use.
+   */
   async clickViewOnRow(rowIndex: number = 0) {
-    await this.tableRows.nth(rowIndex).click();
+    const row = this.tableRows.nth(rowIndex);
+    const viewBtn = row.locator('[data-testid="VisibilityIcon"]').first();
+    if (await viewBtn.isVisible()) {
+      await viewBtn.click();
+    } else {
+      await row.locator('button').nth(0).click(); // 0=view, 1=edit, 2=delete
+    }
+    await this.page.waitForURL(/\/customers\/\d+$/);
   }
 
   async clickDeleteOnRow(rowIndex: number = 0) {
@@ -164,10 +179,24 @@ export class CustomersPage {
     }
   }
 
+  /**
+   * The delete confirmation. Addressed by its accessible name, not by
+   * `[role="dialog"]`: the navigation Drawer also reports that role, so the
+   * bare selector matches two elements and trips strict mode.
+   */
+  get deleteDialog() {
+    return this.page.getByRole('dialog', { name: 'Delete Customer' });
+  }
+
   async confirmDelete() {
-    const dialog = this.page.locator('[role="dialog"]');
-    await dialog.waitFor({ state: 'visible' });
-    await dialog.locator('button:has-text("Delete")').click();
+    await this.deleteDialog.waitFor({ state: 'visible' });
+    await this.deleteDialog.getByRole('button', { name: 'Delete' }).click();
+  }
+
+  async cancelDelete() {
+    await this.deleteDialog.waitFor({ state: 'visible' });
+    await this.deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+    await this.deleteDialog.waitFor({ state: 'hidden' });
   }
 
   async searchCustomers(searchTerm: string) {

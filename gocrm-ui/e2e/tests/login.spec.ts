@@ -1,16 +1,20 @@
 import { test, expect } from '@playwright/test';
 import { LoginPage } from '../pages/login.page';
+import { DashboardPage } from '../pages/dashboard.page';
+import { testAdminCredentials } from '../fixtures/admin-user';
 
-// These credentials must exist in the database before running tests.
-// Created via: POST /api/v1/auth/register with role "admin"
-const ADMIN_EMAIL = 'admin@gophercrm.local';
-const ADMIN_PASSWORD = 'GopherCRM2024!';
+// The admin account these tests log in as is provisioned by e2e/global-setup.ts
+// through cmd/create-admin, so the suite works against any fresh database.
+const ADMIN_EMAIL = testAdminCredentials.email;
+const ADMIN_PASSWORD = testAdminCredentials.password;
 
 test.describe('Login Flow', () => {
   let loginPage: LoginPage;
+  let dashboardPage: DashboardPage;
 
   test.beforeEach(async ({ page }) => {
     loginPage = new LoginPage(page);
+    dashboardPage = new DashboardPage(page);
     await loginPage.goto();
   });
 
@@ -41,11 +45,14 @@ test.describe('Login Flow', () => {
     expect(body.data.token).toBeTruthy();
     expect(body.data.user.email).toBe(ADMIN_EMAIL);
 
-    // Verify redirect to dashboard
+    // Verify redirect to dashboard, and that the dashboard actually rendered
     await page.waitForURL('/', { timeout: 10000 });
+    await expect(dashboardPage.pageTitle).toBeVisible();
 
-    // Verify token is stored in localStorage
-    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    // Verify the token was stored. This login leaves "Remember me" unticked, so
+    // the app keeps the session in sessionStorage (see src/api/client.ts:157);
+    // localStorage is only used for a remembered session.
+    const token = await page.evaluate(() => sessionStorage.getItem('gophercrm_token'));
     expect(token).toBeTruthy();
   });
 
@@ -59,9 +66,14 @@ test.describe('Login Flow', () => {
     // Should stay on login page
     expect(page.url()).toContain('/login');
 
-    // Token should not be set
-    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
-    expect(token).toBeFalsy();
+    // Token should not be set in either store — a successful login writes to
+    // sessionStorage by default and to localStorage only with "Remember me".
+    const tokens = await page.evaluate(() => ({
+      session: sessionStorage.getItem('gophercrm_token'),
+      local: localStorage.getItem('gophercrm_token'),
+    }));
+    expect(tokens.session).toBeFalsy();
+    expect(tokens.local).toBeFalsy();
   });
 
   test('login fails with non-existent email', async ({ page }) => {
@@ -143,10 +155,13 @@ test.describe('Login Flow', () => {
   });
 
   test('unauthenticated user is redirected to login', async ({ page }) => {
-    // Clear any existing tokens
+    // Clear any existing tokens from both stores — an unremembered session
+    // lives in sessionStorage, a remembered one in localStorage.
     await page.evaluate(() => {
-      localStorage.removeItem('gophercrm_token');
-      localStorage.removeItem('gophercrm_refresh_token');
+      for (const store of [localStorage, sessionStorage]) {
+        store.removeItem('gophercrm_token');
+        store.removeItem('gophercrm_refresh_token');
+      }
     });
 
     // Try to access a protected route
