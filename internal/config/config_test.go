@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -206,6 +208,32 @@ func TestDSN(t *testing.T) {
 	assert.Contains(t, dsn, "127.0.0.1:3307")
 	assert.Contains(t, dsn, "/testdb")
 	assert.Contains(t, dsn, "parseTime=True")
+}
+
+// TestDatabaseConfig_HasNoSSLModeField pins the removal of DB_SSL_MODE. The
+// field was parsed from the environment but never reached a DSN, so a re-added
+// field would be dead configuration again — and only a structural assertion
+// catches that, since re-adding it changes no observable value.
+func TestDatabaseConfig_HasNoSSLModeField(t *testing.T) {
+	_, found := reflect.TypeOf(DatabaseConfig{}).FieldByName("SSLMode")
+	assert.False(t, found,
+		"DB_SSL_MODE was removed as dead configuration; wire TLS into DSN() if it is ever needed")
+}
+
+// TestDSN_CarriesNoTLSParameters is built from a literal config rather than
+// Load() so an exported DB_* value in the developer's shell cannot smuggle
+// "ssl"/"tls" into the DSN and fail this spuriously.
+func TestDSN_CarriesNoTLSParameters(t *testing.T) {
+	dbCfg := DatabaseConfig{
+		User:     "testuser",
+		Password: "testpass",
+		Host:     "127.0.0.1",
+		Port:     3306,
+		Name:     "testdb",
+	}
+	dsn := strings.ToLower(dbCfg.DSN())
+	assert.NotContains(t, dsn, "ssl")
+	assert.NotContains(t, dsn, "tls")
 }
 
 func TestLoad_AEODefaults(t *testing.T) {

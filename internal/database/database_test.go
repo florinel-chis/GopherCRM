@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -89,6 +90,27 @@ func TestOpen_SQLiteUsesUTCNowFunc(t *testing.T) {
 	t.Cleanup(func() { closeDB(t, db) })
 
 	assert.Equal(t, "UTC", db.NowFunc().Location().String())
+}
+
+func TestOpen_SQLiteEmptyPathRejected(t *testing.T) {
+	for _, path := range []string{"", "   "} {
+		db, err := Open(&config.DatabaseConfig{Driver: config.DriverSQLite, Path: path})
+		assert.Nil(t, db)
+		require.ErrorIs(t, err, ErrMissingSQLitePath)
+		assert.Contains(t, err.Error(), "DB_PATH")
+		// The offending value is echoed, so a blank path is distinguishable
+		// from an unset one in the log.
+		assert.Contains(t, err.Error(), fmt.Sprintf("%q", path))
+	}
+}
+
+func TestOpen_SQLitePathWithQueryRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crm.db") + "?_pragma=journal_mode(DELETE)"
+
+	db, err := Open(&config.DatabaseConfig{Driver: config.DriverSQLite, Path: path})
+	assert.Nil(t, db)
+	require.ErrorIs(t, err, ErrSQLitePathHasQuery)
+	assert.Contains(t, err.Error(), "DB_PATH")
 }
 
 func TestOpen_UnknownDriverRejected(t *testing.T) {

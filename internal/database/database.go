@@ -5,7 +5,9 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -19,12 +21,38 @@ import (
 // before giving up, instead of failing immediately.
 const sqliteBusyTimeoutMS = 5000
 
+// Rejected SQLite paths. config.Load already enforces both rules; repeating
+// them here keeps Open safe for any caller that builds a DatabaseConfig by
+// hand (tests, tools) rather than through the loader.
+var (
+	// ErrMissingSQLitePath is returned when DB_PATH is empty or blank: the DSN
+	// would then consist of nothing but the pragma query.
+	ErrMissingSQLitePath = errors.New("DB_PATH is empty or blank: the SQLite driver needs a database file path")
+	// ErrSQLitePathHasQuery is returned when DB_PATH already carries a query
+	// string, which would merge into the pragma query the connector appends.
+	ErrSQLitePathHasQuery = errors.New(`DB_PATH must not contain "?": the SQLite connector appends its own pragma query string`)
+)
+
+// validateSQLitePath rejects paths the DSN builder cannot represent unambiguously.
+func validateSQLitePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("invalid DB_PATH %q: %w", path, ErrMissingSQLitePath)
+	}
+	if strings.Contains(path, "?") {
+		return fmt.Errorf("invalid DB_PATH %q: %w", path, ErrSQLitePathHasQuery)
+	}
+	return nil
+}
+
 // sqliteDSN turns a plain file path into the SQLite DSN. journal_mode(WAL)
-// allows readers to proceed during a write, and foreign_keys(1) is needed
-// because SQLite disables FK enforcement by default. The busy timeout is a
-// parameter so a test can prove the pragma actually reaches the driver: 5000
-// also happens to be the driver's own default, so asserting that value alone
-// would hold even if the pragma were dropped from the DSN.
+// lets a reader outside this process — a snapshot or backup tool — read a
+// consistent view while the backend writes; in-process it changes nothing,
+// because every statement already serializes on the single pooled connection.
+// foreign_keys(1) is needed because SQLite disables FK enforcement by default.
+// The busy timeout is a parameter so a test can prove the pragma actually
+// reaches the driver: 5000 also happens to be the driver's own default, so
+// asserting that value alone would hold even if the pragma were dropped from
+// the DSN.
 func sqliteDSN(path string, busyTimeoutMS int) string {
 	return fmt.Sprintf("%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)",
 		path, busyTimeoutMS)
@@ -53,6 +81,9 @@ func Open(cfg *config.DatabaseConfig) (*gorm.DB, error) {
 			sqlDB.SetConnMaxLifetime(time.Hour)
 		}
 	case config.DriverSQLite:
+		if err := validateSQLitePath(cfg.Path); err != nil {
+			return nil, err
+		}
 		dialector = sqlite.Open(sqliteDSN(cfg.Path, sqliteBusyTimeoutMS))
 		tunePool = func(sqlDB *sql.DB) {
 			// SQLite takes a database-wide write lock, so extra connections

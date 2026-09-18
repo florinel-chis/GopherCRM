@@ -121,9 +121,7 @@ DB_PATH=gophercrm.db     # only read when DB_DRIVER=sqlite; relative to the work
 ```
 
 On SQLite the server-connection settings — `DB_HOST`, `DB_PORT`, `DB_NAME`,
-`DB_USER`, `DB_PASSWORD`, `DB_SSL_MODE` — are ignored. (`DB_SSL_MODE` is read
-into the configuration but nothing consumes it on either driver; the MySQL DSN
-is built without it.)
+`DB_USER`, `DB_PASSWORD` — are ignored.
 
 SQLite needs no server and no `make create-db` — the file is created on first
 start. It suits development, demos, CI and small single-instance deployments.

@@ -272,7 +272,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	public := router.Group("")
 	{
 		// Apply strict rate limiting to authentication endpoints
-		// 5 requests per minute with burst of 2 to prevent brute force attacks
+		// 10 requests per minute with burst of 5 to prevent brute force attacks
 		authRoutes := public.Group("/auth")
 		authRoutes.Use(middleware.RateLimitStrict())
 		{
