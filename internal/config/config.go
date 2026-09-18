@@ -37,7 +37,6 @@ type DatabaseConfig struct {
 	Name     string
 	User     string
 	Password string
-	SSLMode  string
 	// Path is the SQLite database file, used only when Driver is
 	// DriverSQLite. It is a bare filesystem path: the connector appends the
 	// pragma query string itself, so a "?" here would be ambiguous.
@@ -199,7 +198,6 @@ func Load() (*Config, error) {
 			Name:     getEnv("DB_NAME", "gocrm"),
 			User:     getEnv("DB_USER", "root"),
 			Password: getEnv("DB_PASSWORD", ""),
-			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
 		Server: ServerConfig{
 			Port:             getEnvAsInt("SERVER_PORT", 8080),

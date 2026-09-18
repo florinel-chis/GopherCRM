@@ -52,6 +52,26 @@ func TestInitDatabase_SQLiteProductionPath(t *testing.T) {
 		"closing the pool must checkpoint and remove the WAL file, got %v", err)
 }
 
+// TestCloseDatabase_IsIdempotent covers the shutdown path where more than one
+// caller may close: the first close clears the handle, the second does nothing
+// rather than operating on an already-closed pool.
+func TestCloseDatabase_IsIdempotent(t *testing.T) {
+	origDB := DB
+	t.Cleanup(func() { DB = origDB })
+
+	require.NoError(t, InitDatabase(&config.DatabaseConfig{
+		Driver: config.DriverSQLite,
+		Path:   filepath.Join(t.TempDir(), "idempotent.db"),
+	}))
+	require.NotNil(t, DB)
+
+	require.NoError(t, CloseDatabase())
+	assert.Nil(t, DB, "a successful close must clear the global handle")
+
+	assert.NoError(t, CloseDatabase())
+	assert.Nil(t, DB)
+}
+
 func TestCloseDatabase_NilHandleIsSafe(t *testing.T) {
 	origDB := DB
 	t.Cleanup(func() { DB = origDB })

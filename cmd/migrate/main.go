@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,28 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// commandCreate authors a new migration file pair; every other command talks to
+// a database.
+const commandCreate = "create"
+
+// ErrSQLiteUnsupported is returned for commands that would execute the files in
+// migrations/, which are MySQL DDL.
+var ErrSQLiteUnsupported = errors.New("SQL migrations are MySQL-only; SQLite schemas are created by auto-migration at startup")
+
+// checkCommandSupported reports whether command can run against driver. The
+// "create" case is stated here so the whole policy reads in one place, even
+// though main short-circuits it earlier: authoring a file needs no
+// configuration and therefore no driver.
+func checkCommandSupported(command, driver string) error {
+	if command == commandCreate {
+		return nil
+	}
+	if driver == config.DriverSQLite {
+		return ErrSQLiteUnsupported
+	}
+	return nil
+}
 
 func main() {
 	// Parse command line flags
@@ -29,7 +52,7 @@ func main() {
 
 	// Authoring a migration only touches the filesystem, so it runs before any
 	// configuration or database is required.
-	if *command == "create" {
+	if *command == commandCreate {
 		if *name == "" {
 			log.Fatal("Name must be specified with create command")
 		}
@@ -45,8 +68,8 @@ func main() {
 
 	// The files in migrations/ are MySQL DDL; SQLite deployments get their
 	// schema from auto-migration when the server starts.
-	if cfg.Database.Driver == config.DriverSQLite {
-		fmt.Fprintln(os.Stderr, "SQL migrations are MySQL-only; SQLite schemas are created by auto-migration at startup")
+	if err := checkCommandSupported(*command, cfg.Database.Driver); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
