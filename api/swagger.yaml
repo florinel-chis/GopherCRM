@@ -1307,7 +1307,6 @@ definitions:
         - unqualified
         - converted
     required:
-    - email
     - first_name
     - last_name
     type: object

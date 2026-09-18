@@ -97,6 +97,56 @@ func (suite *LeadHandlerTestSuite) TestCreate_Success() {
 	assert.NotNil(suite.T(), response.Data)
 }
 
+func (suite *LeadHandlerTestSuite) TestCreate_PhoneWithoutEmail() {
+	suite.router.POST("/leads", suite.handler.Create)
+
+	ownerID := uint(1)
+	payload := CreateLeadRequest{
+		FirstName: "John",
+		LastName:  "Doe",
+		Phone:     "+40 700 000 001",
+		OwnerID:   &ownerID,
+	}
+
+	suite.mockService.On("Create", mock.MatchedBy(func(l *models.Lead) bool {
+		return l.Email == "" && l.Phone == "+40 700 000 001"
+	})).Return(nil).Run(func(args mock.Arguments) {
+		lead := args.Get(0).(*models.Lead)
+		lead.ID = 1
+	})
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestCreate_NeitherEmailNorPhone() {
+	suite.router.POST("/leads", suite.handler.Create)
+
+	ownerID := uint(1)
+	payload := CreateLeadRequest{
+		FirstName: "John",
+		LastName:  "Doe",
+		Phone:     "   ",
+		OwnerID:   &ownerID,
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Create")
+}
+
 func (suite *LeadHandlerTestSuite) TestCreate_SalesUserWithOwnerID() {
 	suite.router.Use(func(c *gin.Context) {
 		c.Set("user_role", "sales")

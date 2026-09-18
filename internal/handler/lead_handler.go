@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -24,7 +25,7 @@ func NewLeadHandler(leadService service.LeadService) *LeadHandler {
 type CreateLeadRequest struct {
 	FirstName      string                    `json:"first_name" binding:"required"`
 	LastName       string                    `json:"last_name" binding:"required"`
-	Email          string                    `json:"email" binding:"required,email"`
+	Email          string                    `json:"email" binding:"omitempty,email"`
 	Phone          string                    `json:"phone,omitempty"`
 	Company        string                    `json:"company,omitempty"`
 	Position       string                    `json:"position,omitempty"`
@@ -81,6 +82,12 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	var req CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	// A lead needs some way to be reached, but either channel will do.
+	if req.Email == "" && strings.TrimSpace(req.Phone) == "" {
+		utils.RespondBadRequest(c, "Provide an email address or a phone number")
 		return
 	}
 
