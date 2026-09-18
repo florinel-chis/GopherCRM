@@ -44,13 +44,16 @@ coverage matrix.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData`, `generateLeadData`, `generateCustomerData`, `generateTicketData`,
   `generateTaskData`). Never hardcode an email.
-- **Pacing.** `/auth/*` sits behind `RateLimitStrict()` — 10 req/min, burst 5, per client IP
-  (`internal/middleware/rate_limit.go:124`, applied at `cmd/main.go:183`). A role case that logs a
-  second and third user in burns one token each, and the whole suite shares one IP. Space auth
-  requests ~6 s apart or run the backend with `DISABLE_RATE_LIMIT=true`, which bypasses **only** the
-  strict tier. Every authenticated request additionally consumes the moderate tier — 120 req/min,
-  burst 30 (`rate_limit.go:136`, `cmd/main.go:197`) — which is *not* bypassable; a spec that loops
-  over 30+ page loads without pause will start seeing 429s.
+- **Pacing.** The public `/auth` routes — register, login, refresh, password-reset and
+  password-reset/confirm — sit behind `RateLimitStrict()` — 10 req/min, burst 5, per client IP
+  (`middleware.RateLimitStrict`, applied to the `authRoutes` group in `setupDependencies`). A role
+  case that logs a second and third user in burns one token each, and the whole suite shares one IP.
+  Space auth requests ~6 s apart or run the backend with `DISABLE_RATE_LIMIT=true`, which bypasses
+  **only** the strict tier. Every authenticated request additionally consumes the moderate tier —
+  120 req/min, burst 30 (`middleware.RateLimitModerate`, applied once to the `protected` group in
+  `setupDependencies`) — which is *not* bypassable; a spec that loops over 30+ page loads without
+  pause will start seeing 429s. `/auth/logout` and `/auth/change-password` are authenticated and
+  live in the `protectedAuth` subgroup, so they ride the moderate tier, not the strict one.
 - `playwright.config.ts` runs `workers: 1`, `fullyParallel: false`. Keep it that way: parallel
   workers share the rate-limit bucket and the same database rows.
 - Deleting a **user, customer or lead** is irreversible GDPR erasure
@@ -639,7 +642,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Expected:** The first five submissions consume the burst and answer **401**; the sixth returns
   **429** with
   `{"success":false,"error":{"code":"TOO_MANY_REQUESTS","message":"Too many requests. Please try again later.","details":{"retry_after":"60s"}}}`
-  (`internal/middleware/rate_limit.go:106-111`). Tokens refill at 10/min, so a further attempt
+  (the abort branch of `middleware.RateLimit`). Tokens refill at 10/min, so a further attempt
   succeeds after ~6 s. The login form shows its generic error text, not the retry hint.
 - **Known issue:** Closes G22 ("Rate limiting has no E2E or integration test"). The bucket is keyed on
   `c.ClientIP()`, which depends on `TRUSTED_PROXIES` being set correctly; behind a misconfigured
@@ -668,7 +671,8 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Preconditions:** Backend started with `DISABLE_RATE_LIMIT=true`.
 - **Steps:** Repeat TC-XCUT-039, then repeat TC-XCUT-040.
 - **Expected:** The login burst no longer produces a 429 — `RateLimitStrict()` returns a pass-through
-  handler when the variable is set (`rate_limit.go:125`). The authenticated burst **still** produces
+  handler when the variable is set (the `DISABLE_RATE_LIMIT` check inside `middleware.RateLimitStrict`).
+  The authenticated burst **still** produces
   429s: the moderate tier has no such switch. A suite that assumes the flag removes all limiting will
   flake on long list-heavy specs.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rate-limit.spec.ts` (new)
@@ -707,8 +711,8 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Expected:** `DELETE /api/v1/customers/:id` returns **200** for admin (`routes.go:44`), the
   snackbar "Customer deleted successfully" appears, the row is gone, and the re-creation returns
   **201** rather than the **409** a live duplicate would produce. If the customer came from a
-  converted lead, the originating lead is erased too (`NewCustomerRepositoryWithLeadErasure`,
-  `cmd/main.go:138`) and disappears from `/leads`.
+  converted lead, the originating lead is erased too (`repository.NewCustomerRepositoryWithLeadErasure`,
+  wired for `customerRepo` in `setupDependencies`) and disappears from `/leads`.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can
   delete a customer"; email reuse and the lead cascade are planned for the same file.
 
