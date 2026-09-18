@@ -40,7 +40,7 @@ test.describe('Registration Flow', () => {
     expect(token).toBeTruthy();
   });
 
-  test('shows validation errors for empty fields', async ({ page }) => {
+  test('shows validation errors for empty fields', async () => {
     // Try to submit without filling any fields
     await registerPage.submit();
     
@@ -87,7 +87,7 @@ test.describe('Registration Flow', () => {
     expect(error).toBe('Invalid email address');
   });
 
-  test('validates password requirements', async ({ page }) => {
+  test('validates password requirements', async () => {
     const user = generateTestUser();
     
     // Test too short password (the policy requires 10 characters)
@@ -120,7 +120,7 @@ test.describe('Registration Flow', () => {
     expect(await registerPage.getErrorMessage('password')).toContain('one special character');
   });
 
-  test('validates password confirmation match', async ({ page }) => {
+  test('validates password confirmation match', async () => {
     const user = generateTestUser();
     await registerPage.fillForm({
       ...user,
@@ -154,7 +154,7 @@ test.describe('Registration Flow', () => {
     expect(error).toContain('user with this email already exists');
   });
 
-  test('password visibility toggle works', async ({ page }) => {
+  test('password visibility toggle works', async () => {
     const password = 'TestPassword123';
     await registerPage.passwordInput.fill(password);
     
@@ -187,9 +187,6 @@ test.describe('Registration Flow', () => {
     const user = generateTestUser();
     await registerPage.fillForm(user);
     
-    // Set up promise to check for loading state
-    const loadingVisible = registerPage.loadingButton.isVisible();
-    
     // Submit form
     await registerPage.submit();
     
@@ -200,7 +197,7 @@ test.describe('Registration Flow', () => {
     await expect(page).toHaveURL('/', { timeout: 10000 });
   });
 
-  test('preserves form data on validation error', async ({ page }) => {
+  test('preserves form data on validation error', async () => {
     const user = generateTestUser();
     
     // Fill form with invalid password
@@ -266,7 +263,7 @@ test.describe('Registration Flow', () => {
     expect(await registerPage.getErrorMessage('confirmPassword')).toBeNull();
   });
 
-  test('handles network error gracefully', async ({ page, context }) => {
+  test('handles network error gracefully', async ({ context }) => {
     const user = generateTestUser();
     
     // Block the registration API endpoint

@@ -13,7 +13,7 @@ test.describe('Admin - Leads Management', () => {
     await adminAuth.ensureAdminLoggedIn();
   });
 
-  test('admin can view leads list page', async ({ page }) => {
+  test('admin can view leads list page', async () => {
     await leadsPage.goto();
 
     await expect(leadsPage.pageTitle).toBeVisible();
@@ -75,7 +75,7 @@ test.describe('Admin - Leads Management', () => {
     await expect(page.getByText(leadData.companyName).first()).toBeVisible();
   });
 
-  test('admin can delete a lead', async ({ page }) => {
+  test('admin can delete a lead', async () => {
     // Create a lead first
     const leadData = generateLeadData();
     await leadsPage.goto();

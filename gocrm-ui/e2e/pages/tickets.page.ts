@@ -163,7 +163,8 @@ export class TicketsPage {
   }
 
   async deleteTicket(rowIndex: number = 0) {
-    const initialCount = await this.getTicketCount();
+    // Wait for the list to have painted its rows before addressing one.
+    await this.getTicketCount();
 
     await this.clickDeleteOnRow(rowIndex);
 

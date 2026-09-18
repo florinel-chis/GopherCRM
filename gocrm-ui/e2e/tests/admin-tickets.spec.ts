@@ -14,7 +14,7 @@ test.describe('Admin - Tickets Management', () => {
     await adminAuth.ensureAdminLoggedIn();
   });
 
-  test('admin can view tickets list page', async ({ page }) => {
+  test('admin can view tickets list page', async () => {
     await ticketsPage.goto();
 
     await expect(ticketsPage.pageTitle).toBeVisible();
@@ -76,7 +76,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can delete a ticket', async ({ page }) => {
+  test('admin can delete a ticket', async () => {
     await ticketsPage.goto();
 
     const initialCount = await ticketsPage.getTicketCount();

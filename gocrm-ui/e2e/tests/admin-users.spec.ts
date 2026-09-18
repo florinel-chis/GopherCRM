@@ -13,7 +13,7 @@ test.describe('Admin - Users Management', () => {
     await adminAuth.ensureAdminLoggedIn();
   });
 
-  test('admin can view users list page', async ({ page }) => {
+  test('admin can view users list page', async () => {
     await usersPage.goto();
 
     await expect(usersPage.pageTitle).toBeVisible();
@@ -158,7 +158,7 @@ test.describe('Admin - Users Management', () => {
     expect(page.url()).not.toContain('/new');
   });
 
-  test('admin can create users with different roles', async ({ page }) => {
+  test('admin can create users with different roles', async () => {
     const roles = ['sales', 'support', 'customer'];
 
     for (const role of roles) {

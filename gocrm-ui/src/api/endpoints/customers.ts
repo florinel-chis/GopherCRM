@@ -22,7 +22,7 @@ export interface CreateCustomerData {
   notes?: string;
 }
 
-export interface UpdateCustomerData extends Partial<CreateCustomerData> {}
+export type UpdateCustomerData = Partial<CreateCustomerData>;
 
 // Helper function to transform backend customer to frontend format
 const transformCustomerFromBackend = (backendCustomer: any): Customer => {
