@@ -51,6 +51,19 @@ export interface DataTableProps<T> {
   onPageChange?: (page: number) => void;
   onRowsPerPageChange?: (rowsPerPage: number) => void;
   onSort?: (field: string, order: 'asc' | 'desc') => void;
+  /**
+   * Column currently sorted, as a controlled value. Pass it (even as `''` for
+   * "nothing sorted") to let the parent own the sort indicator; omit it and the
+   * table falls back to its own internal state.
+   *
+   * List pages must pass it: a sort click changes their query key, which puts
+   * them on their `isLoading` branch, unmounts this table and would otherwise
+   * throw the internal state away — leaving the header inactive and making
+   * `desc` unreachable.
+   */
+  sortBy?: string;
+  /** Direction for `sortBy`. Ignored while `sortBy` is undefined. */
+  sortOrder?: 'asc' | 'desc';
   onSearch?: (search: string) => void;
   onRowClick?: (row: T) => void;
   onEdit?: (row: T) => void;
@@ -225,6 +238,8 @@ export function DataTable<T extends { id?: string | number }>({
   onPageChange,
   onRowsPerPageChange,
   onSort,
+  sortBy,
+  sortOrder,
   onSearch,
   onRowClick,
   onEdit,
@@ -233,17 +248,24 @@ export function DataTable<T extends { id?: string | number }>({
   title,
   actions,
 }: DataTableProps<T>) {
-  const [order, setOrder] = useState<Order>('asc');
-  const [orderBy, setOrderBy] = useState<string>('');
+  const [internalOrder, setInternalOrder] = useState<Order>('asc');
+  const [internalOrderBy, setInternalOrderBy] = useState<string>('');
   const [internalSelected, setInternalSelected] = useState<(string | number)[]>(selected);
+
+  // Controlled as soon as the parent supplies `sortBy`; uncontrolled otherwise.
+  const sortControlled = sortBy !== undefined;
+  const order: Order = sortControlled ? sortOrder ?? 'asc' : internalOrder;
+  const orderBy = sortControlled ? sortBy : internalOrderBy;
 
   const handleRequestSort = useCallback((property: string) => {
     const isAsc = orderBy === property && order === 'asc';
-    const newOrder = isAsc ? 'desc' : 'asc';
-    setOrder(newOrder);
-    setOrderBy(property);
+    const newOrder: Order = isAsc ? 'desc' : 'asc';
+    if (!sortControlled) {
+      setInternalOrder(newOrder);
+      setInternalOrderBy(property);
+    }
     onSort?.(property, newOrder);
-  }, [orderBy, order, onSort]);
+  }, [orderBy, order, onSort, sortControlled]);
 
   const handleSelectAllClick = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {

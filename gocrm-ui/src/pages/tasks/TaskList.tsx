@@ -110,6 +110,14 @@ export const Component: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
 
+  // Sorted column as the DataTable column id (filters carry the mapped backend
+  // field). Owned here because a sort click switches the query key and unmounts
+  // the table through the loading branch below.
+  const [sort, setSort] = useState<{ column: string; order: 'asc' | 'desc' }>({
+    column: '',
+    order: 'asc',
+  });
+
   const { data, isLoading } = useQuery({
     queryKey: ['tasks', filters],
     queryFn: () => tasksApi.getTasks(filters),
@@ -232,6 +240,10 @@ export const Component: React.FC = () => {
       id: 'assignee',
       label: 'Assigned To',
       minWidth: 120,
+      // The tasks sort allowlist (internal/utils/sort.go) offers only
+      // `assigned_to_id`, which orders by a foreign key rather than by the
+      // assignee name this column renders; the raw id is rejected outright.
+      sortable: false,
       format: (value: any) => {
         if (value) {
           return `${value.first_name} ${value.last_name}`;
@@ -286,6 +298,7 @@ export const Component: React.FC = () => {
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
+    setSort({ column: field, order });
     setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
   }, []);
 
@@ -508,6 +521,8 @@ export const Component: React.FC = () => {
           rowsPerPage={filters.limit || 10}
           loading={isLoading}
           onSort={handleSort}
+          sortBy={sort.column}
+          sortOrder={sort.order}
           onPageChange={handlePageChange}
           onRowsPerPageChange={handleRowsPerPageChange}
           onRowClick={(task) => navigate(`/tasks/${task.id}`)}

@@ -173,6 +173,8 @@ export const Component: React.FC = () => {
         rowsPerPage={rowsPerPage}
         loading={isLoading}
         onSort={handleSort}
+        sortBy={sort.sort_by ?? ''}
+        sortOrder={sort.sort_order ?? 'asc'}
         onPageChange={setPage}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(form) => navigate(`/forms/${form.id}`)}

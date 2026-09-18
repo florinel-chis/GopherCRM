@@ -45,6 +45,14 @@ export const Component: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
+  // Sorted column as the DataTable column id (filters carry the mapped backend
+  // field). Owned here because a sort click switches the query key and unmounts
+  // the table through the loading branch below.
+  const [sort, setSort] = useState<{ column: string; order: 'asc' | 'desc' }>({
+    column: '',
+    order: 'asc',
+  });
+
   const { data, isLoading } = useQuery({
     queryKey: ['customers', filters],
     queryFn: () => customersApi.getCustomers(filters),
@@ -87,12 +95,18 @@ export const Component: React.FC = () => {
       id: 'total_revenue',
       label: 'Total Revenue',
       minWidth: 120,
+      // Not in the customers sort allowlist (internal/utils/sort.go): the API
+      // rejects the column, so offering the header would fail the list request.
+      sortable: false,
       format: (value: number) => `$${value.toLocaleString()}`,
     },
     {
       id: 'is_active',
       label: 'Status',
       minWidth: 100,
+      // `is_active` is allowlisted for users but NOT for customers
+      // (internal/utils/sort.go), so the API rejects it here.
+      sortable: false,
       format: (value: boolean) => (
         <Chip
           label={value ? 'Active' : 'Inactive'}
@@ -132,10 +146,10 @@ export const Component: React.FC = () => {
       contact_name: 'first_name',
       email: 'email',
       phone: 'phone',
-      is_active: 'is_active',
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
+    setSort({ column: field, order });
     setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
   }, []);
 
@@ -195,6 +209,8 @@ export const Component: React.FC = () => {
         rowsPerPage={filters.limit || 10}
         loading={isLoading}
         onSort={handleSort}
+        sortBy={sort.column}
+        sortOrder={sort.order}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(customer) => navigate(`/customers/${customer.id}`)}

@@ -101,6 +101,102 @@ describe('DataTable', () => {
     expect(handleSearch).toHaveBeenCalledWith('test');
   });
 
+  describe('sorting', () => {
+    it('toggles asc -> desc on repeat clicks while uncontrolled', () => {
+      const handleSort = vi.fn();
+      render(<DataTable columns={columns} data={mockData} onSort={handleSort} />);
+
+      const nameHeader = screen.getByRole('button', { name: /name/i });
+      fireEvent.click(nameHeader);
+      expect(handleSort).toHaveBeenLastCalledWith('name', 'asc');
+
+      fireEvent.click(nameHeader);
+      expect(handleSort).toHaveBeenLastCalledWith('name', 'desc');
+    });
+
+    it('renders the sort indicator from the controlled props', () => {
+      const { rerender, container } = render(
+        <DataTable
+          columns={columns}
+          data={mockData}
+          onSort={vi.fn()}
+          sortBy="email"
+          sortOrder="desc"
+        />
+      );
+
+      const headerCell = () =>
+        container.querySelector('th:nth-of-type(2)') as HTMLElement;
+      expect(headerCell()).toHaveAttribute('aria-sort', 'descending');
+
+      rerender(
+        <DataTable
+          columns={columns}
+          data={mockData}
+          onSort={vi.fn()}
+          sortBy="email"
+          sortOrder="asc"
+        />
+      );
+      expect(headerCell()).toHaveAttribute('aria-sort', 'ascending');
+    });
+
+    // The defect this guards: a sort click changes the list page's query key,
+    // which sends the page down its loading branch and unmounts the table. Any
+    // sort state kept inside DataTable is destroyed, so the next click on the
+    // same column recomputes 'asc' and 'desc' is unreachable. With the parent
+    // owning the state, a remount keeps the direction.
+    it('reaches desc after a remount when the parent owns the sort state', () => {
+      const handleSort = vi.fn();
+      const { unmount } = render(
+        <DataTable
+          columns={columns}
+          data={mockData}
+          onSort={handleSort}
+          sortBy=""
+          sortOrder="asc"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /name/i }));
+      expect(handleSort).toHaveBeenLastCalledWith('name', 'asc');
+
+      // Stand in for the loading branch swapping the table out and back in.
+      unmount();
+      render(
+        <DataTable
+          columns={columns}
+          data={mockData}
+          onSort={handleSort}
+          sortBy="name"
+          sortOrder="asc"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /name/i }));
+      expect(handleSort).toHaveBeenLastCalledWith('name', 'desc');
+    });
+
+    it('does not move its own indicator while controlled', () => {
+      const handleSort = vi.fn();
+      const { container } = render(
+        <DataTable
+          columns={columns}
+          data={mockData}
+          onSort={handleSort}
+          sortBy=""
+          sortOrder="asc"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /name/i }));
+
+      expect(handleSort).toHaveBeenCalledWith('name', 'asc');
+      // The parent has not fed the new value back yet, so nothing is marked.
+      expect(container.querySelector('th[aria-sort]')).toBeNull();
+    });
+  });
+
   it('formats column values when format function is provided', () => {
     const columnsWithFormat: Column<TestData>[] = [
       { id: 'name', label: 'Name' },
