@@ -37,7 +37,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/contexts/ConfigurationContext';
 import { leadsApi } from '@/api/endpoints';
 import type { Lead } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -277,7 +277,7 @@ export const Component: React.FC = () => {
                         Created
                       </Typography>
                       <Typography>
-                        {format(new Date(lead.created_at), 'MMM dd, yyyy HH:mm')}
+                        {formatDate(lead.created_at, 'MMM dd, yyyy HH:mm')}
                       </Typography>
                     </Box>
                   </Box>
@@ -288,7 +288,7 @@ export const Component: React.FC = () => {
                         Last Updated
                       </Typography>
                       <Typography>
-                        {format(new Date(lead.updated_at), 'MMM dd, yyyy HH:mm')}
+                        {formatDate(lead.updated_at, 'MMM dd, yyyy HH:mm')}
                       </Typography>
                     </Box>
                   </Box>
@@ -329,7 +329,7 @@ export const Component: React.FC = () => {
                     primary={activity.description}
                     secondary={
                       <>
-                        {activity.user} • {format(new Date(activity.timestamp), 'MMM dd, yyyy HH:mm')}
+                        {activity.user} • {formatDate(activity.timestamp, 'MMM dd, yyyy HH:mm')}
                       </>
                     }
                   />

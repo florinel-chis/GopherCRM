@@ -2,6 +2,7 @@ import React from 'react';
 import { TextField, type TextFieldProps } from '@mui/material';
 import { Controller, useFormContext } from 'react-hook-form';
 import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 type FormDatePickerProps = {
   name: string;
@@ -29,7 +30,7 @@ export const FormDatePicker: React.FC<FormDatePickerProps> = ({
           {...props}
           type="date"
           label={label}
-          value={value ? format(value instanceof Date ? value : new Date(value), 'yyyy-MM-dd') : ''}
+          value={formatDate(value, 'yyyy-MM-dd', '')}
           onChange={(e) => {
             const dateValue = e.target.value;
             if (dateValue) {

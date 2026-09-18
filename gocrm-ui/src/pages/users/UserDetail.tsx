@@ -36,7 +36,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, tasksApi, ticketsApi } from '@/api/endpoints';
 import type { User } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface TabPanelProps {
@@ -270,7 +270,7 @@ export const Component: React.FC = () => {
                     </ListItemIcon>
                     <ListItemText
                       primary="Member Since"
-                      secondary={format(new Date(user.created_at), 'MMMM dd, yyyy')}
+                      secondary={formatDate(user.created_at, 'MMMM dd, yyyy')}
                     />
                   </ListItem>
                   <ListItem sx={{ px: 0 }}>
@@ -279,7 +279,7 @@ export const Component: React.FC = () => {
                     </ListItemIcon>
                     <ListItemText
                       primary="Last Updated"
-                      secondary={format(new Date(user.updated_at), 'MMMM dd, yyyy HH:mm')}
+                      secondary={formatDate(user.updated_at, 'MMMM dd, yyyy HH:mm')}
                     />
                   </ListItem>
                 </List>
@@ -331,7 +331,7 @@ export const Component: React.FC = () => {
                             primary={task.title}
                             secondary={
                               <>
-                                {task.status} • {task.priority} priority • Due {format(new Date(task.due_date), 'MMM dd, yyyy')}
+                                {task.status} • {task.priority} priority • Due {formatDate(task.due_date, 'MMM dd, yyyy')}
                               </>
                             }
                           />

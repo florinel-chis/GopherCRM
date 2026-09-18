@@ -38,7 +38,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { customersApi, ticketsApi } from '@/api/endpoints';
 import type { Ticket } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -271,7 +271,7 @@ export const Component: React.FC = () => {
                         Customer Since
                       </Typography>
                       <Typography>
-                        {format(new Date(customer.created_at), 'MMM dd, yyyy')}
+                        {formatDate(customer.created_at, 'MMM dd, yyyy')}
                       </Typography>
                     </Box>
                   </Box>
@@ -340,7 +340,7 @@ export const Component: React.FC = () => {
                       secondary={
                         <>
                           #{ticket.id} • {ticket.status} • {ticket.priority} priority •{' '}
-                          {format(new Date(ticket.created_at), 'MMM dd, yyyy')}
+                          {formatDate(ticket.created_at, 'MMM dd, yyyy')}
                         </>
                       }
                     />
@@ -369,7 +369,7 @@ export const Component: React.FC = () => {
                     primary={activity.description}
                     secondary={
                       <>
-                        {activity.user} • {format(new Date(activity.timestamp), 'MMM dd, yyyy HH:mm')}
+                        {activity.user} • {formatDate(activity.timestamp, 'MMM dd, yyyy HH:mm')}
                       </>
                     }
                   />

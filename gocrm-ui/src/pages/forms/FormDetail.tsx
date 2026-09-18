@@ -35,7 +35,7 @@ import {
   Edit as EditIcon,
   OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
@@ -210,7 +210,7 @@ export const Component: React.FC = () => {
             reCAPTCHA: {form.captcha_enabled ? 'on' : 'off'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Created: {form.created_at ? format(new Date(form.created_at), 'MMM dd, yyyy') : '—'}
+            Created: {formatDate(form.created_at, 'MMM dd, yyyy')}
           </Typography>
           <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
             <Typography variant="body2" color="text.secondary">
@@ -346,9 +346,7 @@ export const Component: React.FC = () => {
                     onClick={() => setSelected(submission)}
                   >
                     <TableCell>
-                      {submission.created_at
-                        ? format(new Date(submission.created_at), 'MMM dd, yyyy HH:mm')
-                        : ''}
+                      {formatDate(submission.created_at, 'MMM dd, yyyy HH:mm', '')}
                     </TableCell>
                     <TableCell>{submission.email}</TableCell>
                     <TableCell>
@@ -442,7 +440,7 @@ export const Component: React.FC = () => {
               Submitted from {selected?.ip_address || 'unknown IP'}
               {selected?.referrer ? ` via ${selected.referrer}` : ''}
               {selected?.confirmed_at
-                ? ` — confirmed ${format(new Date(selected.confirmed_at), 'MMM dd, yyyy HH:mm')}`
+                ? ` — confirmed ${formatDate(selected.confirmed_at, 'MMM dd, yyyy HH:mm')}`
                 : ''}
             </Typography>
           </Stack>

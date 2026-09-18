@@ -29,7 +29,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/contexts/ConfigurationContext';
 import { leadsApi, type LeadFilters } from '@/api/endpoints';
 import type { Lead } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 const statusOptions = [
   { value: '', label: 'All Statuses' },
@@ -194,7 +194,7 @@ export const Component: React.FC = () => {
       id: 'created_at',
       label: 'Created',
       minWidth: 120,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], []);
 
