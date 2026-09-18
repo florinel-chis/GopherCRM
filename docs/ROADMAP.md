@@ -13,6 +13,19 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   user activity
 - **Data export** — CSV/PDF export from the list views
 - **Accessibility pass** — keyboard navigation and screen reader review against WCAG 2.1 AA
+- **Row-0 page objects in the E2E suite** — `customers.page.ts` was reworked to act on the row
+  matching a value unique to the test (`rowMatching`) and to address action icons through a
+  retrying expectation. The leads, tasks, tickets and users page objects still carry the pattern it
+  replaced: `rowIndex = 0` on edit/view/delete, so they act on whatever row happens to sort first
+  rather than the record the test created, plus a one-shot `isVisible()` guard that falls through
+  to a positional `button` fallback when the icon has not painted yet. Green today, latently flaky —
+  port the customers approach across.
+- **Customer `website` is collected and discarded** — both forms that create a customer, the
+  customer form itself and the lead-conversion dialog, render a `Website` input (URL-validated, and
+  declared on the TypeScript `Customer` type), but the Go `Customer` model has no such column. The
+  value is silently dropped on save and comes back empty on the next edit. Either store it (model
+  field, DTOs, migration) or drop the input; leaving it teaches users the CRM keeps something it
+  never had.
 - **Sortable columns the backend has no mapping for** — the customers **Total Revenue** and
   **Status** (`is_active`) headers, and the tickets **Customer** / **Assigned To** and the tasks
   **Assigned To** header, are deliberately non-sortable in the list pages: `utils.AllowedSortColumns`
@@ -27,6 +40,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 - **Serve the OpenAPI spec** — the spec is now generated from handler annotations into `api/`
   (`make swagger`); serving it (e.g. gin-swagger with a Swagger UI route) remains unimplemented
 - **CI pipeline** — build, lint, unit tests, and E2E on pull requests
+- **Coordinated shutdown for detached background work** — an AEO run executes in a goroutine
+  launched with `context.Background()` (`aeo_service.go`, `go executor.Execute(...)`), so it is
+  neither cancelled nor waited for at SIGTERM: `stopBackground()` only stops the scheduler from
+  starting new runs, and the process closes the database handle as soon as HTTP drains. An active
+  run can therefore write to a closed pool. The damage is bounded — the stale-run reconciliation at
+  the next boot treats the row as a crash and recovers it — but the run's remaining results are
+  lost. Closing it properly means a `WaitGroup` plus a cancellable run context joined before the
+  close, and a clear owner for the database handle so nothing outlives it.
 - **Fixture-based upgrade tests for SQLite** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
   the SQL files in `migrations/` target MySQL. Nothing exercises an N-1 → N

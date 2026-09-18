@@ -66,7 +66,7 @@ test.describe('Admin - Customers Management', () => {
     expect(page.url()).toMatch(/\/customers\/\d+$/);
   });
 
-  test('admin can delete a customer', async ({ page }) => {
+  test('admin can delete a customer', async () => {
     const data = generateCustomerData();
     await customersPage.goto();
     await customersPage.clickNewCustomer();
@@ -79,7 +79,13 @@ test.describe('Admin - Customers Management', () => {
 
     await customersPage.clickDeleteOnRowMatching(data.email);
     await customersPage.confirmDelete();
-    await page.waitForTimeout(1000);
+
+    // Assert the row is actually gone instead of sleeping and calling it done.
+    // The list is still narrowed to this customer's email by the search
+    // `clickDeleteOnRowMatching` ran, so the successful delete invalidates the
+    // query and the filtered result set must empty out. `toHaveCount` retries,
+    // which covers the refetch without a fixed wait.
+    await expect(customersPage.tableRows.filter({ hasText: data.email })).toHaveCount(0);
   });
 
   test('admin can search customers', async ({ page }) => {
