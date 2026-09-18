@@ -136,19 +136,22 @@ users and customers. The helper is only safe on tables whose sole unique index i
 true of `users` and `customers`; adding a second unique index to either means the helper can no
 longer attribute a hit to the email column.
 
-**Rate limiting** — two tiers are actually wired in `cmd/main.go`:
+**Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
 
 | Tier | Limit | Where it is applied |
 |------|-------|---------------------|
-| `RateLimitStrict()` | 10 req/min, burst 5 | the `/auth` group — `register` and `login` only (`cmd/main.go:154`) |
-| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike (`cmd/main.go:164`) |
+| `RateLimitStrict()` | 10 req/min, burst 5 | the whole `/auth` group, and the public form `submit` and `confirm` routes via `SetupFormPublicRoutes` |
+| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the protected group in `setupDependencies` |
+| `RateLimitGenerous()` | 240 req/min, burst 40 | the three public form GETs — definition, `embed.js` and the hosted view — via `SetupFormPublicRoutes` |
 
-There is no separate tier for reads. `RateLimitGenerous()` (240 req/min, burst 40) is defined at
-`internal/middleware/rate_limit.go:142` but is **never applied to any route** — it is unused code,
-and any doc or comment implying reads get a more generous budget is wrong. The inline comment beside
-the moderate tier in `cmd/main.go` still says "60 req/min"; the real value is 120. OPTIONS preflight
-requests are excluded. Limiting is keyed on `c.ClientIP()`, which is why `TRUSTED_PROXIES` must be
-set correctly — otherwise a spoofed `X-Forwarded-For` defeats the limiter.
+All three tiers are live, but the split is public-forms versus everything else, **not** reads versus
+writes. On authenticated traffic there is no separate tier for reads: the generous tier is reachable
+only through the unauthenticated `/forms/public` GETs, so any doc or comment implying that an
+authenticated read gets a more generous budget is wrong. The inline comment beside the moderate tier
+in `cmd/main.go` now matches the code — it read "60 req/min" until 2026-09-18, when it was corrected
+to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is keyed on
+`c.ClientIP()`, which is why `TRUSTED_PROXIES` must be set correctly — otherwise a spoofed
+`X-Forwarded-For` defeats the limiter.
 
 `DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside `RateLimitStrict`
 (`internal/middleware/rate_limit.go:125`), so the moderate tier on authenticated traffic stays active
@@ -202,16 +205,21 @@ longer exists in the table and can be registered again.
 or the two paths will disagree between production and tests.
 
 **Do not assume a schema or query behaves the same in tests as in production.** Tests run against
-in-memory SQLite; production is MySQL 8. Anything schema- or driver-specific — index semantics, error
-codes, collation, `ON CONFLICT` versus `ON DUPLICATE KEY` — has to work on both, and a green test
-suite proves only the SQLite half. Both gotchas above are instances of exactly this split.
+in-memory SQLite through `github.com/glebarez/sqlite` — the same pure-Go driver a `DB_DRIVER=sqlite`
+deployment uses, so the driver is no longer a difference. The *dialect* still is: production is
+MySQL 8 by default and SQLite only by choice. Anything schema- or driver-specific — index semantics,
+error codes, collation, `ON CONFLICT` versus `ON DUPLICATE KEY` — has to work on both, and a green
+test suite proves only the SQLite half. Both gotchas above are instances of exactly this split.
 
 ## Configuration
 
 Environment-based via a `.env` file (loaded by godotenv). See `.env.example` for the full list. Key
 settings:
 
-- `DB_*` — MySQL connection
+- `DB_DRIVER` — `mysql` (default) or `sqlite`; anything else fails at startup
+- `DB_PATH` — SQLite database file (default `gophercrm.db`), read only when
+  `DB_DRIVER=sqlite`; must not contain `?`, because the connector appends its own pragma query string
+- `DB_*` — MySQL connection settings, ignored when `DB_DRIVER=sqlite`
 - `JWT_SECRET` — required, minimum 32 characters
 - `API_KEY_SECRET` — optional, falls back to `JWT_SECRET`
 - `SERVER_PORT` (default 8080), `SERVER_MODE` (`development` / `production`)
@@ -225,9 +233,14 @@ points the Axios client at the backend.
 
 ## Database
 
-MySQL 8.0+ with GORM. Migrations live in `migrations/`. Auto-migration runs on startup via
-`models.MigrateDatabase()`. The global DB handle is `models.DB`. The data model is documented in
-[datamodel.md](datamodel.md).
+GORM over MySQL 8.0+ by default, with SQLite selectable through `DB_DRIVER` (pure-Go driver, no
+cgo). `internal/database.Open` is the single place a connection is opened and owns every
+driver-specific decision — dialector, DSN shape, connection pool.
+
+Auto-migration runs on startup via `models.MigrateDatabase()` and is the **only** schema path on
+SQLite: the SQL files in `migrations/` are written for MySQL. The global DB handle is `models.DB`.
+The data model is documented in [datamodel.md](datamodel.md). Operational notes for the SQLite
+flavour — single-connection pool, WAL, backups — are in the README and [DOCKER.md](DOCKER.md).
 
 ## Deleting personal data
 

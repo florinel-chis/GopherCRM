@@ -30,6 +30,13 @@ COPY --from=build /out/gophercrm /out/create-admin /usr/local/bin/
 # file". Harmless when the MySQL driver is used.
 RUN mkdir -p /data && chown gophercrm /data
 
+# Also the working directory, so the image's default relative DB_PATH
+# (gophercrm.db) resolves inside the writable volume instead of at /. The
+# directory already exists, so this only selects it — ownership is untouched.
+# It is also where godotenv looks for .env, i.e. /data/.env — which matters
+# only if a host directory containing one is bind-mounted here.
+WORKDIR /data
+
 USER gophercrm
 
 EXPOSE 8080

@@ -18,9 +18,11 @@ import (
 //     which this project does not currently enable on any connection, so the
 //     fallbacks below are what actually fire today.
 //  2. MySQL 8 (production): error 1062, ER_DUP_ENTRY.
-//  3. SQLite (integration/unit tests): "UNIQUE constraint failed: <table>.<col>".
-//     Matched on the message rather than by asserting on sqlite3.Error so that
-//     production builds do not take a cgo dependency on mattn/go-sqlite3.
+//  3. SQLite (tests, and production when DB_DRIVER=sqlite): "UNIQUE constraint
+//     failed: <table>.<col>". Matched on the message rather than by asserting
+//     on the driver's own error type, which keeps this check independent of
+//     which SQLite driver is linked in — today the pure-Go glebarez/modernc
+//     one.
 //
 // Callers must only use this on statements where the sole unique constraint on
 // the target table is the one they intend to report on. Both `users` and

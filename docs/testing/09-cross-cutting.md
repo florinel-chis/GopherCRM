@@ -652,11 +652,14 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Preconditions:** Logged in as the seeded admin; an `APIRequestContext` with the bearer token.
 - **Steps:** Issue 40 `GET /api/v1/customers` calls back to back from the API context.
 - **Expected:** The first ~30 (the burst) return **200**; once the bucket empties the remainder
-  return **429** until it refills at 2 req/s. Reads get no special treatment —
-  `RateLimitModerate()` is applied to the entire protected group at `cmd/main.go:197` and
-  `RateLimitGenerous()` (240/min) is defined at `rate_limit.go:142` and never used.
-- **Known issue:** The inline comment at `cmd/main.go:197` still says "60 req/min" and is stale; the
-  limiter is 120/min, burst 30. Gap G37 covers the dead generous tier.
+  return **429** until it refills at 2 req/s. Authenticated reads get no special treatment —
+  `RateLimitModerate()` is applied once to the entire protected group in `setupDependencies`
+  (`cmd/main.go`). `RateLimitGenerous()` (240/min, burst 40) is live, but `SetupFormPublicRoutes`
+  attaches it only to the three unauthenticated `/forms/public` GETs, which are outside this case.
+- **Known issue:** Fixed 2026-09-18 — the inline comment on the `RateLimitModerate` line in
+  `cmd/main.go` said "60 req/min" while the limiter had always been 120/min, burst 30; it now states
+  the real values. Documentation only: the observed behaviour this case asserts never changed. Gap
+  G37 covers the generous tier, which reaches the public form GETs but no authenticated route.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rate-limit.spec.ts` (new)
 
 ### TC-XCUT-041 — DISABLE_RATE_LIMIT bypasses the auth tier only

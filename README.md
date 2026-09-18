@@ -51,7 +51,8 @@ Full rationale, the cascade rules for converted leads, and the operational cavea
 - **Go 1.24+** - Main backend language
 - **Gin 1.10** - HTTP web framework
 - **GORM 1.30** - ORM for database operations
-- **MySQL 8.0+** - Primary database (SQLite in-memory for tests)
+- **MySQL 8.0+** - Default database; **SQLite** is a supported alternative via
+  `DB_DRIVER` (pure-Go driver, no cgo) and is what the test suite runs on
 - **JWT** (`golang-jwt/jwt/v5`) - Authentication tokens
 - **Logrus** - Structured logging
 - **Testify** - Unit and integration test suites
@@ -72,7 +73,8 @@ Full rationale, the cascade rules for converted leads, and the operational cavea
 
 ### Backend
 - Go 1.24 or higher
-- MySQL 8.0 or higher
+- MySQL 8.0 or higher — or nothing at all, if you run on SQLite
+  (`DB_DRIVER=sqlite`, see [Choosing a database](#choosing-a-database))
 - Make (optional, for using Makefile commands)
 
 ### Frontend
@@ -93,6 +95,10 @@ docker compose exec backend create-admin          # first admin account
 UI at http://localhost:3000, API at http://localhost:8080/api/v1. See
 [docs/DOCKER.md](docs/DOCKER.md) for configuration and persistence details.
 
+To run the same stack without a database server, use the SQLite flavor instead —
+`docker compose -f docker-compose.sqlite.yml up -d --build` starts two containers
+with the database in a file on a named volume ([docs/DOCKER.md](docs/DOCKER.md#sqlite-flavor-no-database-server)).
+
 ## Setup Instructions
 
 ### 1. Clone the Repository
@@ -103,7 +109,57 @@ cd gophercrm
 
 ### 2. Backend Setup
 
+#### Choosing a database
+
+`DB_DRIVER` selects the backend. It defaults to `mysql`, which is the production
+dialect and the one the SQL files in `migrations/` are written for.
+
+```bash
+DB_DRIVER=mysql          # default: DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD apply
+DB_DRIVER=sqlite         # single file, no server
+DB_PATH=gophercrm.db     # only read when DB_DRIVER=sqlite; relative to the working directory
+```
+
+On SQLite the server-connection settings — `DB_HOST`, `DB_PORT`, `DB_NAME`,
+`DB_USER`, `DB_PASSWORD`, `DB_SSL_MODE` — are ignored. (`DB_SSL_MODE` is read
+into the configuration but nothing consumes it on either driver; the MySQL DSN
+is built without it.)
+
+SQLite needs no server and no `make create-db` — the file is created on first
+start. It suits development, demos, CI and small single-instance deployments.
+Things to know before relying on it:
+
+- **Everything serializes on one connection.** SQLite takes a database-wide
+  write lock, so the pool is deliberately capped at a single connection: within
+  the backend process reads queue behind writes exactly as writes do, and there
+  is no read concurrency to be had. What WAL mode buys here is that a *separate*
+  reader — the `VACUUM INTO` snapshot below, or a `sqlite3` shell — is not
+  blocked by the backend's writes. Run only one backend process against one
+  file.
+- **The file must live on a local filesystem.** WAL mode relies on shared-memory
+  locking that NFS, SMB and similar network shares do not implement reliably;
+  putting the database on one risks corruption.
+- **The database is three files.** `gophercrm.db` plus the `-wal` and `-shm`
+  siblings. A graceful shutdown checkpoints the WAL back into the main file; a
+  process killed outright leaves it in place, which is normal and recovers on the
+  next open.
+- **Never copy a live database file.** To back it up, either stop the backend and
+  copy all three files, or take an online snapshot with
+  `sqlite3 gophercrm.db "VACUUM INTO 'backup.db'"`. A bare `cp` of `gophercrm.db`
+  on a running system produces a stale or torn copy.
+- **Back up before upgrading.** On SQLite the schema advances only through the
+  auto-migration that runs at startup — the `migrations/` SQL is MySQL-only — and
+  auto-migration is not reversible.
+- `DB_PATH` must not contain `?`; the connector appends its own pragma query
+  string, so startup rejects a path that already carries one.
+
+Docker users get this prewired in `docker-compose.sqlite.yml`; see
+[docs/DOCKER.md](docs/DOCKER.md#sqlite-flavor-no-database-server).
+
 #### Create the Database
+
+MySQL only — skip this on SQLite, where the file is created on first start.
+
 ```bash
 # Using Make (recommended)
 make create-db
@@ -240,12 +296,14 @@ Available to **admin**, **sales** and **support** under **AEO** in the sidebar; 
 reach it. Saving the profile, managing prompts and starting a run need admin or sales; deleting a
 prompt needs admin.
 
-1. **Settings** (`/aeo/settings`) — brand name, aliases, owned domains and competitors, plus a chip
-   per answer engine showing whether its key is present. Save the profile before anything else: a
-   run has nothing to detect without it.
+1. **Settings** (`/aeo/settings`) — brand name, aliases, owned domains and competitors, the provider
+   API keys (admin only; stored encrypted and never echoed back, so a chip per engine reports only
+   whether a key is present) and which engine prompt generation runs on. Save the profile before
+   anything else: a run has nothing to detect without it.
 2. **Prompts** (`/aeo/prompts`) — the questions to track (up to 100 active). Add them by hand or ask
-   the Anthropic engine to suggest some. Each row shows the visibility percentage over the selected
-   window; opening a row shows the recorded answers with every brand mention highlighted.
+   the configured generation engine to suggest some. Each row shows the visibility percentage over
+   the selected window; opening a row shows the recorded answers with every brand mention
+   highlighted.
 3. **Dashboard** (`/aeo`) — overall visibility, a per-engine timeline, share of voice against the
    competitors and their trend, over 7, 30 or 90 days.
 4. **Citations** (`/aeo/citations`) — how often each company's domains are cited, and how often a
@@ -257,11 +315,14 @@ Every recorded answer is kept verbatim — the drawer above shows one engine's a
 mentions highlighted and a selector to walk earlier runs. The full screen-by-screen tour lives in
 [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md#aeo).
 
-Engines are configured by environment variable, and one without a key is simply skipped:
+Provider keys come from **Settings** (`/aeo/settings`) first and fall back to the environment
+variables below when no key is stored, so a key entered in the UI takes effect from the next run
+without restarting the process. An engine with no key from either source is simply skipped. Models,
+the custom engine and the schedule are environment-only.
 
 | Engine | Key | Model override |
 |---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` (also drives prompt suggestions) | `AEO_ANTHROPIC_MODEL` |
+| Anthropic | `ANTHROPIC_API_KEY` | `AEO_ANTHROPIC_MODEL` |
 | OpenAI | `OPENAI_API_KEY` | `AEO_OPENAI_MODEL` |
 | Gemini | `GEMINI_API_KEY` | `AEO_GEMINI_MODEL` |
 | Kimi (Moonshot) | `MOONSHOT_API_KEY` | `AEO_KIMI_MODEL` |
@@ -271,6 +332,12 @@ Engines are configured by environment variable, and one without a key is simply 
 `AEO_SCHEDULE_ENABLED` (default `true`) and `AEO_SCHEDULE_HOUR` (default `6`, server local time)
 control the daily run. With no key set at all the module still boots; starting a run then returns
 503 instead of recording a run that could never produce an answer.
+
+Prompt generation (`POST /aeo/prompts/generate`) deliberately runs on one named engine rather than
+whatever happens to be configured, so its output keeps a consistent shape. Anthropic is the default;
+the `Settings` page selects any of Anthropic, OpenAI, Gemini, Kimi or Perplexity instead. If the
+selected engine has no key, generation answers 503 naming that engine rather than silently falling
+back to another one.
 
 **Cost.** One run is *active prompts × configured engines* API calls — 25 prompts across 5 engines
 is 125 calls a day. The 100-prompt cap exists for this reason. Only one run may be in flight at a
@@ -530,10 +597,15 @@ gophercrm/
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.
-- **Only two rate-limit tiers are active.** `RateLimitStrict` (10/min, burst 5) guards the auth
-  endpoints and `RateLimitModerate` (120/min, burst 30) covers *all* authenticated traffic — reads
-  and writes alike. `RateLimitGenerous` (240/min) is defined but never applied. The inline comment
-  at `cmd/main.go:164` saying "60 req/min" is stale.
+- **Rate limiting does not distinguish reads from writes on authenticated routes.**
+  `RateLimitModerate` (120/min, burst 30) is applied once to the whole protected group in
+  `setupDependencies` (`cmd/main.go`) and covers reads and writes alike.
+  `RateLimitStrict` (10/min, burst 5) guards the `/auth`
+  group and, via `SetupFormPublicRoutes`, the public form submit and confirm routes;
+  `RateLimitGenerous` (240/min, burst 40) is applied only to the public form *reads*
+  (`embed.js`, the definition and the hosted view). `DISABLE_RATE_LIMIT=true` bypasses the strict
+  tier alone — the check lives inside `RateLimitStrict` — so the moderate tier still applies to
+  test traffic.
 - **Bulk endpoints are unrouted** (see *Not currently exposed* above).
 - **Erasure does not reach logs or issued tokens.** Application logs record the email address on
   login and on customer create/update, and issued JWTs embed it until they expire. Log retention
