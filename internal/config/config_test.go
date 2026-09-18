@@ -26,6 +26,9 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"AEO_SCHEDULE_ENABLED", "AEO_SCHEDULE_HOUR",
 		// Forms keys, for the same reason as the AEO ones.
 		"PUBLIC_BASE_URL", "RECAPTCHA_SITE_KEY", "RECAPTCHA_SECRET_KEY", "RECAPTCHA_MIN_SCORE",
+		// Database driver selection, so a developer shell pointing at SQLite
+		// cannot flip the default-value assertions.
+		"DB_DRIVER", "DB_PATH",
 	}
 
 	// Save originals.
@@ -450,6 +453,69 @@ func TestClampUnitInterval(t *testing.T) {
 	assert.Equal(t, 0.5, clampUnitInterval(0.5))
 	assert.Equal(t, 1.0, clampUnitInterval(1))
 	assert.Equal(t, 1.0, clampUnitInterval(1.5))
+}
+
+func TestLoad_DatabaseDriverDefaultsToMySQL(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, DriverMySQL, cfg.Database.Driver,
+			"MySQL stays the default driver when DB_DRIVER is unset")
+		assert.Equal(t, "gophercrm.db", cfg.Database.Path)
+	})
+}
+
+func TestLoad_DatabaseDriverSQLite(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+		"DB_DRIVER":  "sqlite",
+		"DB_PATH":    "/var/lib/gophercrm/crm.db",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, DriverSQLite, cfg.Database.Driver)
+		assert.Equal(t, "/var/lib/gophercrm/crm.db", cfg.Database.Path)
+	})
+}
+
+func TestLoad_DatabaseDriverInvalidRejected(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+		"DB_DRIVER":  "postgres",
+	}, func() {
+		_, err := Load()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), `invalid DB_DRIVER "postgres"`)
+		assert.Contains(t, err.Error(), "mysql")
+		assert.Contains(t, err.Error(), "sqlite")
+	})
+}
+
+func TestLoad_SQLitePathWithQueryRejected(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+		"DB_DRIVER":  "sqlite",
+		"DB_PATH":    "crm.db?_pragma=journal_mode(DELETE)",
+	}, func() {
+		_, err := Load()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "DB_PATH")
+		assert.Contains(t, err.Error(), "?")
+	})
+}
+
+func TestLoad_MySQLPathWithQueryIgnored(t *testing.T) {
+	// The DB_PATH check only guards the SQLite DSN; MySQL never reads it.
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET": validSecret(),
+		"DB_PATH":    "irrelevant?x=1",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, DriverMySQL, cfg.Database.Driver)
+	})
 }
 
 func TestParseTrustedProxies(t *testing.T) {
