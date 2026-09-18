@@ -68,15 +68,15 @@ test.describe('Registration Flow', () => {
     // Check for custom error messages
     expect(await registerPage.getErrorMessage('email')).toBe('Invalid email address');
     const passwordError = await registerPage.getErrorMessage('password');
-    expect(passwordError).toContain('at least 8 characters');
+    expect(passwordError).toContain('at least 10 characters');
   });
 
   test('validates email format', async ({ page }) => {
     // Fill required fields first to bypass HTML5 required validation
     await registerPage.firstNameInput.fill('Test');
     await registerPage.lastNameInput.fill('User');
-    await registerPage.passwordInput.fill('ValidPass123');
-    await registerPage.confirmPasswordInput.fill('ValidPass123');
+    await registerPage.passwordInput.fill(testPasswords.allRequirements);
+    await registerPage.confirmPasswordInput.fill(testPasswords.allRequirements);
 
     // Test invalid email format
     await registerPage.emailInput.fill('invalid-email');
@@ -90,11 +90,11 @@ test.describe('Registration Flow', () => {
   test('validates password requirements', async ({ page }) => {
     const user = generateTestUser();
     
-    // Test too short password
-    await registerPage.fillForm({ ...user, password: 'Short1' });
+    // Test too short password (the policy requires 10 characters)
+    await registerPage.fillForm({ ...user, password: 'Short1!' });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('at least 8 characters');
-    
+    expect(await registerPage.getErrorMessage('password')).toContain('at least 10 characters');
+
     // Test missing uppercase
     await registerPage.clearForm();
     await registerPage.fillForm({ ...user, password: testPasswords.noUppercase });
@@ -112,6 +112,12 @@ test.describe('Registration Flow', () => {
     await registerPage.fillForm({ ...user, password: testPasswords.noNumber });
     await registerPage.submit();
     expect(await registerPage.getErrorMessage('password')).toContain('one number');
+
+    // Test missing special character
+    await registerPage.clearForm();
+    await registerPage.fillForm({ ...user, password: 'TestPassword123' });
+    await registerPage.submit();
+    expect(await registerPage.getErrorMessage('password')).toContain('one special character');
   });
 
   test('validates password confirmation match', async ({ page }) => {
@@ -235,8 +241,8 @@ test.describe('Registration Flow', () => {
     
     // Verify password error is shown
     const passwordError = await registerPage.getErrorMessage('password');
-    expect(passwordError).toContain('at least 8 characters');
-    
+    expect(passwordError).toContain('at least 10 characters');
+
     // Verify confirm password error
     const confirmError = await registerPage.getErrorMessage('confirmPassword');
     expect(confirmError).toBe("Passwords don't match");
@@ -249,13 +255,13 @@ test.describe('Registration Flow', () => {
     
     // Fix the password - error should clear
     await registerPage.passwordInput.clear();
-    await registerPage.passwordInput.fill('ValidPass123');
+    await registerPage.passwordInput.fill(testPasswords.allRequirements);
     await page.waitForTimeout(500);
     expect(await registerPage.getErrorMessage('password')).toBeNull();
-    
+
     // Fix confirm password - error should clear
     await registerPage.confirmPasswordInput.clear();
-    await registerPage.confirmPasswordInput.fill('ValidPass123');
+    await registerPage.confirmPasswordInput.fill(testPasswords.allRequirements);
     await page.waitForTimeout(500);
     expect(await registerPage.getErrorMessage('confirmPassword')).toBeNull();
   });
