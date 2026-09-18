@@ -35,7 +35,7 @@ import { LabelChip } from '@/components/LabelChip';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { tasksApi } from '@/api/endpoints';
 import type { Task } from '@/types';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDate, formatDistance } from '@/utils/date';
 
 const getStatusColor = (status: Task['status']) => {
   switch (status) {
@@ -222,8 +222,8 @@ export const Component: React.FC = () => {
                       Due Date
                     </Typography>
                     <Typography color={isOverdue ? 'error' : 'text.primary'}>
-                      {format(new Date(task.due_date), 'MMM dd, yyyy')} 
-                      ({formatDistanceToNow(new Date(task.due_date), { addSuffix: true })})
+                      {formatDate(task.due_date, 'MMM dd, yyyy')} 
+                      ({formatDistance(task.due_date)})
                     </Typography>
                   </Box>
                 </Box>
@@ -261,7 +261,7 @@ export const Component: React.FC = () => {
                       Created
                     </Typography>
                     <Typography>
-                      {format(new Date(task.created_at), 'MMM dd, yyyy HH:mm')}
+                      {formatDate(task.created_at, 'MMM dd, yyyy HH:mm')}
                     </Typography>
                   </Box>
                 </Box>
@@ -274,7 +274,7 @@ export const Component: React.FC = () => {
                         Completed
                       </Typography>
                       <Typography>
-                        {format(new Date(task.completed_at), 'MMM dd, yyyy HH:mm')}
+                        {formatDate(task.completed_at, 'MMM dd, yyyy HH:mm')}
                       </Typography>
                     </Box>
                   </Box>
@@ -312,7 +312,7 @@ export const Component: React.FC = () => {
                 </ListItemIcon>
                 <ListItemText
                   primary="Task created"
-                  secondary={format(new Date(task.created_at), 'MMM dd, yyyy HH:mm')}
+                  secondary={formatDate(task.created_at, 'MMM dd, yyyy HH:mm')}
                 />
               </ListItem>
               {task.status === 'in_progress' && (
@@ -322,7 +322,7 @@ export const Component: React.FC = () => {
                   </ListItemIcon>
                   <ListItemText
                     primary="Task started"
-                    secondary={format(new Date(task.updated_at), 'MMM dd, yyyy HH:mm')}
+                    secondary={formatDate(task.updated_at, 'MMM dd, yyyy HH:mm')}
                   />
                 </ListItem>
               )}
@@ -333,7 +333,7 @@ export const Component: React.FC = () => {
                   </ListItemIcon>
                   <ListItemText
                     primary="Task completed"
-                    secondary={format(new Date(task.completed_at), 'MMM dd, yyyy HH:mm')}
+                    secondary={formatDate(task.completed_at, 'MMM dd, yyyy HH:mm')}
                   />
                 </ListItem>
               )}
@@ -344,7 +344,7 @@ export const Component: React.FC = () => {
                   </ListItemIcon>
                   <ListItemText
                     primary="Task cancelled"
-                    secondary={format(new Date(task.updated_at), 'MMM dd, yyyy HH:mm')}
+                    secondary={formatDate(task.updated_at, 'MMM dd, yyyy HH:mm')}
                   />
                 </ListItem>
               )}

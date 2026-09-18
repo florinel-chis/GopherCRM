@@ -36,7 +36,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi } from '@/api/endpoints';
 import type { Ticket } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 const getStatusColor = (status: Ticket['status']) => {
   switch (status) {
@@ -204,7 +204,7 @@ export const Component: React.FC = () => {
                     Created
                   </Typography>
                   <Typography>
-                    {format(new Date(ticket.created_at), 'MMM dd, yyyy HH:mm')}
+                    {formatDate(ticket.created_at, 'MMM dd, yyyy HH:mm')}
                   </Typography>
                 </Box>
               </Box>
@@ -242,7 +242,7 @@ export const Component: React.FC = () => {
                     Last Updated
                   </Typography>
                   <Typography>
-                    {format(new Date(ticket.updated_at), 'MMM dd, yyyy HH:mm')}
+                    {formatDate(ticket.updated_at, 'MMM dd, yyyy HH:mm')}
                   </Typography>
                 </Box>
               </Box>
@@ -281,7 +281,7 @@ export const Component: React.FC = () => {
                           {comment.user ? `${comment.user.first_name} ${comment.user.last_name}` : 'Unknown User'}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
+                          {formatDate(comment.created_at, 'MMM dd, yyyy HH:mm')}
                         </Typography>
                       </Box>
                     }

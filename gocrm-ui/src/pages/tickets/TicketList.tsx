@@ -28,7 +28,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi, type TicketFilters } from '@/api/endpoints';
 import type { Ticket } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 const statusOptions = [
   { value: '', label: 'All Statuses' },
@@ -180,13 +180,13 @@ export const Component: React.FC = () => {
       id: 'created_at',
       label: 'Created',
       minWidth: 100,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
     {
       id: 'updated_at',
       label: 'Last Updated',
       minWidth: 100,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], []);
 

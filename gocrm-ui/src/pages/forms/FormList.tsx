@@ -13,7 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Add as AddIcon } from '@mui/icons-material';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
@@ -113,7 +113,7 @@ export const Component: React.FC = () => {
         id: 'created_at',
         label: 'Created',
         minWidth: 140,
-        format: (value: string) => (value ? format(new Date(value), 'MMM dd, yyyy') : ''),
+        format: (value: string) => formatDate(value, 'MMM dd, yyyy', ''),
       },
     ],
     []

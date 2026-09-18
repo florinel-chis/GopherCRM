@@ -31,7 +31,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, type UserFilters } from '@/api/endpoints';
 import type { User } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 import { useAuth } from '@/contexts/AuthContext';
 
 const roleOptions = [
@@ -164,7 +164,7 @@ export const Component: React.FC = () => {
       id: 'created_at',
       label: 'Created',
       minWidth: 120,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], []);
 

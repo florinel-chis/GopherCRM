@@ -37,7 +37,8 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { labelsApi, tasksApi, type TaskFilters } from '@/api/endpoints';
 import type { Label, Task } from '@/types';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns';
+import { formatDate, toDate } from '@/utils/date';
 
 // Chips beyond this many collapse into a "+N" indicator so the column keeps a
 // predictable width.
@@ -242,13 +243,13 @@ export const Component: React.FC = () => {
       id: 'due_date',
       label: 'Due Date',
       minWidth: 100,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
     {
       id: 'created_at',
       label: 'Created',
       minWidth: 100,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], [handleLabelFilterChange]);
 
@@ -316,8 +317,8 @@ export const Component: React.FC = () => {
 
     const getTasksForDay = (day: Date) => {
       return tasks.filter(task => {
-        const dueDate = parseISO(task.due_date);
-        return isSameDay(dueDate, day);
+        const dueDate = toDate(task.due_date);
+        return dueDate ? isSameDay(dueDate, day) : false;
       });
     };
 

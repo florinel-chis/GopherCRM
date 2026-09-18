@@ -24,7 +24,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { customersApi, type CustomerFilters } from '@/api/endpoints';
 import type { Customer } from '@/types';
-import { format } from 'date-fns';
+import { formatDate } from '@/utils/date';
 
 export const Component: React.FC = () => {
   const navigate = useNavigate();
@@ -105,7 +105,7 @@ export const Component: React.FC = () => {
       id: 'created_at',
       label: 'Customer Since',
       minWidth: 120,
-      format: (value: string) => format(new Date(value), 'MMM dd, yyyy'),
+      format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], []);
 
