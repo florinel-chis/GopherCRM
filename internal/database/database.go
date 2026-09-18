@@ -21,9 +21,9 @@ import (
 // before giving up, instead of failing immediately.
 const sqliteBusyTimeoutMS = 5000
 
-// Rejected SQLite paths. config.Load already enforces both rules; repeating
-// them here keeps Open safe for any caller that builds a DatabaseConfig by
-// hand (tests, tools) rather than through the loader.
+// Rejected SQLite paths. config.Load enforces the `?` rule; Open owns both of
+// them (empty/blank and `?`), which keeps it safe for any caller that builds a
+// DatabaseConfig by hand (tests, tools) rather than through the loader.
 var (
 	// ErrMissingSQLitePath is returned when DB_PATH is empty or blank: the DSN
 	// would then consist of nothing but the pragma query.
