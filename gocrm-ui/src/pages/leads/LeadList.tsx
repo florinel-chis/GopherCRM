@@ -109,6 +109,15 @@ export const Component: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
+  // The sorted column is tracked as the DataTable column id (filters carry the
+  // mapped backend field). It has to live here, not inside DataTable: a sort
+  // click switches the query key, which sends this page down its loading branch
+  // and unmounts the table.
+  const [sort, setSort] = useState<{ column: string; order: 'asc' | 'desc' }>({
+    column: '',
+    order: 'asc',
+  });
+
   const { data, isLoading } = useQuery({
     queryKey: ['leads', filters],
     queryFn: () => leadsApi.getLeads(filters),
@@ -253,6 +262,7 @@ export const Component: React.FC = () => {
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
+    setSort({ column: field, order });
     setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
   }, []);
 
@@ -338,6 +348,8 @@ export const Component: React.FC = () => {
         rowsPerPage={filters.limit || 10}
         loading={isLoading}
         onSort={handleSort}
+        sortBy={sort.column}
+        sortOrder={sort.order}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(lead) => navigate(`/leads/${lead.id}`)}

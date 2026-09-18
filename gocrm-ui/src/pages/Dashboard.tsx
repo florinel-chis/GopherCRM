@@ -27,6 +27,7 @@ import {
 } from '@mui/icons-material';
 import { dashboardApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
+import { formatDate } from '@/utils/date';
 import { Button } from '@mui/material';
 import { 
   AreaChart, 
@@ -291,7 +292,7 @@ export const Dashboard: React.FC = () => {
                       <ListItem key={activity.id} disableGutters>
                         <ListItemText
                           primary={activity.title}
-                          secondary={`${activity.description} — ${new Date(activity.created_at).toLocaleDateString()}`}
+                          secondary={`${activity.description} — ${formatDate(activity.created_at, 'MMM dd, yyyy')}`}
                         />
                       </ListItem>
                     ))}
@@ -318,7 +319,7 @@ export const Dashboard: React.FC = () => {
                       >
                         <ListItemText
                           primary={task.title}
-                          secondary={`Due ${new Date(task.due_date).toLocaleDateString()}`}
+                          secondary={`Due ${formatDate(task.due_date, 'MMM dd, yyyy')}`}
                         />
                       </ListItem>
                     ))}

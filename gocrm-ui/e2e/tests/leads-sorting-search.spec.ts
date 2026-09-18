@@ -144,17 +144,12 @@ test.describe('Leads List - Sorting and Search', () => {
   });
 
   test('should toggle sort order on double click', async ({ page }) => {
-    // KNOWN ISSUE — the sort direction cannot be toggled from the UI today.
-    // DataTable keeps `order`/`orderBy` in its own state, and that state is lost
-    // every time the list refetches, so the header falls back to inactive and the
-    // next click computes ascending again. Verified against the running app: a
-    // second click on "Created" issues no request at all and the only sort the
-    // backend ever sees is sort_order=asc. The assertions below describe the
-    // intended behaviour, so this is marked as an expected failure rather than
-    // rewritten to bless the defect — fixing DataTable turns it green, at which
-    // point the annotation must be removed.
-    test.fail();
-
+    // Regression guard: DataTable used to keep `order`/`orderBy` in its own
+    // state, which the list page threw away on every refetch (a sort click
+    // changes the query key, the page renders its loading branch and the table
+    // unmounts). The header fell back to inactive and the next click recomputed
+    // ascending, making `desc` unreachable. The sorted column is owned by the
+    // page now and handed to DataTable as controlled `sortBy`/`sortOrder`.
     const leadsPage = new LeadsPage(page);
     await leadsPage.goto();
 

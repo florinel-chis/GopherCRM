@@ -79,6 +79,14 @@ export const Component: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
+  // Sorted column as the DataTable column id (filters carry the mapped backend
+  // field). Owned here because a sort click switches the query key and unmounts
+  // the table through the loading branch below.
+  const [sort, setSort] = useState<{ column: string; order: 'asc' | 'desc' }>({
+    column: '',
+    order: 'asc',
+  });
+
   const { data, isLoading } = useQuery({
     queryKey: ['users', filters],
     queryFn: () => usersApi.getUsers(filters),
@@ -123,11 +131,17 @@ export const Component: React.FC = () => {
       id: 'username',
       label: 'Username',
       minWidth: 150,
+      // There is no `username` on the User model, so this column renders blank
+      // and used to sort by `email` — an indicator on Username while the list
+      // reordered by a different column. Nothing to sort by: keep it inert.
+      sortable: false,
     },
     {
       id: 'name',
       label: 'Name',
       minWidth: 200,
+      // Sorts by `first_name`, the leading component of what is rendered, the
+      // same mapping the lead and customer contact columns use.
       format: (_value: any, row: User) => `${row.first_name} ${row.last_name}`,
     },
     {
@@ -198,13 +212,14 @@ export const Component: React.FC = () => {
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
-      username: 'email',
+      name: 'first_name',
       email: 'email',
       role: 'role',
       is_active: 'is_active',
       created_at: 'created_at',
     };
     const sortBy = fieldMap[field] || field;
+    setSort({ column: field, order });
     setFilters(prev => ({ ...prev, sort_by: sortBy, sort_order: order, page: 1 }));
   }, []);
 
@@ -307,6 +322,8 @@ export const Component: React.FC = () => {
         rowsPerPage={filters.limit || 10}
         loading={isLoading}
         onSort={handleSort}
+        sortBy={sort.column}
+        sortOrder={sort.order}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(user) => navigate(`/users/${user.id}`)}

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Outlet } from 'react-router-dom';
 import { MainLayout } from '@/layouts/MainLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { RouteErrorBoundary } from '@/components/ErrorBoundary';
 import { Login } from '@/pages/auth/Login';
 import { Register } from '@/pages/auth/Register';
 import { Dashboard } from '@/pages/Dashboard';
@@ -11,14 +12,17 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <Login />,
+    errorElement: <RouteErrorBoundary />,
   },
   {
     path: '/register',
     element: <Register />,
+    errorElement: <RouteErrorBoundary />,
   },
   {
     path: '/unauthorized',
     element: <Unauthorized />,
+    errorElement: <RouteErrorBoundary />,
   },
   {
     path: '/',
@@ -27,6 +31,11 @@ export const router = createBrowserRouter([
         <MainLayout />
       </ProtectedRoute>
     ),
+    // A data router catches render errors in its own routes before they can
+    // reach the boundary wrapped around <RouterProvider>, so every top-level
+    // route carries one. Without it a crashing page falls through to React
+    // Router's built-in error screen.
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         index: true,
@@ -220,5 +229,6 @@ export const router = createBrowserRouter([
   {
     path: '*',
     element: <NotFound />,
+    errorElement: <RouteErrorBoundary />,
   },
 ]);
