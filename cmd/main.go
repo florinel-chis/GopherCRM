@@ -287,7 +287,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// Protected routes with moderate rate limiting
 	protected := router.Group("")
 	protected.Use(middleware.Auth(authService))
-	protected.Use(middleware.RateLimitModerate()) // 60 req/min for authenticated users
+	protected.Use(middleware.RateLimitModerate()) // 120 req/min, burst 30, for authenticated users
 	{
 		handler.SetupUserRoutes(protected, userHandler)
 		handler.SetupLeadRoutes(protected, leadHandler)

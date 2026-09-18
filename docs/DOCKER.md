@@ -130,13 +130,17 @@ Differences from the MySQL stack worth knowing:
 
 WAL mode means the database is `gophercrm.db` **plus** `gophercrm.db-wal` and
 `gophercrm.db-shm`. Copying `gophercrm.db` alone while the backend is running
-yields a stale or torn file. Two safe options:
+yields a stale or torn file.
 
 The volume's full Docker name is `gophercrm-sqlite_gophercrm-sqlite-data`
 (project name plus volume name), which is what a throwaway container mounts.
 
+Two safe options:
+
 ```bash
 # 1. Offline copy: stop the app, then copy the file and its WAL siblings.
+#    The glob assumes the database exists — on a stack that has never booted
+#    there is nothing to copy and cp reports "no such file".
 docker compose -f docker-compose.sqlite.yml stop backend
 docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup" \
   alpine:3.20 sh -c 'cp -a /data/gophercrm.db* /backup/'

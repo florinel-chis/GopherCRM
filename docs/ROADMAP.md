@@ -18,8 +18,18 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 - **Serve the OpenAPI spec** — the spec is now generated from handler annotations into `api/`
   (`make swagger`); serving it (e.g. gin-swagger with a Swagger UI route) remains unimplemented
-- **Containerization** — Dockerfile and compose setup for backend + frontend + MySQL
 - **CI pipeline** — build, lint, unit tests, and E2E on pull requests
+- **Fixture-based upgrade tests for SQLite** — auto-migration
+  (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
+  the SQL files in `migrations/` target MySQL. Nothing exercises an N-1 → N
+  upgrade against a populated file, so back the database up before upgrading
+  (see [DOCKER.md](DOCKER.md#backing-up-the-sqlite-database)) until a fixture
+  suite covers it.
+- **Revisit the SQLite driver pin** — `github.com/glebarez/sqlite` pulls
+  `github.com/glebarez/go-sqlite` v1.21.2, whose own `go.mod` pins
+  `modernc.org/sqlite` v1.23.1; module resolution here settles on v1.59.0
+  (engine 3.53.4), a much newer build than its author tested against. It works,
+  but the pairing is worth re-checking whenever glebarez cuts a release.
 
 ## Follow-ups from the backend build-out
 
