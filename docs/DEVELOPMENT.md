@@ -140,8 +140,8 @@ longer attribute a hit to the email column.
 
 | Tier | Limit | Where it is applied |
 |------|-------|---------------------|
-| `RateLimitStrict()` | 10 req/min, burst 5 | the whole `/auth` group, and the public form `submit` and `confirm` routes via `SetupFormPublicRoutes` |
-| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the protected group in `setupDependencies` |
+| `RateLimitStrict()` | 10 req/min, burst 5 | the **public** `/auth` group (`register`, `login`, `refresh`, `password-reset`, `password-reset/confirm`) — the `authRoutes` group in `setupDependencies` — plus the public form `submit` and `confirm` routes via `SetupFormPublicRoutes` |
+| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the `protected` group in `setupDependencies`, which is where `/auth/logout` and `/auth/change-password` live too (the `protectedAuth` subgroup) |
 | `RateLimitGenerous()` | 240 req/min, burst 40 | the three public form GETs — definition, `embed.js` and the hosted view — via `SetupFormPublicRoutes` |
 
 All three tiers are live, but the split is public-forms versus everything else, **not** reads versus
@@ -153,9 +153,11 @@ to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is k
 `c.ClientIP()`, which is why `TRUSTED_PROXIES` must be set correctly — otherwise a spoofed
 `X-Forwarded-For` defeats the limiter.
 
-`DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside `RateLimitStrict`
-(`internal/middleware/rate_limit.go:125`), so the moderate tier on authenticated traffic stays active
-regardless. That is deliberate and is enough to keep the E2E suite from tripping the login limiter.
+`DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside
+`middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, so the
+moderate tier on authenticated traffic stays active regardless — including on `/auth/logout` and
+`/auth/change-password`, which are authenticated and therefore never saw the strict tier to begin
+with. That is deliberate and is enough to keep the E2E suite from tripping the login limiter.
 
 ## Testing
 

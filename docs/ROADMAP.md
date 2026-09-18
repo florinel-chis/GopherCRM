@@ -13,11 +13,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   user activity
 - **Data export** — CSV/PDF export from the list views
 - **Accessibility pass** — keyboard navigation and screen reader review against WCAG 2.1 AA
-- **DataTable loses its sort state on refetch** (defect, found by the fresh-database e2e run) —
-  `order`/`orderBy` reset whenever the query refetches, so the second click of a column header
-  recomputes ascending and descending sort is unreachable on every list page. The
-  leads-sorting-search "toggle sort order" e2e test asserts the intended behaviour and is marked
-  expected-to-fail until this is fixed.
+- **Sortable columns the backend has no mapping for** — the customers **Total Revenue** and
+  **Status** (`is_active`) headers, and the tickets **Customer** / **Assigned To** and the tasks
+  **Assigned To** header, are deliberately non-sortable in the list pages: `utils.AllowedSortColumns`
+  has no `total_revenue` and no customers `is_active` entry, and tickets/tasks allow only the
+  `customer_id` / `assigned_to_id` foreign keys, which order by id rather than by the name the
+  column renders. Restoring the affordance needs an allowlist design first — widen it with real
+  orderable columns (or joined expressions) and map each UI column onto one, rather than letting
+  the frontend send a column the validator rejects.
 
 ## Backend and delivery
 

@@ -347,7 +347,7 @@ func (h *AEOHandler) DeletePrompt(c *gin.Context) {
 
 // GeneratePrompts godoc
 // @Summary Generate candidate AEO prompts
-// @Description Ask the Anthropic model for buyer-style questions derived from the brand profile (admin and sales only). Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise) and an Anthropic API key, from the admin key settings or ANTHROPIC_API_KEY (503 with code PROVIDER_NOT_CONFIGURED otherwise).
+// @Description Ask the configured generation engine for buyer-style questions derived from the brand profile (admin and sales only). The engine is chosen by the integration.aeo.generation_engine setting - anthropic (the default), openai, gemini, kimi or perplexity - and generation deliberately runs on that one engine without falling back to another. Its key is read from the admin key settings first and from the matching environment variable (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, MOONSHOT_API_KEY, PERPLEXITY_API_KEY) otherwise. Nothing is stored: the suggestions come back as plain strings and are only tracked once POSTed to /aeo/prompts. The body is optional and defaults to 10 suggestions. Requires the brand profile to exist (409 otherwise); a missing key on the selected engine answers 503 with code PROVIDER_NOT_CONFIGURED and a message naming that engine.
 // @Tags aeo
 // @Accept json
 // @Produce json
@@ -361,7 +361,7 @@ func (h *AEOHandler) DeletePrompt(c *gin.Context) {
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "The brand profile has not been configured yet"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
-// @Failure 503 {object} utils.APIResponse{error=utils.APIError} "The prompt generation provider is not configured"
+// @Failure 503 {object} utils.APIResponse{error=utils.APIError} "PROVIDER_NOT_CONFIGURED when the selected generation engine has no API key, or PROVIDER_REJECTED when that engine refused the call (503 rather than 502 so the JSON body survives proxies such as Cloudflare)"
 // @Router /aeo/prompts/generate [post]
 func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AEOHandler.GeneratePrompts")
