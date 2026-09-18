@@ -1,0 +1,73 @@
+# Two-service stack: Go API on SQLite, nginx-served UI.
+#
+# Standalone alternative to docker-compose.yml — same services minus `db`,
+# with the backend writing to a SQLite file instead of MySQL:
+#
+#   docker compose -f docker-compose.sqlite.yml up -d --build
+#
+# JWT_SECRET is required (>= 32 chars) and is read from the shell or the
+# repo-root .env file, exactly as in the MySQL stack. No DB credentials are
+# needed — there is no database server.
+#
+# The database file lives in the gophercrm-sqlite-data named volume mounted at
+# /data and survives `docker compose down`; only `down -v` destroys it.
+#
+# The stack carries its own project name so it never adopts the MySQL stack's
+# containers, and its own subnet so both networks can coexist. Host ports are
+# the same, so the two stacks are alternatives: stop one before starting the
+# other.
+
+name: gophercrm-sqlite
+
+services:
+  backend:
+    build: .
+    environment:
+      DB_DRIVER: sqlite
+      # Inside the gophercrm-sqlite-data volume; the image creates /data owned
+      # by the app user so a fresh volume is writable on first boot.
+      DB_PATH: /data/gophercrm.db
+      SERVER_PORT: 8080
+      SERVER_MODE: production
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (>= 32 random chars, e.g. openssl rand -base64 32)}
+      API_KEY_SECRET: ${API_KEY_SECRET:-}
+      API_PREFIX: /api/v1
+      # Must match the subnet below so the rate limiter sees real client
+      # IPs behind the ui nginx proxy instead of the proxy's address.
+      TRUSTED_PROXIES: 172.29.0.0/16
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      APP_BASE_URL: http://localhost:${UI_PORT:-3000}
+      # The UI is same-origin behind nginx, but browsers still send the
+      # Origin header on API calls, and the backend 403s unlisted origins.
+      CORS_ALLOWED_ORIGINS: http://localhost:${UI_PORT:-3000},http://127.0.0.1:${UI_PORT:-3000}
+    volumes:
+      - gophercrm-sqlite-data:/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ui:
+    build: ./gocrm-ui
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${UI_PORT:-3000}:80"
+
+volumes:
+  gophercrm-sqlite-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        # Deliberately not the MySQL stack's 172.28.0.0/16: a network left
+        # behind by `docker compose stop` still holds its subnet, and an
+        # overlapping range would fail to create.
+        - subnet: 172.29.0.0/16

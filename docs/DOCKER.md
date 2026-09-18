@@ -13,6 +13,10 @@ ever talks to `http://localhost:3000` — no CORS involved. The API is also
 reachable directly on `http://localhost:8080/api/v1` if you want to hit it with
 curl or an API key.
 
+If you would rather not run a database server, `docker-compose.sqlite.yml` is a
+two-container variant of the same stack backed by a SQLite file — see
+[SQLite flavor](#sqlite-flavor-no-database-server).
+
 ## Quick start
 
 `JWT_SECRET` is required and must be at least 32 characters. Compose reads it
@@ -85,6 +89,70 @@ Notes on the wiring:
 - Password-reset emails: `SMTP_HOST` is unset, so the mailer logs deliveries
   instead of sending. Add the `SMTP_*` variables to the backend environment
   to enable real mail.
+
+## SQLite flavor (no database server)
+
+`docker-compose.sqlite.yml` is a standalone alternative to the file above: the
+same `backend` and `ui` services, no `db` service, and the backend runs with
+`DB_DRIVER=sqlite` writing to a single file at `DB_PATH=/data/gophercrm.db`.
+It is a complete stack, not an override — pass only that file:
+
+```bash
+docker compose -f docker-compose.sqlite.yml up -d --build
+docker compose -f docker-compose.sqlite.yml exec backend create-admin
+docker compose -f docker-compose.sqlite.yml logs -f backend
+docker compose -f docker-compose.sqlite.yml down
+```
+
+`JWT_SECRET`, `API_KEY_SECRET`, `UI_PORT` and `LOG_LEVEL` behave exactly as in
+the MySQL stack; `DB_PASSWORD` / `DB_ROOT_PASSWORD` are unused because there is
+no database server. Schema still comes from the backend's auto-migration on
+startup — the SQL files in `migrations/` target MySQL and are not applied here.
+
+Differences from the MySQL stack worth knowing:
+
+- The file declares its own compose project name (`gophercrm-sqlite`), so it
+  never adopts or orphans the MySQL stack's containers, and its own subnet
+  (`172.29.0.0/16`, matched by `TRUSTED_PROXIES`) so the two networks coexist.
+  Host ports are the same, so the stacks are **alternatives**: stop one before
+  starting the other.
+- The database file lives in the named volume `gophercrm-sqlite-data` mounted
+  at `/data`. It survives `down` and is destroyed only by
+  `docker compose -f docker-compose.sqlite.yml down -v`.
+- The image creates `/data` owned by the `gophercrm` user, so a fresh volume is
+  writable on first boot.
+- The connection runs in WAL mode, which requires a **local filesystem**. Do
+  not bind-mount `/data` from NFS, SMB or any other network share: SQLite's
+  locking is unreliable there and the database can be corrupted. The default
+  named volume is local, so this only matters if you replace it.
+
+### Backing up the SQLite database
+
+WAL mode means the database is `gophercrm.db` **plus** `gophercrm.db-wal` and
+`gophercrm.db-shm`. Copying `gophercrm.db` alone while the backend is running
+yields a stale or torn file. Two safe options:
+
+The volume's full Docker name is `gophercrm-sqlite_gophercrm-sqlite-data`
+(project name plus volume name), which is what a throwaway container mounts.
+
+```bash
+# 1. Offline copy: stop the app, then copy the file and its WAL siblings.
+docker compose -f docker-compose.sqlite.yml stop backend
+docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup" \
+  alpine:3.20 sh -c 'cp -a /data/gophercrm.db* /backup/'
+docker compose -f docker-compose.sqlite.yml start backend
+```
+
+```bash
+# 2. Online snapshot, nothing stopped: VACUUM INTO writes one consistent file
+#    (the sqlite3 CLI comes from the throwaway container, not the app image).
+docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup" \
+  alpine:3.20 sh -c "apk add --no-cache sqlite >/dev/null && \
+    sqlite3 /data/gophercrm.db \"VACUUM INTO '/backup/gophercrm-backup.db'\""
+```
+
+Restore by putting the file back as `/data/gophercrm.db` with the backend
+stopped, and removing any leftover `-wal`/`-shm` next to it.
 
 ## Rebuilding after code changes
 
