@@ -28,7 +28,10 @@ func NewTransactionManager(db *gorm.DB) *TransactionManager {
 
 // WithTransaction executes fn within a database transaction
 func (tm *TransactionManager) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	tx := tm.db.Begin()
+	// Bind the caller's context so a cancelled or expired request does not sit
+	// waiting for a connection. That wait is unbounded otherwise, and acute on
+	// SQLite where the pool is capped at a single open connection.
+	tx := tm.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return tx.Error
 	}
@@ -74,10 +77,17 @@ func isRetryableError(err error) bool {
 	}
 	errMsg := strings.ToLower(err.Error())
 	retryablePatterns := []string{
+		// MySQL
 		"deadlock",
 		"lock wait timeout",
 		"error 1213",
 		"error 1205",
+		// SQLite: write contention surfaces as SQLITE_BUSY/SQLITE_LOCKED, which
+		// clears once the holding connection commits, so it is worth retrying.
+		"database is locked",
+		"database table is locked",
+		"sqlite_busy",
+		"sqlite_locked",
 	}
 	for _, pattern := range retryablePatterns {
 		if strings.Contains(errMsg, pattern) {

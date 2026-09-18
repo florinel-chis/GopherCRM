@@ -156,7 +156,18 @@ docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup
 ```
 
 Restore by putting the file back as `/data/gophercrm.db` with the backend
-stopped, and removing any leftover `-wal`/`-shm` next to it.
+stopped, and removing any leftover `-wal`/`-shm` next to it. A snapshot from
+option 2 lands root-owned — the throwaway container runs as root, the backend
+runs as `gophercrm` (uid 10001) — so hand it back before starting the backend,
+in the same root container that put the file in place:
+
+```bash
+docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data \
+  alpine:3.20 chown 10001 /data/gophercrm.db
+```
+
+Without it the backend opens the database read-only and fails on the first
+write ("attempt to write a readonly database").
 
 ## Rebuilding after code changes
 
