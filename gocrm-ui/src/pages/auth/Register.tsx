@@ -56,8 +56,14 @@ export const Register: React.FC = () => {
   const onSubmit = async (data: RegisterFormData) => {
     try {
       setError(null);
-      const { confirmPassword, ...registerData } = data;
-      await registerUser(registerData as RegisterRequest);
+      // confirmPassword is a form-only field and is never sent to the API.
+      const registerData: RegisterRequest = {
+        email: data.email,
+        password: data.password,
+        first_name: data.first_name,
+        last_name: data.last_name,
+      };
+      await registerUser(registerData);
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');

@@ -20,7 +20,7 @@ export interface CreateLeadData {
   owner_id?: number;
 }
 
-export interface UpdateLeadData extends Partial<CreateLeadData> {}
+export type UpdateLeadData = Partial<CreateLeadData>;
 
 // Helper function to transform backend lead to frontend format
 const transformLeadFromBackend = (backendLead: any): Lead => {

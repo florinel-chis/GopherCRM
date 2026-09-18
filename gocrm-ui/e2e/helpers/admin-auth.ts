@@ -1,8 +1,7 @@
 import { Page, expect } from '@playwright/test';
-import { RegisterPage } from '../pages/register.page';
 import { LoginPage } from '../pages/login.page';
 import { DashboardPage } from '../pages/dashboard.page';
-import { generateAdminUser, type AdminUser, testAdminCredentials } from '../fixtures/admin-user';
+import { type AdminUser, testAdminCredentials } from '../fixtures/admin-user';
 
 export class AdminAuthHelper {
   readonly page: Page;
@@ -109,7 +108,7 @@ export class AdminAuthHelper {
       
       // Otherwise create new admin
       return await this.createAndLoginAdmin();
-    } catch (error) {
+    } catch {
       // If anything fails, create a new admin
       return await this.createAndLoginAdmin();
     }
@@ -129,13 +128,16 @@ export class AdminAuthHelper {
       
       // Wait for redirect to login page
       await this.page.waitForURL('/login', { timeout: 5000 });
-    } catch (error) {
+    } catch {
       // If logout fails, just clear the token manually
       await this.page.evaluate(() => {
         try {
           localStorage.removeItem('gophercrm_token');
           localStorage.removeItem('gophercrm_refresh_token');
-        } catch {}
+        } catch {
+          // Storage access can throw (blocked cookies / about:blank); the
+          // caller navigates to /login regardless, so there is nothing to do.
+        }
       });
       
       // Navigate to login page manually

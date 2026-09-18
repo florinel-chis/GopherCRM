@@ -102,7 +102,7 @@ test.describe('Login Flow', () => {
     expect(page.url()).toContain('/login');
   });
 
-  test('password visibility toggle works', async ({ page }) => {
+  test('password visibility toggle works', async () => {
     await loginPage.passwordInput.fill('TestPassword123!');
 
     // Initially hidden

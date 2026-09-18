@@ -23,7 +23,8 @@ export interface GeneratedAPIKey extends APIKey {
 // Helper function to transform backend API key to frontend format
 const transformAPIKeyFromBackend = (backendKey: any): APIKey => {
   // Remove sensitive fields that shouldn't be exposed
-  const { key_hash, ...safeKey } = backendKey;
+  const safeKey = { ...backendKey };
+  delete safeKey.key_hash;
   return safeKey;
 };
 

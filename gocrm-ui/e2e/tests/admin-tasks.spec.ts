@@ -13,7 +13,7 @@ test.describe('Admin - Tasks Management', () => {
     await adminAuth.ensureAdminLoggedIn();
   });
 
-  test('admin can view tasks list page', async ({ page }) => {
+  test('admin can view tasks list page', async () => {
     await tasksPage.goto();
 
     await expect(tasksPage.pageTitle).toBeVisible();
@@ -69,7 +69,7 @@ test.describe('Admin - Tasks Management', () => {
     await expect(page.getByText(taskData.title).first()).toBeVisible();
   });
 
-  test('admin can delete a task', async ({ page }) => {
+  test('admin can delete a task', async () => {
     // Create a task first
     const taskData = { ...generateTaskData(), title: `DeleteTask_${Date.now()}` };
     await tasksPage.goto();
@@ -143,7 +143,7 @@ test.describe('Admin - Tasks Management', () => {
     expect(page.url()).not.toContain('/new');
   });
 
-  test('admin can create task with minimal required data', async ({ page }) => {
+  test('admin can create task with minimal required data', async () => {
     const minimalTaskData = {
       title: `MinTask_${Date.now()}`,
       description: 'Basic task description'
@@ -157,7 +157,7 @@ test.describe('Admin - Tasks Management', () => {
     expect(response.status()).toBe(201);
   });
 
-  test('admin can create tasks with different priorities', async ({ page }) => {
+  test('admin can create tasks with different priorities', async () => {
     // Three full create round-trips through the UI, each with an assignee
     // lookup, do not fit the default per-test budget.
     test.slow();

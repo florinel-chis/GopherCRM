@@ -13,7 +13,7 @@ test.describe('Admin - Customers Management', () => {
     await adminAuth.ensureAdminLoggedIn();
   });
 
-  test('admin can view customers list page', async ({ page }) => {
+  test('admin can view customers list page', async () => {
     await customersPage.goto();
     await expect(customersPage.pageTitle).toBeVisible();
     await expect(customersPage.newCustomerButton).toBeVisible();
@@ -39,9 +39,11 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.fillCustomerForm(data);
     await customersPage.saveAndWaitForResponse();
 
-    // Go back and edit
+    // Go back and edit THE customer just created. Editing row 0 instead picked
+    // whichever customer sorted first, and saving it failed whenever its stored
+    // data violated the edit form's zod rules (blank phone, non-URL website).
     await customersPage.goto();
-    await customersPage.clickEditOnRow(0);
+    await customersPage.clickEditOnRowMatching(data.email);
 
     // Update company name
     await customersPage.companyNameInput.clear();
@@ -60,7 +62,7 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.saveAndWaitForResponse();
 
     await customersPage.goto();
-    await customersPage.clickViewOnRow(0);
+    await customersPage.clickViewOnRowMatching(data.email);
     expect(page.url()).toMatch(/\/customers\/\d+$/);
   });
 
@@ -75,7 +77,7 @@ test.describe('Admin - Customers Management', () => {
     const initialCount = await customersPage.getRowCount();
     expect(initialCount).toBeGreaterThan(0);
 
-    await customersPage.clickDeleteOnRow(0);
+    await customersPage.clickDeleteOnRowMatching(data.email);
     await customersPage.confirmDelete();
     await page.waitForTimeout(1000);
   });
@@ -115,7 +117,7 @@ test.describe('Admin - Customers Management', () => {
     expect(page.url()).not.toContain('/new');
   });
 
-  test('admin can create customer with minimal required data', async ({ page }) => {
+  test('admin can create customer with minimal required data', async () => {
     const minimalData = {
       companyName: `MinCo_${Date.now()}`,
       contactName: 'Min Contact',

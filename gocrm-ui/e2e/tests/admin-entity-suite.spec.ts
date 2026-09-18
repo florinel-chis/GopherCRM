@@ -8,7 +8,6 @@ import { UsersPage } from '../pages/users.page';
 import {
   generateLeadData,
   generateCustomerData,
-  generateTicketData,
   generateTaskData,
   generateUserData
 } from '../fixtures/admin-user';
@@ -47,7 +46,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
     }
   });
 
-  test('admin can create complete CRM workflow: Lead -> Customer -> Task', async ({ page }) => {
+  test('admin can create complete CRM workflow: Lead -> Customer -> Task', async () => {
     // Step 1: Create a Lead
     const leadData = generateLeadData();
     await leadsPage.goto();
@@ -83,7 +82,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
     expect(taskCount).toBeGreaterThanOrEqual(1);
   });
 
-  test('admin can manage user roles and access control', async ({ page }) => {
+  test('admin can manage user roles and access control', async () => {
     const roles = ['sales', 'support', 'customer'];
 
     for (const role of roles) {
@@ -108,7 +107,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
     expect(userCount).toBeGreaterThanOrEqual(roles.length);
   });
 
-  test('admin can perform bulk operations across entities', async ({ page }) => {
+  test('admin can perform bulk operations across entities', async () => {
     const batchSize = 2;
 
     // Create multiple leads

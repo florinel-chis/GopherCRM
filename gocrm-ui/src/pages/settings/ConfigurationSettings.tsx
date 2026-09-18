@@ -89,7 +89,7 @@ const ConfigurationSettings: React.FC = () => {
       setLoading(true);
       const configs = await configurationsApi.getAll();
       setConfigurations(configs);
-    } catch (error) {
+    } catch {
       showError('Failed to load configurations');
     } finally {
       setLoading(false);
@@ -118,7 +118,7 @@ const ConfigurationSettings: React.FC = () => {
       await loadConfigurations();
       setShowEditDialog(false);
       setEditingConfig(null);
-    } catch (error) {
+    } catch {
       showError('Failed to update configuration');
     }
   };
@@ -128,7 +128,7 @@ const ConfigurationSettings: React.FC = () => {
       await configurationsApi.reset(config.key);
       showSuccess('Configuration reset to default');
       await loadConfigurations();
-    } catch (error) {
+    } catch {
       showError('Failed to reset configuration');
     }
   };
