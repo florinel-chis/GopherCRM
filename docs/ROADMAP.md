@@ -68,9 +68,9 @@ pagination, strict configuration typing, and — instead of deleting the fronten
 called missing routes — the routes now exist (auth session lifecycle, dashboard analytics, bulk
 status updates, API-key management, customer export/assign, upcoming tasks). Still open:
 
-- **UI pages for the new auth flows** — `authApi.changePassword`, `requestPasswordReset` and
-  `resetPassword` are real endpoints now, but no page calls them; the reset email links to
-  `/reset-password?token=...`, which has no route in the SPA yet.
+- **UI pages for the password-reset flow** — `authApi.changePassword` now has one
+  (`/settings/profile`), but `requestPasswordReset` and `resetPassword` are still called by no
+  page; the reset email links to `/reset-password?token=...`, which has no route in the SPA yet.
 - **Access-token blocklist** — logout/rotation revoke refresh tokens only; an issued JWT stays
   valid until expiry.
 - **Concurrent-refresh stampede** — several simultaneous 401s can race the refresh interceptor;

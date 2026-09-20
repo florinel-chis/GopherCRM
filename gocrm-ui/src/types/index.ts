@@ -104,10 +104,14 @@ export interface Task {
   completed_at?: string;
 }
 
+// The stored hash is deliberately absent: models.APIKey tags it `json:"-"`, so
+// it is never on the wire, and the endpoint transform deletes it defensively.
 export interface APIKey {
   id: number;
   name: string;
-  key_hash: string;
+  // Short non-secret head of the key (models.APIKey.Prefix), the only part the
+  // API ever returns after creation — enough to identify a key, useless as one.
+  prefix?: string;
   last_used_at?: string;
   expires_at?: string;
   user_id: number;
