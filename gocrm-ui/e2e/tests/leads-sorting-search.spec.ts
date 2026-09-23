@@ -2,9 +2,8 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { LeadsPage } from '../pages/leads.page';
 import { testAdminCredentials } from '../fixtures/admin-user';
+import { API_BASE_URL } from '../helpers/env';
 
-// Matches VITE_API_BASE_URL in gocrm-ui/.env — the backend the UI under test talks to.
-const API_BASE_URL = 'http://localhost:8090/api/v1';
 
 // The search assertions below look for this exact lead, so the suite provisions
 // it itself instead of relying on rows that happen to sit in a developer's database.

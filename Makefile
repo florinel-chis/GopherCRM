@@ -12,7 +12,9 @@ help:
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
 	@echo "  make test         - Run Go tests"
-	@echo "  make verify       - Everything CI runs: size check, Go build/vet/test -race, frontend build/lint/test"
+	@echo "  make verify       - Everything CI runs except e2e: size check, Go build/vet/test -race, frontend build/lint/test"
+	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
+	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
@@ -41,6 +43,7 @@ verify: verify-hygiene verify-backend verify-frontend
 
 verify-hygiene:
 	scripts/ci/check-file-sizes.sh
+	scripts/e2e/selftest.sh
 
 verify-backend:
 	go build $(GO_BUILD_PKGS)
@@ -49,6 +52,13 @@ verify-backend:
 
 verify-frontend:
 	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run
+
+# e2e resets the gocrm_e2e database, starts the backend on a free port and runs
+# Playwright against it; CI runs the same script. SPECS narrows the run (paths
+# relative to gocrm-ui/). Needs MySQL, Go, Node and `npx playwright install chromium`.
+.PHONY: e2e
+e2e:
+	scripts/e2e/run.sh $(SPECS)
 
 .PHONY: migrate
 migrate: run

@@ -108,6 +108,9 @@ test.describe('Admin - Complete Entity Management Suite', () => {
   });
 
   test('admin can perform bulk operations across entities', async () => {
+    // Six records created through the UI plus seven list loads do not fit the
+    // default 30 s budget on a cold database; this used to pass only on a retry.
+    test.slow();
     const batchSize = 2;
 
     // Create multiple leads

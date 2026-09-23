@@ -20,14 +20,17 @@ own; the code owner decides.
   published contract of live public forms (field names, select options, public ids) is unchanged
   unless the change says so explicitly.
 - **Tests:** the change is proven by a test that fails without it. Assertions check real state;
-  `expect(true)` or a skipped branch is not a test.
+  `expect(true)` or a skipped branch is not a test. New or changed behaviour brings its tests in
+  the same pull request: Go tests for backend behaviour, Vitest for components, and an e2e spec
+  (`make e2e`) for a user-visible flow. Destructive e2e steps act only on records the test
+  created.
 
 ## What Important means here
 
 Reserve **Important** for findings that would break behaviour, leak data, weaken an authorization
 or spam check, break a live consumer of the public forms API, pass on SQLite while failing on
-MySQL or MariaDB, or weaken a CI or delivery gate (a check that can no longer fail, a skipped
-test, a widened size limit). Everything else is a **Nit**; keep Nits few.
+MySQL or MariaDB, weaken a CI or delivery gate (a check that can no longer fail, a skipped
+test, a widened size limit), or add or change behaviour without the tests that prove it. Everything else is a **Nit**; keep Nits few.
 
 ## Skip
 
