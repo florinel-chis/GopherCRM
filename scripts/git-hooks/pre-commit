@@ -9,6 +9,8 @@
 # 3. When docs/local/forbidden-terms.txt exists (it is untracked on purpose),
 #    staged content and paths are swept for those terms before the commit is
 #    accepted.
+# 4. No tracked file may exceed the size limit (the same check CI runs), so a
+#    stray build output is stopped before it enters history.
 #
 # Activate with: git config core.hooksPath scripts/git-hooks
 
@@ -56,5 +58,7 @@ if [ -f "$terms_file" ]; then
         done
     done < "$terms_file"
 fi
+
+scripts/ci/check-file-sizes.sh >/dev/null || fail "a staged file exceeds the size limit (see above); build outputs belong in .gitignore"
 
 exit 0
