@@ -34,26 +34,31 @@ test.describe('Admin - Leads Management', () => {
   });
 
   test('admin can edit an existing lead', async ({ page }) => {
-    // Create a lead first
-    const originalLeadData = generateLeadData();
+    // Edit only the lead this test created: the list is not ordered
+    // newest-first, so row 0 may belong to someone else.
+    const stamp = Date.now();
+    const originalLeadData = { ...generateLeadData(), companyName: `E2E Edit ${stamp}` };
+    const updatedCompany = `E2E Edited ${stamp}`;
     await leadsPage.goto();
     await leadsPage.clickNewLead();
     await leadsPage.fillLeadForm(originalLeadData);
     await leadsPage.saveAndWaitForResponse();
 
-    // Go back and edit
     await leadsPage.goto();
+    await leadsPage.searchLeads(originalLeadData.companyName);
+    await expect(leadsPage.tableRows).toHaveCount(1);
     await leadsPage.editLead(0);
 
-    // Update fields
     await leadsPage.companyNameInput.clear();
-    await leadsPage.companyNameInput.fill('Updated Company');
+    await leadsPage.companyNameInput.fill(updatedCompany);
     await leadsPage.contactNameInput.clear();
     await leadsPage.contactNameInput.fill('Updated Contact');
     await leadsPage.saveButton.click();
 
-    // Verify we navigated away from the edit page
     await page.waitForURL(/\/leads(?!.*edit)/, { timeout: 10000 });
+    await leadsPage.goto();
+    await leadsPage.searchLeads(updatedCompany);
+    await expect(page.locator('table tbody tr', { hasText: updatedCompany })).toHaveCount(1);
   });
 
   test('admin can view lead details', async ({ page }) => {
@@ -75,21 +80,26 @@ test.describe('Admin - Leads Management', () => {
     await expect(page.getByText(leadData.companyName).first()).toBeVisible();
   });
 
-  test('admin can delete a lead', async () => {
-    // Create a lead first
-    const leadData = generateLeadData();
+  test('admin can delete a lead', async ({ page }) => {
+    // Deleting a lead is an irreversible erasure, so the test only ever
+    // deletes the lead it created: a unique company name narrows the list to
+    // that one row before the delete.
+    const leadData = { ...generateLeadData(), companyName: `E2E Delete ${Date.now()}` };
     await leadsPage.goto();
     await leadsPage.clickNewLead();
     await leadsPage.fillLeadForm(leadData);
     await leadsPage.saveAndWaitForResponse();
 
+    const ownRow = page.locator('table tbody tr', { hasText: leadData.companyName });
     await leadsPage.goto();
-    const initialCount = await leadsPage.getLeadCount();
-    expect(initialCount).toBeGreaterThan(0);
+    await leadsPage.searchLeads(leadData.companyName);
+    await expect(ownRow).toHaveCount(1);
+    await expect(leadsPage.tableRows).toHaveCount(1);
 
     await leadsPage.deleteLead(0);
-    // If we get here, the delete completed successfully
-    expect(true).toBe(true);
+    // The delete invalidates the narrowed query; the old row stays rendered
+    // until the refetch lands, so this retrying check proves it is gone.
+    await expect(ownRow).toHaveCount(0);
   });
 
   test('admin can search leads', async ({ page }) => {
@@ -102,10 +112,14 @@ test.describe('Admin - Leads Management', () => {
 
     await leadsPage.goto();
     await leadsPage.searchLeads(leadData.companyName);
-    await page.waitForTimeout(1000);
+    await expect(page.locator('table tbody tr', { hasText: leadData.companyName })).toHaveCount(1);
+    await expect(leadsPage.tableRows).toHaveCount(1);
   });
 
-  test('admin can filter leads by status', async ({ page }) => {
+  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
+  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a lead with a
+  // known status and check the filter keeps it and drops it for another status.
+  test.fixme('admin can filter leads by status', async ({ page }) => {
     await leadsPage.goto();
 
     // Apply status filter (should complete without errors)

@@ -4,6 +4,14 @@ import { AdminAuthHelper } from '../helpers/admin-auth';
 import { TicketsPage } from '../pages/tickets.page';
 import { generateTicketData } from '../fixtures/admin-user';
 
+// Most tests below are marked fixme on purpose. As written they passed without
+// checking anything: they asserted `true` or `count >= 0`, skipped their
+// assertions when the list was empty, or edited and deleted row 0 (a ticket
+// the test did not create). The status and priority filters are broken too:
+// the backend ignores the parameter (catalog TC-XCUT-038). A ticket needs a
+// customer, so real versions need the e2e API seeding helper to create a
+// customer and the test's own ticket first. Re-enable each test when it
+// asserts on a ticket it created.
 test.describe('Admin - Tickets Management', () => {
   let adminAuth: AdminAuthHelper;
   let ticketsPage: TicketsPage;
@@ -22,7 +30,7 @@ test.describe('Admin - Tickets Management', () => {
     await expect(ticketsPage.ticketsTable).toBeVisible();
   });
 
-  test('admin can create a new ticket successfully', async ({ page }) => {
+  test.fixme('admin can create a new ticket successfully', async ({ page }) => {
     const ticketData = generateTicketData();
 
     await ticketsPage.goto();
@@ -48,7 +56,7 @@ test.describe('Admin - Tickets Management', () => {
     expect(currentUrl.includes('/tickets/new') || currentUrl.includes('/tickets')).toBeTruthy();
   });
 
-  test('admin can edit an existing ticket', async ({ page }) => {
+  test.fixme('admin can edit an existing ticket', async ({ page }) => {
     await ticketsPage.goto();
 
     // If there are existing tickets, edit the first one
@@ -66,7 +74,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can view ticket details', async ({ page }) => {
+  test.fixme('admin can view ticket details', async ({ page }) => {
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
@@ -76,7 +84,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can delete a ticket', async () => {
+  test.fixme('admin can delete a ticket', async () => {
     await ticketsPage.goto();
 
     const initialCount = await ticketsPage.getTicketCount();
@@ -86,7 +94,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can search tickets', async ({ page }) => {
+  test.fixme('admin can search tickets', async ({ page }) => {
     await ticketsPage.goto();
 
     await ticketsPage.searchTickets('ticket');
@@ -96,7 +104,7 @@ test.describe('Admin - Tickets Management', () => {
     expect(searchResultCount).toBeGreaterThanOrEqual(0);
   });
 
-  test('admin can filter tickets by status', async ({ page }) => {
+  test.fixme('admin can filter tickets by status', async ({ page }) => {
     await ticketsPage.goto();
 
     await ticketsPage.filterByStatus('open');
@@ -106,7 +114,7 @@ test.describe('Admin - Tickets Management', () => {
     expect(filteredCount).toBeGreaterThanOrEqual(0);
   });
 
-  test('admin can filter tickets by priority', async ({ page }) => {
+  test.fixme('admin can filter tickets by priority', async ({ page }) => {
     await ticketsPage.goto();
 
     await ticketsPage.filterByPriority('high');
@@ -138,7 +146,7 @@ test.describe('Admin - Tickets Management', () => {
     expect(page.url()).not.toContain('/new');
   });
 
-  test('admin can navigate between tickets efficiently', async ({ page }) => {
+  test.fixme('admin can navigate between tickets efficiently', async ({ page }) => {
     await ticketsPage.goto();
 
     await expect(ticketsPage.ticketsTable).toBeVisible();
@@ -163,7 +171,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can update ticket status', async ({ page }) => {
+  test.fixme('admin can update ticket status', async ({ page }) => {
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
@@ -176,7 +184,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can update ticket priority', async ({ page }) => {
+  test.fixme('admin can update ticket priority', async ({ page }) => {
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
@@ -189,7 +197,7 @@ test.describe('Admin - Tickets Management', () => {
     }
   });
 
-  test('admin can handle ticket with long description', async ({ page }) => {
+  test.fixme('admin can handle ticket with long description', async ({ page }) => {
     const longDescription = faker.lorem.paragraphs(10);
 
     await ticketsPage.goto();

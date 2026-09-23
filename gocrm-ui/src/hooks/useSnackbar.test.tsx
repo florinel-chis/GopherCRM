@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, screen } from '@testing-library/react';
 import { useSnackbar } from './useSnackbar';
 import { SnackbarProvider } from '@/contexts/SnackbarContext';
 import React from 'react';
@@ -37,26 +37,28 @@ describe('useSnackbar', () => {
     expect(typeof result.current.showInfo).toBe('function');
   });
 
-  it('calls showSuccess without errors', () => {
+  it('shows the message as a success alert', () => {
     const { result } = renderHook(() => useSnackbar(), { wrapper });
-    
+
     act(() => {
-      result.current.showSuccess('Success message');
+      result.current.showSuccess('Lead saved');
     });
-    
-    // Should not throw
-    expect(true).toBe(true);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Lead saved');
+    expect(alert.className).toMatch(/MuiAlert-colorSuccess/);
   });
 
-  it('calls showError without errors', () => {
+  it('shows the message as an error alert', () => {
     const { result } = renderHook(() => useSnackbar(), { wrapper });
-    
+
     act(() => {
-      result.current.showError('Error message');
+      result.current.showError('Save failed');
     });
-    
-    // Should not throw
-    expect(true).toBe(true);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Save failed');
+    expect(alert.className).toMatch(/MuiAlert-colorError/);
   });
 
   it('throws error when used outside provider', () => {

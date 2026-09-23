@@ -159,32 +159,13 @@ describe('LeadList', () => {
     });
   });
 
-  it('handles lead conversion for qualified leads', async () => {
-    (leadsApi.convertLead as any).mockResolvedValue({ customer_id: 123 });
-    
-    render(<LeadList />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Company C')).toBeInTheDocument();
-    });
-
-    // The LeadList component doesn't render the more menu in the DataTable actions
-    // Instead, it passes a custom actions prop that includes the MoreVertIcon button
-    // But this button requires selectedLead to be set, which happens via the menu system
-    
-    // First, we need to click on the row to select it (though this navigates)
-    // Actually, looking at the component, the more menu is passed as actions prop
-    // but it's not correctly wired to individual rows
-    
-    // This test appears to have a bug in the component implementation
-    // The more menu button in actions doesn't have access to individual row data
-    // Skip this test or mark it as todo
-    
-    // For now, let's comment out the implementation
-    expect(true).toBe(true); // Placeholder
-    
-    // TODO: Fix the component implementation to properly handle row-level actions
-  });
+  // Blocked by a component bug, not a test gap: the overflow menu that offers
+  // "Convert" can never open. Its button is passed to DataTable as `actions`,
+  // which renders once in the table toolbar with no row context, and its
+  // handler is `selectedLead && handleMenuOpen(...)` while selectedLead is only
+  // set inside handleMenuOpen, so the guard is always false. Replace this todo
+  // with a real test in the change that gives each row its own menu.
+  it.todo('converts a qualified lead from the row overflow menu');
 
   it('handles pagination', async () => {
     // Update the mock to return more data to enable pagination

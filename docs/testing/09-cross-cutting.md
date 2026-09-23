@@ -621,10 +621,10 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Known issue:** FEATURES 3.8, 5.5, 6.5 and 7.8 and gap G34 describe these as *client-side filters
   over the current page*. That is too generous: no list page filters the fetched rows at all — the
   only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
-  existing E2E tests pass because they assert `expect(count).toBeGreaterThanOrEqual(0)`
-  (`admin-leads.spec.ts` "admin can filter leads by status", `admin-tasks.spec.ts` "admin can filter
-  tasks by status" / "by priority", `admin-tickets.spec.ts` "admin can filter tickets by status" /
-  "by priority"), which cannot fail.
+  E2E tests used to pass because they asserted `expect(count).toBeGreaterThanOrEqual(0)`, which
+  cannot fail (`admin-leads.spec.ts` "admin can filter leads by status", `admin-tasks.spec.ts` "admin
+  can filter tasks by status" / "by priority", `admin-tickets.spec.ts` "admin can filter tickets by
+  status" / "by priority"). Since 2026-09-23 they are `test.fixme` until the filters work.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
 
