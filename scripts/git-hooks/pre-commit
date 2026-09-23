@@ -23,7 +23,13 @@ fail() {
     exit 1
 }
 
-staged=$(git diff --cached --name-only --diff-filter=ACR)
+# The size check covers the whole index, so it runs before the early exit
+# below: a commit that only modifies an existing file must not skip it.
+scripts/ci/check-file-sizes.sh >/dev/null || fail "a tracked file exceeds the size limit (see above); build outputs belong in .gitignore"
+
+# M is included: the path and content checks must also see edits to files
+# that already exist, not only added, copied and renamed ones.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
 
 for path in $staged; do
@@ -58,7 +64,5 @@ if [ -f "$terms_file" ]; then
         done
     done < "$terms_file"
 fi
-
-scripts/ci/check-file-sizes.sh >/dev/null || fail "a staged file exceeds the size limit (see above); build outputs belong in .gitignore"
 
 exit 0

@@ -181,8 +181,8 @@ deleted along with their task links; the tasks themselves are untouched.
 
 Answer-engine visibility tracking; FEATURES.md section 10c. Unlike the other suites, the AEO
 captures photograph whatever data the backend holds — a run spends provider credit and takes
-minutes, so the suite creates nothing. The images below were taken against a demo profile (HubSpot
-vs four CRM competitors) after three runs on a single self-hosted engine; with more engines
+minutes, so the suite creates nothing. The images below were taken against a demo brand profile
+(a CRM vendor and four competitors) after three runs on a single self-hosted engine; with more engines
 configured, the per-engine cards and timeline series multiply accordingly.
 
 ![AEO dashboard](screenshots/aeo/aeo-dashboard.png)

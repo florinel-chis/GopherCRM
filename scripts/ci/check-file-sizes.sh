@@ -5,7 +5,8 @@
 #
 # Sizes are read from the blobs in the index, not from the working tree, so a
 # symlink counts as the link itself and an unstaged edit does not change the
-# verdict.
+# verdict. All sizes come from one `git cat-file --batch-check` process, which
+# keeps the check fast enough for the pre-commit hook.
 set -euo pipefail
 
 limit_bytes=${MAX_TRACKED_FILE_BYTES:-5242880} # 5 MiB
@@ -23,19 +24,40 @@ if ! git ls-files -s -z >"$listing"; then
   exit 2
 fi
 
-status=0
+objects=()
+paths=()
 # Each record: "<mode> <object> <stage>\t<path>", NUL-terminated.
 while IFS= read -r -d '' record; do
   meta=${record%%$'\t'*}
-  path=${record#*$'\t'}
   read -r mode object _stage <<<"$meta"
   [ "$mode" = 160000 ] && continue # submodule gitlink, no blob
-  size=$(git cat-file -s "$object")
-  if [ "$size" -gt "$limit_bytes" ]; then
-    echo "Tracked file larger than $limit_bytes bytes: $path ($size bytes)" >&2
-    status=1
-  fi
+  objects+=("$object")
+  paths+=("${record#*$'\t'}")
 done <"$listing"
+
+status=0
+if [ "${#objects[@]}" -gt 0 ]; then
+  # Object ids contain no newlines, so newline-separated input is safe; the
+  # sizes come back in the same order as the paths array.
+  sizes=()
+  while IFS= read -r size; do
+    sizes+=("$size")
+  done < <(printf '%s\n' "${objects[@]}" | git cat-file --batch-check='%(objectsize)')
+  if [ "${#sizes[@]}" -ne "${#objects[@]}" ]; then
+    echo "git cat-file returned ${#sizes[@]} sizes for ${#objects[@]} objects" >&2
+    exit 2
+  fi
+  for i in "${!sizes[@]}"; do
+    if ! [[ ${sizes[$i]} =~ ^[0-9]+$ ]]; then
+      echo "cannot read the size of ${paths[$i]}: ${sizes[$i]}" >&2
+      exit 2
+    fi
+    if [ "${sizes[$i]}" -gt "$limit_bytes" ]; then
+      echo "Tracked file larger than $limit_bytes bytes: ${paths[$i]} (${sizes[$i]} bytes)" >&2
+      status=1
+    fi
+  done
+fi
 
 if [ "$status" -eq 0 ]; then
   echo "No tracked file exceeds $limit_bytes bytes."
