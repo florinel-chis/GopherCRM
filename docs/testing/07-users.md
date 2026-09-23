@@ -189,8 +189,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   name. The table narrows to the matching row. There is no debounce — a ten-character term fires ten
   requests, which counts against the 120 req/min moderate rate limit.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can search users"
-  (the existing test types a term and waits, but asserts nothing about the result; extend it to
-  assert the row).
+  (since 2026-09-23 it asserts that the search returns exactly the user it created).
 
 ### TC-USER-010 — Search for a term that matches nothing
 - **Priority:** P2
@@ -262,8 +261,9 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Known issue:** FEATURES.md row 7.8 and gap G34. The row describes the filter as client-side over
   the current page; in the code it is applied nowhere at all. The existing E2E test only asserts
   `count >= 1`, which passes whether or not the filter works.
-- **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can filter users by
-  role" (extend it to assert the no-op explicitly)
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can filter users by
+  role" is `test.fixme` (2026-09-23): it asserted `count >= 1`, which passes whatever the filter
+  does. A real assertion fails until the filter works (TC-XCUT-038).
 
 ### TC-USER-014 — Record that the Active/Inactive toggle does not filter
 - **Priority:** P1
@@ -431,7 +431,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   `PUT /users/<id>` returns 200, the snackbar reads "User updated successfully" and the app
   navigates to `/users` where the row shows the new name.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can edit an existing
-  user"
+  user" (since 2026-09-23 it edits only its own user, found by email, and asserts the new name; it
+  used to edit row 1, possibly a real account)
 
 ### TC-USER-025 — Change another user's role
 - **Priority:** P0
@@ -446,7 +447,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   else). The list row shows the Sales chip. On the user's next request the auth middleware reads the
   role from the database, so the change takes effect immediately without re-login.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can manage user
-  permissions through roles"
+  permissions through roles" (since 2026-09-23 it changes only its own user's role and asserts
+  `sales` is shown; it used to promote whichever user was in row 1)
 
 ### TC-USER-026 — Demote your own admin account
 - **Priority:** P0

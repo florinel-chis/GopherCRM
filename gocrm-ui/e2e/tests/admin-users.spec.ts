@@ -48,12 +48,14 @@ test.describe('Admin - Users Management', () => {
     });
     await usersPage.saveAndWaitForResponse();
 
-    // Go back and edit
+    // Edit only the user this test created. Picking a row by index could
+    // rename a real account, including an admin.
+    const ownRow = page.locator('table tbody tr', { hasText: originalUserData.email });
     await usersPage.goto();
-    const userCount = await usersPage.getUserCount();
-    const userIndex = userCount > 1 ? 1 : 0;
-
-    await usersPage.editUser(userIndex);
+    await usersPage.searchUsers(originalUserData.email);
+    await expect(ownRow).toHaveCount(1);
+    await expect(usersPage.tableRows).toHaveCount(1);
+    await usersPage.editUser(0);
 
     // Update fields (no password on edit)
     await usersPage.firstNameInput.clear();
@@ -63,6 +65,9 @@ test.describe('Admin - Users Management', () => {
     await usersPage.saveButton.click();
 
     await page.waitForURL(/\/users(?!.*edit)/, { timeout: 10000 });
+    await usersPage.goto();
+    await usersPage.searchUsers(originalUserData.email);
+    await expect(ownRow).toContainText('UpdatedFirst');
   });
 
   test('admin can view user details', async ({ page }) => {
@@ -96,10 +101,14 @@ test.describe('Admin - Users Management', () => {
 
     await usersPage.goto();
     await usersPage.searchUsers(user1Data.firstName);
-    await page.waitForTimeout(1000);
+    await expect(page.locator('table tbody tr', { hasText: user1Data.firstName })).toHaveCount(1);
+    await expect(usersPage.tableRows).toHaveCount(1);
   });
 
-  test('admin can filter users by role', async ({ page }) => {
+  // fixme: asserted `count >= 1`, which passes whatever the filter does. The backend
+  // ignores the role parameter (catalog TC-XCUT-038). Once it works, check that the
+  // filter keeps a user of that role and drops a user of another role.
+  test.fixme('admin can filter users by role', async ({ page }) => {
     const salesUserData = { ...generateUserData(), role: 'sales' };
 
     await usersPage.goto();
@@ -226,15 +235,20 @@ test.describe('Admin - Users Management', () => {
     });
     await usersPage.saveUser();
 
-    // Edit user to change role
+    // Change the role of the user this test created, never of an existing
+    // account (row 1 used to be whoever sorted there, possibly an admin).
+    const ownRow = page.locator('table tbody tr', { hasText: customerUserData.email });
     await usersPage.goto();
-    const userCount = await usersPage.getUserCount();
-    const userIndex = userCount > 1 ? 1 : 0;
-
-    await usersPage.editUser(userIndex);
+    await usersPage.searchUsers(customerUserData.email);
+    await expect(ownRow).toHaveCount(1);
+    await expect(usersPage.tableRows).toHaveCount(1);
+    await usersPage.editUser(0);
     await usersPage.selectMuiOption('role', 'sales');
     await usersPage.saveButton.click();
 
     await page.waitForURL(/\/users(?!.*edit)/, { timeout: 10000 });
+    await usersPage.goto();
+    await usersPage.searchUsers(customerUserData.email);
+    await expect(ownRow).toContainText(/sales/i);
   });
 });
