@@ -31,13 +31,17 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # One package list for every step. Go sources shipped inside
-      # gocrm-ui/node_modules must never be built or tested, and a new
-      # top-level Go directory is picked up without editing this file.
+      # Package lists come from go list, so a new top-level Go directory is
+      # picked up without editing this file, and Go sources shipped inside
+      # gocrm-ui/node_modules are never built or tested. go build rejects an
+      # explicitly named package that holds only _test.go files, so the build
+      # list keeps packages with non-test sources; vet and test cover all.
       - name: List packages
-        run: echo "PKGS=$(go list ./... | grep -v /gocrm-ui/ | tr '\n' ' ')" >> "$GITHUB_ENV"
+        run: |
+          echo "PKGS=$(go list ./... | grep -v /gocrm-ui/ | tr '\n' ' ')" >> "$GITHUB_ENV"
+          echo "BUILD_PKGS=$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v /gocrm-ui/ | tr '\n' ' ')" >> "$GITHUB_ENV"
       - name: Build
-        run: go build $PKGS
+        run: go build $BUILD_PKGS
       - name: Vet
         run: go vet $PKGS
       - name: Test
