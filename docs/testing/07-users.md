@@ -431,7 +431,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   `PUT /users/<id>` returns 200, the snackbar reads "User updated successfully" and the app
   navigates to `/users` where the row shows the new name.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can edit an existing
-  user"
+  user" (since 2026-09-23 it edits only its own user, found by email, and asserts the new name; it
+  used to edit row 1, possibly a real account)
 
 ### TC-USER-025 — Change another user's role
 - **Priority:** P0
@@ -446,7 +447,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   else). The list row shows the Sales chip. On the user's next request the auth middleware reads the
   role from the database, so the change takes effect immediately without re-login.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can manage user
-  permissions through roles"
+  permissions through roles" (since 2026-09-23 it changes only its own user's role and asserts
+  `sales` is shown; it used to promote whichever user was in row 1)
 
 ### TC-USER-026 — Demote your own admin account
 - **Priority:** P0

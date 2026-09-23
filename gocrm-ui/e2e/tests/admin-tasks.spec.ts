@@ -35,22 +35,28 @@ test.describe('Admin - Tasks Management', () => {
 
   test('admin can edit an existing task', async ({ page }) => {
     // Create a task first
-    const originalTaskData = generateTaskData();
+    // Edit only the task this test created (the list is not newest-first).
+    const stamp = Date.now();
+    const originalTaskData = { ...generateTaskData(), title: `EditTask_${stamp}` };
+    const updatedTitle = `EditedTask_${stamp}`;
     await tasksPage.goto();
     await tasksPage.clickNewTask();
     await tasksPage.fillTaskForm(originalTaskData);
     await tasksPage.saveAndWaitForResponse();
 
-    // Go back and edit
     await tasksPage.goto();
+    await tasksPage.searchTasks(originalTaskData.title);
+    await expect(tasksPage.tableRows).toHaveCount(1);
     await tasksPage.editTask(0);
 
-    // Update fields
     await tasksPage.titleInput.clear();
-    await tasksPage.titleInput.fill('Updated Task Title');
+    await tasksPage.titleInput.fill(updatedTitle);
     await tasksPage.saveButton.click();
 
     await page.waitForURL(/\/tasks(?!.*edit)/, { timeout: 10000 });
+    await tasksPage.goto();
+    await tasksPage.searchTasks(updatedTitle);
+    await expect(tasksPage.taskRow(updatedTitle)).toHaveCount(1);
   });
 
   test('admin can view task details', async ({ page }) => {
@@ -90,7 +96,7 @@ test.describe('Admin - Tasks Management', () => {
     await expect(tasksPage.taskRow(taskData.title)).toHaveCount(0);
   });
 
-  test('admin can search tasks', async ({ page }) => {
+  test('admin can search tasks', async () => {
     const taskData = { ...generateTaskData(), title: `SearchTask_${Date.now()}` };
 
     await tasksPage.goto();
@@ -100,10 +106,14 @@ test.describe('Admin - Tasks Management', () => {
 
     await tasksPage.goto();
     await tasksPage.searchTasks(taskData.title);
-    await page.waitForTimeout(1000);
+    await expect(tasksPage.taskRow(taskData.title)).toHaveCount(1);
+    await expect(tasksPage.tableRows).toHaveCount(1);
   });
 
-  test('admin can filter tasks by status', async ({ page }) => {
+  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
+  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a task with a
+  // known value and check the filter keeps it and drops it for another value.
+  test.fixme('admin can filter tasks by status', async ({ page }) => {
     await tasksPage.goto();
     await tasksPage.filterByStatus('pending');
     await page.waitForTimeout(1000);
@@ -112,7 +122,10 @@ test.describe('Admin - Tasks Management', () => {
     expect(filteredCount).toBeGreaterThanOrEqual(0);
   });
 
-  test('admin can filter tasks by priority', async ({ page }) => {
+  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
+  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a task with a
+  // known value and check the filter keeps it and drops it for another value.
+  test.fixme('admin can filter tasks by priority', async ({ page }) => {
     await tasksPage.goto();
     await tasksPage.filterByPriority('high');
     await page.waitForTimeout(1000);

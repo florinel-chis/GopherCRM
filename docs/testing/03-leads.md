@@ -403,6 +403,8 @@ the frontend gating.
 - **Expected:** `DELETE /api/v1/leads/{id}` returns **204** with no body. Snackbar "Lead deleted
   successfully"; the leads query is invalidated and the row disappears from the table.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can delete a lead"
+  (since 2026-09-23 it deletes only its own lead, found by a unique company name, and asserts the
+  row is gone; it used to delete row 0 and assert `true`)
 
 ### TC-LEAD-024 — Deletion erases the personal data, freeing the email for reuse
 - **Priority:** P0

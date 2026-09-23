@@ -238,7 +238,9 @@ regression anchors, not endorsements.
   2. Clear the Title and type a new one.
   3. Click "Update Task".
 - **Expected:** `PUT /api/v1/tasks/{id}` returns 200, the snackbar reads "Task updated successfully" and the app navigates back to `/tasks` with the new title in the row.
-- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can edit an existing task"
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can edit an existing
+  task" (since 2026-09-23 it edits only its own task, found by a unique title, and asserts the new
+  title persisted; it used to edit row 0)
 
 ### TC-TASK-018 — Drive a task through pending → in_progress → completed from the detail page
 - **Priority:** P1
@@ -379,7 +381,7 @@ regression anchors, not endorsements.
   2. Select Status = "Completed".
   3. Wait for the refetch and re-read the table.
 - **Expected:** A request goes out as `GET /api/v1/tasks?page=1&limit=10&status=completed`, returns 200, and the result set is **identical** to the unfiltered one: the same total and the same mix of Pending and Completed rows. The dropdown shows "Completed" but the table is unchanged.
-- **Known issue:** `TaskHandler.List` reads only `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search` (`task_handler.go:194-223`) — `status` is ignored server-side. Unlike the ticket list, `TaskList` also performs **no** client-side narrowing: it renders `data?.data` straight into `DataTable`, which does not filter (`TaskList.tsx:404`, `components/DataTable.tsx`). Confirmed live: `GET /tasks` and `GET /tasks?status=completed&priority=high` both return `total: 39` with mixed statuses. FEATURES.md row 6.5 and gap **G34** call this "client-side" filtering; that is inaccurate for tasks — no filtering happens anywhere. The existing spec "admin can filter tasks by status" only asserts `count >= 0`, so it passes without ever checking that filtering occurred.
+- **Known issue:** `TaskHandler.List` reads only `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search` (`task_handler.go:194-223`) — `status` is ignored server-side. Unlike the ticket list, `TaskList` also performs **no** client-side narrowing: it renders `data?.data` straight into `DataTable`, which does not filter (`TaskList.tsx:404`, `components/DataTable.tsx`). Confirmed live: `GET /tasks` and `GET /tasks?status=completed&priority=high` both return `total: 39` with mixed statuses. FEATURES.md row 6.5 and gap **G34** call this "client-side" filtering; that is inaccurate for tasks — no filtering happens anywhere. The spec "admin can filter tasks by status" asserted only `count >= 0`, which passes without checking that anything was filtered; since 2026-09-23 it is `test.fixme` until the filter works.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; the existing test must be strengthened to assert the no-op rather than a tautology)
 
 ### TC-TASK-030 — The Priority dropdown does not filter anything
@@ -416,7 +418,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Type the unique fragment into the "Search tasks..." field.
 - **Expected:** Each keystroke resets `page` to 1 and issues `GET /api/v1/tasks?…&search=<fragment>` (there is no debounce). The response contains the matching task and the table narrows to it. Search takes precedence over `sort_by` (`task_handler.go:232-236`).
-- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can search tasks" (currently asserts nothing about the result set; strengthening is tracked under TC-TASK-033)
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can search tasks" (since 2026-09-23 it asserts that the search returns exactly the task it created)
 
 ### TC-TASK-033 — Search with no matches empties the table
 - **Priority:** P2
