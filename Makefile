@@ -1,10 +1,18 @@
+# Go packages, excluding sources shipped inside gocrm-ui/node_modules. Recursive
+# (=) so go list only runs for targets that use them. The build list keeps
+# packages with non-test sources: go build rejects a test-only package when it
+# is named explicitly.
+GO_PKGS = $(shell go list ./... | grep -v /gocrm-ui/)
+GO_BUILD_PKGS = $(shell go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v /gocrm-ui/)
+
 .PHONY: help
 help:
 	@echo "Available commands:"
 	@echo "  make create-db    - Create the MySQL database"
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
-	@echo "  make test         - Run tests"
+	@echo "  make test         - Run Go tests"
+	@echo "  make verify       - Everything CI runs: size check, Go build/vet/test -race, frontend build/lint/test"
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
@@ -24,7 +32,23 @@ build:
 
 .PHONY: test
 test:
-	go test ./...
+	go test $(GO_PKGS)
+
+# verify runs exactly what CI runs; CI calls these targets, so the two cannot
+# drift apart. Run it before pushing a branch.
+.PHONY: verify verify-hygiene verify-backend verify-frontend
+verify: verify-hygiene verify-backend verify-frontend
+
+verify-hygiene:
+	scripts/ci/check-file-sizes.sh
+
+verify-backend:
+	go build $(GO_BUILD_PKGS)
+	go vet $(GO_PKGS)
+	go test -race $(GO_PKGS)
+
+verify-frontend:
+	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run
 
 .PHONY: migrate
 migrate: run
