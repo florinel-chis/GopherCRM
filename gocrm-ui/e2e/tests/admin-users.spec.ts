@@ -101,10 +101,14 @@ test.describe('Admin - Users Management', () => {
 
     await usersPage.goto();
     await usersPage.searchUsers(user1Data.firstName);
-    await page.waitForTimeout(1000);
+    await expect(page.locator('table tbody tr', { hasText: user1Data.firstName })).toHaveCount(1);
+    await expect(usersPage.tableRows).toHaveCount(1);
   });
 
-  test('admin can filter users by role', async ({ page }) => {
+  // fixme: asserted `count >= 1`, which passes whatever the filter does. The backend
+  // ignores the role parameter (catalog TC-XCUT-038). Once it works, check that the
+  // filter keeps a user of that role and drops a user of another role.
+  test.fixme('admin can filter users by role', async ({ page }) => {
     const salesUserData = { ...generateUserData(), role: 'sales' };
 
     await usersPage.goto();

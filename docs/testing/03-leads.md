@@ -626,10 +626,9 @@ the frontend gating.
   filtering; in the leads page it is not filtering at all. `LeadList.test.tsx` "filters leads by
   status" only asserts that `getLeads` was called with `status: 'new'`, which is why the defect
   survives the unit suite. Any test asserting server-side status filtering would be wrong.
-- **Automation:** automated (weak) — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can filter
-  leads by status" asserts only that the page survives the interaction
-  (`expect(filteredCount).toBeGreaterThanOrEqual(0)`); the strict assertion above is planned as an
-  extension of the same file.
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can filter leads by
+  status" is `test.fixme` (2026-09-23): it asserted only `count >= 0`. A real assertion fails until
+  the filter works (TC-XCUT-038).
 
 ### TC-LEAD-039 — Changing the status filter resets to page 1
 - **Priority:** P2

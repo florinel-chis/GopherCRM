@@ -388,7 +388,7 @@ depend on that are flagged.
   `DELETE /api/v1/customers/{id}` returns **204** (no body). A success snackbar reads "Customer
   deleted successfully", the customers query is invalidated and the row is gone after the refetch.
   A subsequent `GET /api/v1/customers/{id}` returns 404.
-- **Automation:** automated (partially) — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can delete a customer"; that test deletes row 0 rather than the record it created and asserts nothing after the confirm — extend it to target its own record and assert the 204 plus the row's disappearance
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can delete a customer" (it deletes the row matching its own customer's email and asserts that row disappears)
 
 ### TC-CUST-024 — An erased customer's email can be used again
 - **Priority:** P0

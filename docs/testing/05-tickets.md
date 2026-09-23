@@ -651,7 +651,8 @@ gating); where the two disagree, that disagreement gets its own case.
   pagination footer agrees with the row count. Search also takes precedence over the plain sorted
   listing in the handler.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended; "admin can search
-  tickets" searches the literal string "ticket" and asserts `count >= 0`)
+  tickets" searched the literal string "ticket" and asserted `count >= 0`; it is `test.fixme` since
+  2026-09-23)
 
 ### TC-TICK-036 — Search matches the description as well as the title
 - **Priority:** P2

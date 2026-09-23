@@ -97,9 +97,8 @@ test.describe('Admin - Leads Management', () => {
     await expect(leadsPage.tableRows).toHaveCount(1);
 
     await leadsPage.deleteLead(0);
-
-    await leadsPage.goto();
-    await leadsPage.searchLeads(leadData.companyName);
+    // The delete invalidates the narrowed query; the old row stays rendered
+    // until the refetch lands, so this retrying check proves it is gone.
     await expect(ownRow).toHaveCount(0);
   });
 

@@ -159,11 +159,12 @@ describe('LeadList', () => {
     });
   });
 
-  // Blocked by a component bug, not a test gap: the row overflow menu that
-  // offers "Convert" never opens. Its button calls
-  // `selectedLead && handleMenuOpen(...)`, but selectedLead is only set inside
-  // handleMenuOpen, so the guard is always false. Replace this todo with a real
-  // test in the change that fixes the menu.
+  // Blocked by a component bug, not a test gap: the overflow menu that offers
+  // "Convert" can never open. Its button is passed to DataTable as `actions`,
+  // which renders once in the table toolbar with no row context, and its
+  // handler is `selectedLead && handleMenuOpen(...)` while selectedLead is only
+  // set inside handleMenuOpen, so the guard is always false. Replace this todo
+  // with a real test in the change that gives each row its own menu.
   it.todo('converts a qualified lead from the row overflow menu');
 
   it('handles pagination', async () => {
