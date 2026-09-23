@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Superseded pull-request runs are cancelled; runs on main always finish so
+# every commit on main keeps a completed status.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reject large tracked files
+        run: scripts/ci/check-file-sizes.sh
+
+  backend:
+    name: Backend (build, vet, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Package lists come from go list, so a new top-level Go directory is
+      # picked up without editing this file, and Go sources shipped inside
+      # gocrm-ui/node_modules are never built or tested. go build rejects an
+      # explicitly named package that holds only _test.go files, so the build
+      # list keeps packages with non-test sources; vet and test cover all.
+      - name: List packages
+        run: |
+          echo "PKGS=$(go list ./... | grep -v /gocrm-ui/ | tr '\n' ' ')" >> "$GITHUB_ENV"
+          echo "BUILD_PKGS=$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v /gocrm-ui/ | tr '\n' ' ')" >> "$GITHUB_ENV"
+      - name: Build
+        run: go build $BUILD_PKGS
+      - name: Vet
+        run: go vet $PKGS
+      - name: Test
+        run: go test -race $PKGS
+
+  frontend:
+    name: Frontend (build, lint, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gocrm-ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gocrm-ui/package-lock.json
+      - name: Install
+        run: npm ci
+      # tsc -b plus the production bundle: import-resolution problems that
+      # the type checker accepts only surface when Vite bundles.
+      - name: Build
+        run: npm run build
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test -- --run
