@@ -6,3 +6,4 @@ docs/
 docker-compose*.yml
 Dockerfile
 coverage.out
+/create-admin
