@@ -12,6 +12,12 @@ import {
   generateUserData
 } from '../fixtures/admin-user';
 
+// The three tests that walk several entity forms (the CRM workflow, the batch
+// creation and the cross-entity search) take 60-100 s locally and about 1.7x
+// that on a CI runner, far over the default 30 s. They get a budget sized for
+// the slowest measured environment instead of passing only on a retry.
+const MULTI_ENTITY_TEST_TIMEOUT_MS = 180_000;
+
 test.describe('Admin - Complete Entity Management Suite', () => {
   let adminAuth: AdminAuthHelper;
   let leadsPage: LeadsPage;
@@ -47,6 +53,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
   });
 
   test('admin can create complete CRM workflow: Lead -> Customer -> Task', async () => {
+    test.setTimeout(MULTI_ENTITY_TEST_TIMEOUT_MS);
     // Step 1: Create a Lead
     const leadData = generateLeadData();
     await leadsPage.goto();
@@ -108,9 +115,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
   });
 
   test('admin can perform bulk operations across entities', async () => {
-    // Six records created through the UI plus seven list loads do not fit the
-    // default 30 s budget on a cold database; this used to pass only on a retry.
-    test.slow();
+    test.setTimeout(MULTI_ENTITY_TEST_TIMEOUT_MS);
     const batchSize = 2;
 
     // Create multiple leads
@@ -164,6 +169,7 @@ test.describe('Admin - Complete Entity Management Suite', () => {
   });
 
   test('admin can search across all entities', async ({ page }) => {
+    test.setTimeout(MULTI_ENTITY_TEST_TIMEOUT_MS);
     const searchTerm = `AdminSearch_${Date.now()}`;
 
     // Create searchable lead

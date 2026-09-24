@@ -133,9 +133,8 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
   (`screenshots/09-labels.spec.ts`) deliberately does the opposite — fixed names, created only when
   missing — so the captures stay stable across runs.
 - Three `admin-entity-suite.spec.ts` tests (CRM workflow, bulk operations, cross-entity search) walk
-  three entity forms each and run for 60–100 s, which exceeds the 60 s per-test budget in
-  `playwright.config.slow.ts`. They pass with `--timeout=180000`. Verified 2026-08-08; unrelated to
-  the entity being created — the timeout lands on the customers step.
+  three entity forms each and run for 60–100 s locally and about 1.7× that on a CI runner. They
+  carry their own 180 s budget (`MULTI_ENTITY_TEST_TIMEOUT_MS`), so no `--timeout` flag is needed.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.
