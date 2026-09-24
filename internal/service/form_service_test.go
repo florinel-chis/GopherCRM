@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -631,6 +632,174 @@ func TestFormServiceSubmitRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+// leadColumnFormFields is a form whose fields all land in sized columns of the
+// submission or the lead, plus a textarea that only ever reaches TEXT columns.
+func leadColumnFormFields() []models.FormFieldDef {
+	return []models.FormFieldDef{
+		{Name: "first_name", Label: "First name", Type: models.FormFieldText},
+		{Name: "last_name", Label: "Last name", Type: models.FormFieldText},
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+		{Name: "phone", Label: "Phone", Type: models.FormFieldPhone},
+		{Name: "company", Label: "Company", Type: models.FormFieldText},
+		{Name: "position", Label: "Position", Type: models.FormFieldText},
+		{Name: "message", Label: "Message", Type: models.FormFieldTextarea},
+	}
+}
+
+// addressOfLength builds a well-formed address exactly n characters long.
+func addressOfLength(n int) string {
+	const domain = "@example.com"
+	return strings.Repeat("a", n-len(domain)) + domain
+}
+
+// A field's declared max_length defaults to 1000, but the value is copied into
+// a varchar column that is far narrower. MySQL rejects the insert outright, so
+// the limit of the column has to win during validation — before any spam layer
+// runs, because the spam path stores the submission too.
+func TestFormServiceSubmitRejectsValuesWiderThanTheirColumn(t *testing.T) {
+	cases := map[string]struct {
+		field   string
+		value   string
+		message string
+	}{
+		"email wider than form_submissions.email": {
+			field:   "email",
+			value:   addressOfLength(300),
+			message: "Email must be at most 255 characters long",
+		},
+		"first name wider than leads.first_name": {
+			field:   "first_name",
+			value:   strings.Repeat("a", 120),
+			message: "First name must be at most 100 characters long",
+		},
+		"last name wider than leads.last_name": {
+			field:   "last_name",
+			value:   strings.Repeat("a", 101),
+			message: "Last name must be at most 100 characters long",
+		},
+		"phone wider than leads.phone": {
+			field:   "phone",
+			value:   strings.Repeat("1", 51),
+			message: "Phone must be at most 50 characters long",
+		},
+		"company wider than leads.company": {
+			field:   "company",
+			value:   strings.Repeat("a", 201),
+			message: "Company must be at most 200 characters long",
+		},
+		"position wider than leads.position": {
+			field:   "position",
+			value:   strings.Repeat("a", 101),
+			message: "Position must be at most 100 characters long",
+		},
+		"multi-byte characters count as one": {
+			field:   "first_name",
+			value:   strings.Repeat("ä", 101),
+			message: "First name must be at most 100 characters long",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newDefaultFormFixture(t)
+			form := f.newForm()
+			form.Fields = leadColumnFormFields()
+			f.publish(t, form)
+
+			req := &PublicSubmissionRequest{
+				Values:    map[string]string{"email": "ada@example.com", tc.field: tc.value},
+				Challenge: challengeAged(30 * time.Second),
+			}
+
+			outcome, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+
+			require.Error(t, err)
+			assert.Nil(t, outcome)
+			assert.ErrorIs(t, err, apperrors.ErrValidation)
+			var fieldErrors FieldErrors
+			require.ErrorAs(t, err, &fieldErrors)
+			assert.Equal(t, FieldErrors{tc.field: tc.message}, fieldErrors)
+
+			assert.Empty(t, f.submissions(t, form.ID))
+			assert.Empty(t, f.leads(t))
+		})
+	}
+}
+
+func TestFormServiceSubmitRejectsWideValuesBeforeTheSpamLayers(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = leadColumnFormFields()
+	f.publish(t, form)
+
+	req := &PublicSubmissionRequest{
+		Values:    map[string]string{"email": addressOfLength(300)},
+		Challenge: challengeAged(time.Second),
+		Honeypot:  "https://buy-now.example",
+	}
+
+	_, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+
+	var fieldErrors FieldErrors
+	require.ErrorAs(t, err, &fieldErrors)
+	assert.Contains(t, fieldErrors, "email")
+	assert.Empty(t, f.submissions(t, form.ID), "an over-long value never reaches the spam insert")
+}
+
+func TestFormServiceSubmitAcceptsValuesThatFillTheirColumn(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = leadColumnFormFields()
+	f.publish(t, form)
+
+	address := addressOfLength(255)
+	values := map[string]string{
+		"first_name": strings.Repeat("ä", 100),
+		"last_name":  strings.Repeat("b", 100),
+		"email":      address,
+		"phone":      strings.Repeat("1", 50),
+		"company":    strings.Repeat("c", 200),
+		"position":   strings.Repeat("d", 100),
+		"message":    strings.Repeat("m", models.FormDefaultMaxLength),
+	}
+
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    values,
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	stored := f.submissions(t, form.ID)
+	require.Len(t, stored, 1)
+	assert.Equal(t, address, stored[0].Email)
+	assert.Equal(t, values["message"], stored[0].Data["message"], "a textarea keeps its own, wider limit")
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, values["first_name"], leads[0].FirstName, "nothing is truncated")
+	assert.Equal(t, values["last_name"], leads[0].LastName)
+	assert.Equal(t, values["phone"], leads[0].Phone)
+	assert.Equal(t, values["company"], leads[0].Company)
+	assert.Equal(t, values["position"], leads[0].Position)
+}
+
+func TestFormServiceSubmitKeepsAStricterDeclaredLimit(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = leadColumnFormFields()
+	form.Fields[0].MaxLength = 20
+	f.publish(t, form)
+
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"email": "ada@example.com", "first_name": strings.Repeat("a", 21)},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+
+	var fieldErrors FieldErrors
+	require.ErrorAs(t, err, &fieldErrors)
+	assert.Equal(t, "First name must be at most 20 characters long", fieldErrors["first_name"])
+}
+
 func TestFormServiceSubmitNormalisesStoredValues(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.newForm()
@@ -948,6 +1117,91 @@ func TestFormServiceSubmitFallsBackToUsableLeadNames(t *testing.T) {
 	assert.Equal(t, "ada", leads[0].LastName, "the address local part stands in for a missing surname")
 }
 
+func TestFormServiceSubmitFallbackSurnameFitsTheColumn(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+	}
+	f.publish(t, form)
+
+	// A valid address whose local part alone is wider than leads.last_name.
+	address := strings.Repeat("a", 200) + "@example.com"
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"email": address},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, address, leads[0].Email)
+	assert.Equal(t, strings.Repeat("a", 100), leads[0].LastName,
+		"the stand-in surname is clipped to leads.last_name")
+}
+
+func TestFormServiceSubmitFallbackSurnameKeepsWholeCharacters(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+	}
+	f.publish(t, form)
+
+	// Two-byte characters: clipping by bytes would cut one in half.
+	address := strings.Repeat("ä", 150) + "@example.com"
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"email": address},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, strings.Repeat("ä", 100), leads[0].LastName)
+	assert.True(t, utf8.ValidString(leads[0].LastName))
+}
+
+// Every field copied into a lead column must have a column limit, or a wide
+// value would reach MySQL unchecked. The lone "name" field is the exception:
+// it is split and clipped into the two name columns.
+func TestFormLeadFieldsAllHaveAColumnLimit(t *testing.T) {
+	for name := range formLeadFields {
+		if name == "name" {
+			continue
+		}
+		_, ok := models.FormFieldColumnLimit(name)
+		assert.True(t, ok, "lead-mapped field %q has no column limit", name)
+	}
+}
+
+// Definitions saved before the column limits existed still declare a wider
+// max_length. The published definition states the limit the validator
+// enforces, so the embed script caps the input where the server does.
+func TestFormServicePublicDefinitionAdvertisesTheEnforcedLimit(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = append(form.Fields, models.FormFieldDef{Name: "phone", Label: "Phone", Type: models.FormFieldText})
+	f.publish(t, form)
+
+	// Simulate a legacy row: widen the stored limit behind the validator's back.
+	for i := range form.Fields {
+		if form.Fields[i].Name == "phone" {
+			form.Fields[i].MaxLength = 1000
+		}
+	}
+	require.NoError(t, f.db.Save(form).Error)
+
+	definition, err := f.service.PublicDefinition(form.PublicID, "")
+	require.NoError(t, err)
+	limits := map[string]int{}
+	for _, field := range definition.Fields {
+		limits[field.Name] = field.MaxLength
+	}
+	assert.Equal(t, 50, limits["phone"])
+	assert.Equal(t, 255, limits["email"])
+}
+
 func TestFormServiceSubmitRedirectOutcome(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.newForm()
@@ -1053,6 +1307,35 @@ func TestFormServiceConfirmCompletesTheSubmission(t *testing.T) {
 	assert.NotContains(t, followUps[0].Body, "{content_link}")
 
 	assert.Len(t, f.mailer.to("sales@example.com"), 1, "the team is told once the address is proven")
+}
+
+// A pending submission stored before values were limited to their columns can
+// hold one the lead insert would reject on MySQL. Confirmation refuses it
+// before the token is spent, so the visitor gets the "link no longer valid"
+// answer instead of a server error, and no half-finished state is left.
+func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.publish(t, f.optInForm())
+
+	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	require.NoError(t, err)
+	token := tokenFromLink(t, f.mailer.messages()[0].Body)
+
+	stored := f.submissions(t, form.ID)
+	require.Len(t, stored, 1)
+	legacy := stored[0]
+	legacy.Data["first_name"] = strings.Repeat("x", 120)
+	require.NoError(t, f.db.Save(&legacy).Error)
+
+	err = f.service.ConfirmSubmission(token)
+	require.ErrorIs(t, err, ErrInvalidConfirmationToken)
+
+	var tokens []models.FormConfirmationToken
+	require.NoError(t, f.db.Find(&tokens).Error)
+	require.Len(t, tokens, 1)
+	assert.Nil(t, tokens[0].UsedAt, "the token is not spent")
+	assert.Empty(t, f.leads(t))
+	assert.Equal(t, models.FormSubmissionPending, f.submissions(t, form.ID)[0].Status)
 }
 
 func TestFormServiceConfirmIsSingleUse(t *testing.T) {

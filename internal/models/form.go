@@ -83,6 +83,29 @@ const (
 	FormHardMaxLength            = 10000
 )
 
+// formFieldColumnLimits is the width of the varchar column each lead-mapped
+// field's value is written to: the address goes into form_submissions.email and
+// leads.email, the rest into the lead column of the same name. MySQL rejects an
+// over-long value instead of clipping it, so these cap whatever max_length a
+// definition declares. A lone "name" field is absent on purpose — it is split
+// and clipped into the two name columns. The widths are held to the model tags
+// by TestFormFieldColumnLimitsMatchTheModels.
+var formFieldColumnLimits = map[string]int{
+	FormFieldEmail: 255,
+	"first_name":   100,
+	"last_name":    100,
+	"phone":        50,
+	"company":      200,
+	"position":     100,
+}
+
+// FormFieldColumnLimit reports the width of the column a submitted field's
+// value is stored in, for the fields that are copied into sized columns.
+func FormFieldColumnLimit(name string) (int, bool) {
+	limit, ok := formFieldColumnLimits[name]
+	return limit, ok
+}
+
 // FormMaxFields is the number of fields one form may declare, and doubles as
 // the cap on the options of a select field.
 const FormMaxFields = 50
@@ -283,8 +306,10 @@ func validateFieldType(field *FormFieldDef) error {
 	return nil
 }
 
-// normaliseFieldMaxLength fills in the per-type default and enforces the hard
-// cap, so the submission validator can trust the number without re-deriving it.
+// normaliseFieldMaxLength fills in the per-type default, enforces the hard cap,
+// and narrows a lead-mapped field to the column its value is stored in, so the
+// saved definition (and the builder and embed script that read it) states the
+// limit the submission validator actually enforces.
 func normaliseFieldMaxLength(field *FormFieldDef) {
 	if field.MaxLength <= 0 {
 		if field.Type == FormFieldTextarea {
@@ -295,6 +320,9 @@ func normaliseFieldMaxLength(field *FormFieldDef) {
 	}
 	if field.MaxLength > FormHardMaxLength {
 		field.MaxLength = FormHardMaxLength
+	}
+	if limit, ok := FormFieldColumnLimit(field.Name); ok && field.MaxLength > limit {
+		field.MaxLength = limit
 	}
 }
 

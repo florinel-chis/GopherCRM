@@ -61,8 +61,14 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 - **TC-FORM-022 — the public definition leaks nothing** (no notify emails, owner ids, or email
   bodies in the JSON) · automated · `form_service_test.go` leak assertion.
 - **TC-FORM-023 — server-side validation** (required, email format, select membership, unknown
-  keys, consent required when consent text set) returns 400 with per-field details · automated ·
-  `form_service_test.go` + `form_public_handler_test.go`.
+  keys, consent required when consent text set, and a lead-mapped value wider than its column —
+  email 255, first/last name 100, phone 50, company 200, position 100 — even when the definition
+  declares more) returns 400 with per-field details before any spam layer or insert · automated ·
+  `form_service_test.go` + `form_public_handler_test.go`, and on MySQL by
+  `gocrm-ui/e2e/tests/forms-public-api.spec.ts` (before the column limits this path answered 500
+  with Error 1406). Saved and published definitions state the
+  clamped limit; a legacy pending opt-in row holding an over-wide value is refused at confirm
+  before its token is spent.
 - **TC-FORM-024 — submissions over 64KB are rejected (413)** · automated ·
   `form_public_handler_test.go`.
 - **TC-FORM-025 — cross-origin requests to /forms/public get permissive credential-less CORS while

@@ -218,13 +218,40 @@ func fieldName(i int) string {
 // validator reads MaxLength straight off the definition.
 func TestFormValidateDefinitionNormalisesMaxLength(t *testing.T) {
 	form := validContactForm()
-	form.Fields = append(form.Fields, FormFieldDef{Name: "bio", Label: "Bio", Type: FormFieldText, MaxLength: 999999})
+	form.Fields = append(form.Fields,
+		FormFieldDef{Name: "bio", Label: "Bio", Type: FormFieldText, MaxLength: 999999},
+		FormFieldDef{Name: "website", Label: "Website", Type: FormFieldText},
+	)
 
 	require.NoError(t, form.ValidateDefinition())
 
-	assert.Equal(t, FormDefaultMaxLength, form.Fields[0].MaxLength, "text default")
+	assert.Equal(t, 100, form.Fields[0].MaxLength, "first_name is narrowed to leads.first_name")
 	assert.Equal(t, FormTextareaDefaultMaxLength, form.Fields[2].MaxLength, "textarea default")
 	assert.Equal(t, FormHardMaxLength, form.Fields[3].MaxLength, "hard cap")
+	assert.Equal(t, FormDefaultMaxLength, form.Fields[4].MaxLength, "text default")
+}
+
+// A lead-mapped field is narrowed to the column its value is stored in, so the
+// builder and the embed script show the limit the validator enforces. A
+// stricter declared limit is kept, and unmapped fields are left alone.
+func TestFormValidateDefinitionClampsLeadMappedFieldsToTheirColumns(t *testing.T) {
+	form := validContactForm()
+	form.Fields = append(form.Fields,
+		FormFieldDef{Name: "phone", Label: "Phone", Type: FormFieldText, MaxLength: 1000},
+		FormFieldDef{Name: "company", Label: "Company", Type: FormFieldText, MaxLength: 20},
+		FormFieldDef{Name: "website", Label: "Website", Type: FormFieldText, MaxLength: 1000},
+	)
+
+	require.NoError(t, form.ValidateDefinition())
+
+	byName := map[string]int{}
+	for _, field := range form.Fields {
+		byName[field.Name] = field.MaxLength
+	}
+	assert.Equal(t, 255, byName["email"], "email is narrowed to its column")
+	assert.Equal(t, 50, byName["phone"], "phone is narrowed to its column")
+	assert.Equal(t, 20, byName["company"], "a stricter declared limit is kept")
+	assert.Equal(t, 1000, byName["website"], "an unmapped field keeps its limit")
 }
 
 func TestFormValidateDefinitionNormalisesDomainsAndEmails(t *testing.T) {
