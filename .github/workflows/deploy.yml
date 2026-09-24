@@ -1,0 +1,144 @@
+name: Deploy
+
+# Production deploys run themselves: once CI passes on main (after a merge),
+# the tested commit is built, shipped and activated. The server side is
+# scripts/deploy/receive-release.sh, the only command the deploy key may run:
+#   - it backs up the database first;
+#   - it switches releases atomically;
+#   - it waits for /health to report the new revision;
+#   - it rolls back to the previous release if that fails.
+# The manual trigger redeploys main, rolls back, or shows the server's status.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy main, roll back to the previous release, or show the server's status
+        type: choice
+        options: [deploy, rollback, status]
+        default: deploy
+
+permissions:
+  contents: read
+
+# One production change at a time, never cancelled half-way.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Production
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    env:
+      ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'deploy' }}
+      REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+    steps:
+      - name: Check that production is configured
+        id: configured
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$PRODUCTION_HOST" ] || [ -z "$PRODUCTION_URL" ] || [ -z "$PRODUCTION_SSH_USER" ]; then
+            echo "::notice::Production deploy is not configured yet (run scripts/deploy/bootstrap.sh once); skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          ref: ${{ env.REVISION }}
+
+      # CI runs for several merges can finish out of order; only the commit that
+      # is still main's head is deployed, so an older build never overwrites a
+      # newer one.
+      - name: Skip superseded commits
+        id: current
+        if: steps.configured.outputs.ready == 'true' && env.ACTION == 'deploy'
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$head" != "$REVISION" ]; then
+            echo "::notice::$REVISION is no longer the head of main ($head); skipping."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gocrm-ui/package-lock.json
+
+      - name: Build the release
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          mkdir -p release/bin
+          export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+          go build -ldflags "-s -w -X main.revision=$REVISION" -o release/bin/gophercrm ./cmd
+          go build -ldflags "-s -w" -o release/bin/create-admin ./cmd/create-admin
+          (cd gocrm-ui && npm ci && VITE_API_BASE_URL="$PRODUCTION_URL/api/v1" npm run build)
+          cp -R gocrm-ui/dist release/www
+          echo "$REVISION" > release/REVISION
+          tar -czf release.tgz -C release .
+          ls -l release.tgz
+
+      - name: Configure SSH
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Ship and activate
+        if: steps.current.outputs.deploy == 'true'
+        run: >-
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
+          "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "deploy $REVISION" < release.tgz
+
+      # Through Cloudflare, as visitors reach it: the public /health must report
+      # the commit that was just deployed.
+      - name: Verify from outside
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          for attempt in $(seq 1 24); do
+            body=$(curl -fsS --max-time 10 "$PRODUCTION_URL/health?check=$REVISION-$attempt" || true)
+            if printf '%s' "$body" | grep -q "\"revision\":\"$REVISION\""; then
+              echo "Production serves $REVISION."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$PRODUCTION_URL/health does not report $REVISION: $body"
+          exit 1
+
+      - name: Roll back or report status
+        if: steps.configured.outputs.ready == 'true' && env.ACTION != 'deploy'
+        run: >-
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
+          "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "$ACTION" < /dev/null

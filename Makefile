@@ -44,6 +44,7 @@ verify: verify-hygiene verify-backend verify-frontend
 verify-hygiene:
 	scripts/ci/check-file-sizes.sh
 	scripts/e2e/selftest.sh
+	scripts/deploy/receive-release_test.sh
 
 verify-backend:
 	go build $(GO_BUILD_PKGS)
