@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -1200,6 +1201,38 @@ func TestFormServicePublicDefinitionAdvertisesTheEnforcedLimit(t *testing.T) {
 	}
 	assert.Equal(t, 50, limits["phone"])
 	assert.Equal(t, 255, limits["email"])
+}
+
+// Each submission from an address the CRM already knows adds a block to that
+// lead's notes. The column is TEXT (65,535 bytes on MySQL), so repeated large
+// submissions used to overflow it and every later one answered 500.
+func TestFormServiceRepeatedSubmissionsKeepLeadNotesWithinTheColumn(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+		{Name: "ref", Label: "Reference", Type: models.FormFieldText},
+		{Name: "message", Label: "Message", Type: models.FormFieldTextarea, MaxLength: 10000},
+	}
+	f.publish(t, form)
+
+	for i := 1; i <= 6; i++ {
+		_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+			Values: map[string]string{
+				"email":   "repeat@example.com",
+				"ref":     fmt.Sprintf("sub-%d", i),
+				"message": strings.Repeat("😀", 5000),
+			},
+			Challenge: challengeAged(30 * time.Second),
+		}, submissionMeta())
+		require.NoError(t, err, "submission %d", i)
+	}
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1, "one lead per address")
+	assert.LessOrEqual(t, len(leads[0].Notes), models.LeadNotesMaxBytes)
+	assert.Contains(t, leads[0].Notes, "sub-6", "the newest submission is kept")
+	assert.Len(t, f.submissions(t, form.ID), 6, "every submission is kept in full with the form")
 }
 
 func TestFormServiceSubmitRedirectOutcome(t *testing.T) {

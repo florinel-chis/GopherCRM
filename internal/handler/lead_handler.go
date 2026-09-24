@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,10 @@ func NewLeadHandler(leadService service.LeadService) *LeadHandler {
 	return &LeadHandler{leadService: leadService}
 }
 
+// leadNotesTooLongMessage answers notes that would not fit leads.notes; the
+// database would otherwise reject the write with a server error.
+var leadNotesTooLongMessage = fmt.Sprintf("Notes are too long (at most %d bytes)", models.LeadNotesMaxBytes)
+
 type CreateLeadRequest struct {
 	FirstName      string                    `json:"first_name" binding:"required"`
 	LastName       string                    `json:"last_name" binding:"required"`
@@ -39,18 +44,18 @@ type CreateLeadRequest struct {
 }
 
 type UpdateLeadRequest struct {
-	FirstName      string                   `json:"first_name,omitempty"`
-	LastName       string                   `json:"last_name,omitempty"`
-	Email          string                   `json:"email,omitempty" binding:"omitempty,email"`
-	Phone          string                   `json:"phone,omitempty"`
-	Company        string                   `json:"company,omitempty"`
-	Position       string                   `json:"position,omitempty"`
-	Source         string                   `json:"source,omitempty"`
-	Status         models.LeadStatus        `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
+	FirstName      string                    `json:"first_name,omitempty"`
+	LastName       string                    `json:"last_name,omitempty"`
+	Email          string                    `json:"email,omitempty" binding:"omitempty,email"`
+	Phone          string                    `json:"phone,omitempty"`
+	Company        string                    `json:"company,omitempty"`
+	Position       string                    `json:"position,omitempty"`
+	Source         string                    `json:"source,omitempty"`
+	Status         models.LeadStatus         `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted"`
 	Classification models.LeadClassification `json:"classification,omitempty" binding:"omitempty,oneof=unclassified test spam lead hot_lead"`
-	ExternalID     string                   `json:"external_id,omitempty"`
-	Notes          string                   `json:"notes,omitempty"`
-	OwnerID        *uint                    `json:"owner_id,omitempty"`
+	ExternalID     string                    `json:"external_id,omitempty"`
+	Notes          string                    `json:"notes,omitempty"`
+	OwnerID        *uint                     `json:"owner_id,omitempty"`
 }
 
 type ConvertLeadRequest struct {
@@ -78,10 +83,14 @@ type ConvertLeadRequest struct {
 // @Router /leads [post]
 func (h *LeadHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Create")
-	
+
 	var req CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+	if len(req.Notes) > models.LeadNotesMaxBytes {
+		utils.RespondBadRequest(c, leadNotesTooLongMessage)
 		return
 	}
 
@@ -282,7 +291,7 @@ func (h *LeadHandler) List(c *gin.Context) {
 // @Router /leads/{id} [get]
 func (h *LeadHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Get")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid lead ID")
@@ -299,7 +308,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 	// Permission check: sales users can only view their own leads
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if currentUserRole == string(models.RoleSales) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only view your own leads")
 		return
@@ -329,7 +338,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Router /leads/{id} [put]
 func (h *LeadHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Update")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid lead ID")
@@ -339,6 +348,10 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	var req UpdateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+	if len(req.Notes) > models.LeadNotesMaxBytes {
+		utils.RespondBadRequest(c, leadNotesTooLongMessage)
 		return
 	}
 
@@ -352,7 +365,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Permission check: sales users can only update their own leads
 	if currentUserRole == string(models.RoleSales) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only update your own leads")
@@ -394,7 +407,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	if req.Notes != "" {
 		updates["notes"] = req.Notes
 	}
-	
+
 	// Only admins can reassign leads
 	if req.OwnerID != nil {
 		if currentUserRole != string(models.RoleAdmin) {
@@ -434,7 +447,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 // @Router /leads/{id} [delete]
 func (h *LeadHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Delete")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid lead ID")
@@ -451,7 +464,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Permission check: only admins or lead owners can delete
 	if currentUserRole != string(models.RoleAdmin) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only delete your own leads")
@@ -488,7 +501,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Router /leads/{id}/convert [post]
 func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.ConvertToCustomer")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid lead ID")
@@ -511,7 +524,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Permission check: only admins or lead owners can convert
 	if currentUserRole != string(models.RoleAdmin) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only convert your own leads")
