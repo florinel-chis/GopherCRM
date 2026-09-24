@@ -1,8 +1,11 @@
 package aeo
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -414,5 +417,92 @@ func TestExtractCitations(t *testing.T) {
 		got := ExtractCitations("https://acme.com/x", nil, p)
 		require.Len(t, got, 1)
 		assert.True(t, got[0].IsOwned)
+	})
+}
+
+// overlongURL builds a URL of exactly n characters on host.
+func overlongURL(host string, n int) string {
+	prefix := "https://" + host + "/"
+	return prefix + strings.Repeat("a", n-len(prefix))
+}
+
+// A URL longer than the citation column must be dropped, not truncated (a cut
+// URL points somewhere else), and must not take the rest of the answer's
+// citations with it: on MySQL one oversized value fails the insert and rolls
+// back the whole answer.
+func TestExtractCitationsSkipsValuesTooLongForTheirColumns(t *testing.T) {
+	profile := testProfile()
+
+	t.Run("over-long urls from prose and native citations are skipped", func(t *testing.T) {
+		text := "See https://acme.com/pricing and " + overlongURL("globex.com", 1100) +
+			" plus https://globex.com/compare."
+		native := []string{overlongURL("news.example.org", 1100), "https://news.example.org/story"}
+		got := ExtractCitations(text, native, profile)
+
+		urls := make([]string, 0, len(got))
+		for _, c := range got {
+			urls = append(urls, c.URL)
+		}
+		assert.Equal(t, []string{
+			"https://news.example.org/story",
+			"https://acme.com/pricing",
+			"https://globex.com/compare",
+		}, urls)
+		assert.Equal(t, "Globex", got[2].CompetitorName)
+	})
+
+	t.Run("a url exactly at the limit is kept whole", func(t *testing.T) {
+		atLimit := overlongURL("acme.com", models.AEOCitationURLMaxLength)
+		got := ExtractCitations(atLimit, nil, profile)
+		require.Len(t, got, 1)
+		assert.Equal(t, atLimit, got[0].URL)
+	})
+
+	t.Run("the limit counts characters, not bytes", func(t *testing.T) {
+		prefix := "https://acme.com/"
+		multibyte := prefix + strings.Repeat("é", models.AEOCitationURLMaxLength-len(prefix))
+		got := ExtractCitations(multibyte, nil, profile)
+		require.Len(t, got, 1)
+		assert.Equal(t, multibyte, got[0].URL)
+	})
+
+	t.Run("a host longer than the domain column is skipped", func(t *testing.T) {
+		longHost := "https://" + strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+			strings.Repeat("c", 63) + "." + strings.Repeat("d", 63) + ".example.com/x"
+		got := ExtractCitations(longHost+" and https://acme.com/a", nil, profile)
+		require.Len(t, got, 1)
+		assert.Equal(t, "https://acme.com/a", got[0].URL)
+	})
+
+	t.Run("an over-long competitor name keeps the citation but drops the attribution", func(t *testing.T) {
+		p := &models.AEOProfile{Competitors: []models.AEOCompetitor{
+			{Name: strings.Repeat("G", models.AEOCompetitorNameMaxLength+1), Domain: "globex.com"},
+		}}
+		got := ExtractCitations("https://globex.com/compare", nil, p)
+		require.Len(t, got, 1)
+		assert.Equal(t, "https://globex.com/compare", got[0].URL)
+		assert.Empty(t, got[0].CompetitorName)
+	})
+
+	t.Run("each skip is logged without the url itself", func(t *testing.T) {
+		logger, hook := logtest.NewNullLogger()
+		secretURL := overlongURL("globex.com", 1100) + "?token=s3cr3t"
+
+		got := extractCitations("https://acme.com/a "+secretURL, nil, profile, logrus.NewEntry(logger))
+		require.Len(t, got, 1)
+
+		entries := hook.AllEntries()
+		require.Len(t, entries, 1)
+		entry := entries[0]
+		assert.Equal(t, logrus.WarnLevel, entry.Level)
+		assert.Equal(t, "globex.com", entry.Data["domain"])
+		assert.Equal(t, len(secretURL), entry.Data["url_length"])
+		assert.Equal(t, models.AEOCitationURLMaxLength, entry.Data["max_length"])
+		for key, value := range entry.Data {
+			if s, ok := value.(string); ok {
+				assert.NotContainsf(t, s, "s3cr3t", "field %s leaks the url", key)
+			}
+		}
+		assert.NotContains(t, entry.Message, "s3cr3t")
 	})
 }

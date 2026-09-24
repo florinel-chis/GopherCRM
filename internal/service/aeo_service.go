@@ -26,14 +26,17 @@ const (
 	// a cost guard as much as a data-volume one. Not configurable in v1.
 	aeoMaxActivePrompts = 100
 
-	// aeoPromptTextMaxLength mirrors the varchar(500) column. Rejecting here
-	// turns a driver truncation error into a plain validation failure.
-	aeoPromptTextMaxLength = 500
+	// aeoPromptTextMaxLength, aeoBrandNameMaxLength and
+	// aeoCompetitorNameMaxLength are the column limits from internal/models.
+	// Rejecting here turns a driver "data too long" error into a plain
+	// validation failure. A competitor name is stored in the profile's TEXT
+	// column, but it is copied into aeo_citations.competitor_name later.
+	aeoPromptTextMaxLength     = models.AEOPromptTextMaxLength
+	aeoBrandNameMaxLength      = models.AEOBrandNameMaxLength
+	aeoCompetitorNameMaxLength = models.AEOCompetitorNameMaxLength
 
-	// aeoBrandNameMaxLength and aeoDescriptionMaxLength mirror the profile
-	// columns (varchar(120) and TEXT, the latter capped to keep the prompt
-	// generation payload sane).
-	aeoBrandNameMaxLength   = 120
+	// aeoDescriptionMaxLength caps a TEXT column to keep the prompt generation
+	// payload sane.
 	aeoDescriptionMaxLength = 2000
 
 	// aeoProfileID pins the single profile row. The table is a singleton by
@@ -92,9 +95,10 @@ var (
 	// ErrAEOInvalidPrompt covers empty and over-long prompt text.
 	ErrAEOInvalidPrompt = errors.New("prompt text must be between 1 and 500 characters")
 
-	// ErrAEOInvalidProfile covers a missing or over-long brand name and an
-	// over-long description.
-	ErrAEOInvalidProfile = errors.New("brand name is required")
+	// ErrAEOInvalidProfile covers a missing or over-long brand name, an
+	// over-long description and an over-long competitor name. Each case wraps
+	// it with its own message.
+	ErrAEOInvalidProfile = errors.New("invalid brand profile")
 
 	// ErrAEOInvalidTrigger guards the aeo_runs.trigger column against values
 	// the dashboard cannot interpret.
@@ -1301,7 +1305,7 @@ func normalizeAEOPromptText(raw string) (string, error) {
 func normalizeAEOProfile(profile *models.AEOProfile) error {
 	profile.BrandName = strings.TrimSpace(profile.BrandName)
 	if profile.BrandName == "" {
-		return ErrAEOInvalidProfile
+		return fmt.Errorf("brand name is required: %w", ErrAEOInvalidProfile)
 	}
 	if len([]rune(profile.BrandName)) > aeoBrandNameMaxLength {
 		return fmt.Errorf("brand name is longer than %d characters: %w", aeoBrandNameMaxLength, ErrAEOInvalidProfile)
@@ -1320,6 +1324,9 @@ func normalizeAEOProfile(profile *models.AEOProfile) error {
 		competitor.Name = strings.TrimSpace(competitor.Name)
 		if competitor.Name == "" {
 			continue
+		}
+		if len([]rune(competitor.Name)) > aeoCompetitorNameMaxLength {
+			return fmt.Errorf("competitor name is longer than %d characters: %w", aeoCompetitorNameMaxLength, ErrAEOInvalidProfile)
 		}
 		competitor.Aliases = aeoDedupeStrings(competitor.Aliases, false)
 		competitor.Domain = aeoNormalizeProfileDomain(competitor.Domain)
