@@ -278,6 +278,23 @@ func (suite *AEOHandlerTestSuite) TestSaveProfile_MalformedBodyIsRejectedAtBindi
 	suite.mockService.AssertNotCalled(suite.T(), "SaveProfile", mock.Anything)
 }
 
+func (suite *AEOHandlerTestSuite) TestSaveProfile_OverlongCompetitorNameIs400() {
+	body := validProfileBody()
+	body["competitors"] = []gin.H{
+		{"name": "Globex"},
+		{"name": strings.Repeat("g", models.AEOCompetitorNameMaxLength+1)},
+	}
+
+	w := suite.do(http.MethodPut, "/aeo/profile", body)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	resp := decodeResponse(suite.T(), w)
+	assert.False(suite.T(), resp.Success)
+	suite.Require().NotNil(resp.Error)
+	assert.Equal(suite.T(), utils.ErrCodeValidation, resp.Error.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "SaveProfile", mock.Anything)
+}
+
 // --------------------------------------------------------------------- prompts
 
 func (suite *AEOHandlerTestSuite) TestListPrompts_DefaultsToA30DayWindow() {

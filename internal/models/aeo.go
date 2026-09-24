@@ -176,6 +176,31 @@ func (a *AEOAnswer) AfterFind(tx *gorm.DB) error {
 	return nil
 }
 
+// Length limits of the sized AEO string columns, in characters (MySQL counts
+// varchar in characters, not bytes). They are the single source for every
+// check that keeps a value out of a column it would not fit: request binding,
+// service validation and citation filtering. TestAEOLengthLimitsMatchTheColumns
+// fails if one of them drifts from the gorm tag it mirrors.
+const (
+	// AEOCitationURLMaxLength is aeo_citations.url.
+	AEOCitationURLMaxLength = 1024
+	// AEOCitationDomainMaxLength is aeo_citations.domain.
+	AEOCitationDomainMaxLength = 255
+	// AEOCompetitorNameMaxLength is aeo_citations.competitor_name, which is
+	// filled from the profile's competitor names.
+	AEOCompetitorNameMaxLength = 120
+	// AEOBrandNameMaxLength is aeo_profiles.brand_name.
+	AEOBrandNameMaxLength = 120
+	// AEOPromptTextMaxLength is aeo_prompts.text.
+	AEOPromptTextMaxLength = 500
+	// AEOAnswerProviderMaxLength is aeo_answers.provider, filled from the
+	// engine name (operator-configurable for the custom engine).
+	AEOAnswerProviderMaxLength = 40
+	// AEOAnswerModelMaxLength is aeo_answers.model, filled from the configured
+	// model id.
+	AEOAnswerModelMaxLength = 120
+)
+
 // AEOCitation is a URL referenced by an answer. Citations live in their own
 // table so the citations report is a plain SQL aggregation over scalar columns.
 type AEOCitation struct {

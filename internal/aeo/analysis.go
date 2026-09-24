@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
@@ -160,11 +163,23 @@ func lowerRunes(s string) []rune {
 // neither. Citations are returned without AnswerID; the engine sets it when the
 // answer row is persisted.
 func ExtractCitations(text string, native []string, profile *models.AEOProfile) []models.AEOCitation {
+	return extractCitations(text, native, profile, logProvider())
+}
+
+// extractCitations is ExtractCitations with the logger supplied by the caller,
+// so the engine can tag skips with the run, prompt and provider.
+//
+// A URL or host too long for its aeo_citations column is skipped and logged,
+// never truncated: a cut URL points somewhere else, and on MySQL one oversized
+// value would fail the insert and roll back the whole answer with it. The log
+// line carries the domain and the length but not the URL, whose query string
+// may hold a token.
+func extractCitations(text string, native []string, profile *models.AEOProfile, log *logrus.Entry) []models.AEOCitation {
 	rawURLs := make([]string, 0, len(native)+4)
 	rawURLs = append(rawURLs, native...)
 	rawURLs = append(rawURLs, urlPattern.FindAllString(text, -1)...)
 
-	owned, competitorByDomain := domainIndex(profile)
+	owned, competitorByDomain := domainIndex(profile, log)
 
 	citations := make([]models.AEOCitation, 0, len(rawURLs))
 	seen := make(map[string]struct{}, len(rawURLs))
@@ -181,6 +196,21 @@ func ExtractCitations(text string, native []string, profile *models.AEOProfile) 
 
 		domain := NormalizeDomain(cleaned)
 		if domain == "" {
+			continue
+		}
+		if length := utf8.RuneCountInString(domain); length > models.AEOCitationDomainMaxLength {
+			log.WithFields(logrus.Fields{
+				"domain_length": length,
+				"max_length":    models.AEOCitationDomainMaxLength,
+			}).Warn("skipping AEO citation: host is too long to store")
+			continue
+		}
+		if length := utf8.RuneCountInString(cleaned); length > models.AEOCitationURLMaxLength {
+			log.WithFields(logrus.Fields{
+				"domain":     domain,
+				"url_length": length,
+				"max_length": models.AEOCitationURLMaxLength,
+			}).Warn("skipping AEO citation: URL is too long to store")
 			continue
 		}
 
@@ -219,8 +249,11 @@ func NormalizeDomain(rawURL string) string {
 }
 
 // domainIndex normalizes the profile's owned domains and the competitors'
-// domains once per answer.
-func domainIndex(profile *models.AEOProfile) (owned []string, competitorByDomain map[string]string) {
+// domains once per answer. A competitor whose name does not fit the
+// competitor_name column is left out of the index, so its citations are still
+// stored, just without the attribution. The API rejects such names; this only
+// guards profiles saved before it did.
+func domainIndex(profile *models.AEOProfile, log *logrus.Entry) (owned []string, competitorByDomain map[string]string) {
 	competitorByDomain = map[string]string{}
 	if profile == nil {
 		return nil, competitorByDomain
@@ -235,6 +268,14 @@ func domainIndex(profile *models.AEOProfile) (owned []string, competitorByDomain
 		normalized := normalizeBareDomain(competitor.Domain)
 		name := strings.TrimSpace(competitor.Name)
 		if normalized == "" || name == "" {
+			continue
+		}
+		if length := utf8.RuneCountInString(name); length > models.AEOCompetitorNameMaxLength {
+			log.WithFields(logrus.Fields{
+				"competitor_domain": normalized,
+				"name_length":       length,
+				"max_length":        models.AEOCompetitorNameMaxLength,
+			}).Warn("not attributing AEO citations to competitor: name is too long to store")
 			continue
 		}
 		if _, exists := competitorByDomain[normalized]; !exists {

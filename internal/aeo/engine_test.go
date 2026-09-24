@@ -3,10 +3,12 @@ package aeo
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -346,6 +348,50 @@ func TestEngineRecordsSuccessfulAnswerDetail(t *testing.T) {
 	assert.True(t, citations[0][0].IsOwned)
 	assert.Equal(t, "https://globex.com/pricing", citations[0][1].URL)
 	assert.Equal(t, "Globex", citations[0][1].CompetitorName)
+}
+
+// strictLengthRepo rejects a citation whose URL does not fit the column, the
+// way MySQL in strict mode does. The in-memory SQLite suite never enforces
+// varchar sizes, so this is the only place the rollback is observable.
+type strictLengthRepo struct {
+	*fakeAEORepo
+}
+
+func (r strictLengthRepo) CreateAnswerWithCitations(answer *models.AEOAnswer, citations []models.AEOCitation) error {
+	for _, citation := range citations {
+		if utf8.RuneCountInString(citation.URL) > models.AEOCitationURLMaxLength {
+			return errors.New("Error 1406 (22001): Data too long for column 'url' at row 1")
+		}
+	}
+	return r.fakeAEORepo.CreateAnswerWithCitations(answer, citations)
+}
+
+func TestEngineKeepsTheAnswerWhenOneCitationIsTooLong(t *testing.T) {
+	repo := strictLengthRepo{&fakeAEORepo{}}
+	longURL := "https://globex.com/" + strings.Repeat("a", 1100)
+	provider := &fakeProvider{
+		name:  ProviderPerplexity,
+		model: "sonar",
+		answer: ProviderAnswer{
+			Text:      "Acme leads. See https://acme.com/compare and " + longURL,
+			Citations: []string{longURL, "https://globex.com/pricing"},
+		},
+	}
+	run := newTestRun()
+
+	engine := NewEngine(repo, []Provider{provider}, EngineOptions{})
+	require.NoError(t, engine.Execute(context.Background(), run, enginePrompts("Which CRM?"), testProfile()))
+
+	answers, citations := repo.snapshot()
+	require.Len(t, answers, 1, "the paid answer must be stored")
+	assert.Equal(t, provider.answer.Text, answers[0].AnswerText)
+	require.Len(t, citations, 1)
+	require.Len(t, citations[0], 2)
+	assert.Equal(t, "https://globex.com/pricing", citations[0][0].URL)
+	assert.Equal(t, "https://acme.com/compare", citations[0][1].URL)
+
+	assert.Equal(t, RunStatusCompleted, run.Status)
+	assert.Equal(t, 0, run.FailedQueries)
 }
 
 func TestEngineRecordsFailedQueryAsAnAnswerRow(t *testing.T) {
