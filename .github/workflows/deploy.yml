@@ -43,15 +43,18 @@ jobs:
     env:
       ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'deploy' }}
       REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
-      PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
-      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+    # The server's address and SSH user are secrets, read only by the steps
+    # that need them: job-level env is printed in every step's log header, and
+    # this repository's logs are public.
     steps:
       - name: Check that production is configured
         id: configured
         env:
           SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$PRODUCTION_HOST" ] || [ -z "$PRODUCTION_URL" ] || [ -z "$PRODUCTION_SSH_USER" ]; then
             echo "::notice::Production deploy is not configured yet (run scripts/deploy/bootstrap.sh once); skipping."
@@ -67,7 +70,8 @@ jobs:
 
       # CI runs for several merges can finish out of order; only the commit that
       # is still main's head is deployed, so an older build never overwrites a
-      # newer one.
+      # newer one. If main's head then fails CI, production stays on the last
+      # deployed commit until main is green again.
       - name: Skip superseded commits
         id: current
         if: steps.configured.outputs.ready == 'true' && env.ACTION == 'deploy'
@@ -101,7 +105,7 @@ jobs:
           (cd gocrm-ui && npm ci && VITE_API_BASE_URL="$PRODUCTION_URL/api/v1" npm run build)
           cp -R gocrm-ui/dist release/www
           echo "$REVISION" > release/REVISION
-          tar -czf release.tgz -C release .
+          tar --owner=0 --group=0 --numeric-owner -czf release.tgz -C release .
           ls -l release.tgz
 
       - name: Configure SSH
@@ -117,12 +121,18 @@ jobs:
 
       - name: Ship and activate
         if: steps.current.outputs.deploy == 'true'
+        env:
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
         run: >-
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
           "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "deploy $REVISION" < release.tgz
 
       # Through Cloudflare, as visitors reach it: the public /health must report
-      # the commit that was just deployed.
+      # the commit that was just deployed. The server already verified it
+      # locally, so a failure here (a CDN challenge against runner addresses,
+      # say) turns the run red without rolling back: check, then roll back by
+      # hand with the manual trigger if production really is broken.
       - name: Verify from outside
         if: steps.current.outputs.deploy == 'true'
         run: |
@@ -139,6 +149,9 @@ jobs:
 
       - name: Roll back or report status
         if: steps.configured.outputs.ready == 'true' && env.ACTION != 'deploy'
+        env:
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
         run: >-
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
           "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "$ACTION" < /dev/null

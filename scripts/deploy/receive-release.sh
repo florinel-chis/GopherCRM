@@ -21,12 +21,30 @@
 # against a scratch directory (scripts/deploy/receive-release_test.sh).
 set -euo pipefail
 umask 022
+# A dropped SSH connection must not kill the script half-way (between the
+# switch and a rollback, say): ignore hangups and broken pipes, and keep a log
+# on the server that survives the connection.
+trap '' HUP PIPE
+
+# The script runs as root, so everything it reads or writes must be owned by
+# the user running it and writable by no one else; otherwise a compromised
+# service account could plant a config to be sourced, or links to be followed.
+owner_and_mode() { stat -c '%u %a' "$1" 2>/dev/null || stat -f '%u %Lp' "$1"; }
+require_private() {
+  local owner mode
+  read -r owner mode <<<"$(owner_and_mode "$1")"
+  [ -L "$1" ] && { echo "receive-release: refusing $1: it is a symbolic link" >&2; exit 1; }
+  [ "$owner" = "$(id -u)" ] || { echo "receive-release: refusing $1: not owned by uid $(id -u)" >&2; exit 1; }
+  (( (8#$mode & 8#022) == 0 )) || { echo "receive-release: refusing $1: writable by group or others" >&2; exit 1; }
+}
 
 # Server-specific settings (the web root, for instance) live next to the
 # script on the server, written by scripts/deploy/bootstrap.sh, so none of them
 # is kept in the repository.
 CONFIG=${GOPHERCRM_DEPLOY_CONFIG:-/srv/gophercrm/deploy/receive-release.conf}
 if [ -f "$CONFIG" ]; then
+  require_private "$(dirname "$CONFIG")"
+  require_private "$CONFIG"
   # shellcheck source=/dev/null
   . "$CONFIG"
 fi
@@ -44,15 +62,36 @@ MAX_RELEASE_BYTES=${GOPHERCRM_MAX_RELEASE_BYTES:-209715200} # 200 MiB
 RELEASES=$ROOT/releases
 BACKUPS=$ROOT/backups
 CURRENT=$ROOT/current
+DEPLOY_DIR=$ROOT/deploy
+LOG=$DEPLOY_DIR/deploy.log
 
-log() { echo "receive-release: $*"; }
-die() { echo "receive-release: $*" >&2; exit 1; }
+# Existing directories are checked as found (install -d would silently reset
+# a loosened mode and hide the tampering); missing ones are created private.
+require_private "$ROOT"
+for dir in "$RELEASES" "$DEPLOY_DIR" "$ROOT/bin" "$BACKUPS"; do
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    require_private "$dir"
+  elif [ "$dir" = "$BACKUPS" ]; then
+    install -d -m 700 "$dir"
+  else
+    install -d -m 755 "$dir"
+  fi
+done
 
-mkdir -p "$RELEASES" "$BACKUPS"
+log() {
+  echo "$(date -u +%FT%TZ) $*" >>"$LOG"
+  echo "receive-release: $*" 2>/dev/null || true
+}
+die() {
+  echo "$(date -u +%FT%TZ) error: $*" >>"$LOG"
+  echo "receive-release: $*" >&2 2>/dev/null || true
+  exit 1
+}
 
 # One deploy at a time (flock is util-linux: always on the server; the test
-# suite may run where it is missing).
-exec 9>"$ROOT/deploy.lock"
+# suite may run where it is missing). The lock lives in the root-only deploy
+# directory, so it cannot be swapped for a link to another file.
+exec 9>"$DEPLOY_DIR/deploy.lock"
 if command -v flock >/dev/null; then
   flock -n 9 || die "another deploy is running"
 fi
@@ -81,7 +120,7 @@ adopt_legacy_layout() {
     cp -p "$ROOT/bin/create-admin" "$RELEASES/legacy/bin/create-admin"
   fi
   if [ -d "$WEB_ROOT" ]; then
-    rsync -a "$WEB_ROOT/" "$RELEASES/legacy/www/"
+    rsync -rlt "$WEB_ROOT/" "$RELEASES/legacy/www/"
   fi
   echo legacy >"$RELEASES/legacy/REVISION"
   ln -sfn "$RELEASES/legacy" "$CURRENT"
@@ -101,23 +140,25 @@ activate() {
   mv -Tf "$CURRENT.next" "$CURRENT" 2>/dev/null || { rm -f "$CURRENT"; mv -f "$CURRENT.next" "$CURRENT"; }
   link_binaries
   mkdir -p "$WEB_ROOT"
-  rsync -a --delete "$RELEASES/$revision/www/" "$WEB_ROOT/"
+  # No -o/-g/-p: the web root gets root-owned, world-readable files whatever
+  # the archive claimed.
+  rsync -rlt --delete "$RELEASES/$revision/www/" "$WEB_ROOT/"
 }
 
 # Restarts the service and waits for /health to report the given revision. The
 # pre-pipeline binary ('legacy') predates the revision field, so for it a
 # healthy status is enough.
 restart_and_check() {
-  local revision=$1 waited=0 expect
+  local revision=$1 deadline expect
   expect="\"revision\":\"$revision\""
   [ "$revision" = legacy ] && expect='"status":"healthy"'
   systemctl restart "$SERVICE"
-  while [ "$waited" -lt "$HEALTH_WAIT" ]; do
+  deadline=$((SECONDS + HEALTH_WAIT))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if curl -fsS --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -q "$expect"; then
       return 0
     fi
     sleep 1
-    waited=$((waited + 1))
   done
   return 1
 }
@@ -127,25 +168,35 @@ env_value() {
   sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed "s/^[\"']//; s/[\"']\$//"
 }
 
+# Writes one option-file line, quoted, or nothing when the value is empty (the
+# service falls back to its own defaults then, and so does the client).
+option_line() {
+  local value=$2
+  [ -n "$value" ] || return 0
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '%s="%s"\n' "$1" "$value"
+}
+
 backup_database() {
-  local revision=$1 stamp defaults target
+  local revision=$1 stamp target
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   target="$BACKUPS/$stamp-$revision.sql.gz"
-  defaults=$(mktemp)
-  chmod 600 "$defaults"
-  {
-    echo "[client]"
-    echo "user=$(env_value DB_USER)"
-    echo "password=$(env_value DB_PASSWORD)"
-    echo "host=$(env_value DB_HOST)"
-    echo "port=$(env_value DB_PORT)"
-  } >"$defaults"
-  if ! mysqldump --defaults-extra-file="$defaults" --single-transaction --routines --triggers \
-    "$(env_value DB_NAME)" | gzip >"$target"; then
-    rm -f "$defaults" "$target"
-    return 1
-  fi
-  rm -f "$defaults"
+  (
+    umask 077
+    defaults=$(mktemp)
+    trap 'rm -f "$defaults"' EXIT
+    {
+      echo "[client]"
+      option_line user "$(env_value DB_USER)"
+      option_line password "$(env_value DB_PASSWORD)"
+      option_line host "$(env_value DB_HOST)"
+      option_line port "$(env_value DB_PORT)"
+    } >"$defaults"
+    # --no-tablespaces: MySQL 8 clients otherwise need the PROCESS privilege.
+    mysqldump --defaults-extra-file="$defaults" --single-transaction --no-tablespaces \
+      --routines --triggers "$(env_value DB_NAME)" | gzip >"$target"
+  ) || { rm -f "$target"; return 1; }
   log "database backed up to $target"
 }
 
@@ -174,14 +225,29 @@ deploy() {
   [[ $revision =~ ^[0-9a-f]{7,40}$ ]] || die "not a commit sha: '$revision'"
   adopt_legacy_layout
 
+  if [ "$(active_revision)" = "$revision" ]; then
+    log "revision $revision is already live"
+    return 0
+  fi
+
   staging="$RELEASES/.incoming-$revision"
   rm -rf "$staging"
   mkdir -p "$staging"
-  head -c "$MAX_RELEASE_BYTES" | tar -xzf - -C "$staging" || { rm -rf "$staging"; die "could not unpack the release"; }
+  # Ownership and modes come from the server, never from the archive.
+  head -c "$MAX_RELEASE_BYTES" | tar --no-same-owner --no-same-permissions -xzf - -C "$staging" ||
+    { rm -rf "$staging"; die "could not unpack the release"; }
+  # Only plain files and directories: a link could point the chmod or the SPA
+  # sync below at anything on the server.
+  if [ -n "$(find "$staging" ! -type f ! -type d -print -quit)" ]; then
+    rm -rf "$staging"
+    die "release contains links or special files"
+  fi
   for required in bin/gophercrm www/index.html REVISION; do
-    [ -e "$staging/$required" ] || { rm -rf "$staging"; die "release is missing $required"; }
+    [ -f "$staging/$required" ] || { rm -rf "$staging"; die "release is missing $required"; }
   done
   [ "$(cat "$staging/REVISION")" = "$revision" ] || { rm -rf "$staging"; die "REVISION does not match $revision"; }
+  chown -R "$(id -u):$(id -g)" "$staging"
+  chmod -R u=rwX,go=rX "$staging"
   chmod 755 "$staging/bin/"*
 
   backup_database "$revision" || { rm -rf "$staging"; die "database backup failed; nothing changed"; }
@@ -222,10 +288,11 @@ status() {
   echo "active: $(active_revision)"
   echo "previous: $(previous_revision)"
   echo "kept releases:"
-  ls -1t "$RELEASES" | grep -v '^\.' | sed 's/^/  /'
+  ls -1t "$RELEASES" | { grep -v '^\.' || true; } | sed 's/^/  /'
 }
 
 read -r -a request <<<"${SSH_ORIGINAL_COMMAND:-status}"
+[ "${#request[@]}" -le 2 ] || die "too many arguments: '${SSH_ORIGINAL_COMMAND}'"
 case "${request[0]:-}" in
   deploy) deploy "${request[1]:-}" ;;
   rollback) rollback ;;
