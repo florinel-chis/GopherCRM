@@ -3,9 +3,7 @@ import { AdminAuthHelper } from '../helpers/admin-auth';
 import { LoginPage } from '../pages/login.page';
 import { DashboardPage } from '../pages/dashboard.page';
 import { testAdminCredentials } from '../fixtures/admin-user';
-
-// Matches VITE_API_BASE_URL in gocrm-ui/.env — the backend the UI under test talks to.
-const API_BASE_URL = 'http://localhost:8090/api/v1';
+import { API_BASE_URL } from '../helpers/env';
 
 // Requires a backend started with DISABLE_RATE_LIMIT=true, as e2e/README.md
 // documents. This file makes roughly ten calls into the /auth group — register,
