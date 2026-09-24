@@ -1,14 +1,50 @@
 # E2E Test Suite — GopherCRM
 
-111 end-to-end tests across 10 spec files, run with Playwright against the Vite frontend
-(`http://localhost:5173`) and a real backend. The frontend reads its API base URL from
-`VITE_API_BASE_URL` in `gocrm-ui/.env`, which points at `http://localhost:8090/api/v1` locally — start
-the backend on whichever port that file names.
+115 end-to-end tests across 11 spec files, run with Playwright against the Vite frontend and a
+real backend on MySQL.
 
 Only the `chromium` project is configured. Tests run serially (`fullyParallel: false`, `workers: 1`)
 because they share one database.
 
-## Running Tests
+## The standard way: `make e2e`
+
+From the repository root:
+
+```bash
+(cd gocrm-ui && npm ci && npx playwright install chromium)   # once per machine / after dependency changes
+make e2e                                                    # whole suite
+make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths relative to gocrm-ui/)
+```
+
+`scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request (job
+"E2E (Playwright on MySQL 8)"):
+
+1. Drops and recreates the **`gocrm_e2e`** database (`E2E_DB_NAME`; it refuses any name not ending
+   in `_e2e`), so every run starts empty and never touches the development database.
+2. Builds the backend and starts it on a free port (from 18091) with `DISABLE_RATE_LIMIT=true`.
+   Its log goes to `test-results/e2e-backend.log`.
+3. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
+   backend, and runs Playwright with **no retries**, traces kept for failures, and the `line` + `html`
+   reporters.
+4. Always stops the backend and exits with Playwright's result.
+
+The run pins the backend's environment: MySQL (never SQLite), the default API prefix, no SMTP (the
+log-only mailer), no reCAPTCHA, no answer-engine keys and no AEO schedule, whatever the root `.env`
+says. On macOS it keeps the machine awake (`caffeinate -i`), since an idle sleep mid-run shows up as
+a cascade of page-load timeouts.
+
+Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The
+MySQL user needs privileges on `gocrm_e2e.*` (for example
+`GRANT ALL PRIVILEGES ON gocrm_e2e.* TO 'gophercrm'@'localhost'`).
+
+New or changed user-visible behaviour brings its e2e spec in the same pull request. Destructive
+steps act only on records the test created.
+
+## Running by hand (debugging)
+
+The manual setup below uses the development database and the dev server on 5173. The frontend
+reads its API base URL from `VITE_API_BASE_URL` in `gocrm-ui/.env`, so start the backend on the
+port that file names.
 
 ```bash
 # Terminal 1 — backend (port must match VITE_API_BASE_URL)
@@ -97,9 +133,8 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
   (`screenshots/09-labels.spec.ts`) deliberately does the opposite — fixed names, created only when
   missing — so the captures stay stable across runs.
 - Three `admin-entity-suite.spec.ts` tests (CRM workflow, bulk operations, cross-entity search) walk
-  three entity forms each and run for 60–100 s, which exceeds the 60 s per-test budget in
-  `playwright.config.slow.ts`. They pass with `--timeout=180000`. Verified 2026-08-08; unrelated to
-  the entity being created — the timeout lands on the customers step.
+  three entity forms each and run for 60–100 s locally and about 1.7× that on a CI runner. They
+  carry their own 180 s budget (`MULTI_ENTITY_TEST_TIMEOUT_MS`), so no `--timeout` flag is needed.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.

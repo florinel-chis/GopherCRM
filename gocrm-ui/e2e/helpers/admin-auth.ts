@@ -2,6 +2,7 @@ import { Page, expect } from '@playwright/test';
 import { LoginPage } from '../pages/login.page';
 import { DashboardPage } from '../pages/dashboard.page';
 import { type AdminUser, testAdminCredentials } from '../fixtures/admin-user';
+import { UI_BASE_URL } from './env';
 
 export class AdminAuthHelper {
   readonly page: Page;
@@ -83,7 +84,7 @@ export class AdminAuthHelper {
     try {
       // First, navigate to the app to ensure we're on a proper page
       const currentUrl = this.page.url();
-      if (!currentUrl.includes('localhost:5173') || currentUrl === 'about:blank') {
+      if (!currentUrl.startsWith(UI_BASE_URL) || currentUrl === 'about:blank') {
         await this.page.goto('/');
         await this.page.waitForLoadState('networkidle');
       }
