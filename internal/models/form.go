@@ -306,8 +306,10 @@ func validateFieldType(field *FormFieldDef) error {
 	return nil
 }
 
-// normaliseFieldMaxLength fills in the per-type default and enforces the hard
-// cap, so the submission validator can trust the number without re-deriving it.
+// normaliseFieldMaxLength fills in the per-type default, enforces the hard cap,
+// and narrows a lead-mapped field to the column its value is stored in, so the
+// saved definition (and the builder and embed script that read it) states the
+// limit the submission validator actually enforces.
 func normaliseFieldMaxLength(field *FormFieldDef) {
 	if field.MaxLength <= 0 {
 		if field.Type == FormFieldTextarea {
@@ -318,6 +320,9 @@ func normaliseFieldMaxLength(field *FormFieldDef) {
 	}
 	if field.MaxLength > FormHardMaxLength {
 		field.MaxLength = FormHardMaxLength
+	}
+	if limit, ok := FormFieldColumnLimit(field.Name); ok && field.MaxLength > limit {
+		field.MaxLength = limit
 	}
 }
 

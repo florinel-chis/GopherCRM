@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -1139,6 +1140,68 @@ func TestFormServiceSubmitFallbackSurnameFitsTheColumn(t *testing.T) {
 		"the stand-in surname is clipped to leads.last_name")
 }
 
+func TestFormServiceSubmitFallbackSurnameKeepsWholeCharacters(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = []models.FormFieldDef{
+		{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+	}
+	f.publish(t, form)
+
+	// Two-byte characters: clipping by bytes would cut one in half.
+	address := strings.Repeat("ä", 150) + "@example.com"
+	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		Values:    map[string]string{"email": address},
+		Challenge: challengeAged(30 * time.Second),
+	}, submissionMeta())
+	require.NoError(t, err)
+
+	leads := f.leads(t)
+	require.Len(t, leads, 1)
+	assert.Equal(t, strings.Repeat("ä", 100), leads[0].LastName)
+	assert.True(t, utf8.ValidString(leads[0].LastName))
+}
+
+// Every field copied into a lead column must have a column limit, or a wide
+// value would reach MySQL unchecked. The lone "name" field is the exception:
+// it is split and clipped into the two name columns.
+func TestFormLeadFieldsAllHaveAColumnLimit(t *testing.T) {
+	for name := range formLeadFields {
+		if name == "name" {
+			continue
+		}
+		_, ok := models.FormFieldColumnLimit(name)
+		assert.True(t, ok, "lead-mapped field %q has no column limit", name)
+	}
+}
+
+// Definitions saved before the column limits existed still declare a wider
+// max_length. The published definition states the limit the validator
+// enforces, so the embed script caps the input where the server does.
+func TestFormServicePublicDefinitionAdvertisesTheEnforcedLimit(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.newForm()
+	form.Fields = append(form.Fields, models.FormFieldDef{Name: "phone", Label: "Phone", Type: models.FormFieldText})
+	f.publish(t, form)
+
+	// Simulate a legacy row: widen the stored limit behind the validator's back.
+	for i := range form.Fields {
+		if form.Fields[i].Name == "phone" {
+			form.Fields[i].MaxLength = 1000
+		}
+	}
+	require.NoError(t, f.db.Save(form).Error)
+
+	definition, err := f.service.PublicDefinition(form.PublicID, "")
+	require.NoError(t, err)
+	limits := map[string]int{}
+	for _, field := range definition.Fields {
+		limits[field.Name] = field.MaxLength
+	}
+	assert.Equal(t, 50, limits["phone"])
+	assert.Equal(t, 255, limits["email"])
+}
+
 func TestFormServiceSubmitRedirectOutcome(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.newForm()
@@ -1244,6 +1307,35 @@ func TestFormServiceConfirmCompletesTheSubmission(t *testing.T) {
 	assert.NotContains(t, followUps[0].Body, "{content_link}")
 
 	assert.Len(t, f.mailer.to("sales@example.com"), 1, "the team is told once the address is proven")
+}
+
+// A pending submission stored before values were limited to their columns can
+// hold one the lead insert would reject on MySQL. Confirmation refuses it
+// before the token is spent, so the visitor gets the "link no longer valid"
+// answer instead of a server error, and no half-finished state is left.
+func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) {
+	f := newDefaultFormFixture(t)
+	form := f.publish(t, f.optInForm())
+
+	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	require.NoError(t, err)
+	token := tokenFromLink(t, f.mailer.messages()[0].Body)
+
+	stored := f.submissions(t, form.ID)
+	require.Len(t, stored, 1)
+	legacy := stored[0]
+	legacy.Data["first_name"] = strings.Repeat("x", 120)
+	require.NoError(t, f.db.Save(&legacy).Error)
+
+	err = f.service.ConfirmSubmission(token)
+	require.ErrorIs(t, err, ErrInvalidConfirmationToken)
+
+	var tokens []models.FormConfirmationToken
+	require.NoError(t, f.db.Find(&tokens).Error)
+	require.Len(t, tokens, 1)
+	assert.Nil(t, tokens[0].UsedAt, "the token is not spent")
+	assert.Empty(t, f.leads(t))
+	assert.Equal(t, models.FormSubmissionPending, f.submissions(t, form.ID)[0].Status)
 }
 
 func TestFormServiceConfirmIsSingleUse(t *testing.T) {

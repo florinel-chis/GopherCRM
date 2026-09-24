@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -82,7 +83,18 @@ var formEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
 // leadNameMaxLength is the width of leads.first_name and leads.last_name,
 // which the split "name" field and the stand-in surname are clipped to.
-var leadNameMaxLength, _ = models.FormFieldColumnLimit("last_name")
+var leadNameMaxLength = mustFormColumnLimit("last_name")
+
+// mustFormColumnLimit reads a column width that the service depends on; a
+// missing entry is a programming error that must stop start-up rather than
+// clip every name to nothing.
+func mustFormColumnLimit(name string) int {
+	limit, ok := models.FormFieldColumnLimit(name)
+	if !ok || limit <= 0 {
+		panic(fmt.Sprintf("form service: no column limit for %q", name))
+	}
+	return limit
+}
 
 // formSortColumns is what a caller may sort the form list by. The repository
 // keeps the authoritative allowlist — it is the guard that stands between a
@@ -495,10 +507,18 @@ func (s *formService) PublicDefinition(publicID, origin string) (*PublicFormDefi
 		return nil, fmt.Errorf("form %q not found: %w", publicID, apperrors.ErrNotFound)
 	}
 
+	// Definitions saved before the column limits existed may still declare a
+	// wider max_length; publish the limit the validator enforces.
+	fields := make([]models.FormFieldDef, len(form.Fields))
+	for i, field := range form.Fields {
+		field.MaxLength = effectiveMaxLength(field)
+		fields[i] = field
+	}
+
 	definition := &PublicFormDefinition{
 		Name:          form.Name,
 		PublicID:      form.PublicID,
-		Fields:        form.Fields,
+		Fields:        fields,
 		ConsentText:   form.ConsentText,
 		SubmitAction:  form.SubmitAction,
 		Challenge:     forms.NewChallenge([]byte(s.tokenSecret), time.Now()),
@@ -897,6 +917,16 @@ func (s *formService) ConfirmSubmission(rawToken string) error {
 		return err
 	}
 
+	// A submission stored before values were limited to their columns may
+	// hold one the lead insert would reject. Turn it away before the token is
+	// spent: the visitor is told the link is no longer valid and re-submits,
+	// where validation now reports the over-long field.
+	if name, wide := overlongColumnValue(submission.Data); wide {
+		logger.WithField("submission_id", submission.ID).WithField("field", name).
+			Warn("Pending submission holds a value wider than its column; confirmation refused")
+		return fmt.Errorf("pending submission field %q exceeds its column: %w", name, ErrInvalidConfirmationToken)
+	}
+
 	// Spend the token before anything else, so a failure further down cannot
 	// leave a link that can be clicked twice. A visitor who hits such a failure
 	// re-submits the form and gets a fresh link.
@@ -1158,6 +1188,17 @@ func fieldLabel(field models.FormFieldDef) string {
 		return field.Label
 	}
 	return field.Name
+}
+
+// overlongColumnValue reports a submitted value that is wider than the column
+// it would be written to.
+func overlongColumnValue(values map[string]string) (string, bool) {
+	for name, value := range values {
+		if limit, ok := models.FormFieldColumnLimit(name); ok && utf8.RuneCountInString(value) > limit {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // effectiveMaxLength re-derives the per-type default for a definition stored
