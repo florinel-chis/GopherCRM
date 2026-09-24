@@ -130,6 +130,15 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Expected:** No "AEO" nav entry. Each direct navigation is bounced by `ProtectedRoute`. The API call returns 403 — the group-level `RequireRole(admin, sales, support)` rejects `customer` on every AEO route, read or write.
 - **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts` (customer session available via `registration.spec.ts`'s flow).
 
+### TC-AEO-042 — Competitor name longer than 120 characters
+- **Priority:** P2
+- **Type:** validation
+- **Preconditions:** Admin token.
+- **Steps:**
+  1. `PUT /api/v1/aeo/profile` with a valid body whose second competitor has a 121-character name.
+- **Expected:** 400 `VALIDATION_ERROR` from the binding tag (`max=120` on `competitors[].name`); nothing is written. The limit is `aeo_citations.competitor_name` (varchar(120)), which every citation of that competitor copies the name into. The service repeats the check after trimming (`ErrAEOInvalidProfile`, "competitor name is longer than 120 characters"), so a caller that bypasses the handler is rejected too. Exactly 120 characters, multi-byte ones included, is accepted.
+- **Automation:** automated (backend) — `internal/handler/aeo_handler_test.go` "TestSaveProfile_OverlongCompetitorNameIs400", `internal/service/aeo_service_test.go` "TestSaveProfile_RejectsOverlongCompetitorName" and "TestSaveProfile_AcceptsCompetitorNameAtTheLimit". The binding literals are held to `internal/models` by `internal/handler/aeo_limits_test.go`.
+
 ---
 
 ## 11.2 Prompts
@@ -416,6 +425,17 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Expected:** The first two collapse into one `acme.com` row with `is_owned: true` — the host is lowercased, `www.` stripped and the port dropped. `globex.com` is attributed to the competitor by name. The malformed URL normalises to `""` and is not counted. Trailing punctuation is trimmed off URLs extracted from prose.
 - **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`. Pinned by `internal/aeo/analysis_test.go`.
 
+### TC-AEO-041 — A citation too long for its column does not lose the answer
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A profile with competitor `Globex` on `globex.com`; a provider whose answer cites a normal URL, a 1100-character URL and a URL whose host is longer than 255 characters, in the prose and in its native citations.
+- **Steps:**
+  1. Run the prompt.
+  2. Read the answer with `GET /api/v1/aeo/prompts/:id/answers`.
+- **Expected:** The answer row is stored with its full text and every citation that fits. The over-long URL (more than 1024 characters, the size of `aeo_citations.url`) and the over-long host (more than 255, `aeo_citations.domain`) are skipped, not truncated, and each skip is logged at warn level with `run_id`, `prompt_id`, `provider`, the domain and the length, never the URL itself. Limits count characters, not bytes. The run is not counted as failed. A competitor whose stored name is over 120 characters (only possible in a profile saved before TC-AEO-042's check) keeps its citations, without the attribution.
+- **Known issue:** Fixed 2026-09-24 — URLs were stored without a length check, so on MySQL and MariaDB one over-long URL failed the insert and `CreateAnswerWithCitations` rolled back the whole answer, losing a paid engine call. SQLite does not enforce varchar sizes, so the suite never saw it.
+- **Automation:** automated (backend) — `internal/aeo/analysis_test.go` "TestExtractCitationsSkipsValuesTooLongForTheirColumns", `internal/aeo/engine_test.go` "TestEngineKeepsTheAnswerWhenOneCitationIsTooLong" (a repository double that rejects over-long URLs the way MySQL does). The limits are held to the column sizes by `internal/models/aeo_limits_test.go`.
+
 ---
 
 ## 11.6 Cross-cutting
@@ -464,13 +484,14 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 
 | Section | Cases | P0 | P1 | P2 |
 |---|---|---|---|---|
-| 11.1 Settings and brand profile | 8 | 2 | 5 | 1 |
+| 11.1 Settings and brand profile | 9 | 2 | 5 | 2 |
 | 11.2 Prompts | 14 | 1 | 9 | 4 |
 | 11.3 Runs | 8 | 1 | 5 | 2 |
 | 11.4 Dashboard | 4 | 0 | 2 | 2 |
-| 11.5 Citations | 2 | 0 | 1 | 1 |
+| 11.5 Citations | 3 | 0 | 2 | 1 |
 | 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
-| **Total** | **40** | **5** | **23** | **12** |
+| **Total** | **42** | **5** | **24** | **13** |
 
-Automation status: 1 automated (backend route smoke), 36 planned, 3 blocked (two on the missing
-sales/support login helper, one on a live Anthropic call).
+Automation status: 3 automated at the Go level (the route smoke test and the two column-length
+cases), 36 planned, 3 blocked (two on the missing sales/support login helper, one on a live
+Anthropic call).

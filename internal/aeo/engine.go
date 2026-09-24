@@ -228,7 +228,11 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 		row.BrandMentioned = mentions.BrandMentioned
 		row.FirstMentionPos = mentions.FirstMentionPos
 		row.CompetitorMentions = mentions.CompetitorMentions
-		citations = ExtractCitations(answer.Text, answer.Citations, profile)
+		citations = extractCitations(answer.Text, answer.Citations, profile, logProvider().WithFields(map[string]any{
+			"run_id":    run.ID,
+			"prompt_id": task.prompt.ID,
+			"provider":  task.provider.Name(),
+		}))
 	}
 
 	if err := e.repo.CreateAnswerWithCitations(&row, citations); err != nil {

@@ -178,6 +178,37 @@ func (suite *AEOServiceTestSuite) TestSaveProfile_RejectsOverlongBrandName() {
 	assert.True(suite.T(), errors.Is(err, ErrAEOInvalidProfile))
 }
 
+// A competitor name ends up in aeo_citations.competitor_name, a varchar(120).
+// Letting a longer one through would make every later citation of that
+// competitor fail its insert on MySQL and take the whole answer with it.
+func (suite *AEOServiceTestSuite) TestSaveProfile_RejectsOverlongCompetitorName() {
+	saved, err := suite.service.SaveProfile(&models.AEOProfile{
+		BrandName: "Acme",
+		Competitors: []models.AEOCompetitor{
+			{Name: "Globex"},
+			{Name: strings.Repeat("g", models.AEOCompetitorNameMaxLength+1)},
+		},
+	})
+
+	assert.Nil(suite.T(), saved)
+	assert.True(suite.T(), errors.Is(err, ErrAEOInvalidProfile))
+	assert.Contains(suite.T(), err.Error(), "competitor name")
+}
+
+func (suite *AEOServiceTestSuite) TestSaveProfile_AcceptsCompetitorNameAtTheLimit() {
+	name := strings.Repeat("é", models.AEOCompetitorNameMaxLength)
+	suite.mockRepo.On("UpsertProfile", mock.Anything).Return(nil)
+
+	saved, err := suite.service.SaveProfile(&models.AEOProfile{
+		BrandName:   "Acme",
+		Competitors: []models.AEOCompetitor{{Name: "  " + name + "  "}},
+	})
+
+	suite.Require().NoError(err)
+	suite.Require().Len(saved.Competitors, 1)
+	assert.Equal(suite.T(), name, saved.Competitors[0].Name)
+}
+
 // ---------------------------------------------------------------- prompts ---
 
 func (suite *AEOServiceTestSuite) TestListPrompts_DecoratesWindowMetrics() {
