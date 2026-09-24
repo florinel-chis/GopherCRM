@@ -92,18 +92,23 @@ async function findSubmission(request: APIRequestContext, token: string, formId:
 test.describe('Public forms API - values and their columns', () => {
   let token: string;
   let form: PublishedForm;
+  // Leads created by the test's submissions, removed with the form.
+  let leadIds: number[] = [];
 
   test.beforeEach(async ({ request }) => {
+    leadIds = [];
     token = await adminToken(request);
     form = await createForm(request, token);
   });
 
   test.afterEach(async ({ request }) => {
     // Only the form this test created is removed.
+    const headers = { Authorization: `Bearer ${token}` };
+    for (const id of leadIds) {
+      await request.delete(`${API_BASE_URL}/leads/${id}`, { headers });
+    }
     if (form) {
-      await request.delete(`${API_BASE_URL}/forms/${form.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await request.delete(`${API_BASE_URL}/forms/${form.id}`, { headers });
     }
   });
 
@@ -153,6 +158,7 @@ test.describe('Public forms API - values and their columns', () => {
     );
     expect(stored?.status, 'the submission is received, not filed as spam').toBe('received');
     expect(stored?.lead_id).toBeTruthy();
+    leadIds.push(stored.lead_id);
 
     const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -171,8 +177,11 @@ test.describe('Public forms API - values and their columns', () => {
 test.describe('Public forms API - large submissions', () => {
   let token: string;
   let form: PublishedForm;
+  // Leads created by the test's submissions, removed with the form.
+  let leadIds: number[] = [];
 
   test.beforeEach(async ({ request }) => {
+    leadIds = [];
     token = await adminToken(request);
     form = await createForm(request, token, [
       { name: 'email', label: 'Email', type: 'email', required: true },
@@ -183,10 +192,12 @@ test.describe('Public forms API - large submissions', () => {
   });
 
   test.afterEach(async ({ request }) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    for (const id of leadIds) {
+      await request.delete(`${API_BASE_URL}/leads/${id}`, { headers });
+    }
     if (form) {
-      await request.delete(`${API_BASE_URL}/forms/${form.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await request.delete(`${API_BASE_URL}/forms/${form.id}`, { headers });
     }
   });
 
@@ -202,6 +213,7 @@ test.describe('Public forms API - large submissions', () => {
 
     const stored = await findSubmission(request, token, form.id, email);
     expect(stored?.status).toBe('received');
+    if (stored?.lead_id) leadIds.push(stored.lead_id);
     expect(stored?.data?.message).toBe(message);
     expect(stored?.data?.details).toBe(details);
   });
@@ -218,6 +230,7 @@ test.describe('Public forms API - large submissions', () => {
 
     const stored = await findSubmission(request, token, form.id, email);
     expect(stored?.lead_id).toBeTruthy();
+    leadIds.push(stored.lead_id);
     const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });

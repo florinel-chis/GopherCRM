@@ -922,11 +922,11 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 - **Preconditions:** Admin JWT; the admin's own user id as `owner_id`.
 - **Steps:**
   1. `POST /api/v1/leads` with an email and `notes` of 65,536 bytes.
-  2. `POST /api/v1/leads` with `notes` of exactly 65,535 bytes, then `PUT /api/v1/leads/{id}` with
-     65,536 bytes.
-- **Expected:** step 1 and the update in step 2 are **400** with "Notes are too long (at most 65535
-  bytes)", checked in the handler before any service call. The 65,535-byte create is **201** and
-  the notes come back intact. `leads.notes` is TEXT: MySQL and MariaDB reject a longer value, SQLite
+  2. `POST /api/v1/leads` with `notes` of exactly 65,535 bytes.
+  3. `PUT /api/v1/leads/{id}` on that lead with `notes` of 65,536 bytes, then `GET` it.
+- **Expected:** steps 1 and 3 are **400** with the message "Notes are too long (at most 65535
+  bytes)", checked in the handler before any service call. Step 3 leaves the stored notes
+  unchanged. Step 2 is **201** and the notes come back intact. `leads.notes` is TEXT: MySQL and MariaDB reject a longer value, SQLite
   does not.
 - **Automation:** automated — `internal/handler/lead_handler_test.go`
   `TestCreate_NotesLargerThanTheColumn` / `TestUpdate_NotesLargerThanTheColumn`, and on MySQL by

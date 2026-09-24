@@ -7,27 +7,36 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
-// Lead notes are a readable running log: every form submission from an
-// address the CRM already knows adds a block to that lead's notes. The column
-// is TEXT, so the log is kept within models.LeadNotesMaxBytes instead of
-// growing until MySQL rejects every further submission. Nothing is lost by
-// trimming it: each submission is stored in full with its form.
+// A lead's notes hold two kinds of text: whatever staff wrote, and one block
+// per form submission from the lead's address. The column is TEXT, so the
+// notes are kept within models.LeadNotesMaxBytes instead of growing until MySQL
+// rejects every further submission.
+//
+// Only form blocks are ever trimmed, and only whole blocks, oldest first: each
+// submission is also stored in full with its form, so a trimmed block loses
+// nothing. Staff text before the first block exists nowhere else and is never
+// touched — otherwise anyone who knows a lead's address could erase it by
+// submitting a public form a few times.
 const (
 	// leadNotesBlockMaxBytes caps what a single submission adds.
 	leadNotesBlockMaxBytes = 16 << 10
 
 	leadNotesBlockTruncatedMarker = "\n[Truncated here; the full submission is kept with the form.]"
-	leadNotesTrimmedMarker        = "[Earlier notes trimmed to fit.]\n\n"
+	// leadNotesTrimmedMarker stands where older form blocks were dropped.
+	leadNotesTrimmedMarker = "\n\n[Earlier form submissions trimmed to fit; each is kept in full with its form.]"
 
-	// leadNotesBlockBoundary starts every submission block after the first.
-	leadNotesBlockBoundary = "\n\n--- Form submission:"
+	// leadNotesBlockHeader opens every submission block. Submitted values are
+	// neutralised so they cannot forge one (see neutraliseNotesHeader).
+	leadNotesBlockHeader   = "--- Form submission:"
+	leadNotesBlockBoundary = "\n\n" + leadNotesBlockHeader
 )
 
 // appendLeadNotes adds a submission block to a lead's notes and returns the
-// result, which always fits models.LeadNotesMaxBytes. When it would not, the
-// oldest content goes first — at a block boundary where there is one — and the
-// newest block is always kept.
-func appendLeadNotes(existing, block string) string {
+// result, which always fits models.LeadNotesMaxBytes. Older form blocks are
+// dropped whole to make room. If the staff text alone leaves no room for the
+// block, the short pointer is appended instead, and if not even that fits the
+// notes are returned unchanged.
+func appendLeadNotes(existing, block, pointer string) string {
 	block = capNotesBlock(block)
 	existing = strings.TrimRight(existing, "\n")
 	if strings.TrimSpace(existing) == "" {
@@ -37,12 +46,52 @@ func appendLeadNotes(existing, block string) string {
 		return existing + block
 	}
 
-	room := models.LeadNotesMaxBytes - len(leadNotesTrimmedMarker) - len(block)
-	kept := notesTailWithin(existing, room)
-	if kept == "" {
-		return leadNotesTrimmedMarker + strings.TrimLeft(block, "\n")
+	staff, blocks := splitLeadNotes(existing)
+	for len(blocks) > 0 && len(staff)+len(leadNotesTrimmedMarker)+len(strings.Join(blocks, ""))+len(block) > models.LeadNotesMaxBytes {
+		blocks = blocks[1:]
 	}
-	return leadNotesTrimmedMarker + kept + block
+	if len(staff)+len(leadNotesTrimmedMarker)+len(strings.Join(blocks, ""))+len(block) <= models.LeadNotesMaxBytes {
+		marker := leadNotesTrimmedMarker
+		if staff == "" {
+			marker = strings.TrimLeft(marker, "\n") // no staff text to separate it from
+		}
+		return staff + marker + strings.Join(blocks, "") + block
+	}
+
+	// The staff text itself is too long to leave room for the block.
+	if len(existing)+len(pointer) <= models.LeadNotesMaxBytes {
+		return existing + pointer
+	}
+	return existing
+}
+
+// splitLeadNotes separates the staff text (everything before the first form
+// block, without a trim marker left by an earlier call) from the form blocks,
+// each block keeping its leading boundary.
+func splitLeadNotes(notes string) (string, []string) {
+	var staff, rest string
+	if strings.HasPrefix(notes, leadNotesBlockHeader) {
+		rest = "\n\n" + notes
+	} else if i := strings.Index(notes, leadNotesBlockBoundary); i >= 0 {
+		staff, rest = notes[:i], notes[i:]
+	} else {
+		return notes, nil
+	}
+	staff = strings.TrimSuffix(staff, leadNotesTrimmedMarker)
+	staff = strings.TrimPrefix(staff, strings.TrimLeft(leadNotesTrimmedMarker, "\n"))
+
+	var blocks []string
+	for rest != "" {
+		next := strings.Index(rest[len(leadNotesBlockBoundary):], leadNotesBlockBoundary)
+		if next < 0 {
+			blocks = append(blocks, rest)
+			break
+		}
+		cut := len(leadNotesBlockBoundary) + next
+		blocks = append(blocks, rest[:cut])
+		rest = rest[cut:]
+	}
+	return staff, blocks
 }
 
 // capNotesBlock cuts one submission block to leadNotesBlockMaxBytes, on a
@@ -58,22 +107,8 @@ func capNotesBlock(block string) string {
 	return block[:cut] + leadNotesBlockTruncatedMarker
 }
 
-// notesTailWithin returns the newest part of notes that fits in room bytes,
-// starting at the first block boundary inside it, or on a character boundary
-// when the kept text holds no block boundary (hand-written notes).
-func notesTailWithin(notes string, room int) string {
-	if room <= 0 {
-		return ""
-	}
-	if len(notes) <= room {
-		return notes
-	}
-	start := len(notes) - room
-	if i := strings.Index(notes[start:], leadNotesBlockBoundary); i >= 0 {
-		return notes[start+i+len("\n\n"):]
-	}
-	for start < len(notes) && !utf8.RuneStart(notes[start]) {
-		start++
-	}
-	return notes[start:]
+// neutraliseNotesHeader keeps a submitted value from forging a block header,
+// which would make the notes split at the wrong place.
+func neutraliseNotesHeader(line string) string {
+	return strings.ReplaceAll(line, leadNotesBlockHeader, "-- Form submission:")
 }

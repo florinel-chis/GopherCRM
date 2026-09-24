@@ -975,7 +975,7 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 	}
 
 	if err == nil && existing != nil {
-		existing.Notes = appendLeadNotes(existing.Notes, notes)
+		existing.Notes = appendLeadNotes(existing.Notes, notes, submissionNotesPointer(form))
 		if err := leadRepo.Update(existing); err != nil {
 			return err
 		}
@@ -1014,7 +1014,7 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 		Source:    truncate(form.Name, formLeadSourceMaxLength),
 		Status:    models.LeadStatusNew,
 		OwnerID:   form.DefaultOwnerID,
-		Notes:     appendLeadNotes("", notes),
+		Notes:     appendLeadNotes("", notes, submissionNotesPointer(form)),
 	}
 	if err := leadRepo.Create(lead); err != nil {
 		return err
@@ -1036,9 +1036,16 @@ func submissionNotes(form *models.Form, submission *models.FormSubmission) strin
 
 	for _, line := range submissionLines(form, submission, true) {
 		b.WriteString("\n")
-		b.WriteString(line)
+		b.WriteString(neutraliseNotesHeader(line))
 	}
 	return b.String()
+}
+
+// submissionNotesPointer is what a lead's notes get instead of a submission
+// block when staff notes leave no room for one.
+func submissionNotesPointer(form *models.Form) string {
+	return "\n\n[Form submission: " + form.Name + " (" + time.Now().Format("2006-01-02") +
+		") not copied here because the notes are full; it is kept with the form.]"
 }
 
 // submissionLines renders the submitted answers as "Label: value" lines in the
