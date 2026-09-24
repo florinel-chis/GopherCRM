@@ -37,6 +37,20 @@ import (
 // @name ApiKey
 // @description API key issued via POST /api-keys. The plaintext key is shown only once at creation.
 
+// revision is the commit the binary was built from, set by the release build
+// (-ldflags "-X main.revision=<sha>"). The deploy pipeline waits for /health to
+// report it, so a deploy is only done once the new build actually serves.
+var revision = "dev"
+
+// healthPayload is the body of GET /health.
+func healthPayload(now time.Time) gin.H {
+	return gin.H{
+		"status":   "healthy",
+		"time":     now.UTC(),
+		"revision": revision,
+	}
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -144,10 +158,7 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine 
 	router.Use(middleware.ErrorHandler())
 
 	router.GET("/health", func(c *gin.Context) {
-		utils.RespondSuccess(c, http.StatusOK, gin.H{
-			"status": "healthy",
-			"time":   time.Now().UTC(),
-		})
+		utils.RespondSuccess(c, http.StatusOK, healthPayload(time.Now()))
 	})
 
 	api := router.Group(cfg.API.Prefix)
