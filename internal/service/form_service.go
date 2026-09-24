@@ -975,11 +975,7 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 	}
 
 	if err == nil && existing != nil {
-		if strings.TrimSpace(existing.Notes) == "" {
-			existing.Notes = strings.TrimLeft(notes, "\n")
-		} else {
-			existing.Notes = strings.TrimRight(existing.Notes, "\n") + notes
-		}
+		existing.Notes = appendLeadNotes(existing.Notes, notes)
 		if err := leadRepo.Update(existing); err != nil {
 			return err
 		}
@@ -1018,7 +1014,7 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 		Source:    truncate(form.Name, formLeadSourceMaxLength),
 		Status:    models.LeadStatusNew,
 		OwnerID:   form.DefaultOwnerID,
-		Notes:     strings.TrimLeft(notes, "\n"),
+		Notes:     appendLeadNotes("", notes),
 	}
 	if err := leadRepo.Create(lead); err != nil {
 		return err

@@ -119,3 +119,13 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 - **TC-FORM-083 — unlinked spam/pending submissions are untouched by lead erasure** · automated ·
   same file. **Known issue:** their eventual clean-up is a retention sweep that does not exist
   yet (ROADMAP).
+- **TC-FORM-084 — repeated large submissions from one address keep that lead's notes within the
+  TEXT column (65,535 bytes): each submission block is capped at 16 KiB, the oldest content is
+  trimmed first at a block boundary under a marker, the newest submission is always kept, and every
+  submission stays whole with the form** · automated · `lead_notes_test.go`, `form_service_test.go`,
+  and on MySQL by `forms-public-api.spec.ts` (before the bound the fourth such submission answered
+  500 with Error 1406).
+- **TC-FORM-085 — markup-heavy values (`<`, `&`, which JSON-escape to six bytes) are accepted and
+  stored intact: `form_submissions.data` is MEDIUMTEXT, which holds any submission the 64 KiB body
+  cap admits** · automated · `form_submission_data_test.go`, and on MySQL by
+  `forms-public-api.spec.ts` (a 10,000-character `<` message used to answer 500).

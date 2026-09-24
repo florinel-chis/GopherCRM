@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -28,17 +29,17 @@ type LeadHandlerTestSuite struct {
 
 func (suite *LeadHandlerTestSuite) SetupTest() {
 	gin.SetMode(gin.TestMode)
-	
+
 	// Initialize logger
 	logConfig := &config.LoggingConfig{
 		Level:  "debug",
 		Format: "json",
 	}
 	utils.InitLogger(logConfig)
-	
+
 	suite.mockService = new(mocks.LeadService)
 	suite.handler = NewLeadHandler(suite.mockService)
-	
+
 	suite.router = gin.New()
 	suite.router.Use(func(c *gin.Context) {
 		// Set required context values for tests
@@ -55,7 +56,7 @@ func (suite *LeadHandlerTestSuite) TearDownTest() {
 
 func (suite *LeadHandlerTestSuite) TestCreate_Success() {
 	suite.router.POST("/leads", suite.handler.Create)
-	
+
 	ownerID := uint(1)
 	payload := CreateLeadRequest{
 		FirstName: "John",
@@ -66,7 +67,7 @@ func (suite *LeadHandlerTestSuite) TestCreate_Success() {
 		Source:    "website",
 		OwnerID:   &ownerID,
 	}
-	
+
 	suite.mockService.On("Create", mock.MatchedBy(func(l *models.Lead) bool {
 		return l.FirstName == "John" &&
 			l.LastName == "Doe" &&
@@ -80,16 +81,16 @@ func (suite *LeadHandlerTestSuite) TestCreate_Success() {
 		lead := args.Get(0).(*models.Lead)
 		lead.ID = 1
 	})
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -147,13 +148,52 @@ func (suite *LeadHandlerTestSuite) TestCreate_NeitherEmailNorPhone() {
 	suite.mockService.AssertNotCalled(suite.T(), "Create")
 }
 
+// leads.notes is a TEXT column (65,535 bytes on MySQL, unbounded on SQLite).
+// Anything larger used to reach the insert and answer 500.
+func (suite *LeadHandlerTestSuite) TestCreate_NotesLargerThanTheColumn() {
+	suite.router.POST("/leads", suite.handler.Create)
+
+	ownerID := uint(1)
+	payload := CreateLeadRequest{
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "john@example.com",
+		OwnerID:   &ownerID,
+		Notes:     strings.Repeat("é", models.LeadNotesMaxBytes/2+1), // two bytes each
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Create")
+}
+
+func (suite *LeadHandlerTestSuite) TestUpdate_NotesLargerThanTheColumn() {
+	suite.router.PUT("/leads/:id", suite.handler.Update)
+
+	body, _ := json.Marshal(map[string]string{"notes": strings.Repeat("x", models.LeadNotesMaxBytes+1)})
+	req := httptest.NewRequest(http.MethodPut, "/leads/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Update")
+}
+
 func (suite *LeadHandlerTestSuite) TestCreate_SalesUserWithOwnerID() {
 	suite.router.Use(func(c *gin.Context) {
 		c.Set("user_role", "sales")
 		c.Set("user_id", uint(2))
 	})
 	suite.router.POST("/leads", suite.handler.Create)
-	
+
 	ownerID := uint(1) // Different from current user ID
 	payload := CreateLeadRequest{
 		FirstName: "John",
@@ -161,54 +201,54 @@ func (suite *LeadHandlerTestSuite) TestCreate_SalesUserWithOwnerID() {
 		Email:     "john@example.com",
 		OwnerID:   &ownerID,
 	}
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestCreate_AdminRequiresOwnerID() {
 	suite.router.POST("/leads", suite.handler.Create)
-	
+
 	payload := CreateLeadRequest{
 		FirstName: "John",
 		LastName:  "Doe",
 		Email:     "john@example.com",
 		// No OwnerID specified
 	}
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestList_AdminViewsAll() {
 	suite.router.GET("/leads", suite.handler.List)
-	
+
 	expectedLeads := []models.Lead{
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
-	
+
 	suite.mockService.On("List", 0, 20).Return(expectedLeads, int64(2), nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -223,24 +263,24 @@ func (suite *LeadHandlerTestSuite) TestList_SalesViewsOwn() {
 		c.Set("user_id", uint(2))
 	})
 	suite.router.GET("/leads", suite.handler.List)
-	
+
 	expectedLeads := []models.Lead{
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", OwnerID: 2},
 	}
-	
+
 	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, int64(1), nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestGet_Success() {
 	suite.router.GET("/leads/:id", suite.handler.Get)
-	
+
 	expectedLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -248,16 +288,16 @@ func (suite *LeadHandlerTestSuite) TestGet_Success() {
 		Email:     "john@example.com",
 		OwnerID:   1,
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(expectedLead, nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/leads/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -270,7 +310,7 @@ func (suite *LeadHandlerTestSuite) TestGet_SalesUserForbidden() {
 		c.Set("user_id", uint(2))
 	})
 	suite.router.GET("/leads/:id", suite.handler.Get)
-	
+
 	expectedLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -278,20 +318,20 @@ func (suite *LeadHandlerTestSuite) TestGet_SalesUserForbidden() {
 		Email:     "john@example.com",
 		OwnerID:   1, // Different from current user
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(expectedLead, nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/leads/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestUpdate_Success() {
 	suite.router.PUT("/leads/:id", suite.handler.Update)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -299,7 +339,7 @@ func (suite *LeadHandlerTestSuite) TestUpdate_Success() {
 		Email:     "john@example.com",
 		OwnerID:   1,
 	}
-	
+
 	updatedLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "Jane",
@@ -308,26 +348,26 @@ func (suite *LeadHandlerTestSuite) TestUpdate_Success() {
 		Status:    models.LeadStatusContacted,
 		OwnerID:   1,
 	}
-	
+
 	payload := UpdateLeadRequest{
 		FirstName: "Jane",
 		Status:    models.LeadStatusContacted,
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
 		return updates["first_name"] == "Jane" && updates["status"] == models.LeadStatusContacted
 	})).Return(updatedLead, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/leads/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -340,54 +380,54 @@ func (suite *LeadHandlerTestSuite) TestUpdate_SalesUserReassign() {
 		c.Set("user_id", uint(1))
 	})
 	suite.router.PUT("/leads/:id", suite.handler.Update)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
 		OwnerID:   1,
 	}
-	
+
 	newOwnerID := uint(2)
 	payload := UpdateLeadRequest{
 		FirstName: "Jane",
 		OwnerID:   &newOwnerID,
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/leads/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/leads/:id", suite.handler.Delete)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
 		OwnerID:   1,
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("Delete", uint(1)).Return(nil)
-	
+
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -396,7 +436,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 		Status:    models.LeadStatusQualified,
 		OwnerID:   1,
 	}
-	
+
 	expectedCustomer := &models.Customer{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -404,13 +444,13 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 		Email:     "john@example.com",
 		Company:   "Acme Corp",
 	}
-	
+
 	payload := ConvertLeadRequest{
 		CompanyName: "Acme Corp",
 		Website:     "https://acme.com",
 		Notes:       "Converted from qualified lead",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("ConvertToCustomer", uint(1), mock.MatchedBy(func(c *models.Customer) bool {
 		return c.FirstName == "John" &&
@@ -419,16 +459,16 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 			c.Company == "Acme Corp" &&
 			c.Notes == "Converted from qualified lead"
 	})).Return(expectedCustomer, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -437,29 +477,29 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
 		Status:    models.LeadStatusConverted,
 		OwnerID:   1,
 	}
-	
+
 	payload := ConvertLeadRequest{
 		CompanyName: "Acme Corp",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).
 		Return(nil, fmt.Errorf("lead already converted: %w", apperrors.ErrLeadConverted))
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
 }
 
@@ -469,26 +509,26 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_SalesUserForbidden() {
 		c.Set("user_id", uint(2))
 	})
 	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
-	
+
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
 		OwnerID:   1, // Different from current user
 	}
-	
+
 	payload := ConvertLeadRequest{
 		CompanyName: "Acme Corp",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
