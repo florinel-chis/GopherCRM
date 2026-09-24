@@ -1,39 +1,14 @@
 package models
 
 import (
-	"regexp"
-	"strconv"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm/schema"
 )
 
-// varcharSize matches an explicit `type:varchar(N)` column type.
-var varcharSize = regexp.MustCompile(`(?i)^varchar\((\d+)\)$`)
-
-// columnSize returns the declared character size of a sized string column, read
-// from the parsed GORM schema rather than from a copy of the tag, so the test
-// sees exactly what AutoMigrate creates.
-func columnSize(t *testing.T, model interface{}, column string) int {
-	t.Helper()
-
-	parsed, err := schema.Parse(model, &sync.Map{}, schema.NamingStrategy{})
-	require.NoError(t, err)
-
-	field := parsed.LookUpField(column)
-	require.NotNilf(t, field, "column %q not found on %s", column, parsed.Name)
-
-	if match := varcharSize.FindStringSubmatch(string(field.DataType)); match != nil {
-		size, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		return size
-	}
-	require.NotZerof(t, field.Size, "column %s.%s has no declared size", parsed.Table, column)
-	return field.Size
-}
+// The columns are measured with columnSize (form_column_limits_test.go), which
+// reads the width from the parsed GORM schema, so the test sees exactly what
+// AutoMigrate creates.
 
 // TestAEOLengthLimitsMatchTheColumns guards the length limits the AEO code
 // validates and filters against. If a column is resized without updating the
