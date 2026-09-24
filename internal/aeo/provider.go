@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	openai "github.com/openai/openai-go/v3"
@@ -96,6 +97,26 @@ func LoadProviders(cfg *config.Config) []Provider {
 	return providers
 }
 
+// withStorableIdentity drops an engine whose name or model id is wider than the
+// aeo_answers column it is recorded in. Both come from operator settings; on
+// MySQL an over-long value would fail every answer insert of the run, so the
+// engine is left out, loudly, and the others keep working.
+func withStorableIdentity(providers []Provider) []Provider {
+	kept := providers[:0]
+	for _, p := range providers {
+		nameLength, modelLength := utf8.RuneCountInString(p.Name()), utf8.RuneCountInString(p.Model())
+		if nameLength > models.AEOAnswerProviderMaxLength || modelLength > models.AEOAnswerModelMaxLength {
+			logProvider().WithField("name_length", nameLength).WithField("model_length", modelLength).
+				WithField("name_max_length", models.AEOAnswerProviderMaxLength).
+				WithField("model_max_length", models.AEOAnswerModelMaxLength).
+				Error("AEO engine skipped: its name or model id is longer than the column that records it; shorten AEO_CUSTOM_NAME or the AEO_*_MODEL setting")
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
+}
+
 // LoadProvidersFor builds the ordered set of configured engines from an AEO
 // configuration resolved at call time. An engine with no API key is absent (for
 // the custom engine, an empty base URL means absent), so a deployment that
@@ -154,6 +175,8 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			BaseURL: a.CustomBaseURL,
 		}))
 	}
+
+	providers = withStorableIdentity(providers)
 
 	logProvider().WithField("providers", providerNames(providers)).
 		Debug("AEO providers resolved")

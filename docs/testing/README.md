@@ -37,11 +37,12 @@ Playwright spec behind it at all: three cases are automated at the Go level (the
 smoke test and the two column-length cases, TC-AEO-041 and TC-AEO-042) and the remaining 39 are
 planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist yet, or blocked. Where a Go
 or Vitest test already pins a case's behaviour the Automation line names it, so the E2E spec can be
-written against a verified contract. Five cases are marked *regression*: four cover defects found
-and fixed during the module's adversarial review (500-instead-of-400 on whitespace input, a run
-stranded by a restart bricking the module, a non-atomic run-overlap guard, and `ORDER BY trigger`
-failing on MySQL only), and TC-AEO-041 covers an over-long citation URL rolling back its whole
-answer on MySQL only.
+written against a verified contract. Seven cases are marked *regression*. Six pin defects found
+and fixed during the module's adversarial review: 500-instead-of-400 on whitespace input
+(TC-AEO-003, TC-AEO-012), a run stranded by a restart bricking the module (TC-AEO-026), a
+non-atomic run-overlap guard (TC-AEO-027), `ORDER BY trigger` failing on MySQL only (TC-AEO-028)
+and the `/prompts/generate` vs `/prompts/:id` route clash (TC-AEO-039). TC-AEO-041 covers an
+over-long citation URL rolling back its whole answer on MySQL only.
 
 ## Case format
 

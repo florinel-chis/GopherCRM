@@ -51,6 +51,8 @@ func TestAEOLengthLimitsMatchTheColumns(t *testing.T) {
 		{"citation competitor name", &AEOCitation{}, "competitor_name", AEOCompetitorNameMaxLength},
 		{"profile brand name", &AEOProfile{}, "brand_name", AEOBrandNameMaxLength},
 		{"prompt text", &AEOPrompt{}, "text", AEOPromptTextMaxLength},
+		{"answer provider", &AEOAnswer{}, "provider", AEOAnswerProviderMaxLength},
+		{"answer model", &AEOAnswer{}, "model", AEOAnswerModelMaxLength},
 	}
 
 	for _, tc := range cases {

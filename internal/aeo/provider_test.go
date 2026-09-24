@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -157,6 +159,33 @@ func TestLoadProvidersForMatchesLoadProviders(t *testing.T) {
 		providerNames(LoadProvidersFor(aeoCfg)))
 
 	assert.Empty(t, providerNames(LoadProvidersFor(config.AEOConfig{})))
+}
+
+// An engine whose name or model id is wider than the aeo_answers column that
+// records it would fail every answer insert on MySQL (SQLite hides it). It is
+// left out of the roster; the other engines keep running.
+func TestLoadProvidersForSkipsEnginesThatCannotBeRecorded(t *testing.T) {
+	base := fullyConfiguredAEO()
+	all := providerNames(LoadProvidersFor(base))
+	require.Contains(t, all, ProviderOpenAI)
+	require.Contains(t, all, "lmstudio")
+
+	longModel := base
+	longModel.OpenAIModel = strings.Repeat("m", models.AEOAnswerModelMaxLength+1)
+	names := providerNames(LoadProvidersFor(longModel))
+	assert.NotContains(t, names, ProviderOpenAI, "an over-long model id drops that engine")
+	assert.Len(t, names, len(all)-1, "the other engines are kept")
+
+	atLimit := base
+	atLimit.OpenAIModel = strings.Repeat("é", models.AEOAnswerModelMaxLength)
+	assert.Contains(t, providerNames(LoadProvidersFor(atLimit)), ProviderOpenAI,
+		"a model id exactly at the limit fits, counted in characters")
+
+	longName := base
+	longName.CustomName = strings.Repeat("n", models.AEOAnswerProviderMaxLength+1)
+	names = providerNames(LoadProvidersFor(longName))
+	assert.NotContains(t, names, longName.CustomName, "an over-long custom engine name drops that engine")
+	assert.Len(t, names, len(all)-1)
 }
 
 func TestProviderStatusesForMatchesProviderStatuses(t *testing.T) {

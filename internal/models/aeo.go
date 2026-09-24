@@ -193,6 +193,12 @@ const (
 	AEOBrandNameMaxLength = 120
 	// AEOPromptTextMaxLength is aeo_prompts.text.
 	AEOPromptTextMaxLength = 500
+	// AEOAnswerProviderMaxLength is aeo_answers.provider, filled from the
+	// engine name (operator-configurable for the custom engine).
+	AEOAnswerProviderMaxLength = 40
+	// AEOAnswerModelMaxLength is aeo_answers.model, filled from the configured
+	// model id.
+	AEOAnswerModelMaxLength = 120
 )
 
 // AEOCitation is a URL referenced by an answer. Citations live in their own
