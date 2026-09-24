@@ -1,0 +1,151 @@
+import { test, expect, type APIRequestContext } from '@playwright/test';
+import { testAdminCredentials } from '../fixtures/admin-user';
+import { API_BASE_URL } from '../helpers/env';
+
+// The public forms API at the level a third-party site uses it, run against
+// MySQL. Lead-mapped values are stored in sized varchar columns that MySQL
+// enforces and SQLite ignores: before the column limits, an over-long phone or
+// email reached the insert and the public endpoint answered 500.
+
+// A foreign page, as on an embedding site; the test form allows any origin.
+const SITE_ORIGIN = 'https://e2e-site.example';
+// The service rejects a challenge younger than three seconds as a bot.
+const TIME_TRAP_MS = 3500;
+
+interface PublishedForm {
+  id: number;
+  publicId: string;
+}
+
+async function adminToken(request: APIRequestContext): Promise<string> {
+  const response = await request.post(`${API_BASE_URL}/auth/login`, {
+    data: { email: testAdminCredentials.email, password: testAdminCredentials.password },
+  });
+  expect(response.status(), 'admin login').toBe(200);
+  return (await response.json()).data.token;
+}
+
+async function createForm(request: APIRequestContext, token: string): Promise<PublishedForm> {
+  const auth = { Authorization: `Bearer ${token}` };
+  const me = await request.get(`${API_BASE_URL}/users/me`, { headers: auth });
+  expect(me.status(), 'GET /users/me').toBe(200);
+  const ownerId = (await me.json()).data.id;
+
+  const response = await request.post(`${API_BASE_URL}/forms`, {
+    headers: auth,
+    data: {
+      name: `E2E column limits ${Date.now()}`,
+      status: 'published',
+      submit_action: 'message',
+      create_lead: true,
+      default_owner_id: ownerId,
+      fields: [
+        { name: 'first_name', label: 'First name', type: 'text', max_length: 1000 },
+        { name: 'phone', label: 'Phone', type: 'text', max_length: 1000 },
+        { name: 'email', label: 'Email', type: 'email', required: true },
+        { name: 'message', label: 'Message', type: 'textarea' },
+      ],
+    },
+  });
+  expect(response.status(), 'POST /forms').toBe(201);
+  const body = await response.json();
+  return { id: body.data.id, publicId: body.data.public_id };
+}
+
+async function freshChallenge(request: APIRequestContext, publicId: string) {
+  const response = await request.get(`${API_BASE_URL}/forms/public/${publicId}`, {
+    headers: { Origin: SITE_ORIGIN },
+  });
+  expect(response.status(), 'public definition').toBe(200);
+  const definition = (await response.json()).data;
+  // Wait out the time trap, or the submission is filed as spam.
+  await new Promise((resolve) => setTimeout(resolve, TIME_TRAP_MS));
+  return definition;
+}
+
+async function submit(
+  request: APIRequestContext,
+  publicId: string,
+  challenge: string,
+  values: Record<string, string>
+) {
+  return request.post(`${API_BASE_URL}/forms/public/${publicId}/submissions`, {
+    headers: { Origin: SITE_ORIGIN },
+    data: { values, challenge, page_url: `${SITE_ORIGIN}/contact` },
+  });
+}
+
+test.describe('Public forms API - values and their columns', () => {
+  let token: string;
+  let form: PublishedForm;
+
+  test.beforeEach(async ({ request }) => {
+    token = await adminToken(request);
+    form = await createForm(request, token);
+  });
+
+  test.afterEach(async ({ request }) => {
+    // Only the form this test created is removed.
+    if (form) {
+      await request.delete(`${API_BASE_URL}/forms/${form.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  });
+
+  test('a value wider than its column is a 400 field error, not a 500', async ({ request }) => {
+    const definition = await freshChallenge(request, form.publicId);
+
+    const limits = Object.fromEntries(
+      definition.fields.map((field: { name: string; max_length: number }) => [field.name, field.max_length])
+    );
+    expect(limits.phone, 'the published definition states the enforced limit').toBe(50);
+    expect(limits.email).toBe(255);
+
+    const widePhone = await submit(request, form.publicId, definition.challenge, {
+      email: `wide_phone_${Date.now()}@example.com`,
+      phone: '1'.repeat(51),
+    });
+    expect(widePhone.status()).toBe(400);
+    const phoneError = await widePhone.json();
+    expect(JSON.stringify(phoneError.error), 'the error names the field').toContain('phone');
+
+    const wideEmail = await submit(request, form.publicId, definition.challenge, {
+      email: `${'a'.repeat(250)}@example.com`,
+    });
+    expect(wideEmail.status()).toBe(400);
+  });
+
+  test('values that exactly fill their columns are accepted and stored intact', async ({ request }) => {
+    const definition = await freshChallenge(request, form.publicId);
+    const email = `fill_${Date.now()}@example.com`;
+    const firstName = 'ä'.repeat(100); // counted in characters, as MySQL does
+    const phone = '2'.repeat(50);
+
+    const response = await submit(request, form.publicId, definition.challenge, {
+      email,
+      first_name: firstName,
+      phone,
+      message: 'x'.repeat(1000),
+    });
+    expect(response.status()).toBe(200);
+
+    const submissions = await request.get(`${API_BASE_URL}/forms/${form.id}/submissions`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(submissions.status()).toBe(200);
+    const stored = (await submissions.json()).data.find(
+      (submission: { email: string }) => submission.email === email
+    );
+    expect(stored?.status, 'the submission is received, not filed as spam').toBe('received');
+    expect(stored?.lead_id).toBeTruthy();
+
+    const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(lead.status()).toBe(200);
+    const leadData = (await lead.json()).data;
+    expect(leadData.first_name).toBe(firstName);
+    expect(leadData.phone).toBe(phone);
+  });
+});
