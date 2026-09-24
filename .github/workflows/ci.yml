@@ -51,13 +51,29 @@ jobs:
         run: make verify-frontend
 
   e2e:
-    name: E2E (Playwright on MySQL 8)
+    # One leg per database engine: MySQL 8, and MariaDB 10.11, which is what
+    # production runs. Both are required checks, so nothing reaches main (and
+    # the automated deploy) without passing on production's own engine.
+    name: E2E (Playwright on ${{ matrix.db.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        db:
+          - name: MySQL 8
+            id: mysql8
+            image: mysql:8.0
+            health: mysqladmin ping -h 127.0.0.1 -pe2e-root-password
+          - name: MariaDB 10.11
+            id: mariadb1011
+            image: mariadb:10.11
+            health: healthcheck.sh --connect --innodb_initialized
     services:
-      mysql:
-        image: mysql:8.0
+      db:
+        image: ${{ matrix.db.image }}
         env:
+          # The MariaDB image accepts the MYSQL_* names as well.
           MYSQL_ROOT_PASSWORD: e2e-root-password
           MYSQL_DATABASE: gocrm_e2e
           MYSQL_USER: gophercrm
@@ -65,7 +81,7 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -pe2e-root-password"
+          --health-cmd="${{ matrix.db.health }}"
           --health-interval=5s --health-timeout=5s --health-retries=30
     env:
       # A throwaway database in a service container; these are not secrets.
@@ -98,7 +114,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-report
+          name: e2e-report-${{ matrix.db.id }}
           path: |
             gocrm-ui/playwright-report/
             gocrm-ui/test-results/
