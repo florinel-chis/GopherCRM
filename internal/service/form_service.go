@@ -54,10 +54,6 @@ const (
 	// formLeadSourceMaxLength mirrors the varchar(100) leads.source column.
 	formLeadSourceMaxLength = 100
 
-	// leadNameMaxLength mirrors the varchar(100) leads.first_name and
-	// leads.last_name columns.
-	leadNameMaxLength = 100
-
 	// Placeholders a form's mail bodies may use.
 	formConfirmationLinkPlaceholder = "{confirmation_link}"
 	formContentLinkPlaceholder      = "{content_link}"
@@ -83,6 +79,10 @@ const (
 // stricter rejects more valid addresses than it catches typos, and the double
 // opt-in flow is what actually proves an address exists.
 var formEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+// leadNameMaxLength is the width of leads.first_name and leads.last_name,
+// which the split "name" field and the stand-in surname are clipped to.
+var leadNameMaxLength, _ = models.FormFieldColumnLimit("last_name")
 
 // formSortColumns is what a caller may sort the form list by. The repository
 // keeps the authoritative allowlist — it is the guard that stands between a
@@ -975,7 +975,7 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 		firstName = "Form"
 	}
 	if lastName == "" {
-		lastName = emailLocalPart(submission.Email)
+		lastName = truncate(emailLocalPart(submission.Email), leadNameMaxLength)
 	}
 
 	lead := &models.Lead{
@@ -1161,15 +1161,22 @@ func fieldLabel(field models.FormFieldDef) string {
 }
 
 // effectiveMaxLength re-derives the per-type default for a definition stored
-// before normalisation, so a zero never turns into a zero-length limit.
+// before normalisation, so a zero never turns into a zero-length limit, and
+// narrows it to the column a lead-mapped value is stored in — the database
+// would otherwise reject the insert and the visitor would see a server error.
 func effectiveMaxLength(field models.FormFieldDef) int {
-	if field.MaxLength > 0 {
-		return field.MaxLength
+	max := field.MaxLength
+	if max <= 0 {
+		if field.Type == models.FormFieldTextarea {
+			max = models.FormTextareaDefaultMaxLength
+		} else {
+			max = models.FormDefaultMaxLength
+		}
 	}
-	if field.Type == models.FormFieldTextarea {
-		return models.FormTextareaDefaultMaxLength
+	if limit, ok := models.FormFieldColumnLimit(field.Name); ok && limit < max {
+		max = limit
 	}
-	return models.FormDefaultMaxLength
+	return max
 }
 
 // normaliseCheckboxValue reduces the many ways a browser expresses a ticked box
