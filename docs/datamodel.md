@@ -168,7 +168,7 @@ Represents API keys for programmatic access.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | name | string | Yes | - | max 100 | Descriptive name |
-| key_hash | string | Yes | - | unique, max 64 | Hashed API key (hidden) |
+| key_hash | string | Yes | - | unique, max 128 | Hashed API key (hidden); `hmac$` + 64 hex characters |
 | prefix | string | Yes | - | max 8 | Key prefix for identification |
 | user_id | uint | Yes | - | FK to users | Key owner |
 | last_used_at | timestamp | No | - | - | Last usage timestamp |
