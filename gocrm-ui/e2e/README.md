@@ -11,8 +11,8 @@ because they share one database.
 From the repository root:
 
 ```bash
-npx --prefix gocrm-ui playwright install chromium   # once per machine
-make e2e                                            # whole suite
+(cd gocrm-ui && npm ci && npx playwright install chromium)   # once per machine / after dependency changes
+make e2e                                                    # whole suite
 make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths relative to gocrm-ui/)
 ```
 
@@ -24,8 +24,14 @@ make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths rela
 2. Builds the backend and starts it on a free port (from 18091) with `DISABLE_RATE_LIMIT=true`.
    Its log goes to `test-results/e2e-backend.log`.
 3. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
-   backend, and runs Playwright with **no retries** and the `line` + `html` reporters.
+   backend, and runs Playwright with **no retries**, traces kept for failures, and the `line` + `html`
+   reporters.
 4. Always stops the backend and exits with Playwright's result.
+
+The run pins the backend's environment: MySQL (never SQLite), the default API prefix, no SMTP (the
+log-only mailer), no reCAPTCHA, no answer-engine keys and no AEO schedule, whatever the root `.env`
+says. On macOS it keeps the machine awake (`caffeinate -i`), since an idle sleep mid-run shows up as
+a cascade of page-load timeouts.
 
 Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The
 MySQL user needs privileges on `gocrm_e2e.*` (for example

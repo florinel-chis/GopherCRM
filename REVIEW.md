@@ -22,8 +22,7 @@ own; the code owner decides.
 - **Tests:** the change is proven by a test that fails without it. Assertions check real state;
   `expect(true)` or a skipped branch is not a test. New or changed behaviour brings its tests in
   the same pull request: Go tests for backend behaviour, Vitest for components, and an e2e spec
-  (`make e2e`) for a user-visible flow. Destructive e2e steps act only on records the test
-  created.
+  (`make e2e`) for a user-visible flow. Destructive e2e steps act only on records the test created.
 
 ## What Important means here
 

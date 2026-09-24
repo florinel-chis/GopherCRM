@@ -3,7 +3,7 @@
 # MySQL database. Used by `make e2e` locally and by the CI e2e job, so both
 # exercise exactly the same steps.
 #
-#   scripts/e2e/run.sh                              # whole suite
+#   scripts/e2e/run.sh                               # whole suite
 #   scripts/e2e/run.sh e2e/tests/admin-leads.spec.ts # selected specs (paths relative to gocrm-ui/)
 #
 # Environment (each falls back to the value in .env, then to a default):
@@ -24,20 +24,17 @@ if ! [[ $db_name =~ ^[A-Za-z0-9_]+_e2e$ ]]; then
   exit 2
 fi
 
-# Fill unset variables from .env (simple KEY=VALUE lines; the environment wins).
-if [ -f "$repo_root/.env" ]; then
-  while IFS='=' read -r key value; do
-    case "$key" in
-      DB_HOST|DB_PORT|DB_USER|DB_PASSWORD|JWT_SECRET|API_KEY_SECRET) ;;
-      *) continue ;;
-    esac
-    [ -n "${!key:-}" ] && continue
-    value=${value%$'\r'}
-    value=${value#\"}; value=${value%\"}
-    value=${value#\'}; value=${value%\'}
-    export "$key=$value"
-  done < <(command grep -E '^[A-Z_]+=' "$repo_root/.env" || true)
+# Keep a laptop awake for the length of the run: an idle sleep in the middle
+# of the suite shows up as a cascade of page-load timeouts, not as a failure
+# of anything under test. caffeinate only exists on macOS.
+if [ "$(uname -s)" = Darwin ] && [ -z "${E2E_CAFFEINATED:-}" ] && command -v caffeinate >/dev/null; then
+  E2E_CAFFEINATED=1 exec caffeinate -i "$0" "$@"
 fi
+
+# Fill unset variables from .env (see dotenv.sh); the environment always wins.
+# shellcheck source=scripts/e2e/dotenv.sh
+. "$repo_root/scripts/e2e/dotenv.sh"
+load_dotenv "$repo_root/.env" DB_HOST DB_PORT DB_USER DB_PASSWORD JWT_SECRET API_KEY_SECRET
 : "${DB_HOST:=127.0.0.1}" "${DB_PORT:=3306}" "${DB_USER:=gophercrm}" "${DB_PASSWORD:=}"
 if [ -z "${JWT_SECRET:-}" ]; then
   echo "e2e: JWT_SECRET is not set (environment or .env)" >&2
@@ -45,7 +42,7 @@ if [ -z "${JWT_SECRET:-}" ]; then
 fi
 export DB_HOST DB_PORT DB_USER DB_PASSWORD JWT_SECRET
 
-for tool in mysql go npx; do
+for tool in mysql go npx curl; do
   command -v "$tool" >/dev/null || { echo "e2e: '$tool' is required but not installed" >&2; exit 2; }
 done
 
@@ -60,6 +57,20 @@ free_port() {
 api_port=${E2E_API_PORT:-$(free_port 18091)}
 ui_port=${E2E_UI_PORT:-$(free_port 15173)}
 [ "$ui_port" = "$api_port" ] && ui_port=$(free_port $((api_port + 1)))
+
+# Pin everything the backend (and create-admin, run by Playwright's global
+# setup) would otherwise take from a developer's .env. godotenv never
+# overrides a variable that is set, even to an empty value, so these win.
+# The run must be MySQL, on the default API prefix, and must never send real
+# mail, call a paid answer engine or require reCAPTCHA.
+export DB_DRIVER=mysql DB_NAME="$db_name" API_PREFIX=/api/v1 SERVER_MODE=development \
+  TRUSTED_PROXIES= \
+  SMTP_HOST= SMTP_USER= SMTP_PASSWORD= \
+  RECAPTCHA_SITE_KEY= RECAPTCHA_SECRET_KEY= \
+  AEO_SCHEDULE_ENABLED=false \
+  ANTHROPIC_API_KEY= OPENAI_API_KEY= GEMINI_API_KEY= MOONSHOT_API_KEY= PERPLEXITY_API_KEY= \
+  AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
+  APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
 echo "e2e: resetting database $db_name on $DB_HOST:$DB_PORT"
 MYSQL_PWD=$DB_PASSWORD mysql --protocol=TCP --connect-timeout=10 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e \
@@ -93,7 +104,7 @@ echo "e2e: building backend"
 echo "e2e: starting backend on :$api_port (log copied to gocrm-ui/test-results/e2e-backend.log on exit)"
 (
   cd "$repo_root"
-  export DB_NAME=$db_name SERVER_PORT=$api_port DISABLE_RATE_LIMIT=true \
+  export SERVER_PORT=$api_port DISABLE_RATE_LIMIT=true \
     CORS_ALLOWED_ORIGINS="http://localhost:$ui_port,http://127.0.0.1:$ui_port"
   exec "$work_dir/gophercrm-e2e"
 ) >"$backend_log" 2>&1 &
@@ -121,11 +132,12 @@ status=0
 (
   cd "$repo_root/gocrm-ui"
   # The admin account is seeded by global setup through `go run ./cmd/create-admin`,
-  # which reads the same DB_* variables and so writes into the e2e database.
-  export DB_NAME=$db_name E2E_UI_PORT=$ui_port PLAYWRIGHT_HTML_OPEN=never \
+  # which inherits the variables pinned above and so writes into the e2e database.
+  export E2E_UI_PORT=$ui_port PLAYWRIGHT_HTML_OPEN=never \
     VITE_API_BASE_URL="http://localhost:$api_port/api/v1"
   # No retries: a test that only passes on a second attempt is reported as a
-  # failure, not hidden.
-  npx playwright test --retries=0 --reporter=line,html "$@"
+  # failure, not hidden. With no retries, "on-first-retry" traces would never
+  # be recorded, so failures keep theirs instead.
+  npx playwright test --retries=0 --trace=retain-on-failure --reporter=line,html "$@"
 ) || status=$?
 exit "$status"
