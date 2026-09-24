@@ -4,12 +4,16 @@
 # service answers /health with the revision of whatever `current` points at,
 # unless a test marks that revision unhealthy.
 set -euo pipefail
+# The fake server must look like the real one (the script refuses directories
+# that others can write), whatever the caller's umask is.
+umask 022
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script="$here/receive-release.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+real_rsync=$(command -v rsync)
 
 fail() {
   echo "receive-release test: $1" >&2
@@ -45,6 +49,16 @@ else
 fi
 EOF
   printf '#!/bin/sh\ncat "%s/state/health.json"\n' "$work" >"$work/stubs/curl"
+  # rsync fails for the SPA of a release marked rsync-fail-<sha>.
+  cat >"$work/stubs/rsync" <<EOF
+#!/bin/sh
+for arg in "\$@"; do
+  case "\$arg" in
+    */releases/*/www/) sha=\$(basename "\$(dirname "\$arg")"); [ -e "$work/state/rsync-fail-\$sha" ] && exit 23 ;;
+  esac
+done
+exec "$real_rsync" "\$@"
+EOF
   cat >"$work/stubs/mysqldump" <<EOF
 #!/bin/sh
 [ -e "$work/state/fail-dump" ] && exit 1
@@ -70,6 +84,9 @@ build() { # build <sha> -> directory holding a well-formed release
   printf '#!/bin/sh\necho %s\n' "$sha" >"$dir/bin/gophercrm"
   printf '#!/bin/sh\necho admin\n' >"$dir/bin/create-admin"
   echo "spa $sha" >"$dir/www/index.html"
+  # Same size and same timestamp in every build, as two CI builds can have:
+  # the SPA sync must still tell the files apart.
+  touch -t 202601010000 "$dir/www/index.html"
   echo "$sha" >"$dir/REVISION"
   echo "$dir"
 }
@@ -157,6 +174,12 @@ if run "deploy 8888888" "$(pack 8888888 "$dir")"; then fail "a release with a li
 check "a linked www never reaches the web root" [ ! -e "$work/www/data" ]
 check "the failure names links" grep -q "links or special files" "$work/state/out"
 
+touch "$work/state/rsync-fail-abcabca"
+if run "deploy abcabca" "$(release abcabca)"; then fail "a failed switch must fail the deploy"; fi
+check "a failed switch rolls back" [ "$(active)" = bbbbbbb ]
+check "a failed switch restores the previous SPA" [ "$(spa)" = "spa bbbbbbb" ]
+check "a failed switch is reported" grep -q "rolled back to bbbbbbb" "$work/state/out"
+
 check "redeploying the live revision succeeds" run "deploy bbbbbbb" "$(release bbbbbbb)"
 check "redeploying the live revision says so" grep -q "already live" "$work/state/out"
 check "redeploying the live revision keeps it in place" [ -x "$work/srv/releases/bbbbbbb/bin/gophercrm" ]
@@ -201,6 +224,15 @@ mkdir -p "$work/srv/backups"
 chmod 777 "$work/srv/backups"
 if run status; then fail "a world-writable backups directory must be refused"; fi
 chmod 700 "$work/srv/backups"
+chmod 777 "$work/www"
+if run "deploy abcdef3" "$(release abcdef3)"; then fail "a world-writable web root must be refused"; fi
+check "a refused web root changes nothing" [ ! -L "$work/srv/current" ]
+chmod 755 "$work/www"
+mv "$work/www" "$work/www-real"
+ln -s "$work/www-real" "$work/www"
+if run status; then fail "a linked web root must be refused"; fi
+rm "$work/www"
+mv "$work/www-real" "$work/www"
 mkdir -p "$work/conf"
 printf 'GOPHERCRM_WEB_ROOT=%q\n' "$work/www" >"$work/conf/receive-release.conf"
 chmod 666 "$work/conf/receive-release.conf"

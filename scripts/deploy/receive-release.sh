@@ -68,6 +68,11 @@ LOG=$DEPLOY_DIR/deploy.log
 # Existing directories are checked as found (install -d would silently reset
 # a loosened mode and hide the tampering); missing ones are created private.
 require_private "$ROOT"
+if [ -e "$WEB_ROOT" ] || [ -L "$WEB_ROOT" ]; then
+  require_private "$WEB_ROOT"
+else
+  install -d -m 755 "$WEB_ROOT"
+fi
 for dir in "$RELEASES" "$DEPLOY_DIR" "$ROOT/bin" "$BACKUPS"; do
   if [ -e "$dir" ] || [ -L "$dir" ]; then
     require_private "$dir"
@@ -115,12 +120,13 @@ adopt_legacy_layout() {
   fi
   log "adopting the pre-pipeline layout as release 'legacy'"
   mkdir -p "$RELEASES/legacy/bin" "$RELEASES/legacy/www"
-  cp -p "$ROOT/bin/gophercrm" "$RELEASES/legacy/bin/gophercrm"
+  cp "$ROOT/bin/gophercrm" "$RELEASES/legacy/bin/gophercrm"
   if [ -f "$ROOT/bin/create-admin" ]; then
-    cp -p "$ROOT/bin/create-admin" "$RELEASES/legacy/bin/create-admin"
+    cp "$ROOT/bin/create-admin" "$RELEASES/legacy/bin/create-admin"
   fi
+  chmod 755 "$RELEASES/legacy/bin/"*
   if [ -d "$WEB_ROOT" ]; then
-    rsync -rlt "$WEB_ROOT/" "$RELEASES/legacy/www/"
+    rsync -rlt --checksum "$WEB_ROOT/" "$RELEASES/legacy/www/"
   fi
   echo legacy >"$RELEASES/legacy/REVISION"
   ln -sfn "$RELEASES/legacy" "$CURRENT"
@@ -128,21 +134,21 @@ adopt_legacy_layout() {
 }
 
 link_binaries() {
-  mkdir -p "$ROOT/bin"
-  ln -sfn "$CURRENT/bin/gophercrm" "$ROOT/bin/gophercrm"
-  ln -sfn "$CURRENT/bin/create-admin" "$ROOT/bin/create-admin"
+  ln -sfn "$CURRENT/bin/gophercrm" "$ROOT/bin/gophercrm" &&
+    ln -sfn "$CURRENT/bin/create-admin" "$ROOT/bin/create-admin"
 }
 
-# Points `current` at a release with an atomic rename and syncs its SPA.
+# Points `current` at a release with an atomic rename and syncs its SPA. Every
+# step is checked explicitly: callers run it inside `if`, where set -e is off.
 activate() {
   local revision=$1
-  ln -sfn "$RELEASES/$revision" "$CURRENT.next"
-  mv -Tf "$CURRENT.next" "$CURRENT" 2>/dev/null || { rm -f "$CURRENT"; mv -f "$CURRENT.next" "$CURRENT"; }
-  link_binaries
-  mkdir -p "$WEB_ROOT"
+  ln -sfn "$RELEASES/$revision" "$CURRENT.next" || return 1
+  mv -Tf "$CURRENT.next" "$CURRENT" 2>/dev/null || { rm -f "$CURRENT" && mv -f "$CURRENT.next" "$CURRENT"; } || return 1
+  link_binaries || return 1
   # No -o/-g/-p: the web root gets root-owned, world-readable files whatever
-  # the archive claimed.
-  rsync -rlt --delete "$RELEASES/$revision/www/" "$WEB_ROOT/"
+  # the archive claimed. --checksum: two builds can have files of the same
+  # size and timestamp, which rsync would otherwise skip as unchanged.
+  rsync -rlt --checksum --delete "$RELEASES/$revision/www/" "$WEB_ROOT/"
 }
 
 # Restarts the service and waits for /health to report the given revision. The
@@ -163,7 +169,10 @@ restart_and_check() {
   return 1
 }
 
-# Reads one KEY=VALUE from the service environment file.
+# Reads one KEY=VALUE from the service environment file. Values may be bare
+# or wrapped in one pair of quotes; escapes inside quotes are not decoded, so
+# keep the DB_* values free of them (a wrong value fails the backup, which
+# stops the deploy before anything changes).
 env_value() {
   sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed "s/^[\"']//; s/[\"']\$//"
 }
@@ -256,8 +265,7 @@ deploy() {
   previous=$(active_revision)
   rm -rf "${RELEASES:?}/$revision"
   mv "$staging" "$RELEASES/$revision"
-  activate "$revision"
-  if restart_and_check "$revision"; then
+  if activate "$revision" && restart_and_check "$revision"; then
     [ -n "$previous" ] && [ "$previous" != "$revision" ] && echo "$previous" >"$RELEASES/.previous"
     log "revision $revision is live"
     prune
@@ -265,9 +273,9 @@ deploy() {
   fi
 
   if [ -n "$previous" ] && [ "$previous" != "$revision" ]; then
-    log "revision $revision failed its health check; rolling back to $previous" >&2
-    activate "$previous"
-    restart_and_check "$previous" || die "rollback to $previous also failed its health check"
+    log "revision $revision did not come up; rolling back to $previous" >&2
+    activate "$previous" && restart_and_check "$previous" ||
+      die "rollback to $previous also failed"
     die "deploy of $revision rolled back to $previous"
   fi
   die "revision $revision failed its health check and there is no previous release"
@@ -278,8 +286,8 @@ rollback() {
   current=$(active_revision)
   previous=$(previous_revision)
   [ -n "$previous" ] && [ -d "$RELEASES/$previous" ] || die "no previous release to roll back to"
-  activate "$previous"
-  restart_and_check "$previous" || die "rolled back to $previous but it failed its health check"
+  activate "$previous" && restart_and_check "$previous" ||
+    die "rolling back to $previous failed"
   echo "$current" >"$RELEASES/.previous"
   log "rolled back from $current to $previous"
 }

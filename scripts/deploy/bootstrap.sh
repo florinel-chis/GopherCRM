@@ -32,6 +32,7 @@ fi
 target=$1
 url=${2%/}
 web_root=$3
+[[ $target == *@* ]] || { echo "bootstrap: the target must be user@host" >&2; exit 2; }
 user=${target%@*}
 host=${target#*@}
 
@@ -49,17 +50,23 @@ ssh-keygen -q -t ed25519 -N '' -C gophercrm-deploy -f "$tmp/deploy_key"
 
 echo "bootstrap: installing the deploy script and key on $host"
 scp -q scripts/deploy/receive-release.sh "$target:/tmp/receive-release.new"
-ssh "$target" bash -s -- "$(cat "$tmp/deploy_key.pub")" "$web_root" <<'REMOTE'
+# ssh joins its arguments with spaces into one remote command line, so each
+# argument is quoted for the remote shell here.
+ssh "$target" "bash -s -- $(printf '%q ' "$(cat "$tmp/deploy_key.pub")" "$web_root")" <<'REMOTE'
 set -euo pipefail
 public_key=$1
 web_root=$2
+[[ $public_key =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+\ gophercrm-deploy$ ]] ||
+  { echo "server: unexpected public key argument" >&2; exit 1; }
+[[ $web_root == /* ]] || { echo "server: the web root must be an absolute path" >&2; exit 1; }
 for tool in flock rsync mysqldump gzip curl tar systemctl; do
   command -v "$tool" >/dev/null || { echo "server: '$tool' is missing" >&2; exit 1; }
 done
 # The deploy script runs as root and trusts these directories, so root owns
 # them and no one else may write there (the service only reads bin/ and env/).
+# 755, not just go-w: the service user must still be able to reach bin/.
 chown root:root /srv/gophercrm
-chmod go-w /srv/gophercrm
+chmod 755 /srv/gophercrm
 for dir in bin deploy releases; do
   install -d -o root -g root -m 755 "/srv/gophercrm/$dir"
   chown root:root "/srv/gophercrm/$dir"
@@ -70,6 +77,10 @@ chown root:root /srv/gophercrm/backups
 chmod 700 /srv/gophercrm/backups
 install -o root -g root -m 755 /tmp/receive-release.new /srv/gophercrm/deploy/receive-release
 rm -f /tmp/receive-release.new
+# The web root is synced by root with --delete, so it gets the same rule.
+install -d -o root -g root -m 755 "$web_root"
+chown root:root "$web_root"
+chmod 755 "$web_root"
 printf 'GOPHERCRM_WEB_ROOT=%q\n' "$web_root" >/srv/gophercrm/deploy/receive-release.conf
 chown root:root /srv/gophercrm/deploy/receive-release.conf
 chmod 644 /srv/gophercrm/deploy/receive-release.conf
@@ -79,9 +90,13 @@ chmod 644 /srv/gophercrm/deploy/receive-release.conf
 install -d -m 700 ~/.ssh
 touch ~/.ssh/authorized_keys
 keys=$(mktemp ~/.ssh/authorized_keys.XXXXXX)
+unix=$(mktemp ~/.ssh/authorized_keys.XXXXXX)
+tr -d '\r' <~/.ssh/authorized_keys >"$unix" ||
+  { rm -f "$keys" "$unix"; echo "server: could not read authorized_keys" >&2; exit 1; }
 rc=0
-tr -d '\r' <~/.ssh/authorized_keys | grep -v ' gophercrm-deploy$' >"$keys" || rc=$?
-[ "$rc" -le 1 ] || { rm -f "$keys"; echo "server: could not read authorized_keys" >&2; exit 1; }
+grep -v ' gophercrm-deploy$' "$unix" >"$keys" || rc=$?
+rm -f "$unix"
+[ "$rc" -le 1 ] || { rm -f "$keys"; echo "server: could not filter authorized_keys" >&2; exit 1; }
 printf 'restrict,command="/srv/gophercrm/deploy/receive-release" %s\n' "$public_key" >>"$keys"
 chmod 600 "$keys"
 mv -f "$keys" ~/.ssh/authorized_keys
@@ -102,7 +117,9 @@ ssh -i "$tmp/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes \
 
 echo "bootstrap: configuring the GitHub 'production' environment of $repo"
 # Only protected branches (main) may use the environment, so a workflow on any
-# other branch cannot get the key.
+# other branch cannot get the key. This PUT sets only the branch policy; if
+# reviewers or a wait timer are added by hand later, re-check them after a key
+# rotation.
 printf '%s' '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' |
   gh api -X PUT "repos/$repo/environments/production" --input - >/dev/null
 gh secret set PRODUCTION_SSH_KEY --env production --repo "$repo" <"$tmp/deploy_key"
