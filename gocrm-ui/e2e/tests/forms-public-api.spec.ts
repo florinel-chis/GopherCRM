@@ -25,7 +25,18 @@ async function adminToken(request: APIRequestContext): Promise<string> {
   return (await response.json()).data.token;
 }
 
-async function createForm(request: APIRequestContext, token: string): Promise<PublishedForm> {
+const DEFAULT_FIELDS = [
+  { name: 'first_name', label: 'First name', type: 'text', max_length: 1000 },
+  { name: 'phone', label: 'Phone', type: 'text', max_length: 1000 },
+  { name: 'email', label: 'Email', type: 'email', required: true },
+  { name: 'message', label: 'Message', type: 'textarea' },
+];
+
+async function createForm(
+  request: APIRequestContext,
+  token: string,
+  fields: Record<string, unknown>[] = DEFAULT_FIELDS
+): Promise<PublishedForm> {
   const auth = { Authorization: `Bearer ${token}` };
   const me = await request.get(`${API_BASE_URL}/users/me`, { headers: auth });
   expect(me.status(), 'GET /users/me').toBe(200);
@@ -39,12 +50,7 @@ async function createForm(request: APIRequestContext, token: string): Promise<Pu
       submit_action: 'message',
       create_lead: true,
       default_owner_id: ownerId,
-      fields: [
-        { name: 'first_name', label: 'First name', type: 'text', max_length: 1000 },
-        { name: 'phone', label: 'Phone', type: 'text', max_length: 1000 },
-        { name: 'email', label: 'Email', type: 'email', required: true },
-        { name: 'message', label: 'Message', type: 'textarea' },
-      ],
+      fields,
     },
   });
   expect(response.status(), 'POST /forms').toBe(201);
@@ -75,21 +81,34 @@ async function submit(
   });
 }
 
+async function findSubmission(request: APIRequestContext, token: string, formId: number, email: string) {
+  const response = await request.get(`${API_BASE_URL}/forms/${formId}/submissions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.status()).toBe(200);
+  return (await response.json()).data.find((submission: { email: string }) => submission.email === email);
+}
+
 test.describe('Public forms API - values and their columns', () => {
   let token: string;
   let form: PublishedForm;
+  // Leads created by the test's submissions, removed with the form.
+  let leadIds: number[] = [];
 
   test.beforeEach(async ({ request }) => {
+    leadIds = [];
     token = await adminToken(request);
     form = await createForm(request, token);
   });
 
   test.afterEach(async ({ request }) => {
     // Only the form this test created is removed.
+    const headers = { Authorization: `Bearer ${token}` };
+    for (const id of leadIds) {
+      await request.delete(`${API_BASE_URL}/leads/${id}`, { headers });
+    }
     if (form) {
-      await request.delete(`${API_BASE_URL}/forms/${form.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await request.delete(`${API_BASE_URL}/forms/${form.id}`, { headers });
     }
   });
 
@@ -139,6 +158,7 @@ test.describe('Public forms API - values and their columns', () => {
     );
     expect(stored?.status, 'the submission is received, not filed as spam').toBe('received');
     expect(stored?.lead_id).toBeTruthy();
+    leadIds.push(stored.lead_id);
 
     const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -147,5 +167,76 @@ test.describe('Public forms API - values and their columns', () => {
     const leadData = (await lead.json()).data;
     expect(leadData.first_name).toBe(firstName);
     expect(leadData.phone).toBe(phone);
+  });
+});
+
+// Large submissions against the TEXT columns (65,535 bytes on MySQL):
+// form_submissions.data holds the JSON-encoded values, in which `<` and `&`
+// become six-byte escapes, and a lead's notes gain one block per submission
+// from the same address. Either used to overflow and answer 500.
+test.describe('Public forms API - large submissions', () => {
+  let token: string;
+  let form: PublishedForm;
+  // Leads created by the test's submissions, removed with the form.
+  let leadIds: number[] = [];
+
+  test.beforeEach(async ({ request }) => {
+    leadIds = [];
+    token = await adminToken(request);
+    form = await createForm(request, token, [
+      { name: 'email', label: 'Email', type: 'email', required: true },
+      { name: 'ref', label: 'Reference', type: 'text' },
+      { name: 'message', label: 'Message', type: 'textarea', max_length: 10000 },
+      { name: 'details', label: 'Details', type: 'textarea', max_length: 10000 },
+    ]);
+  });
+
+  test.afterEach(async ({ request }) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    for (const id of leadIds) {
+      await request.delete(`${API_BASE_URL}/leads/${id}`, { headers });
+    }
+    if (form) {
+      await request.delete(`${API_BASE_URL}/forms/${form.id}`, { headers });
+    }
+  });
+
+  test('markup-heavy values are accepted and stored intact', async ({ request }) => {
+    const definition = await freshChallenge(request, form.publicId);
+    const email = `markup_${Date.now()}@example.com`;
+    // About 12 KB on the wire, about 72 KB once JSON-escaped for storage.
+    const message = '<'.repeat(10000);
+    const details = '&'.repeat(2000);
+
+    const response = await submit(request, form.publicId, definition.challenge, { email, message, details });
+    expect(response.status()).toBe(200);
+
+    const stored = await findSubmission(request, token, form.id, email);
+    expect(stored?.status).toBe('received');
+    if (stored?.lead_id) leadIds.push(stored.lead_id);
+    expect(stored?.data?.message).toBe(message);
+    expect(stored?.data?.details).toBe(details);
+  });
+
+  test('repeated large submissions from one address keep the lead notes within the column', async ({ request }) => {
+    const definition = await freshChallenge(request, form.publicId);
+    const email = `notes_${Date.now()}@example.com`;
+    const message = '😀'.repeat(5000); // 5,000 characters, about 20 KB of UTF-8
+
+    for (let i = 1; i <= 5; i++) {
+      const response = await submit(request, form.publicId, definition.challenge, { email, ref: `sub-${i}`, message });
+      expect(response.status(), `submission ${i}`).toBe(200);
+    }
+
+    const stored = await findSubmission(request, token, form.id, email);
+    expect(stored?.lead_id).toBeTruthy();
+    leadIds.push(stored.lead_id);
+    const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(lead.status()).toBe(200);
+    const notes: string = (await lead.json()).data.notes;
+    expect(Buffer.byteLength(notes, 'utf8')).toBeLessThanOrEqual(65535);
+    expect(notes, 'the newest submission is always kept').toContain('sub-5');
   });
 });

@@ -20,6 +20,10 @@ const (
 	LeadClassificationHotLead      LeadClassification = "hot_lead"
 )
 
+// LeadNotesMaxBytes is the size of leads.notes, a TEXT column: 65,535 bytes on
+// MySQL and MariaDB, which reject a longer value (SQLite does not).
+const LeadNotesMaxBytes = 65535
+
 type Lead struct {
 	BaseModel
 	FirstName      string             `gorm:"not null;type:varchar(100)" json:"first_name"`

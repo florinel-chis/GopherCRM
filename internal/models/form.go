@@ -384,7 +384,7 @@ type FormSubmission struct {
 	FormID uint `gorm:"not null;index" json:"form_id"`
 
 	Data     map[string]string `gorm:"-" json:"data"`
-	DataJSON string            `gorm:"column:data;type:text" json:"-"`
+	DataJSON string            `gorm:"column:data;type:mediumtext" json:"-"`
 
 	Email       string               `gorm:"type:varchar(255);index" json:"email"`
 	Status      FormSubmissionStatus `gorm:"not null;type:varchar(20);index" json:"status"`
