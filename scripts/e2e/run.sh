@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Runs the Playwright e2e suite against a real backend and a freshly reset
-# MySQL database. Used by `make e2e` locally and by the CI e2e job, so both
+# MySQL or MariaDB database. Used by `make e2e` locally and by the CI e2e job, so both
 # exercise exactly the same steps.
 #
 #   scripts/e2e/run.sh                               # whole suite
 #   scripts/e2e/run.sh e2e/tests/admin-leads.spec.ts # selected specs (paths relative to gocrm-ui/)
 #
 # Environment (each falls back to the value in .env, then to a default):
-#   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD   MySQL server and credentials
+#   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD   MySQL or MariaDB server and credentials
 #   JWT_SECRET, API_KEY_SECRET               passed through to the backend
 #   E2E_DB_NAME    database to reset and use (default gocrm_e2e; must end in _e2e)
 #   E2E_API_PORT   backend port (default: first free port from 18091)

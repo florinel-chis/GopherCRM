@@ -16,8 +16,8 @@ make e2e                                                    # whole suite
 make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths relative to gocrm-ui/)
 ```
 
-`scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request (job
-"E2E (Playwright on MySQL 8)"):
+`scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, once per
+database engine (jobs "E2E (Playwright on MySQL 8)" and "E2E (Playwright on MariaDB 10.11)"):
 
 1. Drops and recreates the **`gocrm_e2e`** database (`E2E_DB_NAME`; it refuses any name not ending
    in `_e2e`), so every run starts empty and never touches the development database.
