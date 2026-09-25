@@ -315,6 +315,11 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		if customerData.Company == "" {
 			customerData.Company = txLead.Company
 		}
+		// A lead may carry only a phone number, but customers need a unique
+		// email: refuse before anything is written.
+		if customerData.Email == "" {
+			return fmt.Errorf("lead %d: %w", leadID, apperrors.ErrLeadMissingEmail)
+		}
 
 		// Create customer within transaction
 		if err := txCustomerRepo.Create(customerData); err != nil {

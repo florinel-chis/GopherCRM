@@ -492,10 +492,11 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or lead already converted"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted, or lead has no email address"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A customer with the lead's email address already exists"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /leads/{id}/convert [post]
@@ -545,9 +546,14 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to convert lead")
-		if errors.Is(err, apperrors.ErrLeadConverted) {
+		switch {
+		case errors.Is(err, apperrors.ErrLeadConverted):
 			utils.RespondBadRequest(c, "lead already converted")
-		} else {
+		case errors.Is(err, apperrors.ErrLeadMissingEmail):
+			utils.RespondBadRequest(c, "This lead has no email address. Add one before converting it: every customer needs an email.")
+		case errors.Is(err, apperrors.ErrDuplicateEmail):
+			utils.RespondConflict(c, "customer with this email already exists")
+		default:
 			utils.RespondInternalError(c)
 		}
 		return

@@ -143,8 +143,9 @@ export const Component: React.FC = () => {
       setConvertDialog({ open: false });
       navigate(`/customers/${data.customer_id}`);
     },
-    onError: () => {
-      showError('Failed to convert lead');
+    onError: (error: any) => {
+      // The server explains refusals such as a lead without an email address.
+      showError(error.response?.data?.message || 'Failed to convert lead');
     },
   });
 

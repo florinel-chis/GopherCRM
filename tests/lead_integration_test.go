@@ -489,6 +489,68 @@ func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_AlreadyConverted() 
 	assert.Contains(suite.T(), response.Error.Message, "lead already converted")
 }
 
+// A lead may carry only a phone number, but a customer needs an email: the
+// customers table has a unique, non-null email and the customer API requires
+// one. Converting such a lead must be refused with a clear 400, not create a
+// customer with an empty email (and 500 on the second such conversion, when
+// the unique index sees a second empty email).
+func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_LeadWithoutEmailIsRejected() {
+	for n, phone := range []string{"+40 700 000 001", "+40 700 000 002"} {
+		lead := &models.Lead{
+			FirstName: "Phone",
+			LastName:  fmt.Sprintf("Only %d", n),
+			Phone:     phone,
+			OwnerID:   suite.salesUser.ID,
+			Status:    models.LeadStatusQualified,
+		}
+		suite.Require().NoError(suite.leadService.Create(lead))
+
+		rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID),
+			handler.ConvertLeadRequest{CompanyName: "Acme"}, suite.adminToken)
+
+		suite.Equal(http.StatusBadRequest, rec.Code, "conversion %d: %s", n, rec.Body.String())
+		var response utils.APIResponse
+		suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+		suite.False(response.Success)
+		suite.Require().NotNil(response.Error)
+		suite.Contains(response.Error.Message, "email")
+
+		unchanged, err := suite.leadService.GetByID(lead.ID)
+		suite.Require().NoError(err)
+		suite.Equal(models.LeadStatusQualified, unchanged.Status, "a refused conversion leaves the lead as it was")
+	}
+
+	var emptyEmailCustomers int64
+	suite.Require().NoError(suite.db.Model(&models.Customer{}).Where("email = ?", "").Count(&emptyEmailCustomers).Error)
+	suite.Zero(emptyEmailCustomers, "no customer may be created without an email")
+}
+
+// Converting a lead whose email already belongs to a customer is a conflict
+// the user can act on, not a server error.
+func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_EmailTakenByCustomerIsConflict() {
+	suite.Require().NoError(suite.db.Create(&models.Customer{
+		FirstName: "Existing",
+		LastName:  "Customer",
+		Email:     "taken@example.com",
+	}).Error)
+	lead := &models.Lead{
+		FirstName: "Second",
+		LastName:  "Contact",
+		Email:     "taken@example.com",
+		OwnerID:   suite.salesUser.ID,
+		Status:    models.LeadStatusQualified,
+	}
+	suite.Require().NoError(suite.leadService.Create(lead))
+
+	rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID),
+		handler.ConvertLeadRequest{CompanyName: "Acme"}, suite.adminToken)
+
+	suite.Equal(http.StatusConflict, rec.Code, rec.Body.String())
+	unchanged, err := suite.leadService.GetByID(lead.ID)
+	suite.Require().NoError(err)
+	suite.Equal(models.LeadStatusQualified, unchanged.Status)
+}
+
 func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_SalesUserForbidden() {
 	lead := &models.Lead{
 		FirstName: "John",
