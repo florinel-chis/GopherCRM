@@ -26,6 +26,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   value is silently dropped on save and comes back empty on the next edit. Either store it (model
   field, DTOs, migration) or drop the input; leaving it teaches users the CRM keeps something it
   never had.
+- **AEO Citations copy describes the wrong denominator** — the backend computes
+  `owned_citation_rate` and every `citation_rate` as citations to that company or domain divided by
+  all citations in the window (`internal/service/aeo_service.go`, `Citations`), so the company rates
+  add up to 100% together with unaffiliated domains. The page describes them as shares of answers:
+  "answers citing a domain you own" under the owned-domain rate and "Share of answers citing each
+  company's domains" on the chart (`gocrm-ui/src/pages/aeo/AEOCitations.tsx`). Either reword the
+  copy to "share of all citations", or change the backend to count answers, which needs a second
+  aggregation per company.
 - **Sortable columns the backend has no mapping for** — the customers **Total Revenue** and
   **Status** (`is_active`) headers, and the tickets **Customer** / **Assigned To** and the tasks
   **Assigned To** header, are deliberately non-sortable in the list pages: `utils.AllowedSortColumns`
