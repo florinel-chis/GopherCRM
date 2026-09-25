@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **SQLite backend.**
-  - `DB_DRIVER` selects `mysql` (the default) or `sqlite`, and `DB_PATH` names the SQLite file.
+  - `DB_DRIVER` selects `mysql` (the default) or `sqlite`, and `DB_PATH` names the SQLite file. An
+    empty `DB_PATH`, or one containing `?`, stops startup.
   - SQLite runs on a pure-Go driver with WAL, foreign keys and a busy timeout. Shutdown never
     hangs on a stuck query, transactions follow the request context, and lock errors are retried.
   - The test suites run on the same driver that ships.
@@ -35,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Continuous integration on every pull request.**
   - Checks: repository hygiene, backend build/vet/race tests, frontend build/lint/tests, and the
     Playwright end-to-end suite on both MySQL 8 and MariaDB 10.11.
-  - `make verify` runs CI's build, lint and test gates. `make e2e` runs the end-to-end suite
+  - `make verify` runs every CI gate except the end-to-end suite. `make e2e` runs that suite
     locally against a throwaway `*_e2e` database on free ports.
 
 ### Changed
@@ -44,13 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Before, the API required an email and the lead form required both. A lead with neither gets
     a 400.
   - API consumers can now receive leads with an empty `email`.
-  - Update still treats empty fields as untouched, so an existing lead cannot lose both.
+  - A lead without an email can't be converted to a customer (customers need one). The conversion
+    answers 400 and says to add an email first.
+  - Update treats an empty field as untouched.
 - **Forms:** when `first_name` and `last_name` are both absent, a single `name` field is split
-  onto them, so leads are no longer named `Form <email local part>`.
+  onto them, so leads are no longer named `Form <email local part>`. The `name` value is no longer
+  copied into the lead's notes.
 - **Form definitions** report each field's `max_length` capped at the width of the lead column it
   maps to: email 255, first and last name 100, phone 50, company 200, position 100. Existing forms
   that declared more publish the lower value. Field names and options do not change.
-- **AEO brand profile:** saving it rejects a competitor name longer than 120 characters with a 400.
 - The AEO documentation screenshots use demo data with GopherCRM as the tracked brand.
 
 ### Removed
@@ -62,10 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API keys could not be created on MySQL or MariaDB.** The hash column was too narrow and the
   insert failed. `api_keys.key_hash` is now `varchar(128)`.
 - **Lead conversion:**
-  - converting a lead without an email address used to create a customer with an empty email,
-    and the next such conversion answered 500; it is now refused with a 400 that says why;
   - a lead whose email already belongs to a customer answers 409 instead of 500;
-  - the lead pages show the server's message when a conversion is refused.
+  - the lead page shows the server's message when a conversion is refused.
 - **Form submissions:**
   - a value wider than the column it is stored in is rejected with a field error ("X must be at
     most N characters long") instead of failing with a 500 on MySQL and MariaDB;
@@ -74,9 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lead notes** are capped at 65,535 bytes, the width of the column.
   - Create and update reject longer notes with a 400.
   - Repeated form submissions still append to a lead's notes. Each appended block is capped at
-    16 KiB and marked when cut. When space runs out, the oldest appended blocks go first, and text
-    written by staff is never trimmed; if staff text leaves no room, only a one-line pointer is
-    appended.
+    16 KiB, marked when cut, and closed by an end line.
+  - When space runs out, only complete form blocks are dropped, oldest first. Every other byte is
+    kept wherever it sits: staff notes before, between or after blocks, and blocks written before
+    this release. Public submissions can therefore never erase what staff wrote.
+  - If the kept text leaves no room, a one-line pointer is appended instead, or nothing when not
+    even that fits.
   - The full submission always stays with its form.
 - **AEO:**
   - a citation URL over 1,024 characters or a host over 255 is skipped and logged, instead of
@@ -100,9 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `api_keys.key_hash` becomes `varchar(128)` and `form_submissions.data` becomes `MEDIUMTEXT`.
   - Existing rows and the unique index are kept; this was verified on MySQL and on MariaDB 10.11.
   - Take a database backup first. The automated deploy does this for you.
-  - If you apply SQL by hand: `migrations/20260923120000_widen_api_key_hash.{up,down}.sql`.
-- **AEO profiles.** An existing brand profile with a competitor name over 120 characters can't be
-  saved again until the name is shortened.
+  - If you apply SQL by hand, `migrations/20260923120000_widen_api_key_hash.{up,down}.sql` covers
+    `key_hash`. `form_submissions.data` is widened by auto-migration only.
 - **Configuration.**
   - Remove `DB_SSL_MODE` from your environment if you set it; it has no effect.
   - An unknown `DB_DRIVER` value now stops the server at startup.
@@ -129,11 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     effect without a restart. Environment variables remain the fallback.
   - The configuration system gained a generic mechanism for sensitive values.
 - The AEO prompt-generation engine is selectable per deployment.
+- A single AEO prompt can be run on demand from its drawer, including inactive drafts.
 
 ### Changed
 
 - AEO answer transcripts render as markdown, with brand mentions still highlighted.
-- A single prompt can be run on demand from its drawer, including inactive drafts.
 - AEO errors distinguish a missing key from a rejected one.
 
 ### Fixed
