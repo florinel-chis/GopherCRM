@@ -239,4 +239,41 @@ test.describe('Public forms API - large submissions', () => {
     expect(Buffer.byteLength(notes, 'utf8')).toBeLessThanOrEqual(65535);
     expect(notes, 'the newest submission is always kept').toContain('sub-5');
   });
+
+  // A lead created by a form starts with a form block, so staff notes added
+  // later follow it. Large public submissions from the lead's address must
+  // never push those notes out.
+  test('staff notes added after a form block survive repeated large submissions', async ({ request }) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    const definition = await freshChallenge(request, form.publicId);
+    const email = `staffnotes_${Date.now()}@example.com`;
+
+    const first = await submit(request, form.publicId, definition.challenge, { email, ref: 'sub-0', message: 'hello' });
+    expect(first.status()).toBe(200);
+    const stored = await findSubmission(request, token, form.id, email);
+    expect(stored?.lead_id).toBeTruthy();
+    leadIds.push(stored.lead_id);
+
+    const staffNote = 'Staff: called on Monday, wants a demo';
+    const before = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, { headers });
+    const created: string = (await before.json()).data.notes;
+    const updated = await request.put(`${API_BASE_URL}/leads/${stored.lead_id}`, {
+      headers,
+      data: { notes: `${created}\n\n${staffNote}` },
+    });
+    expect(updated.status()).toBe(200);
+
+    const message = '😀'.repeat(5000); // about 20 KB of UTF-8 each
+    for (let i = 1; i <= 5; i++) {
+      const response = await submit(request, form.publicId, definition.challenge, { email, ref: `sub-${i}`, message });
+      expect(response.status(), `submission ${i}`).toBe(200);
+    }
+
+    const lead = await request.get(`${API_BASE_URL}/leads/${stored.lead_id}`, { headers });
+    const notes: string = (await lead.json()).data.notes;
+    expect(Buffer.byteLength(notes, 'utf8')).toBeLessThanOrEqual(65535);
+    expect(notes, 'the staff note survives').toContain(staffNote);
+    expect(notes, 'the newest submission is kept').toContain('sub-5');
+    expect(notes, 'older form blocks are what gets trimmed').not.toContain('Reference: sub-1');
+  });
 });

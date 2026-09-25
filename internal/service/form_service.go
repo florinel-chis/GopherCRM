@@ -1029,7 +1029,8 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 func submissionNotes(form *models.Form, submission *models.FormSubmission) string {
 	var b strings.Builder
 	b.WriteString("\n\n--- Form submission: ")
-	b.WriteString(form.Name)
+	// The name is admin-chosen, but it must not forge a marker either.
+	b.WriteString(neutraliseNotesHeader(form.Name))
 	b.WriteString(" (")
 	b.WriteString(time.Now().Format("2006-01-02"))
 	b.WriteString(") ---")
@@ -1044,7 +1045,7 @@ func submissionNotes(form *models.Form, submission *models.FormSubmission) strin
 // submissionNotesPointer is what a lead's notes get instead of a submission
 // block when staff notes leave no room for one.
 func submissionNotesPointer(form *models.Form) string {
-	return "\n\n[Form submission: " + form.Name + " (" + time.Now().Format("2006-01-02") +
+	return "\n\n[Form submission: " + neutraliseNotesHeader(form.Name) + " (" + time.Now().Format("2006-01-02") +
 		") not copied here because the notes are full; it is kept with the form.]"
 }
 
