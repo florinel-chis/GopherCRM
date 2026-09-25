@@ -10020,7 +10020,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request data, or lead already converted",
+                        "description": "Invalid request data, lead already converted, or lead has no email address",
                         "schema": {
                             "allOf": [
                                 {
@@ -10075,6 +10075,24 @@
                     },
                     "404": {
                         "description": "Lead not found",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "A customer with the lead's email address already exists",
                         "schema": {
                             "allOf": [
                                 {

@@ -750,8 +750,8 @@ the frontend gating.
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
   transaction (`lead_service.go:272`, `:298`), and the handler classifies it with `errors.Is`
-  (`lead_handler.go:528`). No second customer is created. Driven through the UI the snackbar would
-  read "Failed to convert lead".
+  (`lead_handler.go:528`). No second customer is created. Driven through the UI the snackbar shows
+  the server's message (since 1.2.0; it used to read "Failed to convert lead").
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new, via the `request`
   fixture)
 
@@ -932,3 +932,34 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   `TestCreate_NotesLargerThanTheColumn` / `TestUpdate_NotesLargerThanTheColumn`, and on MySQL by
   `gocrm-ui/e2e/tests/leads-notes-api.spec.ts` (before the check the 65,536-byte create answered
   500 with Error 1406).
+
+### TC-LEAD-057 — Converting a lead without an email address is refused with a reason
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; the admin's own user id as `owner_id`.
+- **Steps:**
+  1. Create two `qualified` leads that have a phone number and no email (allowed since 1.2.0).
+  2. `POST /api/v1/leads/{id}/convert` for each, one after the other.
+  3. `GET` each lead.
+- **Expected:** both conversions are **400** with "This lead has no email address. Add one before
+  converting it: every customer needs an email." Both leads stay `qualified`, and no customer with
+  an empty email exists. Before the check, the first conversion created a customer with `email = ""`
+  and the second hit the unique index on `customers.email` and answered **500**. On the lead detail
+  page the snackbar shows the same message.
+- **Automation:** automated — `tests/lead_integration_test.go`
+  `TestConvertToCustomer_LeadWithoutEmailIsRejected`, on MySQL and MariaDB by
+  `gocrm-ui/e2e/tests/leads-convert-api.spec.ts`, and the snackbar by
+  `src/pages/leads/LeadDetail.test.tsx`.
+
+### TC-LEAD-058 — Converting a lead whose email already belongs to a customer is a 409
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; a customer with email `X`.
+- **Steps:**
+  1. Create a `qualified` lead with email `X`.
+  2. `POST /api/v1/leads/{id}/convert`.
+- **Expected:** **409** "A customer with this email address already exists"; the lead stays
+  `qualified`. It used to answer **500**.
+- **Automation:** automated — `tests/lead_integration_test.go`
+  `TestConvertToCustomer_EmailTakenByCustomerIsConflict`, and on MySQL and MariaDB by
+  `gocrm-ui/e2e/tests/leads-convert-api.spec.ts`.

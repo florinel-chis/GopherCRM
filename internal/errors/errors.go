@@ -17,6 +17,7 @@ var (
 	ErrNotFound                = errors.New("not found")
 	ErrRecordNotFound          = errors.New("record not found")
 	ErrLeadConverted           = errors.New("lead already converted")
+	ErrLeadMissingEmail        = errors.New("lead has no email address")
 	ErrAssigneeNotFound        = errors.New("assignee not found")
 	ErrCustomerNotFound        = errors.New("customer not found")
 	ErrLeadNotFound            = errors.New("lead not found")
