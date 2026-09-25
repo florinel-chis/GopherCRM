@@ -1,22 +1,24 @@
 import { test } from '@playwright/test';
 import { capture } from './helpers/capture';
 import { ensureAdminLoggedIn } from './helpers/login';
+import { mockAeoApi } from './helpers/aeo-fixtures';
 
 /**
  * Documentation captures for the AEO section: dashboard metrics, the tracked
  * prompt list with its answer drawer, the citation comparisons and the
  * settings page.
  *
- * Unlike the other areas this suite creates nothing: an AEO run spends real
- * provider credit and takes minutes, so the captures photograph whatever the
- * backend already holds. Seed before running — a brand profile, a handful of
- * prompts and at least one completed run (scripts/aeo_live_smoke.sh walks the
- * whole path) — or the charts will be photographed empty.
+ * Unlike the other areas, the AEO API is answered from fixed fixtures
+ * (helpers/aeo-fixtures.ts): GopherCRM as the tracked brand against fictional
+ * competitors. A real run spends provider credit, takes minutes and would
+ * photograph whatever brand the backend happens to hold. Login, navigation
+ * and the configuration keys still use the real backend.
  */
 test.describe.configure({ mode: 'serial' });
 
 test.describe('AEO documentation screenshots', () => {
   test.beforeEach(async ({ page }) => {
+    await mockAeoApi(page);
     await ensureAdminLoggedIn(page);
   });
 

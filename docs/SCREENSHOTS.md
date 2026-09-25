@@ -180,10 +180,13 @@ deleted along with their task links; the tasks themselves are untouched.
 ## AEO
 
 Answer-engine visibility tracking; FEATURES.md section 10c. Unlike the other suites, the AEO
-captures photograph whatever data the backend holds — a run spends provider credit and takes
-minutes, so the suite creates nothing. The images below were taken against a demo brand profile
-(a CRM vendor and four competitors) after three runs on a single self-hosted engine; with more engines
-configured, the per-engine cards and timeline series multiply accordingly.
+captures do not use live runs: a run spends provider credit and takes minutes. The suite answers
+the AEO API from fixed demo data (`gocrm-ui/e2e/screenshots/helpers/aeo-fixtures.ts`). That data
+has GopherCRM as the tracked brand, three fictional competitors on reserved `.example` domains,
+six prompts, and three runs on a single self-hosted engine. With more engines configured, the
+per-engine cards and timeline series multiply accordingly. To regenerate only these images, on
+free ports against the e2e database:
+`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/10-aeo.spec.ts`.
 
 ![AEO dashboard](screenshots/aeo/aeo-dashboard.png)
 The dashboard at `/aeo`: brand-visibility gauge over the selected window, per-engine summary cards,
