@@ -11,13 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **SQLite backend.** `DB_DRIVER` selects `mysql` (the default) or `sqlite`. `DB_PATH` names the
-  SQLite file. SQLite runs on a pure-Go driver with WAL, foreign keys and a busy timeout, and the
-  test suites now run on the same driver that ships. `docker-compose.sqlite.yml` runs the backend
-  and UI without a MySQL service; `docs/DOCKER.md` covers backups.
+- **SQLite backend.**
+  - `DB_DRIVER` selects `mysql` (the default) or `sqlite`, and `DB_PATH` names the SQLite file.
+  - SQLite runs on a pure-Go driver with WAL, foreign keys and a busy timeout. Shutdown never
+    hangs on a stuck query, transactions follow the request context, and lock errors are retried.
+  - The test suites run on the same driver that ships.
+  - `docker-compose.sqlite.yml` runs the backend and UI without a MySQL service; `docs/DOCKER.md`
+    covers backups.
 - **Profile and API Keys settings pages.**
-  - **Profile** shows the signed-in account and changes its password; other sessions are revoked,
-    and the page says so.
+  - **Profile** shows the signed-in account and changes its password. Changing it revokes every
+    refresh token, so no session can be renewed; access tokens already issued stay valid until
+    they expire.
   - **API Keys** lists your keys, creates new ones (the key is shown exactly once, behind a copy
     button) and revokes them in place.
 - `/health` reports `revision`, the commit the running binary was built from.
@@ -31,25 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Continuous integration on every pull request.**
   - Checks: repository hygiene, backend build/vet/race tests, frontend build/lint/tests, and the
     Playwright end-to-end suite on both MySQL 8 and MariaDB 10.11.
-  - `make verify` runs exactly what CI runs. `make e2e` runs the end-to-end suite locally against a
-    throwaway `*_e2e` database on free ports.
+  - `make verify` runs CI's build, lint and test gates. `make e2e` runs the end-to-end suite
+    locally against a throwaway `*_e2e` database on free ports.
 
 ### Changed
 
-- A lead needs **either** an email address **or** a phone number; previously both were required.
-  Update still treats empty fields as untouched, so an existing lead cannot lose both.
-- **Forms:**
-  - a single `name` field is split onto the lead's first and last name, so leads are no longer
-    named `Form <email>`;
-  - submitted values wider than the column they are stored in are rejected with 400 and a message,
-    instead of failing with a 500 on MySQL;
-  - the raw submission is stored as `MEDIUMTEXT`, so large multi-field submissions fit.
-- **Lead notes** are capped at 65,535 bytes. Create and update reject longer notes with 400.
-  Repeated form submissions append to a lead's notes: when space runs out, the oldest appended
-  form blocks are dropped first, and text written by staff is never trimmed. Each submission stays
-  complete with its form.
-- **AEO:** a citation URL, provider or model id that is too long for its column is skipped and
-  logged. Previously the whole recorded answer was lost.
+- **A lead needs either an email address or a phone number.**
+  - Before, the API required an email and the lead form required both. A lead with neither gets
+    a 400.
+  - API consumers can now receive leads with an empty `email`.
+  - Update still treats empty fields as untouched, so an existing lead cannot lose both.
+- **Forms:** when `first_name` and `last_name` are both absent, a single `name` field is split
+  onto them, so leads are no longer named `Form <email local part>`.
+- **Form definitions** report each field's `max_length` capped at the width of the lead column it
+  maps to: email 255, first and last name 100, phone 50, company 200, position 100. Existing forms
+  that declared more publish the lower value. Field names and options do not change.
+- **AEO brand profile:** saving it rejects a competitor name longer than 120 characters with a 400.
 - The AEO documentation screenshots use demo data with GopherCRM as the tracked brand.
 
 ### Removed
@@ -58,27 +59,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- API keys could not be created on MySQL or MariaDB: the hash column was too narrow and the insert
-  failed. `api_keys.key_hash` is now `varchar(128)`.
-- Configuration seeding failed on MySQL (`NO_ZERO_DATE`, Error 1292) for older rows with no
-  `created_at`. The whole seeding transaction rolled back on every boot, so new defaults were never
-  inserted.
-- A list's sort order survives refetches, and descending order works again. Columns the backend
-  cannot sort no longer offer sorting.
-- A rendering error in one route shows a recoverable fallback instead of blanking the app. Missing
-  or invalid dates render as a placeholder instead of crashing the page.
-- SQLite: shutdown no longer hangs on a stuck query, transactions follow the request context, and
-  lock errors are retried.
-- `@mui/utils` is declared as a direct dependency, so strict installers such as pnpm resolve it
-  (#54).
+- **API keys could not be created on MySQL or MariaDB.** The hash column was too narrow and the
+  insert failed. `api_keys.key_hash` is now `varchar(128)`.
+- **Lead conversion:**
+  - converting a lead without an email address used to create a customer with an empty email,
+    and the next such conversion answered 500; it is now refused with a 400 that says why;
+  - a lead whose email already belongs to a customer answers 409 instead of 500;
+  - the lead pages show the server's message when a conversion is refused.
+- **Form submissions:**
+  - a value wider than the column it is stored in is rejected with a field error ("X must be at
+    most N characters long") instead of failing with a 500 on MySQL and MariaDB;
+  - a pending double opt-in whose stored data holds such a value is refused at confirmation;
+  - the raw submission is stored as `MEDIUMTEXT`, so large multi-field submissions fit.
+- **Lead notes** are capped at 65,535 bytes, the width of the column.
+  - Create and update reject longer notes with a 400.
+  - Repeated form submissions still append to a lead's notes. Each appended block is capped at
+    16 KiB and marked when cut. When space runs out, the oldest appended blocks go first, and text
+    written by staff is never trimmed; if staff text leaves no room, only a one-line pointer is
+    appended.
+  - The full submission always stays with its form.
+- **AEO:**
+  - a citation URL over 1,024 characters or a host over 255 is skipped and logged, instead of
+    losing the whole recorded answer;
+  - an engine whose configured name (`AEO_CUSTOM_NAME`, 40 characters) or model id
+    (`AEO_*_MODEL`, 120 characters) does not fit its column is left out of runs, with an error log
+    naming the setting.
+- **Configuration seeding** failed on MySQL (`NO_ZERO_DATE`, Error 1292) for older rows with no
+  `created_at`. The whole seeding transaction rolled back on every boot, so new defaults were
+  never inserted.
+- **Lists:** the sort order survives refetches, and descending order works again. Columns the
+  backend cannot sort no longer offer sorting.
+- **Rendering errors:** an error in one route shows a recoverable fallback instead of blanking the
+  app. Missing or invalid dates render as a placeholder instead of crashing the page.
+- **Dependencies:** `@mui/utils` is declared as a direct dependency, so strict installers such as
+  pnpm resolve it (#54).
 
 ### Upgrade notes
 
-- Auto-migration at startup widens two columns on MySQL and MariaDB: `api_keys.key_hash` becomes
-  `varchar(128)` and `form_submissions.data` becomes `MEDIUMTEXT`. Existing rows and the unique index
-  are kept (verified on MariaDB 10.11). Take a database backup first; the automated deploy does
-  this for you.
-- Remove `DB_SSL_MODE` from your environment if you set it; it has no effect.
+- **Schema changes.** Auto-migration at startup widens two columns on MySQL and MariaDB:
+  `api_keys.key_hash` becomes `varchar(128)` and `form_submissions.data` becomes `MEDIUMTEXT`.
+  - Existing rows and the unique index are kept; this was verified on MySQL and on MariaDB 10.11.
+  - Take a database backup first. The automated deploy does this for you.
+  - If you apply SQL by hand: `migrations/20260923120000_widen_api_key_hash.{up,down}.sql`.
+- **AEO profiles.** An existing brand profile with a competitor name over 120 characters can't be
+  saved again until the name is shortened.
+- **Configuration.**
+  - Remove `DB_SSL_MODE` from your environment if you set it; it has no effect.
+  - An unknown `DB_DRIVER` value now stops the server at startup.
+  - `cmd/migrate` refuses database commands under SQLite, where the schema comes from
+    auto-migration.
+- **Docker.** The image now runs in `/data`, which is also where `godotenv` looks for `.env`.
 
 ## [1.1.0] - 2026-08-12
 
@@ -93,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     origin allowlist, and optional reCAPTCHA v3.
   - The embeddable widget has no dependencies, can be themed through CSS custom properties, and is
     served by the backend.
+  - Erasing a lead also scrubs its linked form submissions and confirmation tokens.
 - **API keys managed in Settings.**
   - AEO provider keys are encrypted at rest (AES-256-GCM), never echoed back by the API, and take
     effect without a restart. Environment variables remain the fallback.
@@ -103,23 +134,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AEO answer transcripts render as markdown, with brand mentions still highlighted.
 - A single prompt can be run on demand from its drawer, including inactive drafts.
-- Reasoning-class models get enough completion budget to finish their answers.
-- Gemini defaults to the rolling `gemini-flash-latest` alias.
 - AEO errors distinguish a missing key from a rejected one.
 
 ### Fixed
 
+- Reasoning-class models get enough completion budget to finish their answers, instead of stopping
+  mid-sentence.
+- Gemini defaults to the rolling `gemini-flash-latest` alias, which fixes 404s from a retired
+  pinned model.
 - Boot-time configuration seeding no longer overwrites stored values with defaults.
 - Public form endpoints answer cross-origin requests with credential-less CORS; every other route
   keeps the strict allowlist.
-- Erasing a lead also scrubs its linked form submissions and confirmation tokens.
+
+### Upgrade notes
+
+- **No breaking changes.** Schema additions (the forms tables and configuration flags) apply
+  through auto-migration at startup.
+- **New optional environment variables:** `PUBLIC_BASE_URL`, `RECAPTCHA_SITE_KEY`,
+  `RECAPTCHA_SECRET_KEY` and `RECAPTCHA_MIN_SCORE`. See `.env.example`.
 
 ## [1.0.0] - 2026-08-11
 
-First tagged release, and the one that shipped **Answer Engine Optimization (AEO)**: brand
-visibility tracking across six answer engines, with a dashboard, prompt transcripts and citation
-comparisons. The GitHub release describes it in full. The entries below were collected before the
-release was tagged.
+First tagged release. It shipped:
+- **Answer Engine Optimization (AEO):** brand visibility tracking across six answer engines, with a
+  dashboard, prompt transcripts and citation comparisons;
+- **task labels**;
+- **the Docker Compose stack**, with `CORS_ALLOWED_ORIGINS`.
+
+The GitHub release describes these in full. The entries below were collected before the release
+was tagged, and do not cover those three.
 
 ### BREAKING
 
