@@ -26,13 +26,17 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   value is silently dropped on save and comes back empty on the next edit. Either store it (model
   field, DTOs, migration) or drop the input; leaving it teaches users the CRM keeps something it
   never had.
-- **Flaky route-guard test under load**
-  - **The failure:** `src/routes/index.test.tsx` › "blocks non-admin users from /users via the
-    pathless ProtectedRoute layout" failed once in a busy `make verify` run (2026-09-25). The page
-    rendered empty, and `findByText('Access Denied')` gave up after its default 1 s.
-  - **Not a regression:** it passed 5 of 5 runs alone and in the full suite.
-  - **Likely cause:** the lazily loaded route resolves later than 1 s when the machine is busy.
-  - **Fix options:** give that assertion a longer timeout, or preload the route in the test.
+- **Vitest cases that time out on a loaded machine**
+  - **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
+    running; load average up to 71):**
+    - `src/routes/index.test.tsx` › "blocks non-admin users from /users via the pathless
+      ProtectedRoute layout": the page rendered empty and `findByText` gave up after 1 s.
+    - `src/pages/forms/FormBuilder.test.tsx` › "refuses a dropdown without options" and "lets an
+      admin pick the lead owner from the user list" hit Vitest's 5 s test timeout.
+  - **Not regressions:** each passes 5 of 5 alone, and `make verify-frontend` on a quiet machine
+    passes 38 of 38 files.
+  - **Fix options:** longer timeouts for these interaction-heavy tests, fewer Vitest workers in
+    `make verify`, or run the frontend gate before the race-enabled Go tests.
 - **AEO Citations copy describes the wrong denominator** — the backend computes
   `owned_citation_rate` and every `citation_rate` as citations to that company or domain divided by
   all citations in the window (`internal/service/aeo_service.go`, `Citations`), so the company rates
