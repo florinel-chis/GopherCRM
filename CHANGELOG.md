@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-25
+
+### Added
+
+- **SQLite backend.** `DB_DRIVER` selects `mysql` (the default) or `sqlite`. `DB_PATH` names the
+  SQLite file. SQLite runs on a pure-Go driver with WAL, foreign keys and a busy timeout, and the
+  test suites now run on the same driver that ships. `docker-compose.sqlite.yml` runs the backend
+  and UI without a MySQL service; `docs/DOCKER.md` covers backups.
+- **Profile and API Keys settings pages.**
+  - **Profile** shows the signed-in account and changes its password; other sessions are revoked,
+    and the page says so.
+  - **API Keys** lists your keys, creates new ones (the key is shown exactly once, behind a copy
+    button) and revokes them in place.
+- `/health` reports `revision`, the commit the running binary was built from.
+- **Automated production deploy** (`.github/workflows/deploy.yml`, `scripts/deploy/`).
+  - When CI passes on `main`, the tested commit is built and shipped over SSH to a single forced
+    command on the server.
+  - That command backs up the database, switches releases atomically, waits for `/health` to
+    report the new revision, and rolls back on its own if it does not.
+  - `scripts/deploy/bootstrap.sh` sets up a server once. Manual rollback and status checks run from
+    the Actions tab.
+- **Continuous integration on every pull request.**
+  - Checks: repository hygiene, backend build/vet/race tests, frontend build/lint/tests, and the
+    Playwright end-to-end suite on both MySQL 8 and MariaDB 10.11.
+  - `make verify` runs exactly what CI runs. `make e2e` runs the end-to-end suite locally against a
+    throwaway `*_e2e` database on free ports.
+
+### Changed
+
+- A lead needs **either** an email address **or** a phone number; previously both were required.
+  Update still treats empty fields as untouched, so an existing lead cannot lose both.
+- **Forms:**
+  - a single `name` field is split onto the lead's first and last name, so leads are no longer
+    named `Form <email>`;
+  - submitted values wider than the column they are stored in are rejected with 400 and a message,
+    instead of failing with a 500 on MySQL;
+  - the raw submission is stored as `MEDIUMTEXT`, so large multi-field submissions fit.
+- **Lead notes** are capped at 65,535 bytes. Create and update reject longer notes with 400.
+  Repeated form submissions append to a lead's notes: when space runs out, the oldest appended
+  form blocks are dropped first, and text written by staff is never trimmed. Each submission stays
+  complete with its form.
+- **AEO:** a citation URL, provider or model id that is too long for its column is skipped and
+  logged. Previously the whole recorded answer was lost.
+- The AEO documentation screenshots use demo data with GopherCRM as the tracked brand.
+
+### Removed
+
+- `DB_SSL_MODE`. It was read into the configuration but never used.
+
+### Fixed
+
+- API keys could not be created on MySQL or MariaDB: the hash column was too narrow and the insert
+  failed. `api_keys.key_hash` is now `varchar(128)`.
+- Configuration seeding failed on MySQL (`NO_ZERO_DATE`, Error 1292) for older rows with no
+  `created_at`. The whole seeding transaction rolled back on every boot, so new defaults were never
+  inserted.
+- A list's sort order survives refetches, and descending order works again. Columns the backend
+  cannot sort no longer offer sorting.
+- A rendering error in one route shows a recoverable fallback instead of blanking the app. Missing
+  or invalid dates render as a placeholder instead of crashing the page.
+- SQLite: shutdown no longer hangs on a stuck query, transactions follow the request context, and
+  lock errors are retried.
+- `@mui/utils` is declared as a direct dependency, so strict installers such as pnpm resolve it
+  (#54).
+
+### Upgrade notes
+
+- Auto-migration at startup widens two columns on MySQL and MariaDB: `api_keys.key_hash` becomes
+  `varchar(128)` and `form_submissions.data` becomes `MEDIUMTEXT`. Existing rows and the unique index
+  are kept (verified on MariaDB 10.11). Take a database backup first; the automated deploy does
+  this for you.
+- Remove `DB_SSL_MODE` from your environment if you set it; it has no effect.
+
+## [1.1.0] - 2026-08-12
+
+### Added
+
+- **Forms module.**
+  - Build contact, quote-request and lead-capture forms in the CRM. Embed them on any website with
+    one script tag, or share the hosted form page.
+  - Submissions create leads, or match existing ones, automatically.
+  - **Double opt-in:** the visitor confirms their email through a single-use link.
+  - Layered spam protection: honeypot, minimum-fill-time challenge, per-IP rate limits, a per-form
+    origin allowlist, and optional reCAPTCHA v3.
+  - The embeddable widget has no dependencies, can be themed through CSS custom properties, and is
+    served by the backend.
+- **API keys managed in Settings.**
+  - AEO provider keys are encrypted at rest (AES-256-GCM), never echoed back by the API, and take
+    effect without a restart. Environment variables remain the fallback.
+  - The configuration system gained a generic mechanism for sensitive values.
+- The AEO prompt-generation engine is selectable per deployment.
+
+### Changed
+
+- AEO answer transcripts render as markdown, with brand mentions still highlighted.
+- A single prompt can be run on demand from its drawer, including inactive drafts.
+- Reasoning-class models get enough completion budget to finish their answers.
+- Gemini defaults to the rolling `gemini-flash-latest` alias.
+- AEO errors distinguish a missing key from a rejected one.
+
+### Fixed
+
+- Boot-time configuration seeding no longer overwrites stored values with defaults.
+- Public form endpoints answer cross-origin requests with credential-less CORS; every other route
+  keeps the strict allowlist.
+- Erasing a lead also scrubs its linked form submissions and confirmation tokens.
+
+## [1.0.0] - 2026-08-11
+
+First tagged release, and the one that shipped **Answer Engine Optimization (AEO)**: brand
+visibility tracking across six answer engines, with a dashboard, prompt transcripts and citation
+comparisons. The GitHub release describes it in full. The entries below were collected before the
+release was tagged.
+
 ### BREAKING
 
 - Deleting a **user, customer or lead** is now irreversible. `DELETE` overwrites every personal
@@ -168,3 +282,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written (redacted) to the application log.
 - ESLint reports 40 errors and 137 warnings in the frontend, mostly unused Playwright fixture
   arguments and `any` types. These pre-date this work and were not touched. `tsc -b` is clean.
+
+[Unreleased]: https://github.com/florinel-chis/GopherCRM/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/florinel-chis/GopherCRM/releases/tag/v1.0.0
