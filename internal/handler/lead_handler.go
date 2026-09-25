@@ -552,7 +552,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		case errors.Is(err, apperrors.ErrLeadMissingEmail):
 			utils.RespondBadRequest(c, "This lead has no email address. Add one before converting it: every customer needs an email.")
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
-			utils.RespondConflict(c, "A customer with this email address already exists")
+			utils.RespondConflict(c, "customer with this email already exists")
 		default:
 			utils.RespondInternalError(c)
 		}

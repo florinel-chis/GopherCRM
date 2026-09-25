@@ -958,7 +958,7 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 - **Steps:**
   1. Create a `qualified` lead with email `X`.
   2. `POST /api/v1/leads/{id}/convert`.
-- **Expected:** **409** "A customer with this email address already exists"; the lead stays
+- **Expected:** **409** "customer with this email already exists" (the same text as a duplicate on the customer endpoints); the lead stays
   `qualified`. It used to answer **500**.
 - **Automation:** automated — `tests/lead_integration_test.go`
   `TestConvertToCustomer_EmailTakenByCustomerIsConflict`, and on MySQL and MariaDB by
