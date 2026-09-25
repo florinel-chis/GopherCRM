@@ -123,9 +123,11 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   TEXT column (65,535 bytes).**
   - Each submission block is capped at 16 KiB.
   - Only whole form blocks are dropped, oldest first, under a marker; the newest is always kept.
-  - Staff-written text before the first block is **never** trimmed. When it leaves no room, a
-    one-line pointer to the stored submission is added instead.
-  - A submitted value cannot forge a block header.
+  - A block runs from its header line to its end line. Everything else is **never** trimmed:
+    staff text before, between or after blocks, and blocks written before blocks carried an end
+    line. When that text leaves no room, a one-line pointer to the stored submission is added
+    instead.
+  - A submitted value cannot forge a block header or end line, not even with extra dashes.
   - Every submission stays whole with the form.
   · automated · `lead_notes_test.go` (including a 2,000-case randomized invariant sweep),
   `form_service_test.go`,
@@ -135,3 +137,13 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   stored intact: `form_submissions.data` is MEDIUMTEXT, which holds any submission the 64 KiB body
   cap admits** · automated · `form_submission_data_test.go`, and on MySQL by
   `forms-public-api.spec.ts` (a 10,000-character `<` message used to answer 500).
+- **TC-FORM-086 — staff notes added to a form-created lead survive repeated large submissions.**
+  A lead created by a form starts with a form block, so staff notes added later follow it.
+  - Steps: submit once (the lead is created); append a staff note through `PUT /leads/{id}`; submit
+    five ~20 KB messages from the same address.
+  - The staff note is still there, the notes fit 65,535 bytes, the newest block is kept and the
+    oldest are trimmed.
+  - Before the fix, everything after the first block header counted as form blocks, so a few public
+    submissions erased the staff note.
+  · automated · `lead_notes_test.go` `TestAppendLeadNotesKeepsStaffTextWrittenAfterABlock`, and on
+  MySQL and MariaDB by `forms-public-api.spec.ts`.
