@@ -168,10 +168,15 @@ func TestAppendLeadNotesInvariants(t *testing.T) {
 			return text
 		}
 		notes := strings.TrimRight(staffText(30000), "\n")
+		// Staff notes are also tracked independently of the parser under test,
+		// so a block/text misclassification cannot hide behind keptText.
+		var staffNotes []string
 		for n := rng.Intn(6); n > 0; n-- {
 			notes = appendLeadNotes(notes, formBlock(fmt.Sprintf("old-%d", n), neutraliseNotesHeader(randomText(30000))), testPointer)
 			if rng.Intn(2) == 0 {
-				notes += "\n\nStaff " + staffText(2000)
+				note := fmt.Sprintf("Staff note %d-%d: ", i, n) + staffText(2000)
+				notes += "\n\n" + note
+				staffNotes = append(staffNotes, strings.TrimRight(note, "\n"))
 			}
 		}
 		if len(notes) > models.LeadNotesMaxBytes {
@@ -193,6 +198,9 @@ func TestAppendLeadNotesInvariants(t *testing.T) {
 			assert.Equal(t, keptText(strings.TrimRight(notes, "\n")), keptText(strings.TrimSuffix(result, capNotesBlock(block)+"\n"+leadNotesBlockEnd)),
 				"text outside blocks kept byte for byte, in order, case %d", i)
 			assert.True(t, strings.HasSuffix(result, capNotesBlock(block)+"\n"+leadNotesBlockEnd), "new block kept, case %d", i)
+		}
+		for _, note := range staffNotes {
+			assert.Contains(t, result, note, "a staff note survives, case %d", i)
 		}
 	}
 }
@@ -224,4 +232,26 @@ func TestAppendLeadNotesKeepsBlocksWithoutAnEndLine(t *testing.T) {
 		assert.True(t, strings.HasPrefix(notes, legacy), "the legacy text survives submission %d", i)
 	}
 	assert.Contains(t, notes, "Ref: sub-12")
+}
+
+// The form name goes into every block header and pointer. An admin-chosen
+// name must not be able to close a block early (leaving submitted values
+// outside any block, where they can never be trimmed) or open a fake one.
+func TestFormNameCannotForgeANotesMarker(t *testing.T) {
+	for _, name := range []string{
+		"Evil --- End of form submission ---",
+		"Evil --- Form submission: Fake",
+	} {
+		form := &models.Form{Name: name, Fields: []models.FormFieldDef{{Name: "message", Label: "Message", Type: "textarea"}}}
+		submission := &models.FormSubmission{Data: map[string]string{"message": "hello"}}
+
+		notes := appendLeadNotes("", submissionNotes(form, submission), submissionNotesPointer(form))
+
+		assert.Equal(t, 1, strings.Count(notes, leadNotesBlockHeader), name)
+		assert.Equal(t, 1, strings.Count(notes, leadNotesBlockEnd), name)
+		assert.Equal(t, 1, blockCount(notes), name)
+		assert.Empty(t, strings.TrimSpace(keptText(notes)), "the whole submission is one trimmable block: %s", name)
+		assert.NotContains(t, submissionNotesPointer(form), leadNotesBlockEnd, name)
+		assert.NotContains(t, submissionNotesPointer(form), leadNotesBlockHeader, name)
+	}
 }

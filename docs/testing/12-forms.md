@@ -123,11 +123,16 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   TEXT column (65,535 bytes).**
   - Each submission block is capped at 16 KiB.
   - Only whole form blocks are dropped, oldest first, under a marker; the newest is always kept.
-  - A block runs from its header line to its end line. Everything else is **never** trimmed:
+  - A block runs from its header line to its end line. Everything else is **never** dropped:
     staff text before, between or after blocks, and blocks written before blocks carried an end
-    line. When that text leaves no room, a one-line pointer to the stored submission is added
-    instead.
-  - A submitted value cannot forge a block header or end line, not even with extra dashes.
+    line. Two exceptions: trailing newlines give way to the next block, and a verbatim copy of the
+    trim marker is moved. Text typed *inside* a block, or a pasted copy of a whole block, goes with
+    that block.
+  - When the kept text leaves no room, a one-line pointer to the stored submission is added instead.
+    Pointers are never dropped, so a lead whose kept text is near the limit fills up with them;
+    staff clean such notes up by hand.
+  - Neither a submitted value nor the form name can forge a block header or end line, not even with
+    extra dashes.
   - Every submission stays whole with the form.
   · automated · `lead_notes_test.go` (including a 2,000-case randomized invariant sweep),
   `form_service_test.go`,

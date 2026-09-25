@@ -15,14 +15,18 @@ import (
 // Only complete form blocks are ever trimmed, whole and oldest first: each
 // submission is also stored in full with its form, so a trimmed block loses
 // nothing. A block is exactly the span from its header line to its end line.
-// Submitted values cannot forge either line (see neutraliseNotesHeader); text
-// that reproduces both verbatim is a block by definition.
+// Submitted values and form names cannot forge either line (see
+// neutraliseNotesHeader); text that reproduces both verbatim, such as a pasted
+// copy of a block, is a block by definition, and so is anything typed inside
+// one.
 // Everything else is kept byte for byte wherever it sits, before, between or
 // after blocks: staff text exists nowhere else, and a lead created by a form
 // starts with a block, so staff notes usually follow one. Otherwise anyone who
 // knows a lead's address could erase them by submitting a public form a few
 // times. Blocks written before blocks carried an end line cannot be told apart
-// from staff text that follows them, so they are kept too.
+// from staff text that follows them, so they are kept too. Two things are not
+// kept verbatim: trailing newlines give way to the next block's blank line, and
+// the trim marker's own text is moved to where the marker belongs.
 const (
 	// leadNotesBlockMaxBytes caps what a single submission adds.
 	leadNotesBlockMaxBytes = 16 << 10
