@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
+  licensing as unresolved.
+
 ## [1.2.0] - 2026-09-25
 
 ### Added

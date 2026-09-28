@@ -625,9 +625,7 @@ rules, erasure-on-delete). Then:
 
 ## License
 
-This project has been documented as MIT-licensed, but no `LICENSE` file is currently checked into
-the repository and no license metadata is declared in `go.mod` or `gocrm-ui/package.json`. Treat the
-licensing as unresolved until a `LICENSE` file lands.
+GopherCRM is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Support
 
