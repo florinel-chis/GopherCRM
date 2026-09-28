@@ -264,4 +264,5 @@ EXPOSE 80
 
 ## License
 
-This project is part of the GopherCRM system and follows the same license terms.
+This project is part of GopherCRM and is released under the MIT License. See
+[LICENSE](../LICENSE).
