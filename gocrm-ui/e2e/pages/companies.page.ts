@@ -263,9 +263,12 @@ export class CompaniesPage {
    * Picks a company in the "Company (linked)" autocomplete of the lead or
    * customer form: type a fragment (the domain is unique), then click the
    * option, which reads "Name (domain)".
+   *
+   * Addressed by role: once the autocomplete is open its listbox carries the
+   * same label as the input, so `getByLabel` would match two elements.
    */
   async pickLinkedCompany(typed: string, optionLabel: string) {
-    const input = this.page.getByLabel('Company (linked)');
+    const input = this.page.getByRole('combobox', { name: 'Company (linked)' });
     await input.click();
     await input.fill(typed);
     await this.page.getByRole('option', { name: optionLabel, exact: true }).click();
