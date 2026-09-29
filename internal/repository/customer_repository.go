@@ -34,7 +34,7 @@ func (r *customerRepository) Create(customer *models.Customer) error {
 
 func (r *customerRepository) GetByID(id uint) (*models.Customer, error) {
 	var customer models.Customer
-	err := r.db.Preload("User").First(&customer, id).Error
+	err := r.db.Preload("User").Preload("CompanyRecord").First(&customer, id).Error
 	if err != nil {
 		return nil, err
 	}

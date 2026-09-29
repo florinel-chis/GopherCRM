@@ -51,7 +51,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 	// Migrate database
 	err = suite.db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		// Label precedes Task so the many2many join table is built against an
 		// existing labels table, mirroring the order in MigrateDatabase().

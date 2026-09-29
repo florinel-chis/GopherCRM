@@ -34,7 +34,7 @@ func setupLeadErasureDB(t *testing.T) *gorm.DB {
 	db := setupDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		&models.APIKey{},
 		&models.RefreshToken{},
@@ -106,6 +106,7 @@ func convertLead(t *testing.T, db *gorm.DB, lead *models.Lead) *models.Customer 
 	leadService := service.NewLeadService(
 		repository.NewLeadRepository(db),
 		repository.NewCustomerRepository(db),
+		repository.NewCompanyRepository(db),
 		utils.NewTransactionManager(db),
 	)
 	customer, err := leadService.ConvertToCustomer(lead.ID, &models.Customer{})
@@ -271,6 +272,7 @@ func TestCustomerServiceErasureFollowsTheConversionLink(t *testing.T) {
 	customerService := service.NewCustomerService(
 		repository.NewCustomerRepositoryWithLeadErasure(db),
 		repository.NewUserRepository(db),
+		repository.NewCompanyRepository(db),
 	)
 
 	owner := seedLeadOwner(t, db)
@@ -435,6 +437,7 @@ func TestLeadServiceErasureOfAMissingLeadIsNotFound(t *testing.T) {
 	leadService := service.NewLeadService(
 		repository.NewLeadRepository(db),
 		repository.NewCustomerRepository(db),
+		repository.NewCompanyRepository(db),
 		utils.NewTransactionManager(db),
 	)
 
@@ -451,6 +454,7 @@ func TestLeadServiceErasureIsNotRepeatable(t *testing.T) {
 	leadService := service.NewLeadService(
 		leadRepo,
 		repository.NewCustomerRepository(db),
+		repository.NewCompanyRepository(db),
 		utils.NewTransactionManager(db),
 	)
 

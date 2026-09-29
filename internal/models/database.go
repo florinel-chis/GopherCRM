@@ -47,6 +47,7 @@ func CloseDatabase() error {
 func MigrateDatabase() error {
 	return DB.AutoMigrate(
 		&User{},
+		&Company{},
 		&Lead{},
 		&Customer{},
 		&Ticket{},

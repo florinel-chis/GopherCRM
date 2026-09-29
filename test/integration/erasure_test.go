@@ -39,7 +39,7 @@ func setupErasureDB(t *testing.T) *gorm.DB {
 	db := setupDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
-		&models.Customer{},
+		&models.Company{}, &models.Customer{},
 		&models.APIKey{},
 		&models.RefreshToken{},
 		&models.PasswordResetToken{},
@@ -445,6 +445,7 @@ func TestErasingACustomerThatDoesNotExistReportsNotFound(t *testing.T) {
 	customerService := service.NewCustomerService(
 		repository.NewCustomerRepository(db),
 		repository.NewUserRepository(db),
+		repository.NewCompanyRepository(db),
 	)
 
 	err := customerService.Delete(99999)
@@ -769,7 +770,7 @@ func TestErasedCustomerEmailCanBeUsedAgain(t *testing.T) {
 	db := setupErasureDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
 
 	original := &models.Customer{FirstName: "First", LastName: "Tenant", Email: "reusable-customer@example.com"}
 	require.NoError(t, customerService.Create(original))

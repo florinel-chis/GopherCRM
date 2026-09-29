@@ -44,6 +44,14 @@ var (
 	ErrInvalidLabelColor  = errors.New("label color must be a hex value of the form #RRGGBB")
 	ErrLabelNotFound      = errors.New("label not found")
 
+	// Company errors. ErrDuplicateCompanyDomain is the company counterpart of
+	// ErrDuplicateEmail and is answered with 409. ErrCompanyNotFound is what a
+	// lead or customer create/update gets back for a company_id that matches no
+	// live company; the handlers answer it with 400 INVALID_REFERENCE, because
+	// the bad reference is in the body, not at the requested path.
+	ErrDuplicateCompanyDomain = errors.New("a company with this domain already exists")
+	ErrCompanyNotFound        = errors.New("company not found")
+
 	// AEO errors. The two conflict sentinels are answered with 409;
 	// ErrProfileNotConfigured is the exception that is answered with 404 on
 	// GET /aeo/profile (an unconfigured profile is a missing resource there)

@@ -40,7 +40,10 @@ type CreateLeadRequest struct {
 	ExternalID     string                    `json:"external_id,omitempty"`
 	Notes          string                    `json:"notes,omitempty"`
 	OwnerID        *uint                     `json:"owner_id,omitempty"`
-	CreatedAt      *string                   `json:"created_at,omitempty"` // ISO8601 timestamp for import
+	// CompanyID links the lead to a company record; 0 or absent means none.
+	// It is independent of the free-text Company field above.
+	CompanyID *uint   `json:"company_id,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"` // ISO8601 timestamp for import
 }
 
 type UpdateLeadRequest struct {
@@ -56,6 +59,9 @@ type UpdateLeadRequest struct {
 	ExternalID     string                    `json:"external_id,omitempty"`
 	Notes          string                    `json:"notes,omitempty"`
 	OwnerID        *uint                     `json:"owner_id,omitempty"`
+	// CompanyID: absent leaves the link alone, 0 clears it, any other value
+	// must name a live company.
+	CompanyID *uint `json:"company_id,omitempty"`
 }
 
 type ConvertLeadRequest struct {
@@ -67,7 +73,7 @@ type ConvertLeadRequest struct {
 
 // Create godoc
 // @Summary Create a new lead
-// @Description Create a new lead (sales and admin roles only)
+// @Description Create a new lead (sales and admin roles only). Optional company_id links the lead to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -75,7 +81,7 @@ type ConvertLeadRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateLeadRequest true "Lead creation request"
 // @Success 201 {object} utils.APIResponse{data=models.Lead} "Lead created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or missing owner_id for admin users"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, missing owner_id for admin users, or an unknown company_id (INVALID_REFERENCE)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only assign leads to themselves"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
@@ -115,6 +121,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 		Classification: req.Classification,
 		ExternalID:     req.ExternalID,
 		Notes:          req.Notes,
+	}
+	if req.CompanyID != nil && *req.CompanyID != 0 {
+		lead.CompanyID = req.CompanyID
 	}
 
 	// Set custom created_at for imports (preserves original submission date)
@@ -156,6 +165,12 @@ func (h *LeadHandler) Create(c *gin.Context) {
 
 	if err := h.leadService.Create(lead); err != nil {
 		logger.WithError(err).Error("Failed to create lead")
+		if errors.Is(err, apperrors.ErrCompanyNotFound) {
+			// A bad company id is a bad reference in the body, not a missing
+			// resource at the requested path, so it is a 400 like label_ids.
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+			return
+		}
 		utils.RespondInternalError(c)
 		return
 	}
@@ -320,7 +335,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a lead
-// @Description Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner)
+// @Description Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner). company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -329,7 +344,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body UpdateLeadRequest true "Lead update request; empty fields are left unchanged"
 // @Success 200 {object} utils.APIResponse{data=models.Lead} "Lead updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID or request data"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID or request data, or an unknown company_id (INVALID_REFERENCE)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only update their own leads; only admins can reassign owners"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
@@ -417,9 +432,22 @@ func (h *LeadHandler) Update(c *gin.Context) {
 		updates["owner_id"] = *req.OwnerID
 	}
 
+	// The scalar counterpart of the label_ids rule: absent keeps, 0 clears.
+	if req.CompanyID != nil {
+		if *req.CompanyID == 0 {
+			updates["company_id"] = (*uint)(nil)
+		} else {
+			updates["company_id"] = req.CompanyID
+		}
+	}
+
 	updatedLead, err := h.leadService.Update(uint(id), updates)
 	if err != nil {
 		logger.WithError(err).Error("Failed to update lead")
+		if errors.Is(err, apperrors.ErrCompanyNotFound) {
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+			return
+		}
 		utils.RespondInternalError(c)
 		return
 	}

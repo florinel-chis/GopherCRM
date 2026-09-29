@@ -56,7 +56,7 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	suite.NoError(err)
 	
 	// Migrate the schema
-	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Customer{})
+	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{})
 	suite.NoError(err)
 	
 	suite.db = db
@@ -73,7 +73,7 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	}
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
-	suite.customerService = service.NewCustomerService(customerRepo, userRepo)
+	suite.customerService = service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
 	
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)

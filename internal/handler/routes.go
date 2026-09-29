@@ -46,6 +46,24 @@ func SetupCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
 	}
 }
 
+// SetupCompanyRoutes mounts the companies endpoints. Reading is open to the
+// three staff roles, writing to admin and sales, deleting to admin — the same
+// split as customers. The company's leads are admin and sales only, as the
+// leads endpoints are; the handler narrows sales to their own leads.
+func SetupCompanyRoutes(router *gin.RouterGroup, handler *CompanyHandler) {
+	companies := router.Group("/companies")
+	companies.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport))
+	{
+		companies.POST("", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.Create)
+		companies.GET("", handler.List)
+		companies.GET("/:id", handler.Get)
+		companies.PUT("/:id", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.Update)
+		companies.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+		companies.GET("/:id/customers", handler.ListCustomers)
+		companies.GET("/:id/leads", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.ListLeads)
+	}
+}
+
 func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
 	tickets := router.Group("/tickets")
 	{

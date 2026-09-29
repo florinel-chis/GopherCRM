@@ -119,7 +119,7 @@ func newFormFixture(t *testing.T, cfg config.FormsConfig) *formFixture {
 
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
-		&models.Customer{},
+		&models.Company{}, &models.Customer{},
 		&models.Lead{},
 		&models.Form{},
 		&models.FormSubmission{},
