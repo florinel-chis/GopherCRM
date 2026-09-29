@@ -8,6 +8,9 @@ handlers, services and repository; the frontend pages named here are the ones th
 introduces, so their selectors are stated where the backend contract fixes them and left generic
 otherwise.
 
+24 cases: 9 automated (8 by `gocrm-ui/e2e/tests/admin-companies.spec.ts`, 6 of them partial, plus
+TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-login helper.
+
 **Sources**
 
 - `internal/models/company.go`, `internal/models/lead.go`, `internal/models/customer.go`,
@@ -64,7 +67,8 @@ otherwise.
   `{success:true, data:[…], meta:{page, per_page, total, total_pages}}` — `data` is the array
   itself, unlike the `{customers:[…], total}` object of the customers list. Every item carries
   `customer_count` and `lead_count`.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new)
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "admin can view the companies list page"
 
 ### TC-COMP-002 — Search matches name, domain, industry and city
 - **Priority:** P1
@@ -78,7 +82,9 @@ otherwise.
   matching company with `meta.total` 1. The search is a substring match over `name`, `domain`,
   `industry` and `city` (`companySearchClause`); it does not match notes, phone or address.
   On MySQL and MariaDB the match is case-insensitive (collation); on SQLite it is case-sensitive.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "admin can search companies" (searches by name and expects one row; the industry, city and
+  domain halves are pinned in Go).
   Go: `company_repository_test.go` `TestCompanyRepository_ListSearchSortAndPaginate`,
   `company_integration_test.go` `TestListSearchSortAndPagination`.
 
@@ -135,7 +141,10 @@ otherwise.
   `owner` preloaded (null when admin left the owner empty), `customer_count` 0, `lead_count` 0,
   and `domain` normalised to `<run>.example` — lower case, scheme, path and leading `www.`
   stripped. The list shows the new row; the detail page shows every field.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new)
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "admin can create a company with all fields and sees them on the detail page" (fills a plain
+  domain, so the normalisation half is pinned in Go: `company_service_test.go`
+  `TestNormalizeCompanyDomain`)
 
 ### TC-COMP-007 — Validation: name required, website must be http(s), employee range from the list
 - **Priority:** P1
@@ -150,7 +159,8 @@ otherwise.
   https URL" (`normalizeCompany`). Step 3: **400** from the binding tag
   `oneof=1-10 11-50 51-200 201-500 501-1000 1000+`. A blank or whitespace-only name sent directly
   is **400** "company name is required".
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "validation errors keep the form open" (steps 1 and 2, client-side; step 3 is Go only).
   Go: `company_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
   `company_service_test.go` `TestCreate_ValidationFailures`.
 
@@ -180,7 +190,10 @@ otherwise.
   exists`. The form stays open and shows the message. The check is `LOWER(domain)` among live rows
   (`companyRepository.ExistsByDomain`); there is deliberately no unique index, so a soft-deleted
   company does not reserve its domain.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "a duplicate domain is refused with the server message on the domain field" (sends the same
+  domain, not the upper-case scheme variant; it asserts the 409 and that the domain field shows
+  a server message, not the exact text).
   Go: `company_handler_test.go` `TestCreate_DuplicateDomainIs409`,
   `company_integration_test.go` `TestCreateNormalisesTheDomainAndRefusesDuplicates`.
 
@@ -245,7 +258,9 @@ otherwise.
   `owner_id` is unchanged (the form did not send it), and the response is re-read with the owner
   and refreshed counts. PUT is a full replacement of the text fields: what the form leaves blank
   is cleared.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "admin can edit a company" (changes the industry and checks the detail page; clearing the
+  website and the kept owner are pinned in Go and in `CompanyForm.test.tsx`).
   Go: `company_handler_test.go` `TestUpdate_ReplacesTheFieldsAndKeepsTheOwner`.
 
 ### TC-COMP-015 — Duplicate domain is 409 on update; a company may keep its own domain
@@ -289,7 +304,9 @@ otherwise.
   `GET /api/v1/companies/{id}` is now 404. The customer and the lead still exist with their
   free-text company unchanged and `company_id` and `company_record` absent. The domain can be
   reused immediately (TC-COMP-009's check sees live rows only). Deleting again is **404**.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "deleting a company leaves the customer with its text company only" (customer half through the
+  UI; the lead half, the 404 afterwards and the domain reuse are pinned in Go).
   Go: `company_service_test.go` `TestCompanyServiceDelete_UnlinksLeadsAndCustomersThenSoftDeletes`,
   `TestCompanyServiceDelete_RollsBackTheUnlinksWhenTheDeleteFails`;
   `company_integration_test.go` `TestDeleteUnlinksLeadsAndCustomers`.
@@ -320,7 +337,8 @@ otherwise.
   customer detail shows the linked company as a link to it; the company detail lists the
   customer under its customers and reports `customer_count` 1. The two company fields are
   independent: neither overwrites the other.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
+  "linking a customer to a company shows the link on both detail pages".
   Go: `company_integration_test.go` `TestLeadAndCustomerCompanyLinkThroughTheAPI`.
 
 ### TC-COMP-020 — Link a lead to a company; sales sees only its own leads on the company

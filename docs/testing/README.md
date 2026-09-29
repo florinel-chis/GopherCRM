@@ -26,8 +26,8 @@ that the test was executed as part of writing this catalog.
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
-| [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 1 | 17 | 6 |
-| **Total** | | **509** | **142** | **227** | **140** | **111** | **325** | **73** |
+| [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
+| **Total** | | **509** | **142** | **227** | **140** | **119** | **317** | **73** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -47,11 +47,12 @@ over-long citation URL rolling back its whole answer on MySQL only.
 
 [13-companies.md](13-companies.md) was added 2026-09-29 with the companies feature (`12-forms.md`
 is the forms catalog and is not in this table). Its cases are written against the backend contract
-that ships with the feature and the frontend pages the same change introduces; the target spec,
-`gocrm-ui/e2e/tests/admin-companies.spec.ts`, is named on every planned case. Every case names the
-Go test that already pins its API behaviour, so the spec can be written against a verified
-contract. The six blocked cases are the sales and support role cases, blocked for the usual reason
-(lesson 8).
+that ships with the feature and the frontend pages the same change introduces. Eight cases are
+automated by `gocrm-ui/e2e/tests/admin-companies.spec.ts` (six of them *automated (partial)*, as
+in 10-labels: the spec asserts the core outcome, the rest is pinned in Go) and TC-COMP-024 by the
+forms suite; the same spec is named on every planned case. Every case names the Go test that
+already pins its API behaviour. The six blocked cases are the sales and support role cases,
+blocked for the usual reason (lesson 8).
 
 ## Case format
 
