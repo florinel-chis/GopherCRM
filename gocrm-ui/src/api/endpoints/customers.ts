@@ -20,12 +20,16 @@ export interface CreateCustomerData {
   country: string;
   postal_code: string;
   notes?: string;
+  // Link to a Company record. On update, 0 clears the link and an absent
+  // field keeps it (the scalar counterpart of the task label rule).
+  company_id?: number;
 }
 
 export type UpdateCustomerData = Partial<CreateCustomerData>;
 
-// Helper function to transform backend customer to frontend format
-const transformCustomerFromBackend = (backendCustomer: any): Customer => {
+// Helper function to transform backend customer to frontend format. Exported
+// for the company sub-resource endpoint, which returns the same raw rows.
+export const transformCustomerFromBackend = (backendCustomer: any): Customer => {
   return {
     ...backendCustomer,
     company_name: backendCustomer.company || '',
@@ -74,6 +78,7 @@ export const customersApi = {
       country: data.country,
       postal_code: data.postal_code,
       notes: data.notes || '',
+      ...(data.company_id !== undefined && { company_id: data.company_id }),
     };
     const response = await api.post<any>('/customers', transformedData);
     return transformCustomerFromBackend(response.data);
@@ -98,6 +103,7 @@ export const customersApi = {
     if (data.country !== undefined) transformedData.country = data.country;
     if (data.postal_code !== undefined) transformedData.postal_code = data.postal_code;
     if (data.notes !== undefined) transformedData.notes = data.notes;
+    if (data.company_id !== undefined) transformedData.company_id = data.company_id;
     
     const response = await api.put<any>(`/customers/${id}`, transformedData);
     return transformCustomerFromBackend(response.data);
