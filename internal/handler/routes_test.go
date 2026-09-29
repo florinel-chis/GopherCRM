@@ -21,6 +21,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupUserRoutes(group, &UserHandler{})
 	SetupLeadRoutes(group, &LeadHandler{})
 	SetupCustomerRoutes(group, &CustomerHandler{})
+	SetupCompanyRoutes(group, &CompanyHandler{})
 	SetupTicketRoutes(group, &TicketHandler{})
 	SetupTaskRoutes(group, &TaskHandler{})
 	SetupLabelRoutes(group, &LabelHandler{})
@@ -101,6 +102,14 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodDelete, "/api/v1/forms/123"},
 		{http.MethodGet, "/api/v1/forms/123/submissions"},
 		{http.MethodGet, "/api/v1/forms/submissions/5"},
+		// Companies: the parameter route and its two deeper static segments
+		// sit next to each other on the same verb.
+		{http.MethodGet, "/api/v1/companies"},
+		{http.MethodGet, "/api/v1/companies/1"},
+		{http.MethodPut, "/api/v1/companies/1"},
+		{http.MethodDelete, "/api/v1/companies/1"},
+		{http.MethodGet, "/api/v1/companies/1/customers"},
+		{http.MethodGet, "/api/v1/companies/1/leads"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()
