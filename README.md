@@ -9,6 +9,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 🧹 **Right to Erasure**: Deleting a person overwrites their personal data before the row is soft-deleted (GDPR Art. 17)
 - 👥 **Lead Management**: Lead tracking with conversion to customers
 - 🏢 **Customer Management**: Complete customer lifecycle management
+- 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
@@ -462,6 +463,24 @@ authentication and live on the moderate tier:
   egress; supports `search`, `sort_by`, `sort_order`)*
 - `POST /api/v1/customers/:id/assign` - Assign the customer to an active admin or sales user
   *(admin, sales)*
+
+### Companies *(read: admin, sales, support; write: admin, sales; delete: admin)*
+- `GET /api/v1/companies` - List companies (`page`, `limit`, `search` over name/domain/industry/city,
+  `sort_by` in `id, name, domain, industry, created_at, updated_at` — anything else is 400, `sort_order`);
+  `data` is the array, `meta` the pagination
+- `POST /api/v1/companies` - Create a company *(domain normalised and unique among live companies → 409;
+  `owner_id` must be a live user → 400 `INVALID_REFERENCE`; sales may only own it themselves)*
+- `GET /api/v1/companies/:id` - Get a company with its owner and live `customer_count` / `lead_count`
+- `PUT /api/v1/companies/:id` - Replace a company's fields *(absent text fields are cleared; `owner_id`
+  absent keeps, `0` clears — admin only)*
+- `DELETE /api/v1/companies/:id` - Soft-delete a company and clear `company_id` on its leads and
+  customers in one transaction *(not an erasure: companies hold no personal data)*
+- `GET /api/v1/companies/:id/customers` - The company's customers, paginated
+- `GET /api/v1/companies/:id/leads` - The company's leads, paginated *(admin and sales; sales sees only
+  its own)*
+- Leads and customers accept `company_id` on create and update *(unknown → 400 `INVALID_REFERENCE`;
+  on update `0` clears, absent keeps)* and return `company_record` on their detail endpoints. The
+  free-text `company` field is independent of the link.
 
 ### Tickets
 - `GET /api/v1/tickets` - List tickets *(customers cannot list all tickets)*

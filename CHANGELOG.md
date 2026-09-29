@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Companies.** A curated organisation record next to the free-text company field of leads and
+  customers.
+  - `/companies`: list with search (name, domain, industry, city), a sort allowlist and
+    pagination; get with the owner and live customer and lead counts; create and update with the
+    domain normalised (lower case, no scheme, path or `www.`) and unique among live companies
+    (409); admin-only delete that clears the links from leads and customers in the same
+    transaction. Reading is open to admin, sales and support; writing to admin and sales.
+  - `GET /companies/{id}/customers` and `GET /companies/{id}/leads` page through the linked
+    records; sales sees only the leads it owns.
+  - Leads and customers accept an optional `company_id` on create and update (unknown → 400
+    `INVALID_REFERENCE`; on update `0` clears, absent keeps) and return `company_record` on their
+    detail endpoints. The free-text `company` column and the public forms are unchanged.
+  - Erasure is unchanged: `company_id` is a business link and stays on the erased row; companies
+    hold no personal data.
+  - Migration `20260929120000_add_companies` for MySQL and MariaDB; auto-migration covers SQLite.
 - `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
   licensing as unresolved.
 

@@ -79,6 +79,19 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   (engine 3.53.4), a much newer build than its author tested against. It works,
   but the pairing is worth re-checking whenever glebarez cuts a release.
 
+## Companies — follow-ups
+
+- **Backfill `company_id` from the free-text column** — every lead and customer created before
+  2026-09-29 carries only the text `company`. A one-off script that groups the distinct texts,
+  proposes a company per group (name from the text, domain from the email addresses) and links
+  the rows after a human review would seed the companies table; it is deliberately not part of
+  the migration, which only adds the nullable column.
+- **Domain-based auto-link from forms** — a public form submission that creates a lead could
+  set `company_id` when the submitter's email domain matches a live company's `domain`
+  (free-mail domains excluded). Today the forms module writes only the text column, so a lead
+  from `jane@acme.example` is not linked to the Acme company even when it exists; linking by hand
+  on the lead form is the only path.
+
 ## Follow-ups from the backend build-out
 
 The audit-defect list and its loose ends are done: dashboard role guard, sentinel-error
