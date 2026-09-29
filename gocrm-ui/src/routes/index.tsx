@@ -74,6 +74,46 @@ export const router = createBrowserRouter([
         lazy: () => import('@/pages/customers/CustomerForm'),
       },
       {
+        // Companies mirror the API guard: admin, sales and support read; the
+        // customer role gets no entry. Writes are narrowed further below.
+        // Same pathless-layout shape as the admin block — a static `element`
+        // on the children themselves would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'companies',
+            lazy: () => import('@/pages/companies/CompanyList'),
+          },
+          {
+            path: 'companies/:id',
+            lazy: () => import('@/pages/companies/CompanyDetail'),
+          },
+          {
+            // POST and PUT /companies are admin and sales only; support is
+            // read-only and a deep link to the form must not reach it.
+            element: (
+              <ProtectedRoute requiredRole={['admin', 'sales']}>
+                <Outlet />
+              </ProtectedRoute>
+            ),
+            children: [
+              {
+                path: 'companies/new',
+                lazy: () => import('@/pages/companies/CompanyForm'),
+              },
+              {
+                path: 'companies/:id/edit',
+                lazy: () => import('@/pages/companies/CompanyForm'),
+              },
+            ],
+          },
+        ],
+      },
+      {
         path: 'tickets',
         lazy: () => import('@/pages/tickets/TicketList'),
       },

@@ -25,6 +25,7 @@ import {
   Dashboard,
   People,
   Business,
+  Apartment,
   Assignment,
   Task,
   ExpandLess,
@@ -71,6 +72,13 @@ const navItems: NavItem[] = [
     title: 'Customers',
     path: '/customers',
     icon: <Business />,
+    roles: ['admin', 'sales', 'support'],
+  },
+  {
+    // Same read roles as the API group; the customer role never sees it.
+    title: 'Companies',
+    path: '/companies',
+    icon: <Apartment />,
     roles: ['admin', 'sales', 'support'],
   },
   {

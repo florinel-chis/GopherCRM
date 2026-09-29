@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as LeadDetail } from './LeadDetail';
 import { leadsApi } from '@/api/endpoints';
-import { createMockLead } from '@/test/factories';
+import { createMockLead, createMockCompany } from '@/test/factories';
 import { useNavigate, useParams } from 'react-router-dom';
 
 vi.mock('react-router-dom', async () => {
@@ -70,5 +70,38 @@ describe('LeadDetail conversion', () => {
     await convertThroughDialog();
 
     await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to convert lead'));
+  });
+});
+
+describe('LeadDetail company', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (useNavigate as any).mockReturnValue(vi.fn());
+    (useParams as any).mockReturnValue({ id: '1' });
+  });
+
+  it('links to the company record when the lead is linked', async () => {
+    (leadsApi.getLead as any).mockResolvedValue(
+      createMockLead({
+        company_name: 'Acme (as typed)',
+        company_id: 7,
+        company_record: createMockCompany({ id: 7, name: 'Acme Widgets' }),
+      })
+    );
+
+    render(<LeadDetail />);
+
+    const link = await screen.findByRole('link', { name: 'Acme Widgets' });
+    expect(link).toHaveAttribute('href', '/companies/7');
+  });
+
+  it('shows the free-text company when there is no link', async () => {
+    (leadsApi.getLead as any).mockResolvedValue(createMockLead({ company_name: 'Loose Text Ltd' }));
+
+    render(<LeadDetail />);
+
+    // The header and the Company field both carry the text; neither is a link.
+    expect((await screen.findAllByText('Loose Text Ltd')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'Loose Text Ltd' })).not.toBeInTheDocument();
   });
 });
