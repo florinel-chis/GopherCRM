@@ -33,6 +33,14 @@ vi.mock('@/hooks/useSnackbar', () => ({
 
 const acme = createMockCompany({ id: 7, name: 'Acme Widgets', domain: 'acme.example' });
 
+// The rejection the form sees for an unknown company_id: the API answers
+// `{success:false, error:{code:"INVALID_REFERENCE", message, details:null}}`
+// and the axios client (src/api/client.ts) replaces `response.data` with that
+// `error` object before the endpoint module rethrows.
+const invalidReference = (message: string) => ({
+  response: { status: 400, data: { code: 'INVALID_REFERENCE', message, details: null } },
+});
+
 const fillRequired = () => {
   fireEvent.change(screen.getByLabelText(/Primary Contact Name/i), { target: { value: 'Jane Smith' } });
   fireEvent.change(screen.getByLabelText(/^Email/i), { target: { value: 'jane@acme.example' } });
@@ -95,6 +103,20 @@ describe('CustomerForm linked company', () => {
           expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
         );
       });
+    });
+
+    it('puts an INVALID_REFERENCE message on the linked-company picker', async () => {
+      const message = 'unknown company_id 7: company not found';
+      vi.mocked(customersApi.createCustomer).mockRejectedValue(invalidReference(message));
+
+      render(<CustomerForm />);
+      await pickCompany();
+      fillRequired();
+      fireEvent.click(screen.getByRole('button', { name: /Create Customer/i }));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
 
     it('prefills the linked company from ?company_id= (the New Customer button on a company)', async () => {

@@ -48,14 +48,19 @@ const authState = (user: User) => ({
   refreshUser: vi.fn(),
 });
 
-const axios409 = (message: string) =>
-  new AxiosError('Request failed with status code 409', 'ERR_BAD_REQUEST', undefined, undefined, {
-    status: 409,
-    statusText: 'Conflict',
+// The rejection the form sees: the API answers
+// `{success:false, error:{code, message, details}, meta}` and the axios client
+// (src/api/client.ts) replaces `response.data` with that `error` object before
+// the endpoint module rethrows.
+const apiError = (status: number, code: string, message: string) =>
+  new AxiosError(`Request failed with status code ${status}`, 'ERR_BAD_REQUEST', undefined, undefined, {
+    status,
+    statusText: status === 409 ? 'Conflict' : 'Bad Request',
     headers: {},
     config: {} as InternalAxiosRequestConfig,
-    data: { code: 'DUPLICATE_DOMAIN', message },
+    data: { code, message, details: null },
   } as AxiosResponse);
+const axios409 = (message: string) => apiError(409, 'CONFLICT', message);
 
 // Required fields carry MUI's " *" suffix in their label, hence the prefix match.
 const fill = (label: string, value: string) => {
@@ -106,6 +111,9 @@ describe('CompanyForm', () => {
       ]) {
         expect(screen.getByLabelText(new RegExp(`^${label}`))).toBeInTheDocument();
       }
+      expect(screen.getByLabelText(/^Owner/)).toHaveAccessibleDescription(
+        'Account manager; leave empty to keep the company unowned'
+      );
       await waitFor(() => expect(usersApi.getUsers).toHaveBeenCalledWith({ is_active: true }));
     });
 
@@ -115,6 +123,7 @@ describe('CompanyForm', () => {
       render(<CompanyForm />);
 
       expect(screen.queryByLabelText(/^Owner/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Account manager/)).not.toBeInTheDocument();
       expect(usersApi.getUsers).not.toHaveBeenCalled();
     });
 
@@ -224,6 +233,24 @@ describe('CompanyForm', () => {
       expect(mockNavigate).not.toHaveBeenCalled();
     });
 
+    it('shows a 400 validation message from the server instead of the generic text', async () => {
+      const message = 'website must be an http or https URL: validation failed';
+      vi.mocked(companiesApi.createCompany).mockRejectedValue(
+        apiError(400, 'VALIDATION_ERROR', message)
+      );
+
+      render(<CompanyForm />);
+
+      fill('Name', 'Acme Widgets');
+      fill('Website', 'https://acme.example');
+      fireEvent.click(screen.getByRole('button', { name: 'Create Company' }));
+
+      await waitFor(() => expect(showError).toHaveBeenCalledWith(message));
+      expect(showError).not.toHaveBeenCalledWith('Failed to create company');
+      expect(screen.getByLabelText(/^Domain/)).not.toHaveAccessibleDescription(message);
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
     it('reports other failures generically', async () => {
       vi.mocked(companiesApi.createCompany).mockRejectedValue(new Error('Network Error'));
 
@@ -273,13 +300,16 @@ describe('CompanyForm', () => {
       await waitFor(() => {
         expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu');
       });
+      expect(screen.getByLabelText(/^Owner/)).toHaveAccessibleDescription(
+        'Account manager; clear to remove the owner'
+      );
     });
 
-    it('PUTs the full body with the current owner and returns to the detail page', async () => {
+    it('PUTs the full body without owner_id when the owner is untouched and returns to the detail page', async () => {
       vi.mocked(companiesApi.updateCompany).mockResolvedValue(existing);
 
       render(<CompanyForm />);
-      await waitFor(() => expect(screen.getByDisplayValue('Acme Widgets')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
 
       fill('Industry', 'Robotics');
       fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
@@ -298,10 +328,48 @@ describe('CompanyForm', () => {
           country: existing.country,
           postal_code: existing.postal_code,
           notes: '',
-          owner_id: 2,
         });
       });
+      expect(vi.mocked(companiesApi.updateCompany).mock.calls[0][1]).not.toHaveProperty('owner_id');
       expect(mockNavigate).toHaveBeenCalledWith('/companies/7');
+    });
+
+    it('sends owner_id 0 when an admin clears the owner', async () => {
+      vi.mocked(companiesApi.updateCompany).mockResolvedValue(existing);
+
+      render(<CompanyForm />);
+      await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
+
+      fireEvent.click(screen.getByTitle('Clear'));
+      expect(screen.getByLabelText(/^Owner/)).toHaveValue('');
+      fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
+
+      await waitFor(() => {
+        expect(companiesApi.updateCompany).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ name: 'Acme Widgets', owner_id: 0 })
+        );
+      });
+    });
+
+    it('sends the new owner_id when an admin picks another owner', async () => {
+      vi.mocked(companiesApi.updateCompany).mockResolvedValue(existing);
+
+      render(<CompanyForm />);
+      await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
+
+      const ownerInput = screen.getByLabelText(/^Owner/);
+      ownerInput.focus();
+      fireEvent.change(ownerInput, { target: { value: 'Ana' } });
+      fireEvent.click(await screen.findByRole('option', { name: 'Ana Pop' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
+
+      await waitFor(() => {
+        expect(companiesApi.updateCompany).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ owner_id: 1 })
+        );
+      });
     });
 
     it('shows the 409 message on the domain field when an update collides', async () => {

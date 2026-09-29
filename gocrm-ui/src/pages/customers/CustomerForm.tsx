@@ -40,9 +40,11 @@ const customerSchema = z.object({
 
 type CustomerFormData = z.infer<typeof customerSchema>;
 
+// What the axios client leaves in `error.response.data`: the `error` object of
+// the API envelope ({code, message, details}), not the envelope itself.
 interface ServerErrorPayload {
+  code?: string;
   message?: string;
-  details?: Record<string, unknown>;
 }
 
 export const Component: React.FC = () => {
@@ -99,15 +101,16 @@ export const Component: React.FC = () => {
   });
 
   // An unknown or deleted company_id comes back as 400 INVALID_REFERENCE with
-  // the field named in `details`; that message belongs on the company picker.
-  // Returns the server's top-level message, if any, for the snackbar.
+  // no details and the field named in the message ("unknown company_id 7:
+  // company not found"); that message belongs on the company picker.
+  // Returns the server's message, if any, for the snackbar.
   const reportCompanyReference = (error: unknown): string | undefined => {
     const payload = (error as { response?: { data?: ServerErrorPayload } })?.response?.data;
-    const reference = payload?.details?.company_id ?? payload?.details?.CompanyID;
-    if (reference) {
-      setCompanyError(String(reference));
+    const message = typeof payload?.message === 'string' ? payload.message : undefined;
+    if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
+      setCompanyError(message);
     }
-    return payload?.message;
+    return message;
   };
 
   const createMutation = useMutation({

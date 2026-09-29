@@ -97,6 +97,23 @@ export const Component: React.FC = () => {
     enabled: isEditMode,
   });
 
+  // An unknown or deleted company_id comes back as 400 INVALID_REFERENCE with
+  // no details and the field named in the message ("unknown company_id 7:
+  // company not found"); that message belongs on the company picker. The axios
+  // client leaves the envelope's `error` object ({code, message}) in
+  // `response.data`. Returns true when the error was reported here.
+  const reportCompanyReference = (error: unknown): boolean => {
+    const payload = (error as { response?: { data?: { code?: string; message?: string } } })
+      ?.response?.data;
+    const message = typeof payload?.message === 'string' ? payload.message : undefined;
+    if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
+      setCompanyError(message);
+      showError(message);
+      return true;
+    }
+    return false;
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: CreateLeadData) => leadsApi.createLead(data),
     onSuccess: () => {
@@ -105,6 +122,9 @@ export const Component: React.FC = () => {
       navigate('/leads');
     },
     onError: (error: any) => {
+      if (reportCompanyReference(error)) {
+        return;
+      }
       // Handle validation errors
       if (error.response?.data?.details) {
         const validationErrors = error.response.data.details;
@@ -119,10 +139,6 @@ export const Component: React.FC = () => {
         
         Object.entries(validationErrors).forEach(([field, message]) => {
           const frontendField = fieldMapping[field] || field.toLowerCase();
-          if (frontendField === 'company_id' || frontendField === 'companyid') {
-            setCompanyError(String(message));
-            return;
-          }
           methods.setError(frontendField as any, {
             type: 'server',
             message: String(message),
@@ -146,6 +162,9 @@ export const Component: React.FC = () => {
       navigate('/leads');
     },
     onError: (error: any) => {
+      if (reportCompanyReference(error)) {
+        return;
+      }
       // Handle validation errors
       if (error.response?.data?.details) {
         const validationErrors = error.response.data.details;
@@ -160,10 +179,6 @@ export const Component: React.FC = () => {
         
         Object.entries(validationErrors).forEach(([field, message]) => {
           const frontendField = fieldMapping[field] || field.toLowerCase();
-          if (frontendField === 'company_id' || frontendField === 'companyid') {
-            setCompanyError(String(message));
-            return;
-          }
           methods.setError(frontendField as any, {
             type: 'server',
             message: String(message),

@@ -38,6 +38,14 @@ describe('LeadForm', () => {
 
   const acme = createMockCompany({ id: 7, name: 'Acme Widgets', domain: 'acme.example' });
 
+  // The rejection the form sees for an unknown company_id: the API answers
+  // `{success:false, error:{code:"INVALID_REFERENCE", message, details:null}}`
+  // and the axios client (src/api/client.ts) replaces `response.data` with
+  // that `error` object before the endpoint module rethrows.
+  const invalidReference = (message: string) => ({
+    response: { status: 400, data: { code: 'INVALID_REFERENCE', message, details: null } },
+  });
+
   const pickCompany = async () => {
     const input = screen.getByLabelText('Company (linked)');
     input.focus();
@@ -178,6 +186,25 @@ describe('LeadForm', () => {
           expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
         );
       });
+    });
+
+    it('puts an INVALID_REFERENCE message on the linked-company picker', async () => {
+      const message = 'unknown company_id 7: company not found';
+      vi.mocked(leadsApi.createLead).mockRejectedValue(invalidReference(message));
+
+      render(<LeadForm />);
+
+      await pickCompany();
+      fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: 'John Doe' } });
+      fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'john@acme.example' } });
+      fireEvent.mouseDown(screen.getByLabelText(/Lead Source/i));
+      fireEvent.click(await screen.findByRole('option', { name: 'Website' }));
+
+      fireEvent.click(screen.getByText('Create Lead'));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
 
     it('does not overwrite a free-text company the user already typed', async () => {

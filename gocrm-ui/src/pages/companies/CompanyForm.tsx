@@ -52,6 +52,13 @@ const companySchema = z.object({
 
 type CompanyFormData = z.infer<typeof companySchema>;
 
+// What the axios client leaves in `error.response.data`: the `error` object of
+// the API envelope ({code, message, details}), not the envelope itself.
+interface ApiErrorPayload {
+  code?: string;
+  message?: string;
+}
+
 const employeeRangeOptions = [
   { value: '', label: 'Not specified' },
   ...COMPANY_EMPLOYEE_RANGES.map((range) => ({ value: range, label: range })),
@@ -84,6 +91,10 @@ export const Component: React.FC = () => {
   // gives sales its own id regardless of what is sent.
   const isAdmin = user?.role === 'admin';
   const [owner, setOwner] = useState<User | null>(null);
+  // Set once the admin changes the picker. An untouched owner is not sent, so
+  // an update keeps whatever the company has; a cleared one is sent as 0,
+  // which is how the API removes an owner.
+  const [ownerTouched, setOwnerTouched] = useState(false);
 
   const methods = useForm<CompanyFormData>({
     resolver: zodResolver(companySchema),
@@ -126,19 +137,34 @@ export const Component: React.FC = () => {
   // that caused it. Anything else is reported through the snackbar.
   const reportError = (error: unknown, fallback: string) => {
     if (error instanceof AxiosError) {
-      const payload = error.response?.data as { message?: string } | undefined;
+      const payload = error.response?.data as ApiErrorPayload | undefined;
+      const serverMessage =
+        typeof payload?.message === 'string' && payload.message !== '' ? payload.message : undefined;
       if (error.response?.status === 409) {
-        const message = payload?.message || 'A company with this domain already exists';
+        const message = serverMessage || 'A company with this domain already exists';
         methods.setError('domain', { type: 'server', message });
         showError(message);
         return;
       }
-      if (payload?.message) {
-        showError(payload.message);
+      if (serverMessage) {
+        showError(serverMessage);
         return;
       }
     }
     showError(fallback);
+  };
+
+  // Sales never sends owner_id: the API assigns the company to the caller.
+  // An admin sends the picked owner, 0 to clear one on update, and nothing
+  // when the picker was left alone (create: unowned; update: unchanged).
+  const ownerPatch = (): Pick<CreateCompanyData, 'owner_id'> => {
+    if (!isAdmin || !ownerTouched) {
+      return {};
+    }
+    if (owner) {
+      return { owner_id: owner.id };
+    }
+    return isEditMode ? { owner_id: 0 } : {};
   };
 
   const createMutation = useMutation({
@@ -165,7 +191,7 @@ export const Component: React.FC = () => {
   const onSubmit = (data: CompanyFormData) => {
     const payload: CreateCompanyData = {
       ...data,
-      ...(isAdmin && owner ? { owner_id: owner.id } : {}),
+      ...ownerPatch(),
     };
     if (isEditMode) {
       updateMutation.mutate(payload);
@@ -220,7 +246,10 @@ export const Component: React.FC = () => {
               {isAdmin && (
                 <Autocomplete
                   value={owner}
-                  onChange={(_, newValue) => setOwner(newValue)}
+                  onChange={(_, newValue) => {
+                    setOwner(newValue);
+                    setOwnerTouched(true);
+                  }}
                   options={users}
                   getOptionLabel={(option) => `${option.first_name} ${option.last_name}`}
                   isOptionEqualToValue={(option, current) => option.id === current.id}
@@ -228,7 +257,11 @@ export const Component: React.FC = () => {
                     <MuiTextField
                       {...params}
                       label="Owner"
-                      helperText="Account manager; defaults to you when left empty"
+                      helperText={
+                        isEditMode
+                          ? 'Account manager; clear to remove the owner'
+                          : 'Account manager; leave empty to keep the company unowned'
+                      }
                     />
                   )}
                 />
