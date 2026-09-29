@@ -18,13 +18,17 @@ export interface CompanyFormData {
 /**
  * Values unique to one run. The domain is what `rowMatching` searches for: it
  * is unique among live companies on the API, so it identifies exactly one row.
+ *
+ * The API accepts only letters, digits, dots and hyphens in a domain (the
+ * hostname rule), so the domain and website get a stamp without underscores.
  */
 export function generateCompanyData(): Required<CompanyFormData> {
   const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const hostStamp = stamp.replace(/_/g, '-');
   return {
     name: `E2E Company ${stamp}`,
-    domain: `e2e-${stamp}.example`,
-    website: `https://www.e2e-${stamp}.example`,
+    domain: `e2e-${hostStamp}.example`,
+    website: `https://www.e2e-${hostStamp}.example`,
     industry: `Industry ${stamp}`,
     employeeRange: '51-200',
     phone: '+40 21 555 0100',

@@ -198,7 +198,7 @@ export const Component: React.FC = () => {
                   name="domain"
                   label="Domain"
                   placeholder="example.com"
-                  helperText="Unique among companies; the scheme and www. are stripped"
+                  helperText="Letters, digits, dots and hyphens; unique among companies; the scheme and www. are stripped"
                 />
               </Box>
 
