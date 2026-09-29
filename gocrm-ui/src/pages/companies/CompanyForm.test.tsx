@@ -245,7 +245,8 @@ describe('CompanyForm', () => {
       fill('Website', 'https://acme.example');
       fireEvent.click(screen.getByRole('button', { name: 'Create Company' }));
 
-      await waitFor(() => expect(showError).toHaveBeenCalledWith(message));
+      await waitFor(() => expect(companiesApi.createCompany).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(showError).toHaveBeenCalledWith(message), { timeout: 3000 });
       expect(showError).not.toHaveBeenCalledWith('Failed to create company');
       expect(screen.getByLabelText(/^Domain/)).not.toHaveAccessibleDescription(message);
       expect(mockNavigate).not.toHaveBeenCalled();

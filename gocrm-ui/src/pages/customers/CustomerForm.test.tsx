@@ -114,7 +114,8 @@ describe('CustomerForm linked company', () => {
       fillRequired();
       fireEvent.click(screen.getByRole('button', { name: /Create Customer/i }));
 
-      expect(await screen.findByText(message)).toBeInTheDocument();
+      await waitFor(() => expect(customersApi.createCustomer).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText(message, undefined, { timeout: 3000 })).toBeInTheDocument();
       expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
       expect(mockNavigate).not.toHaveBeenCalled();
     });

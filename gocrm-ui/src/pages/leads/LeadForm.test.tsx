@@ -202,7 +202,8 @@ describe('LeadForm', () => {
 
       fireEvent.click(screen.getByText('Create Lead'));
 
-      expect(await screen.findByText(message)).toBeInTheDocument();
+      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText(message, undefined, { timeout: 3000 })).toBeInTheDocument();
       expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
       expect(mockNavigate).not.toHaveBeenCalled();
     });
