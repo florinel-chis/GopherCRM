@@ -41,9 +41,9 @@ describe('LeadDetail conversion', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (useParams as any).mockReturnValue({ id: '1' });
-    (leadsApi.getLead as any).mockResolvedValue(createMockLead({ status: 'qualified', email: '' }));
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '1' });
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ status: 'qualified', email: '' }));
   });
 
   const convertThroughDialog = async () => {
@@ -54,7 +54,7 @@ describe('LeadDetail conversion', () => {
 
   it("shows the server's reason when a conversion is refused", async () => {
     const reason = 'This lead has no email address. Add one before converting it: every customer needs an email.';
-    (leadsApi.convertLead as any).mockRejectedValue({ response: { status: 400, data: { message: reason } } });
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({ response: { status: 400, data: { message: reason } } });
 
     render(<LeadDetail />);
     await convertThroughDialog();
@@ -64,7 +64,7 @@ describe('LeadDetail conversion', () => {
   });
 
   it('falls back to a generic message when the server gives none', async () => {
-    (leadsApi.convertLead as any).mockRejectedValue(new Error('Network Error'));
+    vi.mocked(leadsApi.convertLead).mockRejectedValue(new Error('Network Error'));
 
     render(<LeadDetail />);
     await convertThroughDialog();
@@ -76,12 +76,12 @@ describe('LeadDetail conversion', () => {
 describe('LeadDetail company', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(vi.fn());
-    (useParams as any).mockReturnValue({ id: '1' });
+    vi.mocked(useNavigate).mockReturnValue(vi.fn());
+    vi.mocked(useParams).mockReturnValue({ id: '1' });
   });
 
   it('links to the company record when the lead is linked', async () => {
-    (leadsApi.getLead as any).mockResolvedValue(
+    vi.mocked(leadsApi.getLead).mockResolvedValue(
       createMockLead({
         company_name: 'Acme (as typed)',
         company_id: 7,
@@ -96,7 +96,7 @@ describe('LeadDetail company', () => {
   });
 
   it('shows the free-text company when there is no link', async () => {
-    (leadsApi.getLead as any).mockResolvedValue(createMockLead({ company_name: 'Loose Text Ltd' }));
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ company_name: 'Loose Text Ltd' }));
 
     render(<LeadDetail />);
 

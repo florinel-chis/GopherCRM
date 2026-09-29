@@ -47,10 +47,10 @@ describe('LeadForm', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (useParams as any).mockReturnValue({});
-    (companiesApi.getCompanies as any).mockResolvedValue({ companies: [acme], total: 1 });
-    (companiesApi.getCompany as any).mockResolvedValue(acme);
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({});
+    vi.mocked(companiesApi.getCompanies).mockResolvedValue({ companies: [acme], total: 1 });
+    vi.mocked(companiesApi.getCompany).mockResolvedValue(acme);
   });
 
   describe('Create Mode', () => {
@@ -67,7 +67,7 @@ describe('LeadForm', () => {
     });
 
     it('submits form with valid data', async () => {
-      (leadsApi.createLead as any).mockResolvedValue(createMockLead());
+      vi.mocked(leadsApi.createLead).mockResolvedValue(createMockLead());
       
       render(<LeadForm />);
 
@@ -159,7 +159,7 @@ describe('LeadForm', () => {
     });
 
     it('sends company_id when a company is linked and seeds the blank free-text company', async () => {
-      (leadsApi.createLead as any).mockResolvedValue(createMockLead());
+      vi.mocked(leadsApi.createLead).mockResolvedValue(createMockLead());
 
       render(<LeadForm />);
 
@@ -214,8 +214,8 @@ describe('LeadForm', () => {
     });
 
     beforeEach(() => {
-      (useParams as any).mockReturnValue({ id: '1' });
-      (leadsApi.getLead as any).mockResolvedValue(mockLead);
+      vi.mocked(useParams).mockReturnValue({ id: '1' });
+      vi.mocked(leadsApi.getLead).mockResolvedValue(mockLead);
     });
 
     it('renders edit form with existing data', async () => {
@@ -232,7 +232,7 @@ describe('LeadForm', () => {
     });
 
     it('updates lead successfully', async () => {
-      (leadsApi.updateLead as any).mockResolvedValue(mockLead);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(mockLead);
       
       render(<LeadForm />);
 
@@ -264,7 +264,7 @@ describe('LeadForm', () => {
     });
 
     it('omits company_id when the lead had no link and none is chosen', async () => {
-      (leadsApi.updateLead as any).mockResolvedValue(mockLead);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(mockLead);
 
       render(<LeadForm />);
       await waitFor(() => expect(screen.getByDisplayValue('Existing Company')).toBeInTheDocument());
@@ -272,13 +272,13 @@ describe('LeadForm', () => {
       fireEvent.click(screen.getByText('Update Lead'));
 
       await waitFor(() => expect(leadsApi.updateLead).toHaveBeenCalled());
-      expect((leadsApi.updateLead as any).mock.calls[0][1]).not.toHaveProperty('company_id');
+      expect(vi.mocked(leadsApi.updateLead).mock.calls[0][1]).not.toHaveProperty('company_id');
     });
 
     it('preselects the linked company and sends its id back untouched', async () => {
       const linked = createMockLead({ ...mockLead, company_id: 7, company_record: acme });
-      (leadsApi.getLead as any).mockResolvedValue(linked);
-      (leadsApi.updateLead as any).mockResolvedValue(linked);
+      vi.mocked(leadsApi.getLead).mockResolvedValue(linked);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(linked);
 
       render(<LeadForm />);
       await waitFor(() => {
@@ -295,8 +295,8 @@ describe('LeadForm', () => {
 
     it('sends company_id 0 when a previously linked company is cleared', async () => {
       const linked = createMockLead({ ...mockLead, company_id: 7, company_record: acme });
-      (leadsApi.getLead as any).mockResolvedValue(linked);
-      (leadsApi.updateLead as any).mockResolvedValue(linked);
+      vi.mocked(leadsApi.getLead).mockResolvedValue(linked);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(linked);
 
       render(<LeadForm />);
       await waitFor(() => {

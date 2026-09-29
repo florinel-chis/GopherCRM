@@ -1,6 +1,6 @@
 # E2E Test Suite — GopherCRM
 
-115 end-to-end tests across 11 spec files, run with Playwright against the Vite frontend and a
+123 end-to-end tests across 12 spec files, run with Playwright against the Vite frontend and a
 real backend on MySQL.
 
 Only the `chromium` project is configured. Tests run serially (`fullyParallel: false`, `workers: 1`)
@@ -96,6 +96,7 @@ an admin through the app.
 | `admin-users.spec.ts` | 12 | Users — list, create, edit, view, delete, search, role filter |
 | `admin-leads.spec.ts` | 11 | Leads — list, create, edit, view, delete, status filter, search, minimal data |
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
+| `admin-companies.spec.ts` | 8 | Companies — list, create with all fields, validation, duplicate domain 409 on the field, edit, search, link a customer through the customer form and see it on both detail pages, delete and the customer falls back to its text company |
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
 | `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
@@ -135,6 +136,8 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
 - Three `admin-entity-suite.spec.ts` tests (CRM workflow, bulk operations, cross-entity search) walk
   three entity forms each and run for 60–100 s locally and about 1.7× that on a CI runner. They
   carry their own 180 s budget (`MULTI_ENTITY_TEST_TIMEOUT_MS`), so no `--timeout` flag is needed.
+- Companies are unique by domain among live rows, so `companies.page.ts` searches by domain
+  (`generateCompanyData()` stamps one per run) rather than by row position.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.
