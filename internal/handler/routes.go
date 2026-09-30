@@ -64,6 +64,28 @@ func SetupCompanyRoutes(router *gin.RouterGroup, handler *CompanyHandler) {
 	}
 }
 
+// SetupDealRoutes mounts the deals endpoints. Deals are admin and sales only,
+// as leads are; deleting one is admin only. The two sub-lists live under the
+// company and customer paths but are registered here, with the deals guard,
+// so the SetupCompanyRoutes and SetupCustomerRoutes signatures stay as they
+// are for the suites that mount them.
+func SetupDealRoutes(router *gin.RouterGroup, handler *DealHandler) {
+	guard := middleware.RequireRole(models.RoleAdmin, models.RoleSales)
+	deals := router.Group("/deals")
+	deals.Use(guard)
+	{
+		deals.POST("", handler.Create)
+		deals.GET("", handler.List)
+		deals.GET("/:id", handler.Get)
+		deals.PUT("/:id", handler.Update)
+		deals.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+		deals.POST("/:id/stage", handler.ChangeStage)
+		deals.GET("/:id/history", handler.History)
+	}
+	router.GET("/companies/:id/deals", guard, handler.ListByCompany)
+	router.GET("/customers/:id/deals", guard, handler.ListByCustomer)
+}
+
 func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
 	tickets := router.Group("/tickets")
 	{

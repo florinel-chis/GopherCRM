@@ -112,7 +112,7 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param category path string true "Configuration category" Enums(general, leads, customers, tickets, tasks, security, integration, ui)
+// @Param category path string true "Configuration category" Enums(general, leads, customers, deals, tickets, tasks, security, integration, ui)
 // @Success 200 {object} utils.APIResponse{data=object{configurations=[]ConfigurationResponse}} "Configurations retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
@@ -345,7 +345,7 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 // GetUIConfigurations returns configurations that are safe for UI consumption
 // GetUIConfigurations godoc
 // @Summary List UI-safe configurations
-// @Description Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, and a synthetic leads.conversion.allowed_statuses entry. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Description Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and a synthetic leads.conversion.allowed_statuses entry. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -377,6 +377,15 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 				configs = append(configs, config)
 			}
 		}
+	}
+
+	// The default deal currency: the deal form pre-fills it. Not sensitive,
+	// and read by key because it is the only entry of its category the UI
+	// needs.
+	if currency, err := h.configService.GetByKey(service.ConfigDealsDefaultCurrency); err != nil {
+		logger.WithError(err).Warn("Failed to get the default deal currency configuration")
+	} else {
+		configs = append(configs, *currency)
 	}
 
 	// Get lead conversion statuses for frontend
