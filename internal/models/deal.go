@@ -175,9 +175,11 @@ const (
 	DealNotesMaxBytes = LeadNotesMaxBytes
 )
 
-// DealAmountCentsMax is the largest amount_cents a deal may carry: 2^53 - 1,
-// the largest integer a JavaScript number holds exactly, so the UI never
-// shows a rounded amount. It also keeps the pipeline aggregate
-// SUM(amount_cents * probability) inside a BIGINT: one deal at the bound and
-// probability 100 contributes about 9.007e17 of the 9.22e18 a BIGINT holds.
-const DealAmountCentsMax int64 = 1<<53 - 1
+// DealAmountCentsMax is the largest amount_cents a deal may carry: 10^12
+// cents, i.e. 10,000,000,000.00 in major units. It keeps the pipeline
+// aggregates inside a BIGINT (2^63 - 1, about 9.22e18): a maximal deal at
+// probability 100 contributes 10^14 to SUM(amount_cents * probability), so
+// about 92,000 such deals in one stage and currency would be needed to
+// overflow it, and the plain SUM(amount_cents) needs 9.2 million. The bound is
+// also far below 2^53, so a JavaScript number holds every amount exactly.
+const DealAmountCentsMax int64 = 1_000_000_000_000

@@ -861,12 +861,12 @@ func TestCreateDeal_ProbabilityOutOfRangeHasANumericMessage(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-// amount_cents is bounded at 2^53 - 1, the largest integer a JavaScript number
-// holds exactly, so the pipeline sums cannot overflow a BIGINT. One cent more
+// amount_cents is bounded at 10^12 cents, so the pipeline sums cannot
+// overflow a BIGINT. One cent more
 // is refused by the binding on create and on update, before the service is
 // reached; the bound itself is accepted.
 func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
-	const maxAmount = int64(1<<53 - 1) // 9007199254740991
+	const maxAmount = int64(1_000_000_000_000)
 	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
 	gin.SetMode(gin.TestMode)
 	svc := new(mocks.DealService)
@@ -910,7 +910,7 @@ func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
 		}
 		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
 		assert.Equal(t, utils.ErrCodeValidation, resp.Error.Code)
-		assert.Equal(t, "AmountCents must be at most 9007199254740991", resp.Error.Details["AmountCents"], w.Body.String())
+		assert.Equal(t, "AmountCents must be at most 1000000000000", resp.Error.Details["AmountCents"], w.Body.String())
 	}
 	svc.AssertNotCalled(t, "Create", mock.Anything, mock.Anything, mock.Anything)
 	svc.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)

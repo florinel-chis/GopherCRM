@@ -1694,7 +1694,7 @@ definitions:
   internal_handler.DealRequest:
     properties:
       amount_cents:
-        maximum: 9007199254740991
+        maximum: 1000000000000
         minimum: 0
         type: integer
       company_id:
@@ -7276,7 +7276,7 @@ paths:
       - application/json
       description: Create a deal (admin and sales roles only). title is trimmed and
         required, 1 to 200 characters. stage defaults to qualification. amount_cents
-        is an integer in minor units, 0 to 9007199254740991 (2^53 - 1; a larger value
+        is an integer in minor units, 0 to 1000000000000 (10^12 cents; a larger value
         is a 400); currency is three upper-case letters and defaults to the deals.default_currency
         configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults
         per stage (qualification 10, proposal 40, negotiation 70); won is always 100
@@ -7527,9 +7527,9 @@ paths:
         else 400 INVALID_REFERENCE). Links are checked only when the request sets
         them; a deal keeps links to erased records and stays editable. owner_id absent
         keeps the owner (sales may only name themselves, admins any live user); currency
-        absent keeps the stored code. amount_cents is 0 to 9007199254740991 (2^53
-        - 1), as on create. A stage different from the stored one goes through the
-        same rules as POST /deals/{id}/stage — probability defaults to the new stage''s
+        absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents),
+        as on create. A stage different from the stored one goes through the same
+        rules as POST /deals/{id}/stage — probability defaults to the new stage''s
         unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason
         kept only on lost — and writes a history row in the same transaction. The
         same stage writes no history row; probability is then applied only when sent.'

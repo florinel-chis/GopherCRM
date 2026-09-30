@@ -369,16 +369,14 @@ func TestDealRepository_PipelineGroupsByStageAndCurrency(t *testing.T) {
 	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageWon, Currency: "EUR", DealCount: 1, AmountCents: 990000, AmountTimesProbability: 99000000}, index["won/EUR"])
 }
 
-// Deals at the largest accepted amount (2^53 - 1 cents) and probability 100
-// aggregate without an overflow. One such row adds about 9.007e17 to the
-// weighted SUM and 9.007e15 to the amount SUM; a BIGINT holds 2^63 - 1, about
-// 9.22e18. The headroom is therefore about 10 maximal deals at probability
-// 100 in one stage and currency for the weighted SUM (and about 1,000 for the
-// amount SUM) before the aggregate could overflow. Every one of them would be
-// a deal worth ninety trillion in its currency, which is not a real workload.
-// Five keep the test inside that headroom on every engine.
+// Deals at the largest accepted amount (10^12 cents) and probability 100
+// aggregate without an overflow. One such row adds 10^14 to the weighted SUM
+// and 10^12 to the amount SUM; a BIGINT holds 2^63 - 1, about 9.22e18. About
+// 92,000 maximal deals at probability 100 in one stage and currency would be
+// needed to overflow the weighted SUM, and 9.2 million to overflow the amount
+// SUM. Each of them would be a deal worth ten billion in its currency.
 func TestDealRepository_PipelineAggregatesTheMaximumAmount(t *testing.T) {
-	const maxAmount = int64(1<<53 - 1)
+	const maxAmount = int64(1_000_000_000_000)
 	const deals = 5
 	db := setupDealDB(t)
 	repo := NewDealRepository(db)

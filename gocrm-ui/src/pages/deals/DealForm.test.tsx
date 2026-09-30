@@ -232,21 +232,21 @@ describe('DealForm', () => {
       expect(dealsApi.createDeal).not.toHaveBeenCalled();
     });
 
-    it('refuses an amount above the API bound of 9007199254740991 cents and accepts the bound', async () => {
+    it('refuses an amount above the API bound of 1000000000000 cents and accepts the bound', async () => {
       render(<DealForm />);
 
       fireEvent.change(title(), { target: { value: 'Website redesign' } });
-      fireEvent.change(amount(), { target: { value: '90071992547409.92' } });
+      fireEvent.change(amount(), { target: { value: '10000000000.01' } });
       submit(/Create Deal/);
 
       expect(await screen.findByText('Amount is too large')).toBeInTheDocument();
       expect(dealsApi.createDeal).not.toHaveBeenCalled();
 
-      fireEvent.change(amount(), { target: { value: '90071992547409.91' } });
+      fireEvent.change(amount(), { target: { value: '10000000000.00' } });
       submit(/Create Deal/);
 
       await waitFor(() => expect(dealsApi.createDeal).toHaveBeenCalledTimes(1), { timeout: 3000 });
-      expect(dealsApi.createDeal).toHaveBeenCalledWith({ ...baseBody, amount_cents: 9007199254740991 });
+      expect(dealsApi.createDeal).toHaveBeenCalledWith({ ...baseBody, amount_cents: 1000000000000 });
     });
 
     it('fills the probability from the stage until the user overrides it', async () => {
