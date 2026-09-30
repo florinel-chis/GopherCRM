@@ -2,7 +2,7 @@ import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { testAdminCredentials } from './fixtures/admin-user';
-import { setPublicRegistration } from './helpers/registration-config';
+import { getPublicRegistration, setPublicRegistration } from './helpers/registration-config';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
@@ -19,8 +19,10 @@ export default async function globalSetup() {
   // The backend ships security.allow_public_registration=false; most of the
   // suite (registration.spec.ts, the settings specs' throwaway accounts, the
   // register-page screenshots) assumes an open /auth/register, so turn it on
-  // once. The disabled state is covered by registration.spec.ts, which flips
-  // the switch off and back on around its own tests.
+  // once, remembering what was there for global-teardown to restore. The
+  // disabled state is covered by registration.spec.ts, which flips the switch
+  // off and back on around its own tests.
+  process.env.E2E_REGISTRATION_WAS_OPEN = (await getPublicRegistration()) ? 'true' : 'false';
   await setPublicRegistration(true);
   console.log('[global-setup] public registration enabled for the suite');
 }

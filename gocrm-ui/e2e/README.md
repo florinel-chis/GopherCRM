@@ -85,7 +85,9 @@ the API (`helpers/registration-config.ts`): the switch ships **off**, and most o
 the registration specs, the settings specs' throwaway accounts — assumes an open
 `/auth/register`. This means global setup needs the backend to be up and reachable at
 `VITE_API_BASE_URL`. The disabled state is covered by `registration.spec.ts`, which flips the
-switch off and back on around its own tests.
+switch off and back on around its own tests. `global-teardown.ts` restores the switch to what
+global setup found, so a screenshots or manual run against the dev backend on 8090 does not
+leave that database's sign-up permanently reopened.
 
 This account cannot be created through the UI or the API. `POST /auth/register` is public and always
 creates a `customer`, ignoring any role in the request body, so an admin has to come from the CLI or

@@ -12,6 +12,26 @@ import { testAdminCredentials } from '../fixtures/admin-user';
  * Creates its own APIRequestContext so it works from global setup and from
  * beforeAll/afterAll hooks alike (the `request` fixture is test-scoped).
  */
+/**
+ * Reads the current state of the switch through the public status endpoint,
+ * so global setup can record what it found and teardown can put it back —
+ * a screenshots run against the dev backend must not permanently reopen
+ * sign-up in that deployment's database.
+ */
+export async function getPublicRegistration(): Promise<boolean> {
+  const context = await request.newContext();
+  try {
+    const response = await context.get(`${API_BASE_URL}/auth/registration`);
+    if (!response.ok()) {
+      throw new Error(`reading the registration status failed (${response.status()}): ${await response.text()}`);
+    }
+    const { data } = await response.json();
+    return data.enabled === true;
+  } finally {
+    await context.dispose();
+  }
+}
+
 export async function setPublicRegistration(enabled: boolean): Promise<void> {
   const context = await request.newContext();
   try {
