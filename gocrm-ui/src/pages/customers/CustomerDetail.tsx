@@ -36,8 +36,10 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { customersApi, ticketsApi } from '@/api/endpoints';
+import { customersApi, dealsApi, ticketsApi } from '@/api/endpoints';
+import { DealsSection } from '@/pages/deals/DealsSection';
 import type { Ticket } from '@/types';
 import { formatDate } from '@/utils/date';
 
@@ -67,7 +69,11 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  
+  const { user } = useAuth();
+  // Deals are admin and sales only on the API; support sees the customer
+  // without the section.
+  const canSeeDeals = user?.role === 'admin' || user?.role === 'sales';
+
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
 
@@ -401,6 +407,19 @@ export const Component: React.FC = () => {
           </Box>
         </TabPanel>
       </Paper>
+
+      {canSeeDeals && (
+        <Box mt={3}>
+          <DealsSection
+            queryKey={['customer', id, 'deals']}
+            fetchDeals={(params) => dealsApi.getCustomerDeals(Number(id), params)}
+            newDealPath={`/deals/new?customer_id=${customer.id}`}
+            canWrite
+            headingId="customer-deals-heading"
+            emptyText="No deals for this customer"
+          />
+        </Box>
+      )}
 
       <ConfirmDialog
         open={deleteDialog}

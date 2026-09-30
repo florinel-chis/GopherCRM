@@ -22,6 +22,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupLeadRoutes(group, &LeadHandler{})
 	SetupCustomerRoutes(group, &CustomerHandler{})
 	SetupCompanyRoutes(group, &CompanyHandler{})
+	SetupDealRoutes(group, &DealHandler{})
 	SetupTicketRoutes(group, &TicketHandler{})
 	SetupTaskRoutes(group, &TaskHandler{})
 	SetupLabelRoutes(group, &LabelHandler{})
@@ -110,6 +111,20 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodDelete, "/api/v1/companies/1"},
 		{http.MethodGet, "/api/v1/companies/1/customers"},
 		{http.MethodGet, "/api/v1/companies/1/leads"},
+		// Deals: /:id/stage (POST) and /:id/history (GET) next to /:id on
+		// three verbs, and two sub-lists registered from the deals file onto
+		// the company and customer parameter paths, next to
+		// /companies/:id/customers and /customers/:id/tickets.
+		{http.MethodGet, "/api/v1/deals"},
+		{http.MethodPost, "/api/v1/deals"},
+		{http.MethodGet, "/api/v1/deals/1"},
+		{http.MethodPut, "/api/v1/deals/1"},
+		{http.MethodDelete, "/api/v1/deals/1"},
+		{http.MethodPost, "/api/v1/deals/1/stage"},
+		{http.MethodGet, "/api/v1/deals/1/history"},
+		{http.MethodGet, "/api/v1/companies/1/deals"},
+		{http.MethodGet, "/api/v1/customers/1/deals"},
+		{http.MethodGet, "/api/v1/customers/1/tickets"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()

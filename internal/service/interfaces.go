@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 )
 
 type AuthTokens struct {
@@ -179,6 +180,43 @@ type CompanyService interface {
 	// means every owner.
 	ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error)
 	ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error)
+}
+
+// DealService drives the deals module. Every write validates the links
+// (company, customer, lead and owner must be live rows, else the matching
+// *NotFound sentinel, which the handler answers with 400 INVALID_REFERENCE),
+// fills the defaults (currency from configuration, probability from the stage)
+// and applies the stage rules: won is 100 and lost is 0 whatever was sent,
+// closed_at is set on entering won or lost and cleared on leaving them, and
+// lost_reason is kept only while lost. Every stage change, the create
+// included, writes one history row in the same transaction.
+type DealService interface {
+	// Create writes the deal and its first history row (from_stage NULL). A
+	// nil probability takes the stage's default.
+	Create(deal *models.Deal, probability *int, actorID uint) error
+	// GetByID returns the deal with owner, company, customer and lead.
+	GetByID(id uint) (*models.Deal, error)
+	// Update saves the deal as given. When its stage differs from the stored
+	// one the change goes through the same transition rules as ChangeStage and
+	// records a history row; a nil probability then takes the new stage's
+	// default, and otherwise leaves the stored probability alone.
+	Update(deal *models.Deal, probability *int, actorID uint) error
+	// ChangeStage moves the deal to stage. The same stage again is a no-op
+	// that writes nothing. A nil lostReason keeps whatever a lost deal had.
+	ChangeStage(id uint, stage models.DealStage, probability *int, lostReason *string, actorID uint) (*models.Deal, error)
+	// Delete soft-deletes the deal; its history rows stay.
+	Delete(id uint) error
+	// List returns one page plus the total matching the filter; the sort
+	// column is checked against the deals allowlist and an unknown one is an
+	// error.
+	List(offset, limit int, filter repository.DealListFilter) ([]models.Deal, int64, error)
+	// ListByCompany and ListByCustomer page through the deals linked to the
+	// record, newest first, and report apperrors.ErrNotFound for an unknown
+	// company or customer. A nil ownerID means every owner.
+	ListByCompany(companyID uint, ownerID *uint, offset, limit int) ([]models.Deal, int64, error)
+	ListByCustomer(customerID uint, ownerID *uint, offset, limit int) ([]models.Deal, int64, error)
+	// History returns the stage changes oldest first with the acting user.
+	History(dealID uint) ([]models.DealStageChange, error)
 }
 
 type APIKeyService interface {

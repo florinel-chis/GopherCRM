@@ -186,8 +186,8 @@ type LabelRepository interface {
 // UnlinkCustomers.
 type CompanyRepository interface {
 	Create(company *models.Company) error
-	// GetByID returns the company with Owner preloaded and CustomerCount and
-	// LeadCount populated.
+	// GetByID returns the company with Owner preloaded and CustomerCount,
+	// LeadCount and DealCount populated.
 	GetByID(id uint) (*models.Company, error)
 	Update(company *models.Company) error
 	// Delete soft-deletes the company and reports gorm.ErrRecordNotFound when
@@ -202,15 +202,55 @@ type CompanyRepository interface {
 	// rows, compared with LOWER(). excludeID is the row an update may collide
 	// with; 0 for a create.
 	ExistsByDomain(domain string, excludeID uint) (bool, error)
-	// UnlinkLeads and UnlinkCustomers set company_id to NULL on every row,
-	// soft-deleted ones included, that points at the company.
+	// UnlinkLeads, UnlinkCustomers and UnlinkDeals set company_id to NULL on
+	// every row, soft-deleted ones included, that points at the company.
 	UnlinkLeads(companyID uint) error
 	UnlinkCustomers(companyID uint) error
+	UnlinkDeals(companyID uint) error
 	// ListCustomers and ListLeads page through the live rows linked to the
 	// company, newest first. A nil ownerID means every owner.
 	ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error)
 	ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error)
 	WithTx(tx *gorm.DB) CompanyRepository
+}
+
+// DealListFilter narrows DealRepository.List. Every pointer that is nil and
+// every empty string means "no filter"; Open selects the stages that are
+// neither won nor lost. SortBy is checked against
+// utils.AllowedSortColumns["deals"] and an empty one means newest first.
+type DealListFilter struct {
+	Search     string
+	Stage      models.DealStage
+	CompanyID  *uint
+	CustomerID *uint
+	OwnerID    *uint
+	Open       bool
+	SortBy     string
+	SortOrder  string
+}
+
+// DealRepository backs the deals module. Deals hold no personal data, so
+// nothing here takes part in the erasure; the stage history is append-only.
+type DealRepository interface {
+	Create(deal *models.Deal) error
+	// GetByID returns the deal with Owner, Company, Customer and Lead
+	// preloaded.
+	GetByID(id uint) (*models.Deal, error)
+	// Update saves every column of the deal, nil pointers included, so a
+	// cleared closed_at or lost_reason reaches the database. Associations are
+	// not written.
+	Update(deal *models.Deal) error
+	// Delete soft-deletes the deal and reports gorm.ErrRecordNotFound when no
+	// live row matched. History rows stay.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same filter.
+	List(offset, limit int, filter DealListFilter) ([]models.Deal, int64, error)
+	// CreateStageChange appends one history row.
+	CreateStageChange(change *models.DealStageChange) error
+	// ListStageChanges returns the deal's history oldest first with ChangedBy
+	// preloaded.
+	ListStageChanges(dealID uint) ([]models.DealStageChange, error)
+	WithTx(tx *gorm.DB) DealRepository
 }
 
 type APIKeyRepository interface {

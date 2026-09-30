@@ -118,6 +118,17 @@ vi.mock('@/api/endpoints/companies', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/deals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/deals')>();
+  return {
+    ...actual,
+    dealsApi: {
+      ...actual.dealsApi,
+      getDeals: vi.fn().mockResolvedValue({ deals: [], total: 0 }),
+    },
+  };
+});
+
 vi.mock('@/api/endpoints/tickets', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/endpoints/tickets')>();
   return {
@@ -328,4 +339,59 @@ describe('company routes', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
   }, 20000);
+});
+
+// Deals are admin and sales only on the API, so the whole /deals group sits
+// under one pathless guard: support and customer get "Access Denied" on every
+// path, including deep links to the form.
+describe('deal routes', () => {
+  beforeEach(() => {
+    authUser = null;
+  });
+
+  it.each(['admin', 'sales'] as const)(
+    'lets a %s user reach the deal list',
+    async (role) => {
+      authUser = createMockUser({ role });
+
+      renderAt('/deals');
+
+      expect(
+        await screen.findByRole('heading', { name: 'Deals' }, { timeout: 15000 })
+      ).toBeInTheDocument();
+      expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+    },
+    20000
+  );
+
+  it('lets a sales user reach the deal create form', async () => {
+    authUser = createMockUser({ role: 'sales' });
+
+    renderAt('/deals/new');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Create New Deal' }, { timeout: 15000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+  }, 20000);
+
+  const dealPaths = ['/deals', '/deals/new', '/deals/1', '/deals/1/edit'];
+
+  it.each(dealPaths)('blocks a support user from %s', async (path) => {
+    authUser = createMockUser({ role: 'support' });
+
+    renderAt(path);
+
+    expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /deal/i })).not.toBeInTheDocument();
+  });
+
+  it.each(dealPaths)('blocks a customer user from %s', async (path) => {
+    authUser = createMockUser({ role: 'customer' });
+
+    renderAt(path);
+
+    expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /deal/i })).not.toBeInTheDocument();
+  });
 });

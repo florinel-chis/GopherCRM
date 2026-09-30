@@ -81,6 +81,10 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
+	configRepo := repository.NewConfigurationRepository(suite.db)
+	suite.Require().NoError(configRepo.InitializeDefaults())
+	configService := service.NewConfigurationService(configRepo, utils.NewSecretBox("test-secret-key", "configuration-secret"))
+	dealService := service.NewDealService(repository.NewDealRepository(suite.db), companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 
@@ -90,6 +94,8 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	leadHandler := handler.NewLeadHandler(leadService)
 	customerHandler := handler.NewCustomerHandler(customerService)
 	companyHandler := handler.NewCompanyHandler(companyService)
+	dealHandler := handler.NewDealHandler(dealService)
+	configHandler := handler.NewConfigurationHandler(configService)
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
@@ -116,6 +122,8 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	handler.SetupLeadRoutes(protected, leadHandler)
 	handler.SetupCustomerRoutes(protected, customerHandler)
 	handler.SetupCompanyRoutes(protected, companyHandler)
+	handler.SetupDealRoutes(protected, dealHandler)
+	handler.SetupConfigurationRoutes(protected, configHandler)
 	handler.SetupTicketRoutes(protected, ticketHandler)
 	handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
 

@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deals with stage history.** A sales opportunity with a fixed pipeline and an append-only
+  record of every stage it has been through.
+  - `/deals` (admin and sales; sales sees and edits its own, delete is admin only): list with
+    search over title and notes, server-side filters (`stage`, `open=true`, `company_id`,
+    `customer_id`, `owner_id`), a sort allowlist and pagination; get with owner, company,
+    customer and lead; create and update with validation of the links (400
+    `INVALID_REFERENCE`; on update, links are checked only when the request sets them, so a
+    deal keeps links to erased records and stays editable); `POST /deals/{id}/stage` and
+    `GET /deals/{id}/history`;
+    `GET /companies/{id}/deals` and `GET /customers/{id}/deals`.
+  - Stages `qualification`, `proposal`, `negotiation`, `won`, `lost` with default probabilities
+    10/40/70/100/0; `won` is always 100 and `lost` always 0; `closed_at` is set on entering a
+    closed stage and cleared on leaving it; `lost_reason` is kept only while lost. Every stage
+    change, the create included, writes one history row in the same transaction; asking for the
+    current stage again writes nothing.
+  - Money is an integer amount in minor units (`amount_cents`) next to a three-letter currency
+    code; the default currency is the new `deals.default_currency` setting (category `deals`,
+    shipped as `EUR`, admin-editable, and exposed on `GET /configurations/ui`).
+    `expected_close_date` is a plain `YYYY-MM-DD` date on the wire.
+  - Companies report `deal_count`, and deleting a company also clears `company_id` on its deals.
+  - Deals hold no personal data: erasing a linked customer, lead or user leaves them and their
+    history intact.
+  - Migration `20260930120000_add_deals` for MySQL and MariaDB (two new tables, nothing altered);
+    auto-migration covers SQLite, populated files included.
 - **Companies.** A curated organisation record next to the free-text company field of leads and
   customers.
   - `/companies`: list with search (name, domain, industry, city), a sort allowlist and

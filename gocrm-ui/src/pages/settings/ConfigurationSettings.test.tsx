@@ -48,6 +48,16 @@ const sensitive = baseConfig({
   is_set: true,
 });
 
+const dealCurrency = baseConfig({
+  id: 3,
+  key: 'deals.default_currency',
+  value: 'EUR',
+  category: 'deals',
+  description: 'ISO 4217 currency code a new deal takes when none is sent',
+  default_value: 'EUR',
+  is_system: true,
+});
+
 const openIntegrationTab = async () => {
   const tab = await screen.findByRole('tab', { name: /Integration/ });
   fireEvent.click(tab);
@@ -101,6 +111,32 @@ describe('ConfigurationSettings', () => {
       expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.gemini_api_key', {
         value: 'fresh-secret',
       });
+    });
+  });
+
+  it('lists a deals configuration under the Deals tab, after Tasks, and edits it', async () => {
+    (configurationsApi.getAll as any).mockResolvedValue([baseConfig({}), dealCurrency]);
+    (configurationsApi.set as any).mockResolvedValue({ ...dealCurrency, value: 'USD' });
+
+    render(<ConfigurationSettings />);
+
+    const tabs = await screen.findAllByRole('tab');
+    const labels = tabs.map((tab) => tab.textContent ?? '');
+    expect(labels.indexOf('Deals (1)')).toBe(labels.indexOf('Tasks (0)') + 1);
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Deals/ }));
+
+    expect(await screen.findByText('deals.default_currency')).toBeInTheDocument();
+    expect(screen.queryByText('general.company_name')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('Edit configuration'));
+
+    const input = await screen.findByDisplayValue('EUR');
+    fireEvent.change(input, { target: { value: 'USD' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(configurationsApi.set).toHaveBeenCalledWith('deals.default_currency', { value: 'USD' });
     });
   });
 

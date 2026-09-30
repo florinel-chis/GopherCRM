@@ -102,7 +102,54 @@ checked in the service rather than by an index.
 | notes | text | No | - | max 65535 bytes | Free text |
 | owner_id | uint | No | - | FK to users | Account manager |
 
-`customer_count` and `lead_count` are computed on read (live rows only) and are not columns.
+`customer_count`, `lead_count` and `deal_count` are computed on read (live rows only) and are not
+columns.
+
+## Deal Model
+
+A sales opportunity, optionally linked to a company, a customer and the lead it grew from, always
+owned by a user. Holds no personal data; deleting one is a soft delete that keeps the history.
+Money is an integer amount in minor units next to an ISO 4217 code — sums are only meaningful per
+currency.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 200 | Deal title (trimmed) |
+| stage | string | Yes | `qualification` | one of the stage values below | Pipeline stage |
+| amount_cents | int64 | Yes | 0 | ≥ 0 | Amount in minor units |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$` | ISO 4217 code |
+| probability | int | Yes | per stage | 0–100; won is 100, lost is 0 | Chance of closing |
+| expected_close_date | date | No | - | `YYYY-MM-DD` on the wire | Expected close |
+| closed_at | datetime | No | - | set on entering won or lost, cleared on leaving them | When the deal closed |
+| lost_reason | string | No | - | max 255; stored only while lost | Why the deal was lost |
+| source | string | No | - | max 100 | Free text |
+| notes | text | No | - | max 65535 bytes | Free text |
+| company_id | uint | No | - | FK to companies | Linked company |
+| customer_id | uint | No | - | FK to customers | Linked customer |
+| lead_id | uint | No | - | FK to leads | Lead it grew from |
+| owner_id | uint | Yes | the caller | FK to users | Staff account working the deal |
+
+### Deal Stage Values
+- `qualification` (default probability 10)
+- `proposal` (40)
+- `negotiation` (70)
+- `won` (100, closed)
+- `lost` (0, closed)
+
+### Deal Stage Change
+
+`deal_stage_changes` is append-only: one row per stage the deal entered, written in the same
+transaction as the create or the change, never updated, kept when the deal is soft-deleted.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| deal_id | uint | Yes | FK to deals, indexed | The deal |
+| from_stage | string | No | null on the creating row | Stage left |
+| to_stage | string | Yes | a stage value | Stage entered |
+| changed_by_id | uint | Yes | FK to users | Who made the change |
+| changed_at | datetime | Yes | - | When |
 
 ## Customer Model
 
@@ -233,6 +280,7 @@ Represents system configuration settings that control application behavior.
 - `security` - Security-related settings
 - `leads` - Lead management settings
 - `customers` - Customer management settings
+- `deals` - Deals settings
 - `tickets` - Ticket system settings
 - `tasks` - Task management settings
 - `integration` - Third-party integrations
@@ -244,6 +292,7 @@ Represents system configuration settings that control application behavior.
 - `leads.conversion.allowed_statuses` - Lead statuses that allow conversion
 - `leads.conversion.require_notes` - Whether conversion notes are required
 - `leads.conversion.auto_assign_owner` - Auto-assign lead owner to customer
+- `deals.default_currency` - Currency a new deal takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
 - `tickets.auto_assign_support` - Auto-assign tickets to support users
 
 ## API Request/Response Format

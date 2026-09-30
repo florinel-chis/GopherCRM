@@ -447,6 +447,7 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_SensitiveVal
 		Return([]models.Configuration{storedSensitiveConfig()}, nil)
 	suite.mockService.On("GetByCategory", models.CategoryGeneral).
 		Return([]models.Configuration{}, nil)
+	suite.mockService.On("GetByKey", "deals.default_currency").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockService.On("GetLeadConversionStatuses").Return([]string{"qualified"}, nil)
 
 	w := suite.get("/configurations/ui")
@@ -456,6 +457,36 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_SensitiveVal
 	entries := suite.decodeConfigurations(w)
 	suite.Require().NotEmpty(entries)
 	suite.assertMasked(entries[0], true)
+}
+
+// The deal form pre-fills its currency from this endpoint, so the deals
+// default has to be in it next to the ui and general entries; a missing row
+// (a database that was never seeded) degrades to the key's absence, not to a
+// failure of the whole endpoint.
+func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_CarriesTheDefaultDealCurrency() {
+	suite.mockService.On("GetByCategory", models.CategoryUI).Return([]models.Configuration{}, nil)
+	suite.mockService.On("GetByCategory", models.CategoryGeneral).Return([]models.Configuration{}, nil)
+	suite.mockService.On("GetByKey", "deals.default_currency").Return(&models.Configuration{
+		Key: "deals.default_currency", Value: "RON", Type: models.ConfigTypeString, Category: models.CategoryDeals,
+	}, nil).Once()
+	suite.mockService.On("GetLeadConversionStatuses").Return([]string{"qualified"}, nil)
+
+	w := suite.get("/configurations/ui")
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var found bool
+	for _, entry := range suite.decodeConfigurations(w) {
+		if entry["key"] == "deals.default_currency" {
+			found = true
+			assert.Equal(suite.T(), "RON", entry["value"])
+			assert.Equal(suite.T(), string(models.CategoryDeals), entry["category"])
+		}
+	}
+	assert.True(suite.T(), found, "deals.default_currency must be in the UI configurations")
+
+	suite.mockService.On("GetByKey", "deals.default_currency").Return(nil, gorm.ErrRecordNotFound).Once()
+	w = suite.get("/configurations/ui")
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	assert.NotContains(suite.T(), w.Body.String(), "deals.default_currency")
 }
 
 // A write answers with the same masked shape, so a saved key is never echoed.

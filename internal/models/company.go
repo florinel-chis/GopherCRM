@@ -37,11 +37,13 @@ type Company struct {
 	OwnerID *uint `gorm:"index" json:"owner_id,omitempty"`
 	Owner   *User `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 
-	// CustomerCount and LeadCount are how many live customers and leads point at
-	// the company. They are computed by the repository, not stored: `gorm:"-"`
-	// keeps them out of the schema and of every generated statement.
+	// CustomerCount, LeadCount and DealCount are how many live customers, leads
+	// and deals point at the company. They are computed by the repository, not
+	// stored: `gorm:"-"` keeps them out of the schema and of every generated
+	// statement.
 	CustomerCount int64 `gorm:"-" json:"customer_count"`
 	LeadCount     int64 `gorm:"-" json:"lead_count"`
+	DealCount     int64 `gorm:"-" json:"deal_count"`
 }
 
 // Column widths of the companies table. The handler rejects a value that would

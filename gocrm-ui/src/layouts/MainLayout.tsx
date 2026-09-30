@@ -35,6 +35,7 @@ import {
   Logout,
   AccountCircle,
   ContactPhone,
+  Handshake,
   ChevronLeft,
   Tune,
   LocalOffer,
@@ -66,6 +67,13 @@ const navItems: NavItem[] = [
     title: 'Leads',
     path: '/leads',
     icon: <ContactPhone />,
+    roles: ['admin', 'sales'],
+  },
+  {
+    // Same roles as the API group: admin and sales only.
+    title: 'Deals',
+    path: '/deals',
+    icon: <Handshake />,
     roles: ['admin', 'sales'],
   },
   {

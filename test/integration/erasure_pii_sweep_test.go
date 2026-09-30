@@ -247,7 +247,7 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 	require.NoError(t, err)
 
 	for _, expected := range []string{
-		"users", "leads", "customers", "companies", "tickets", "tasks",
+		"users", "leads", "customers", "companies", "deals", "deal_stage_changes", "tickets", "tasks",
 		"api_keys", "configurations", "refresh_tokens",
 		"bulk_operations", "bulk_operation_items",
 	} {

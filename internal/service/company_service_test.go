@@ -191,8 +191,8 @@ func setupCompanyServiceDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
-	require.NoError(t, db.Migrator().DropTable(&models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}))
+	require.NoError(t, db.Migrator().DropTable(&models.Deal{}, &models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}))
 	t.Cleanup(func() {
 		if sqlDB, err := db.DB(); err == nil {
 			_ = sqlDB.Close()

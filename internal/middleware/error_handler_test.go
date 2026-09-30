@@ -9,6 +9,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -114,4 +115,59 @@ func TestErrorHandler_AlreadyWritten(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Contains(t, w.Body.String(), "created")
+}
+
+func TestValidationMessage_BoundsFollowTheFieldKind(t *testing.T) {
+	type payload struct {
+		Name        string  `validate:"min=2,max=5"`
+		Probability *int    `validate:"omitempty,min=0,max=100"`
+		Count       int     `validate:"min=1,max=10"`
+		Ratio       float64 `validate:"max=1.5"`
+		Quantity    uint    `validate:"max=3"`
+		Score       int     `validate:"gte=0,lte=10"`
+	}
+	intOf := func(v int) *int { return &v }
+	v := validator.New()
+
+	messageFor := func(p payload, field string) string {
+		t.Helper()
+		err := v.Struct(p)
+		var ve validator.ValidationErrors
+		if !errors.As(err, &ve) {
+			t.Fatalf("expected validation errors, got %v", err)
+		}
+		for _, fe := range ve {
+			if fe.Field() == field {
+				return validationMessage(fe)
+			}
+		}
+		t.Fatalf("no error for field %s in %v", field, err)
+		return ""
+	}
+	valid := payload{Name: "abc", Probability: intOf(50), Count: 5, Ratio: 1, Quantity: 1, Score: 5}
+
+	tests := []struct {
+		name   string
+		mutate func(*payload)
+		field  string
+		want   string
+	}{
+		{"string max keeps the length wording", func(p *payload) { p.Name = "abcdef" }, "Name", "Name must be at most 5 characters long"},
+		{"string min keeps the length wording", func(p *payload) { p.Name = "a" }, "Name", "Name must be at least 2 characters long"},
+		{"int pointer max is a value bound", func(p *payload) { p.Probability = intOf(101) }, "Probability", "Probability must be at most 100"},
+		{"int pointer min is a value bound", func(p *payload) { p.Probability = intOf(-1) }, "Probability", "Probability must be at least 0"},
+		{"int max is a value bound", func(p *payload) { p.Count = 11 }, "Count", "Count must be at most 10"},
+		{"int min is a value bound", func(p *payload) { p.Count = 0 }, "Count", "Count must be at least 1"},
+		{"float max is a value bound", func(p *payload) { p.Ratio = 2 }, "Ratio", "Ratio must be at most 1.5"},
+		{"uint max is a value bound", func(p *payload) { p.Quantity = 4 }, "Quantity", "Quantity must be at most 3"},
+		{"lte is unchanged", func(p *payload) { p.Score = 11 }, "Score", "Score must be less than or equal to 10"},
+		{"gte is unchanged", func(p *payload) { p.Score = -1 }, "Score", "Score must be greater than or equal to 0"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := valid
+			tc.mutate(&p)
+			assert.Equal(t, tc.want, messageFor(p, tc.field))
+		})
+	}
 }

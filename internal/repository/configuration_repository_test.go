@@ -55,7 +55,20 @@ func TestInitializeDefaultsKeepsConfiguredValues(t *testing.T) {
 	plain.Value = "Acme Industries"
 	require.NoError(t, repo.Update(plain))
 
+	// The deals default currency ships as EUR and is admin-editable; a boot
+	// must not put EUR back.
+	currency, err := repo.GetByKey("deals.default_currency")
+	require.NoError(t, err)
+	assert.Equal(t, "EUR", currency.Value)
+	assert.Equal(t, models.CategoryDeals, currency.Category)
+	currency.Value = "RON"
+	require.NoError(t, repo.Update(currency))
+
 	require.NoError(t, repo.InitializeDefaults())
+
+	currency, err = repo.GetByKey("deals.default_currency")
+	require.NoError(t, err)
+	assert.Equal(t, "RON", currency.Value)
 
 	secret, err = repo.GetByKey("integration.aeo.gemini_api_key")
 	require.NoError(t, err)

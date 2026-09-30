@@ -114,6 +114,35 @@ export const router = createBrowserRouter([
         ],
       },
       {
+        // Deals are admin and sales only on the API (support and customer get
+        // 403 on everything), so the whole group sits under one pathless
+        // guard. Same shape as the admin block — a static `element` on the
+        // children themselves would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'deals',
+            lazy: () => import('@/pages/deals/DealList'),
+          },
+          {
+            path: 'deals/new',
+            lazy: () => import('@/pages/deals/DealForm'),
+          },
+          {
+            path: 'deals/:id',
+            lazy: () => import('@/pages/deals/DealDetail'),
+          },
+          {
+            path: 'deals/:id/edit',
+            lazy: () => import('@/pages/deals/DealForm'),
+          },
+        ],
+      },
+      {
         path: 'tickets',
         lazy: () => import('@/pages/tickets/TicketList'),
       },

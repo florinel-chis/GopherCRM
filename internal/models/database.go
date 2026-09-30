@@ -54,6 +54,8 @@ func MigrateDatabase() error {
 			&Company{},
 			&Lead{},
 			&Customer{},
+			&Deal{},
+			&DealStageChange{},
 			&Ticket{},
 			&Label{},
 			&Task{},

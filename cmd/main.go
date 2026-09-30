@@ -182,6 +182,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	taskRepo := repository.NewTaskRepository(models.DB)
 	labelRepo := repository.NewLabelRepository(models.DB)
 	companyRepo := repository.NewCompanyRepository(models.DB)
+	dealRepo := repository.NewDealRepository(models.DB)
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)
 	configRepo := repository.NewConfigurationRepository(models.DB)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(models.DB)
@@ -207,6 +208,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	configService := service.NewConfigurationService(configRepo,
 		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
+	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
 	bulkService := service.NewBulkOperationService(
 		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
 		taskRepo, ticketRepo, txManager, utils.Logger,
@@ -248,6 +250,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	taskHandler := handler.NewTaskHandler(taskService)
 	labelHandler := handler.NewLabelHandler(labelService)
 	companyHandler := handler.NewCompanyHandler(companyService)
+	dealHandler := handler.NewDealHandler(dealService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
@@ -313,6 +316,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupLeadRoutes(protected, leadHandler)
 		handler.SetupCustomerRoutes(protected, customerHandler)
 		handler.SetupCompanyRoutes(protected, companyHandler)
+		handler.SetupDealRoutes(protected, dealHandler)
 		handler.SetupTicketRoutes(protected, ticketHandler)
 		handler.SetupTaskRoutes(protected, taskHandler)
 		handler.SetupLabelRoutes(protected, labelHandler)

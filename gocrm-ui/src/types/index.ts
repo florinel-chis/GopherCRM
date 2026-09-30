@@ -91,6 +91,74 @@ export interface Company {
   updated_at: string;
 }
 
+// Deal pipeline stages in board order. `probability` is the default the API
+// applies when a create or stage change carries none; `won` is always 100 and
+// `lost` always 0 whatever is sent.
+export const DEAL_STAGES = [
+  { value: 'qualification', label: 'Qualification', probability: 10 },
+  { value: 'proposal', label: 'Proposal', probability: 40 },
+  { value: 'negotiation', label: 'Negotiation', probability: 70 },
+  { value: 'won', label: 'Won', probability: 100 },
+  { value: 'lost', label: 'Lost', probability: 0 },
+] as const;
+
+export type DealStage = (typeof DEAL_STAGES)[number]['value'];
+
+export const DEAL_STAGE_VALUES = DEAL_STAGES.map((stage) => stage.value) as [
+  DealStage,
+  ...DealStage[],
+];
+
+export const isClosedDealStage = (stage: DealStage): boolean =>
+  stage === 'won' || stage === 'lost';
+
+export const dealStageLabel = (stage: DealStage): string =>
+  DEAL_STAGES.find((candidate) => candidate.value === stage)?.label ?? stage;
+
+export const dealStageDefaultProbability = (stage: DealStage): number =>
+  DEAL_STAGES.find((candidate) => candidate.value === stage)?.probability ?? 0;
+
+export interface Deal {
+  id: number;
+  title: string;
+  stage: DealStage;
+  // Integer minor units with an ISO 4217 code; the UI divides by 100 only
+  // for display and never sums across currencies.
+  amount_cents: number;
+  currency: string;
+  probability: number;
+  // Calendar date as YYYY-MM-DD, or null. Compared in local time from the
+  // string itself so a timezone can never shift the day.
+  expected_close_date: string | null;
+  // ISO timestamp, set while the stage is won or lost, null otherwise.
+  closed_at: string | null;
+  lost_reason: string;
+  source: string;
+  notes: string;
+  company_id?: number;
+  company?: Company;
+  customer_id?: number;
+  customer?: Customer;
+  lead_id?: number;
+  lead?: Lead;
+  owner_id: number;
+  owner?: User;
+  created_at: string;
+  updated_at: string;
+}
+
+// One row of GET /deals/:id/history. `from_stage` is null on the row written
+// when the deal was created.
+export interface DealStageChange {
+  id: number;
+  deal_id: number;
+  from_stage: DealStage | null;
+  to_stage: DealStage;
+  changed_by_id: number;
+  changed_by?: Pick<User, 'id' | 'first_name' | 'last_name' | 'email'>;
+  changed_at: string;
+}
+
 export interface Ticket {
   id: number;
   subject: string;
