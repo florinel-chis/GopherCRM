@@ -16,6 +16,7 @@ interface BreadcrumbItem {
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
   leads: 'Leads',
+  deals: 'Deals',
   customers: 'Customers',
   tickets: 'Tickets',
   tasks: 'Tasks',
