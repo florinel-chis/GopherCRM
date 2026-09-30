@@ -68,6 +68,7 @@ const CATEGORIES = [
   { value: 'customers', label: 'Customers' },
   { value: 'tickets', label: 'Tickets' },
   { value: 'tasks', label: 'Tasks' },
+  { value: 'deals', label: 'Deals' },
   { value: 'integration', label: 'Integration' },
 ];
 
