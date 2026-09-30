@@ -32,6 +32,10 @@ var AllowedSortColumns = map[string]map[string]bool{
 	"companies": {
 		"id": true, "name": true, "domain": true, "industry": true, "created_at": true, "updated_at": true,
 	},
+	"deals": {
+		"id": true, "title": true, "stage": true, "amount_cents": true, "probability": true,
+		"expected_close_date": true, "closed_at": true, "created_at": true, "updated_at": true,
+	},
 }
 
 // ValidateSort checks that sortBy is in the allowlist for the given entity and

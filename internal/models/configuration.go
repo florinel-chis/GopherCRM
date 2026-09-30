@@ -29,6 +29,11 @@ const (
 	CategorySecurity    ConfigurationCategory = "security"
 	CategoryIntegration ConfigurationCategory = "integration"
 	CategoryUI          ConfigurationCategory = "ui"
+	// CategoryDeals groups the deals settings. The category column is a plain
+	// varchar(50) with no enumeration in the schema, so a new category needs
+	// no migration; GetByCategory answers an empty list for a category it has
+	// no rows for.
+	CategoryDeals ConfigurationCategory = "deals"
 )
 
 // Configuration represents a system configuration setting
@@ -310,6 +315,16 @@ func DefaultConfigurations() []Configuration {
 			IsSystem:     true,
 			IsReadOnly:   false,
 			ValidValues:  `[1, 8, 24, 48, 72, 168]`,
+		},
+		{
+			Key:          "deals.default_currency",
+			Value:        DealDefaultCurrency,
+			Type:         ConfigTypeString,
+			Category:     CategoryDeals,
+			Description:  "ISO 4217 currency code a new deal takes when none is sent (three upper-case letters)",
+			DefaultValue: DealDefaultCurrency,
+			IsSystem:     true,
+			IsReadOnly:   false,
 		},
 		{
 			Key:          "tickets.auto_assign_support",

@@ -24,6 +24,9 @@ func TestValidateSort_ValidColumns(t *testing.T) {
 		{"tasks by due_date desc", "tasks", "due_date", "desc", "due_date", "desc"},
 		{"companies by domain asc", "companies", "domain", "asc", "domain", "asc"},
 		{"companies by name desc", "companies", "name", "desc", "name", "desc"},
+		{"deals by amount asc", "deals", "amount_cents", "asc", "amount_cents", "asc"},
+		{"deals by expected close desc", "deals", "expected_close_date", "desc", "expected_close_date", "desc"},
+		{"deals by closed_at asc", "deals", "closed_at", "asc", "closed_at", "asc"},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +56,17 @@ func TestValidateSort_InvalidColumn_ReturnsError(t *testing.T) {
 	for _, column := range []string{"owner_id", "phone", "customer_count", "lead_count"} {
 		_, _, err := ValidateSort("companies", column, "asc")
 		assert.Errorf(t, err, "%q must not be a sortable company column", column)
+	}
+
+	// Deals: the allowlist is exactly the documented columns plus id. The
+	// links and the text columns exist but are not sortable.
+	for _, column := range []string{"id", "title", "stage", "amount_cents", "probability", "expected_close_date", "closed_at", "created_at", "updated_at"} {
+		_, _, err := ValidateSort("deals", column, "asc")
+		assert.NoErrorf(t, err, "%q is a sortable deal column", column)
+	}
+	for _, column := range []string{"owner_id", "company_id", "customer_id", "lead_id", "currency", "notes", "lost_reason"} {
+		_, _, err := ValidateSort("deals", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable deal column", column)
 	}
 }
 

@@ -156,6 +156,19 @@ func assertUpgradedV120(t *testing.T) {
 	assert.Contains(t, indexSQL(t, "customers", "idx_customers_email"), "UNIQUE",
 		"the unique email index must survive the rebuild")
 
+	// The deals tables (new in this release) are created on the populated
+	// file, with their own foreign keys, and no existing table was given a
+	// foreign key to them: deals point at companies, customers, leads and
+	// users, never the other way round, so no further table is rebuilt.
+	for _, table := range []string{"deals", "deal_stage_changes"} {
+		assert.True(t, DB.Migrator().HasTable(table), "%s must exist after the upgrade", table)
+	}
+	assert.Contains(t, tableSQL(t, "deals"), "CONSTRAINT `fk_deals_owner` FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`)")
+	assert.Contains(t, tableSQL(t, "deal_stage_changes"), "CONSTRAINT `fk_deal_stage_changes_changed_by` FOREIGN KEY (`changed_by_id`) REFERENCES `users`(`id`)")
+	for _, table := range []string{"users", "companies", "customers", "leads", "tickets", "tasks"} {
+		assert.NotContains(t, tableSQL(t, table), "REFERENCES `deals`", "%s must not have gained a foreign key to deals", table)
+	}
+
 	// A second migration on the upgraded file is a no-op.
 	before := schemaSnapshot(t)
 	require.NoError(t, MigrateDatabase())
