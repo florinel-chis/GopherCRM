@@ -689,9 +689,13 @@ are the test's own; only those are deleted.
   negotiation, won, lost, each present even when empty (`count: 0`, `totals: []`); each stage's
   `totals` holds one entry per currency, sorted by code, with `amount_cents` the sum and
   `weighted_cents` = round half up of Σ `amount_cents × probability` / 100, rounded once per
-  stage and currency. The chart plots the default currency's totals per stage and shows a legend
-  per currency when several exist.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`. Go:
+  stage and currency. The chart plots the open stages in the default currency
+  (`deals.default_currency`) and lists every other currency per stage in an "Other currencies"
+  table under it; nothing is converted or summed across currencies. A failed request shows
+  "Pipeline could not be loaded" instead of the empty state.
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` (new; the spec does
+  not open the chart today). Vitest: `PipelineChart.test.tsx`, `Dashboard.test.tsx` "shows the
+  pipeline chart and the won-this-month tile for the %s role". Go:
   `dashboard_handler_test.go` `TestGetPipeline_ResponseShape`; `deal_service_test.go`
   `TestDealService_DashboardPipeline`; `deal_pipeline_integration_test.go`
   `TestDashboardPipeline`.
@@ -708,8 +712,11 @@ are the test's own; only those are deleted.
   `closed_at` is stamped in UTC at the move; the tile counts won deals with `closed_at` in
   [first instant of the current UTC month, first instant of the next). Moving the deal back to an
   open stage clears `closed_at` and removes it from the tile.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`. Go:
-  `deal_pipeline_integration_test.go` `TestDashboardPipeline`, `TestWonThisMonthFollowsTheStage`.
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` "the
+  dashboard "Won this month" tile counts a deal moved to Won on the board" (the tile's count grows
+  by exactly one after the move and the tile links to the board). Not asserted end to end: the
+  amount per currency and moving the deal back out of won. Vitest: `WonThisMonthTile.test.tsx`.
+  Go: `deal_pipeline_integration_test.go` `TestDashboardPipeline`, `TestWonThisMonthFollowsTheStage`.
 
 ### TC-DASH-040 — Sales sees only its own deals in the widgets
 - **Priority:** P1
@@ -731,8 +738,9 @@ are the test's own; only those are deleted.
   1. As each, `GET /api/v1/dashboard/pipeline`.
 - **Expected:** **403** for both: customer at the dashboard guard, support in the handler ("Deals
   are available to the admin and sales roles only"). Unlike `/dashboard/new-leads`, which answers
-  support with an empty list, this endpoint refuses; the dashboard page must not request it for
-  support.
+  support with an empty list, this endpoint refuses, and the dashboard page does not request it
+  for support or customer (Vitest `Dashboard.test.tsx` "shows no deal widgets and makes no pipeline
+  request for the %s role").
 - **Automation:** blocked — needs a role-login helper for support. Go: `dashboard_handler_test.go`
   `TestGetPipeline_RoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.
 

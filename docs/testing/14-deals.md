@@ -7,10 +7,11 @@ the history, not an erasure). Every **Expected** states what the build does **to
 the handlers, service and repository; every automated case names the exact test title in
 `gocrm-ui/e2e/tests/admin-deals.spec.ts`.
 
-33 cases: 13 automated by `gocrm-ui/e2e/tests/admin-deals.spec.ts` (12 of them partial, as in
-10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or
-Vitest), 12 planned (7 against the same spec, 5 against `admin-deals-board.spec.ts` for the
-pipeline board of section 14.7), 8 blocked on the sales/support role-login helper. Every case
+33 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
+`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of them
+partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
+in Go or Vitest), 9 planned (7 against `admin-deals.spec.ts`, 2 against
+`admin-deals-board.spec.ts`), 8 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
 
 **Sources**
@@ -499,8 +500,14 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   lost collapsed by default); each deal's card sits in its stage's column; each header shows the
   count and one total per currency. `GET /api/v1/deals/pipeline` → **200** with the same numbers;
   soft-deleted deals are not counted; amounts in different currencies are never added together.
-- **Automation:** planned — `admin-deals-board.spec.ts`. Go: `deal_repository_test.go`
-  `TestDealRepository_PipelineGroupsByStageAndCurrency`; `deal_service_test.go`
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "the board shows created deals in their stage columns with counts and totals" (two deals
+  created in Qualification and Proposal sit in their columns; each header count is at least 1;
+  each column's EUR total grows by exactly the created amount; the Qualification header shows a
+  weighted line; Won and Lost start collapsed). Not asserted end to end: the column order, the API
+  response, a second currency and the exclusion of soft-deleted deals — Vitest `DealBoard.test.tsx`
+  "renders the five stage columns in order with their counts and totals" and the Go tests.
+  Go: `deal_repository_test.go`
+  `TestDealRepository_PipelineGroupsByStageAndCurrency`, `TestDealRepository_PipelineAggregatesTheMaximumAmount`; `deal_service_test.go`
   `TestBuildDealPipelineStages_Layout`; `deal_handler_test.go` `TestPipeline_ResponseShape`;
   `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
 
@@ -514,8 +521,8 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Expected:** proposal EUR `weighted_cents` = round half up of (10989 + 40000000) / 100 =
   **400110**; negotiation EUR = 0.5 → **1**. Rounding is applied to the stage-and-currency sum,
   not per deal (two 1-cent deals at 50 % give 1, not 2).
-- **Automation:** planned — `admin-deals-board.spec.ts` (API level). Go: `deal_service_test.go`
-  `TestWeightedCents_RoundsHalfUpOnce`, `TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal`;
+- **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
+  Go: `deal_service_test.go` `TestWeightedCents_RoundsHalfUpOnce`, `TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal`;
   `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
 
 ### TC-DEAL-029 — "Move to…" moves a card and updates both columns
@@ -527,8 +534,12 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Expected:** `POST /api/v1/deals/{id}/stage` with `{"stage":"negotiation"}` → **200**; the
   card appears under negotiation; both headers' counts and totals change; the history gains one
   row.
-- **Automation:** planned — `admin-deals-board.spec.ts`. Go: `deal_service_test.go`
-  `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`.
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Negotiation through its menu moves it and updates both headers" (the stage
+  response is 200, the card leaves Qualification and appears under Negotiation, and both header
+  counts change by one). Not asserted end to end: the request body, the header totals and the
+  history row. Go: `deal_service_test.go` `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
+  Vitest `DealBoard.test.tsx` "moves a card to Proposal from its menu and refetches both columns and
+  the pipeline".
 
 ### TC-DEAL-030 — Moving a card to lost asks for a reason
 - **Priority:** P1
@@ -538,8 +549,11 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   1. Choose "Move to… lost"; enter a reason; confirm.
 - **Expected:** the stage request carries `lost_reason`; the card moves to the lost column (with
   probability 0, so it adds nothing to the weighted total).
-- **Automation:** planned — `admin-deals-board.spec.ts`. Go: `deal_service_test.go`
-  `TestApplyDealTransition`.
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Lost asks for a reason and shows it under the expanded Lost column" (the dialog
+  takes the reason, the stage response is 200, the card appears under the expanded Lost column,
+  and the detail page shows the Lost chip and the reason). Not asserted end to end: the request
+  body and the weighted total. Go: `deal_service_test.go` `TestApplyDealTransition`; Vitest
+  `DealBoard.test.tsx` "asks for a reason before moving a card to Lost and sends it".
 
 ### TC-DEAL-031 — Sales sees only its own deals on the board
 - **Priority:** P0
@@ -564,8 +578,8 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Expected:** step 1: **200**, the aggregate narrowed accordingly; an id matching nothing gives
   five empty stages. Step 2: **400** "owner_id must be a positive integer" / "company_id must be a
   positive integer", the list's rule.
-- **Automation:** planned — `admin-deals-board.spec.ts` (API level). Go: `deal_handler_test.go`
-  `TestPipeline_PassesTheFiltersAndTheCaller`, `TestPipeline_BadFiltersAre400`;
+- **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
+  Go: `deal_handler_test.go` `TestPipeline_PassesTheFiltersAndTheCaller`, `TestPipeline_BadFiltersAre400`;
   `deal_repository_test.go` `TestDealRepository_PipelineOwnerAndCompanyFilters`;
   `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
 
