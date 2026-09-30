@@ -182,12 +182,16 @@ names the Go test that already pins its API behaviour.
 - **Type:** validation
 - **Preconditions:** Admin logged in.
 - **Steps:**
-  1. Submit with an empty title; with a negative amount; with currency `eur`; with probability
-     101; with a title of 201 characters.
+  1. Submit with an empty title; with a negative amount; with an amount above
+     90,071,992,547,409.91; with currency `eur`; with probability 101; with a title of 201
+     characters.
 - **Expected:** The form stays open with the message on the field. The form's own schema refuses
   most of these before any request ("Title is required", "Amount must be a positive number with
-  at most two decimals", "Currency must be a 3-letter ISO code"); whatever reaches the API is a
-  **400**: the binding tags refuse the amount (`min=0`), the currency (`len=3,alpha,uppercase`)
+  at most two decimals", "Amount is too large", "Currency must be a 3-letter ISO code"); whatever
+  reaches the API is a **400**: the binding tags refuse the amount (`min=0`, and
+  `max=9007199254740991`, i.e. 2^53 - 1 cents, answered "AmountCents must be at most
+  9007199254740991"; the service repeats the bound as `models.DealAmountCentsMax`, so the pipeline
+  sums stay inside a BIGINT), the currency (`len=3,alpha,uppercase`)
   and the probability (`0–100`); `lengthError` refuses values longer than their column (title 200,
   `lost_reason` 255, `source` 100, notes 65535 bytes) and names the field; the service trims and
   refuses a blank title. A date not of the form `YYYY-MM-DD` is a 400 too.
@@ -195,8 +199,13 @@ names the Go test that already pins its API behaviour.
   open" (an empty title, `12,5` as amount and `EU` as currency, all refused by the form before
   any request, so the 400s of the API are pinned in Go).
   Go: `deal_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
-  `TestCreate_ValuesLongerThanTheirColumnAre400`; `deal_service_test.go`
-  `TestCreate_ValidationFailuresNeverReachTheWrite`; `deal_test.go`.
+  `TestCreate_ValuesLongerThanTheirColumnAre400`,
+  `TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage` (create and update),
+  `TestDealAmountBindingTagMatchesTheModel`; `deal_service_test.go`
+  `TestCreate_ValidationFailuresNeverReachTheWrite`, `TestAmountBound_OnCreateAndUpdate`;
+  `deal_repository_test.go` `TestDealRepository_PipelineAggregatesTheMaximumAmount`;
+  `deal_test.go`. Vitest: `DealForm.test.tsx` "refuses an amount above the API bound of
+  9007199254740991 cents and accepts the bound".
 
 ### TC-DEAL-009 — An unknown company, customer, lead or owner is INVALID_REFERENCE
 - **Priority:** P0

@@ -62,6 +62,16 @@ func TestDealStageBindingTagsMatchTheModel(t *testing.T) {
 	}
 }
 
+// The max binding on amount_cents must be models.DealAmountCentsMax, the bound
+// the service enforces as well; struct tags cannot reference the constant.
+func TestDealAmountBindingTagMatchesTheModel(t *testing.T) {
+	field, ok := reflect.TypeOf(DealRequest{}).FieldByName("AmountCents")
+	if !ok {
+		t.Fatal("DealRequest has no AmountCents field")
+	}
+	assert.Equal(t, fmt.Sprintf("min=0,max=%d", models.DealAmountCentsMax), field.Tag.Get("binding"))
+}
+
 type DealHandlerTestSuite struct {
 	suite.Suite
 	mockService *mocks.DealService

@@ -33,7 +33,7 @@ func NewDealHandler(dealService service.DealService) *DealHandler {
 type DealRequest struct {
 	Title             string           `json:"title" binding:"required"`
 	Stage             models.DealStage `json:"stage,omitempty" binding:"omitempty,oneof=qualification proposal negotiation won lost"`
-	AmountCents       int64            `json:"amount_cents" binding:"min=0"`
+	AmountCents       int64            `json:"amount_cents" binding:"min=0,max=9007199254740991"`
 	Currency          string           `json:"currency,omitempty" binding:"omitempty,len=3,alpha,uppercase"`
 	Probability       *int             `json:"probability,omitempty" binding:"omitempty,min=0,max=100"`
 	ExpectedCloseDate string           `json:"expected_close_date,omitempty"`
@@ -123,7 +123,7 @@ func optionalID(id *uint) *uint {
 
 // Create godoc
 // @Summary Create a deal
-// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 or more; currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
+// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 to 9007199254740991 (2^53 - 1; a larger value is a 400); currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -337,7 +337,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a deal
-// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
+// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. amount_cents is 0 to 9007199254740991 (2^53 - 1), as on create. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
 // @Tags deals
 // @Accept json
 // @Produce json

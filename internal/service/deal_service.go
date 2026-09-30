@@ -522,6 +522,9 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 	if deal.AmountCents < 0 {
 		return fmt.Errorf("amount_cents must not be negative: %w", apperrors.ErrValidation)
 	}
+	if deal.AmountCents > models.DealAmountCentsMax {
+		return fmt.Errorf("amount_cents must be at most %d: %w", models.DealAmountCentsMax, apperrors.ErrValidation)
+	}
 	if !dealCurrencyPattern.MatchString(deal.Currency) {
 		return fmt.Errorf("currency must be a three-letter upper-case ISO 4217 code: %w", apperrors.ErrValidation)
 	}
