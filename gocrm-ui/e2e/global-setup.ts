@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { testAdminCredentials } from './fixtures/admin-user';
+import { setPublicRegistration } from './helpers/registration-config';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
@@ -12,7 +13,19 @@ const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..'
  * to be seeded out-of-band through the same CLI an operator would use. Re-running
  * this is harmless: create-admin exits non-zero when the account already exists.
  */
-export default function globalSetup() {
+export default async function globalSetup() {
+  provisionAdmin();
+
+  // The backend ships security.allow_public_registration=false; most of the
+  // suite (registration.spec.ts, the settings specs' throwaway accounts, the
+  // register-page screenshots) assumes an open /auth/register, so turn it on
+  // once. The disabled state is covered by registration.spec.ts, which flips
+  // the switch off and back on around its own tests.
+  await setPublicRegistration(true);
+  console.log('[global-setup] public registration enabled for the suite');
+}
+
+function provisionAdmin() {
   try {
     execFileSync(
       'go',

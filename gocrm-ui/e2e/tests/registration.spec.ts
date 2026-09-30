@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { RegisterPage } from '../pages/register.page';
 import { DashboardPage } from '../pages/dashboard.page';
 import { generateTestUser, testPasswords } from '../fixtures/test-data';
+import { setPublicRegistration } from '../helpers/registration-config';
+import { API_BASE_URL } from '../helpers/env';
 
 test.describe('Registration Flow', () => {
   let registerPage: RegisterPage;
@@ -300,5 +302,54 @@ test.describe('Registration Flow', () => {
     ]);
 
     await page.waitForURL('/', { timeout: 10000 });
+  });
+});
+// The switch itself: security.allow_public_registration ships disabled, and
+// global-setup enables it for the rest of the suite. These tests restore the
+// shipped state, verify the closed surface end to end, and reopen it in
+// afterAll for the spec files that run later (workers=1 keeps this race-free).
+test.describe('Registration disabled (security.allow_public_registration=false)', () => {
+  test.beforeAll(async () => {
+    await setPublicRegistration(false);
+  });
+
+  test.afterAll(async () => {
+    await setPublicRegistration(true);
+  });
+
+  test('login page offers no sign-up link', async ({ page }) => {
+    const statusProbe = page.waitForResponse(
+      response =>
+        response.url().includes('/auth/registration') && response.request().method() === 'GET'
+    );
+    await page.goto('/login');
+    await statusProbe;
+
+    await expect(page.getByRole('link', { name: /forgot password/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /sign up/i })).toHaveCount(0);
+  });
+
+  test('the register page shows the disabled notice instead of the form', async ({ page }) => {
+    await page.goto('/register');
+
+    await expect(page.getByText(/registration is disabled/i)).toBeVisible();
+    await expect(page.getByLabel(/email address/i)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /back to sign in/i })).toBeVisible();
+  });
+
+  test('a direct POST /auth/register is refused with 403', async ({ request }) => {
+    const user = generateTestUser();
+    const response = await request.post(`${API_BASE_URL}/auth/register`, {
+      data: {
+        email: user.email,
+        password: user.password,
+        first_name: user.firstName,
+        last_name: user.lastName,
+      },
+    });
+
+    expect(response.status()).toBe(403);
+    const body = await response.json();
+    expect(body.success).toBe(false);
   });
 });

@@ -80,6 +80,13 @@ It is seeded by `global-setup.ts`, which shells out to `go run ./cmd/create-admi
 from the repo root before any test starts. Re-running is harmless — the CLI exits non-zero when the
 account already exists and global setup treats that as success.
 
+Global setup then logs in as this admin and enables `security.allow_public_registration` through
+the API (`helpers/registration-config.ts`): the switch ships **off**, and most of the suite —
+the registration specs, the settings specs' throwaway accounts — assumes an open
+`/auth/register`. This means global setup needs the backend to be up and reachable at
+`VITE_API_BASE_URL`. The disabled state is covered by `registration.spec.ts`, which flips the
+switch off and back on around its own tests.
+
 This account cannot be created through the UI or the API. `POST /auth/register` is public and always
 creates a `customer`, ignoring any role in the request body, so an admin has to come from the CLI or
 from an existing admin calling `POST /users`. Do not "fix" a failing admin spec by trying to register
@@ -90,7 +97,7 @@ an admin through the app.
 | Spec | Tests | Area |
 |------|-------|------|
 | `login.spec.ts` | 11 | Auth — render, success, wrong password, unknown user, empty and invalid input, password visibility, register link, Enter key, protected routes, unauthenticated redirect |
-| `registration.spec.ts` | 15 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error |
+| `registration.spec.ts` | 18 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error, disabled switch (no sign-up link, notice instead of form, API 403) |
 | `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, status and priority filters |
 | `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, status and priority filters, minimal data |
 | `admin-users.spec.ts` | 12 | Users — list, create, edit, view, delete, search, role filter |
