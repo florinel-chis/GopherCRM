@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator, Response, expect } from '@playwright/test';
 
 export type DealStageLabel = 'Qualification' | 'Proposal' | 'Negotiation' | 'Won' | 'Lost';
 
@@ -233,6 +233,15 @@ export class DealsPage {
     const response = await this.saveAndWaitForResponse('POST');
     expect(response.status()).toBe(201);
     await this.page.waitForURL(/\/deals\/\d+$/);
+    // The router pushes the new URL before React commits the detail route (the
+    // state update runs in a transition), so for a moment the URL already reads
+    // /deals/:id while the form, with its own "Stage" select, is still mounted.
+    // A stage pick in that window opens the form's menu, which the route swap
+    // then removes. Wait for the detail page itself: its heading, its stage
+    // chip, and the creation row of the history.
+    await expect(this.detailHeading(data.title)).toBeVisible();
+    await expect(this.stageChip).toHaveText(data.stage ?? 'Qualification');
+    await expect(this.historyRows).toHaveCount(1);
     const match = this.page.url().match(/\/deals\/(\d+)$/);
     return Number(match?.[1]);
   }
@@ -249,8 +258,11 @@ export class DealsPage {
    */
   async changeStage(label: Exclude<DealStageLabel, 'Lost'>) {
     const responsePromise = this.stageResponse();
+    const historyPromise = this.historyResponse();
     await this.pickStage(label);
-    return await responsePromise;
+    const response = await responsePromise;
+    await this.settleAfterStageChange(response, historyPromise, label);
+    return response;
   }
 
   /** Opens the lost dialog from the stage select; does not confirm. */
@@ -263,8 +275,11 @@ export class DealsPage {
   async confirmLost(reason: string) {
     await this.lostDialog.getByLabel(/^Lost reason/).fill(reason);
     const responsePromise = this.stageResponse();
+    const historyPromise = this.historyResponse();
     await this.lostDialog.getByRole('button', { name: 'Mark as lost' }).click();
-    return await responsePromise;
+    const response = await responsePromise;
+    await this.settleAfterStageChange(response, historyPromise, 'Lost');
+    return response;
   }
 
   private stageResponse() {
@@ -273,6 +288,35 @@ export class DealsPage {
         /\/deals\/\d+\/stage$/.test(new URL(response.url()).pathname) &&
         response.request().method() === 'POST'
     );
+  }
+
+  private historyResponse() {
+    return this.page.waitForResponse(
+      (response) =>
+        /\/deals\/\d+\/history$/.test(new URL(response.url()).pathname) &&
+        response.request().method() === 'GET'
+    );
+  }
+
+  /**
+   * After a successful stage change the page stores the returned deal and
+   * refetches the history. Waits for that refetch, the chip showing the new
+   * stage and the select enabled again, so the next stage pick starts from a
+   * settled page. A failed change triggers no refetch; the caller asserts the
+   * status, so nothing is awaited then.
+   */
+  private async settleAfterStageChange(
+    response: Response,
+    historyPromise: Promise<Response>,
+    label: DealStageLabel
+  ) {
+    if (!response.ok()) {
+      historyPromise.catch(() => undefined);
+      return;
+    }
+    await historyPromise;
+    await expect(this.stageChip).toHaveText(label);
+    await expect(this.stageSelect).toBeEnabled();
   }
 
   /**
