@@ -10,6 +10,7 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 👥 **Lead Management**: Lead tracking with conversion to customers
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
+- 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
@@ -493,6 +494,28 @@ authentication and live on the moderate tier:
 - Leads and customers accept `company_id` on create and update *(unknown → 400 `INVALID_REFERENCE`;
   on update `0` clears, absent keeps)* and return `company_record` on their detail endpoints. The
   free-text `company` field is independent of the link.
+- Companies also report a live `deal_count`, and `GET /api/v1/companies/:id/deals` lists their deals
+  *(admin and sales; sales sees only its own)*
+
+### Deals *(admin and sales; sales sees and edits its own deals; delete: admin)*
+- `GET /api/v1/deals` - List deals (`page`, `limit`, `search` over title/notes, `stage`, `open=true`,
+  `company_id`, `customer_id`, `owner_id` — admin only, sales is always narrowed to itself —
+  `sort_by` in `id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at,
+  updated_at`, anything else is 400, `sort_order`); `data` is the array, `meta` the pagination
+- `POST /api/v1/deals` - Create a deal *(stage defaults to `qualification`, probability to the stage's
+  10/40/70/100/0, currency to the `deals.default_currency` setting; every link must be a live row →
+  400 `INVALID_REFERENCE`; `owner_id` defaults to the caller and sales may only own it themselves;
+  the first history row is written in the same transaction)*
+- `GET /api/v1/deals/:id` - Get a deal with its owner, company, customer and lead
+- `PUT /api/v1/deals/:id` - Replace a deal's fields *(links: absent keeps, `0` clears; a stage change
+  goes through the same rules as the stage endpoint and records history)*
+- `POST /api/v1/deals/:id/stage` - Move a deal to a stage `{stage, probability?, lost_reason?}` *(won is
+  always 100 and lost 0; `closed_at` set on won/lost and cleared on leaving them; `lost_reason` kept
+  only on lost; the same stage again is a 200 that writes nothing)*
+- `GET /api/v1/deals/:id/history` - The stage changes, oldest first, with the user who made each
+- `DELETE /api/v1/deals/:id` - Soft-delete a deal; its history stays *(admin)*
+- `GET /api/v1/customers/:id/deals` - The customer's deals, paginated *(admin and sales; sales sees
+  only its own)*
 
 ### Tickets
 - `GET /api/v1/tickets` - List tickets *(customers cannot list all tickets)*
