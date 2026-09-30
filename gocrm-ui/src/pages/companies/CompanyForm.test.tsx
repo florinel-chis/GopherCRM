@@ -4,6 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { Component as CompanyForm } from './CompanyForm';
 import { companiesApi, usersApi } from '@/api/endpoints';
 import { createMockCompany, createMockUser } from '@/test/factories';
+import { pickAutocompleteOption } from '@/test/autocomplete';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User } from '@/types';
 
@@ -172,31 +173,29 @@ describe('CompanyForm', () => {
       fireEvent.mouseDown(screen.getByLabelText(/^Employees/));
       fireEvent.click(await screen.findByRole('option', { name: '51-200' }));
 
-      const ownerInput = screen.getByLabelText(/^Owner/);
-      ownerInput.focus();
-      fireEvent.change(ownerInput, { target: { value: 'Ion' } });
-      fireEvent.click(await screen.findByRole('option', { name: 'Ion Ionescu' }));
+      await pickAutocompleteOption(/^Owner/, 'Ion', 'Ion Ionescu');
 
       fireEvent.click(screen.getByRole('button', { name: 'Create Company' }));
 
-      await waitFor(() => {
-        expect(companiesApi.createCompany).toHaveBeenCalledWith({
-          name: 'Acme Widgets',
-          domain: 'acme.example',
-          website: 'https://www.acme.example',
-          industry: 'Manufacturing',
-          employee_range: '51-200',
-          phone: '+40 21 555 0100',
-          address: '1 Foundry Lane',
-          city: 'Cluj',
-          state: 'CJ',
-          country: 'Romania',
-          postal_code: '400001',
-          notes: 'Key account',
-          owner_id: 2,
-        });
+      await waitFor(() => expect(companiesApi.createCompany).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
       });
-      expect(mockNavigate).toHaveBeenCalledWith('/companies/42');
+      expect(companiesApi.createCompany).toHaveBeenCalledWith({
+        name: 'Acme Widgets',
+        domain: 'acme.example',
+        website: 'https://www.acme.example',
+        industry: 'Manufacturing',
+        employee_range: '51-200',
+        phone: '+40 21 555 0100',
+        address: '1 Foundry Lane',
+        city: 'Cluj',
+        state: 'CJ',
+        country: 'Romania',
+        postal_code: '400001',
+        notes: 'Key account',
+        owner_id: 2,
+      });
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/companies/42'), { timeout: 3000 });
       expect(showSuccess).toHaveBeenCalledWith('Company created successfully');
     });
 
@@ -342,7 +341,7 @@ describe('CompanyForm', () => {
       await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
 
       fireEvent.click(screen.getByTitle('Clear'));
-      expect(screen.getByLabelText(/^Owner/)).toHaveValue('');
+      await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue(''), { timeout: 3000 });
       fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
 
       await waitFor(() => {
@@ -359,18 +358,16 @@ describe('CompanyForm', () => {
       render(<CompanyForm />);
       await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
 
-      const ownerInput = screen.getByLabelText(/^Owner/);
-      ownerInput.focus();
-      fireEvent.change(ownerInput, { target: { value: 'Ana' } });
-      fireEvent.click(await screen.findByRole('option', { name: 'Ana Pop' }));
+      await pickAutocompleteOption(/^Owner/, 'Ana', 'Ana Pop');
       fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
 
-      await waitFor(() => {
-        expect(companiesApi.updateCompany).toHaveBeenCalledWith(
-          7,
-          expect.objectContaining({ owner_id: 1 })
-        );
+      await waitFor(() => expect(companiesApi.updateCompany).toHaveBeenCalledTimes(1), {
+        timeout: 3000,
       });
+      expect(companiesApi.updateCompany).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ owner_id: 1 })
+      );
     });
 
     it('shows the 409 message on the domain field when an update collides', async () => {

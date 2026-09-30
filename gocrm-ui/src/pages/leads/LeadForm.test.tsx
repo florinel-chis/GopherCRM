@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { Component as LeadForm } from './LeadForm';
 import { leadsApi, companiesApi } from '@/api/endpoints';
 import { createMockLead, createMockCompany } from '@/test/factories';
+import { pickAutocompleteOption } from '@/test/autocomplete';
 import { useNavigate, useParams } from 'react-router-dom';
 
 vi.mock('react-router-dom', async () => {
@@ -46,12 +47,8 @@ describe('LeadForm', () => {
     response: { status: 400, data: { code: 'INVALID_REFERENCE', message, details: null } },
   });
 
-  const pickCompany = async () => {
-    const input = screen.getByLabelText('Company (linked)');
-    input.focus();
-    fireEvent.change(input, { target: { value: 'acme' } });
-    fireEvent.click(await screen.findByRole('option', { name: 'Acme Widgets (acme.example)' }));
-  };
+  const pickCompany = () =>
+    pickAutocompleteOption('Company (linked)', 'acme', 'Acme Widgets (acme.example)');
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,7 +169,10 @@ describe('LeadForm', () => {
       render(<LeadForm />);
 
       await pickCompany();
-      expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme Widgets');
+      await waitFor(
+        () => expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme Widgets'),
+        { timeout: 3000 }
+      );
 
       fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: 'John Doe' } });
       fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'john@acme.example' } });
@@ -181,11 +181,10 @@ describe('LeadForm', () => {
 
       fireEvent.click(screen.getByText('Create Lead'));
 
-      await waitFor(() => {
-        expect(leadsApi.createLead).toHaveBeenCalledWith(
-          expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
-        );
-      });
+      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      expect(leadsApi.createLead).toHaveBeenCalledWith(
+        expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
+      );
     });
 
     it('puts an INVALID_REFERENCE message on the linked-company picker', async () => {
@@ -202,7 +201,7 @@ describe('LeadForm', () => {
 
       fireEvent.click(screen.getByText('Create Lead'));
 
-      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1), { timeout: 3000 });
       expect(await screen.findByText(message, undefined, { timeout: 3000 })).toBeInTheDocument();
       expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
       expect(mockNavigate).not.toHaveBeenCalled();

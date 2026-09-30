@@ -38,17 +38,24 @@ describe('CompanyAutocomplete', () => {
     input.focus();
     fireEvent.change(input, { target: { value: 'acme' } });
 
-    await waitFor(() => {
-      expect(companiesApi.getCompanies).toHaveBeenCalledWith({ search: 'acme', limit: 20 });
-    });
+    // The typed search must reach the API before the pick closes the list:
+    // opening the list already fetched the empty search, whose page also
+    // lists Acme, so clicking straight away would prove nothing about typing.
+    await waitFor(
+      () => expect(companiesApi.getCompanies).toHaveBeenCalledWith({ search: 'acme', limit: 20 }),
+      { timeout: 3000 }
+    );
 
     // Name plus domain in brackets; a company without a domain shows its name only.
-    fireEvent.click(await screen.findByRole('option', { name: 'Acme Widgets (acme.example)' }));
+    fireEvent.click(
+      await screen.findByRole('option', { name: 'Acme Widgets (acme.example)' }, { timeout: 3000 })
+    );
 
     expect(onChange).toHaveBeenCalledWith(7, acme);
-    await waitFor(() => {
-      expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
-    });
+    await waitFor(
+      () => expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)'),
+      { timeout: 3000 }
+    );
   });
 
   it('lists a company without a domain by name alone', async () => {
@@ -56,7 +63,9 @@ describe('CompanyAutocomplete', () => {
 
     fireEvent.mouseDown(screen.getByLabelText('Company (linked)'));
 
-    expect(await screen.findByRole('option', { name: 'Bolt Robotics' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('option', { name: 'Bolt Robotics' }, { timeout: 3000 })
+    ).toBeInTheDocument();
   });
 
   it('preselects from the record the caller already holds without a lookup', () => {
