@@ -148,7 +148,14 @@ Things to know before relying on it:
   on a running system produces a stale or torn copy.
 - **Back up before upgrading.** On SQLite the schema advances only through the
   auto-migration that runs at startup — the `migrations/` SQL is MySQL-only — and
-  auto-migration is not reversible.
+  auto-migration is not reversible. Take the offline copy or the `VACUUM INTO`
+  snapshot above first. Upgrading from v1.2.0 rewrites `leads` and `customers`
+  in place (the driver drops and copies each table to add the company link), so
+  the first start needs free disk for a full copy of both tables inside one
+  transaction, and the WAL grows by that amount until it is checkpointed.
+  Auto-migration runs with foreign-key enforcement off, as SQLite prescribes for
+  table rebuilds, checks every foreign key afterwards and refuses to start if
+  the check finds a dangling reference.
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 

@@ -67,12 +67,16 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   the next boot treats the row as a crash and recovers it — but the run's remaining results are
   lost. Closing it properly means a `WaitGroup` plus a cancellable run context joined before the
   close, and a clear owner for the database handle so nothing outlives it.
-- **Fixture-based upgrade tests for SQLite** — auto-migration
+- **Extend the SQLite upgrade fixtures per release** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
-  the SQL files in `migrations/` target MySQL. Nothing exercises an N-1 → N
-  upgrade against a populated file, so back the database up before upgrading
-  (see [DOCKER.md](DOCKER.md#backing-up-the-sqlite-database)) until a fixture
-  suite covers it.
+  the SQL files in `migrations/` target MySQL. The v1.2.0 → next upgrade is
+  covered by a fixture (`internal/models/testdata/sqlite-v1.2.0-schema.sql`
+  and `database_sqlite_upgrade_test.go`: a populated file with referenced
+  rows, and the half-applied state a failed first start leaves behind). Each
+  release that changes the schema should add its own N-1 fixture, dumped from
+  a fresh file of the previous release, so the chain keeps being exercised.
+  Backing up before upgrading (see
+  [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
 - **Revisit the SQLite driver pin** — `github.com/glebarez/sqlite` pulls
   `github.com/glebarez/go-sqlite` v1.21.2, whose own `go.mod` pins
   `modernc.org/sqlite` v1.23.1; module resolution here settles on v1.59.0

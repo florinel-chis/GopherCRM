@@ -169,6 +169,20 @@ docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data \
 Without it the backend opens the database read-only and fails on the first
 write ("attempt to write a readonly database").
 
+### Upgrading the SQLite database
+
+Take one of the two backups above before pulling a new image: the schema
+advances only through auto-migration on startup, which is not reversible. The
+release after 1.2.0 adds the company link to `leads` and `customers`, and the
+SQLite driver adds a foreign key by rebuilding the table — drop and copy — so
+the first start needs free space in the `/data` volume for a full copy of both
+tables inside one transaction, and the WAL file grows by that amount until it
+is checkpointed. Auto-migration runs with foreign-key enforcement switched off,
+as SQLite prescribes for table rebuilds, checks every foreign key once it is
+done and refuses to start if the check finds a dangling reference;
+`docker compose -f docker-compose.sqlite.yml logs backend` then names the
+tables involved, and the backup is the way back.
+
 ## Rebuilding after code changes
 
 ```bash
