@@ -130,7 +130,11 @@ export const Dashboard: React.FC = () => {
   // request. The API scopes sales to its own deals.
   const canViewDeals = user?.role === 'admin' || user?.role === 'sales';
 
-  const { data: pipeline, isLoading: pipelineLoading } = useQuery({
+  const {
+    data: pipeline,
+    isLoading: pipelineLoading,
+    isError: pipelineError,
+  } = useQuery({
     queryKey: ['dashboard', 'pipeline'],
     queryFn: dashboardApi.getPipeline,
     enabled: canViewDeals,
@@ -227,10 +231,15 @@ export const Dashboard: React.FC = () => {
               stages={pipeline?.stages}
               defaultCurrency={defaultCurrency}
               isLoading={pipelineLoading}
+              isError={pipelineError}
             />
           </Box>
           <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 calc(33.333% - 12px)' } }}>
-            <WonThisMonthTile wonThisMonth={pipeline?.won_this_month} isLoading={pipelineLoading} />
+            <WonThisMonthTile
+              wonThisMonth={pipeline?.won_this_month}
+              isLoading={pipelineLoading}
+              isError={pipelineError}
+            />
           </Box>
         </Box>
       )}

@@ -8,13 +8,19 @@ import { formatDealAmount } from '@/pages/deals/dealFormat';
 export interface WonThisMonthTileProps {
   wonThisMonth: WonThisMonth | undefined;
   isLoading: boolean;
+  /** The pipeline request failed: say so rather than show zero. */
+  isError?: boolean;
 }
 
 /**
  * Deals won in the current calendar month (UTC, as the API buckets them):
  * the count and one total per currency, never summed across currencies.
  */
-export const WonThisMonthTile: React.FC<WonThisMonthTileProps> = ({ wonThisMonth, isLoading }) => {
+export const WonThisMonthTile: React.FC<WonThisMonthTileProps> = ({
+  wonThisMonth,
+  isLoading,
+  isError = false,
+}) => {
   if (isLoading) {
     return <Skeleton variant="rectangular" height={140} />;
   }
@@ -29,10 +35,16 @@ export const WonThisMonthTile: React.FC<WonThisMonthTileProps> = ({ wonThisMonth
             <Typography color="textSecondary" gutterBottom variant="body2" id="won-this-month-heading">
               Won this month
             </Typography>
-            <Typography variant="h4" component="div" data-testid="won-this-month-count">
-              {count}
-            </Typography>
-            {count === 0 ? (
+            {isError ? (
+              <Typography variant="body2" color="error" role="alert">
+                Pipeline could not be loaded
+              </Typography>
+            ) : (
+              <Typography variant="h4" component="div" data-testid="won-this-month-count">
+                {count}
+              </Typography>
+            )}
+            {isError ? null : count === 0 ? (
               <Typography variant="body2" color="text.secondary">
                 No deals won yet this month
               </Typography>

@@ -175,6 +175,7 @@ interface BoardColumnProps {
   stage: DealStage;
   summary: PipelineStage | undefined;
   summaryLoading: boolean;
+  summaryError: boolean;
   expanded: boolean;
   onToggle?: () => void;
   movingDealId: number | null;
@@ -185,6 +186,7 @@ const BoardColumn: React.FC<BoardColumnProps> = ({
   stage,
   summary,
   summaryLoading,
+  summaryError,
   expanded,
   onToggle,
   movingDealId,
@@ -241,7 +243,7 @@ const BoardColumn: React.FC<BoardColumnProps> = ({
         </Typography>
         {summaryLoading ? (
           <Skeleton width={80} />
-        ) : (
+        ) : summaryError ? null : (
           <>
             <Typography variant="body2" color="text.secondary" data-testid="deal-board-count">
               {dealCountText(summary?.count ?? 0)}
@@ -310,7 +312,11 @@ export const Component: React.FC = () => {
   const [lostTarget, setLostTarget] = useState<Deal | null>(null);
 
   // Under the ['deals'] prefix so every deal mutation elsewhere refreshes it.
-  const { data: pipeline, isLoading: pipelineLoading } = useQuery({
+  const {
+    data: pipeline,
+    isLoading: pipelineLoading,
+    isError: pipelineError,
+  } = useQuery({
     queryKey: ['deals', 'pipeline'],
     queryFn: () => dealsApi.getPipeline(),
   });
@@ -358,6 +364,12 @@ export const Component: React.FC = () => {
         </Box>
       </Box>
 
+      {pipelineError && (
+        <Typography color="error" role="alert" mb={2}>
+          Pipeline could not be loaded
+        </Typography>
+      )}
+
       <Box display="flex" gap={2} alignItems="flex-start" sx={{ overflowX: 'auto', pb: 1 }}>
         {DEAL_STAGES.map(({ value: stage }) => {
           const closed = stage === 'won' || stage === 'lost';
@@ -367,6 +379,7 @@ export const Component: React.FC = () => {
               stage={stage}
               summary={pipeline?.stages.find((candidate) => candidate.stage === stage)}
               summaryLoading={pipelineLoading}
+              summaryError={pipelineError}
               expanded={closed ? expandedClosed[stage] : true}
               onToggle={
                 closed

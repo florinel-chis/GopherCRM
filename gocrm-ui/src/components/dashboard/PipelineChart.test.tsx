@@ -99,6 +99,18 @@ describe('PipelineChart', () => {
     expect(screen.queryByTestId('pipeline-default-total')).not.toBeInTheDocument();
   });
 
+  it('says the pipeline could not be loaded instead of the empty state when the request failed', () => {
+    render(
+      <MemoryRouter>
+        <PipelineChart stages={undefined} defaultCurrency="EUR" isLoading={false} isError />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Pipeline could not be loaded');
+    expect(screen.queryByText('No open deals yet')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pipeline-default-total')).not.toBeInTheDocument();
+  });
+
   it('links to the board', () => {
     renderChart(mixed);
 

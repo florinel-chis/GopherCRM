@@ -281,6 +281,22 @@ describe('Dashboard', () => {
       expect(screen.getByTestId('won-this-month-count')).toHaveTextContent('0');
     });
 
+    it('says the pipeline could not be loaded instead of showing zero when the request fails', async () => {
+      // The shape the axios client rethrows after its response interceptor.
+      mockGetPipeline.mockRejectedValue({ response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } });
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
+
+      renderDashboard();
+
+      const chart = await screen.findByRole('region', { name: 'Pipeline by stage' });
+      expect(await within(chart).findByText('Pipeline could not be loaded')).toBeInTheDocument();
+      expect(within(chart).queryByText('No open deals yet')).not.toBeInTheDocument();
+      const tile = screen.getByRole('region', { name: 'Won this month' });
+      expect(within(tile).getByText('Pipeline could not be loaded')).toBeInTheDocument();
+      expect(within(tile).queryByTestId('won-this-month-count')).not.toBeInTheDocument();
+      expect(within(tile).queryByText('No deals won yet this month')).not.toBeInTheDocument();
+    });
+
     it.each(['support', 'customer'] as const)(
       'shows no deal widgets and makes no pipeline request for the %s role',
       async (role) => {

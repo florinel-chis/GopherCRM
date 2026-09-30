@@ -165,6 +165,20 @@ describe('DealBoard', () => {
     expect(await within(column('proposal')).findByText('No deals')).toBeInTheDocument();
   });
 
+  it('says the pipeline could not be loaded instead of zero totals when the request fails', async () => {
+    // The shape the axios client rethrows after its response interceptor.
+    vi.mocked(dealsApi.getPipeline).mockRejectedValue({ response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } });
+    render(<DealBoard />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Pipeline could not be loaded');
+    for (const stage of ['qualification', 'proposal', 'negotiation', 'won', 'lost'] as const) {
+      expect(within(header(stage)).queryByTestId('deal-board-count')).not.toBeInTheDocument();
+      expect(within(header(stage)).queryByTestId('deal-board-total')).not.toBeInTheDocument();
+    }
+    // The cards come from their own requests and still load.
+    expect(await within(column('qualification')).findByText('Website redesign')).toBeInTheDocument();
+  });
+
   it('loads each open column sorted by expected close and leaves the closed columns unloaded', async () => {
     render(<DealBoard />);
 

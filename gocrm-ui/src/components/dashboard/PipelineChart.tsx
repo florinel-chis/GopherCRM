@@ -22,6 +22,8 @@ export interface PipelineChartProps {
   /** The currency the bars are drawn in; other currencies go in a table. */
   defaultCurrency: string;
   isLoading: boolean;
+  /** The pipeline request failed: say so rather than draw an empty chart. */
+  isError?: boolean;
 }
 
 const amountIn = (stage: PipelineStage, currency: string): number =>
@@ -32,7 +34,12 @@ const amountIn = (stage: PipelineStage, currency: string): number =>
  * Amounts are never converted or summed across currencies, so every other
  * currency present is listed in a small table under the chart.
  */
-export const PipelineChart: React.FC<PipelineChartProps> = ({ stages, defaultCurrency, isLoading }) => {
+export const PipelineChart: React.FC<PipelineChartProps> = ({
+  stages,
+  defaultCurrency,
+  isLoading,
+  isError = false,
+}) => {
   const theme = useTheme();
   const openStages = (stages ?? []).filter((stage) => !isClosedDealStage(stage.stage));
   const openCount = openStages.reduce((sum, stage) => sum + stage.count, 0);
@@ -61,6 +68,10 @@ export const PipelineChart: React.FC<PipelineChartProps> = ({ stages, defaultCur
       </Box>
       {isLoading ? (
         <Skeleton variant="rectangular" height={240} />
+      ) : isError ? (
+        <Typography color="error" role="alert">
+          Pipeline could not be loaded
+        </Typography>
       ) : openCount === 0 ? (
         <Typography color="text.secondary">No open deals yet</Typography>
       ) : (

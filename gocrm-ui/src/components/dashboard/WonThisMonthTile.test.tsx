@@ -39,6 +39,18 @@ describe('WonThisMonthTile', () => {
     expect(screen.queryByTestId('won-this-month-total')).not.toBeInTheDocument();
   });
 
+  it('says the pipeline could not be loaded instead of showing zero when the request failed', () => {
+    render(
+      <MemoryRouter>
+        <WonThisMonthTile wonThisMonth={undefined} isLoading={false} isError />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Pipeline could not be loaded');
+    expect(screen.queryByTestId('won-this-month-count')).not.toBeInTheDocument();
+    expect(screen.queryByText('No deals won yet this month')).not.toBeInTheDocument();
+  });
+
   it('shows a placeholder while loading', () => {
     renderTile(undefined, true);
 
