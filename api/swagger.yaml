@@ -7386,13 +7386,14 @@ paths:
         and expected_close_date: one left out is stored empty or cleared. The links
         follow the rule of company_id on leads: company_id, customer_id and lead_id
         absent keep the stored link, 0 clears it, another value sets it (a live row,
-        else 400 INVALID_REFERENCE). owner_id absent keeps the owner (sales may only
-        name themselves, admins any live user); currency absent keeps the stored code.
-        A stage different from the stored one goes through the same rules as POST
-        /deals/{id}/stage — probability defaults to the new stage''s unless sent,
-        won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on
-        lost — and writes a history row in the same transaction. The same stage writes
-        no history row; probability is then applied only when sent.'
+        else 400 INVALID_REFERENCE). Links are checked only when the request sets
+        them; a deal keeps links to erased records and stays editable. owner_id absent
+        keeps the owner (sales may only name themselves, admins any live user); currency
+        absent keeps the stored code. A stage different from the stored one goes through
+        the same rules as POST /deals/{id}/stage — probability defaults to the new
+        stage''s unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason
+        kept only on lost — and writes a history row in the same transaction. The
+        same stage writes no history row; probability is then applied only when sent.'
       parameters:
       - description: Deal ID
         in: path

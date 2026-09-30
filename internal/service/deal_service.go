@@ -72,6 +72,10 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 		logger.WithError(err).Warn("Deal rejected")
 		return err
 	}
+	if err := s.checkLinks(deal, nil); err != nil {
+		logger.WithError(err).Warn("Deal rejected")
+		return err
+	}
 
 	// A create is a transition from nowhere into the stage: the same rules
 	// decide probability, closed_at and lost_reason, and the same history row
@@ -121,7 +125,8 @@ func (s *dealService) GetByID(id uint) (*models.Deal, error) {
 
 // Update saves the deal. The stored row is re-read for its stage: a difference
 // is a transition and gets the history row; the same stage keeps closed_at as
-// it is and only applies an explicit probability.
+// it is and only applies an explicit probability. The links and the owner are
+// checked only where they differ from the stored row (see checkLinks).
 func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("deal_id", deal.ID), "DealService", "Update")
 
@@ -136,6 +141,10 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 		deal.Currency = stored.Currency
 	}
 	if err := s.validate(deal, probability); err != nil {
+		logger.WithError(err).Warn("Deal rejected")
+		return err
+	}
+	if err := s.checkLinks(deal, stored); err != nil {
 		logger.WithError(err).Warn("Deal rejected")
 		return err
 	}
@@ -340,10 +349,10 @@ func (s *dealService) defaultCurrency() string {
 	return value
 }
 
-// validate runs the domain rules and the link checks. Length bounds on the
-// other text columns are the handler's job, with the column widths as the
-// source of truth; the rules here are the ones that interpret the value or
-// need the database.
+// validate runs the domain rules on the fields. Length bounds on the other
+// text columns are the handler's job, with the column widths as the source of
+// truth; the rules here are the ones that interpret the value. The links are
+// checkLinks' job.
 func (s *dealService) validate(deal *models.Deal, probability *int) error {
 	deal.Title = strings.TrimSpace(deal.Title)
 	if deal.Title == "" {
@@ -367,14 +376,33 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 	if deal.OwnerID == 0 {
 		return fmt.Errorf("owner_id is required: %w", apperrors.ErrValidation)
 	}
+	return nil
+}
 
-	if _, err := s.userRepo.GetByID(deal.OwnerID); err != nil {
-		if isNotFound(err) {
-			return fmt.Errorf("unknown owner_id %d: %w", deal.OwnerID, apperrors.ErrAssigneeNotFound)
-		}
-		return err
+// checkLinks holds the owner and the optional links to live rows. On a create
+// (stored nil) every link the deal carries is checked. On an update only a
+// link that differs from the stored row is: the handler leaves a link the
+// request did not set exactly as stored, and such a link is not re-checked,
+// so a deal keeps its links to erased records (erasure soft-deletes the row)
+// and stays editable. A link the request cleared is nil and needs no check;
+// one set to another id must name a live row, as on a create.
+func (s *dealService) checkLinks(deal, stored *models.Deal) error {
+	var previousCompany, previousCustomer, previousLead *uint
+	ownerChanged := true
+	if stored != nil {
+		previousCompany, previousCustomer, previousLead = stored.CompanyID, stored.CustomerID, stored.LeadID
+		ownerChanged = deal.OwnerID != stored.OwnerID
 	}
-	if deal.CompanyID != nil {
+
+	if ownerChanged {
+		if _, err := s.userRepo.GetByID(deal.OwnerID); err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("unknown owner_id %d: %w", deal.OwnerID, apperrors.ErrAssigneeNotFound)
+			}
+			return err
+		}
+	}
+	if linkChanged(deal.CompanyID, previousCompany) {
 		if _, err := s.companyRepo.GetByID(*deal.CompanyID); err != nil {
 			if isNotFound(err) {
 				return fmt.Errorf("unknown company_id %d: %w", *deal.CompanyID, apperrors.ErrCompanyNotFound)
@@ -382,7 +410,7 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 			return err
 		}
 	}
-	if deal.CustomerID != nil {
+	if linkChanged(deal.CustomerID, previousCustomer) {
 		if _, err := s.customerRepo.GetByID(*deal.CustomerID); err != nil {
 			if isNotFound(err) {
 				return fmt.Errorf("unknown customer_id %d: %w", *deal.CustomerID, apperrors.ErrCustomerNotFound)
@@ -390,7 +418,7 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 			return err
 		}
 	}
-	if deal.LeadID != nil {
+	if linkChanged(deal.LeadID, previousLead) {
 		if _, err := s.leadRepo.GetByID(*deal.LeadID); err != nil {
 			if isNotFound(err) {
 				return fmt.Errorf("unknown lead_id %d: %w", *deal.LeadID, apperrors.ErrLeadNotFound)
@@ -399,6 +427,15 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 		}
 	}
 	return nil
+}
+
+// linkChanged reports whether next is a link that has to be checked: one that
+// is set and is not the one already stored. A cleared link (nil) never is.
+func linkChanged(next, previous *uint) bool {
+	if next == nil {
+		return false
+	}
+	return previous == nil || *next != *previous
 }
 
 // applyDealTransition moves deal into `to` and applies every rule that hangs

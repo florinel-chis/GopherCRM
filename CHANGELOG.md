@@ -14,8 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `/deals` (admin and sales; sales sees and edits its own, delete is admin only): list with
     search over title and notes, server-side filters (`stage`, `open=true`, `company_id`,
     `customer_id`, `owner_id`), a sort allowlist and pagination; get with owner, company,
-    customer and lead; create and update with validation of every link (400
-    `INVALID_REFERENCE`); `POST /deals/{id}/stage` and `GET /deals/{id}/history`;
+    customer and lead; create and update with validation of the links (400
+    `INVALID_REFERENCE`; on update, links are checked only when the request sets them, so a
+    deal keeps links to erased records and stays editable); `POST /deals/{id}/stage` and
+    `GET /deals/{id}/history`;
     `GET /companies/{id}/deals` and `GET /customers/{id}/deals`.
   - Stages `qualification`, `proposal`, `negotiation`, `won`, `lost` with default probabilities
     10/40/70/100/0; `won` is always 100 and `lost` always 0; `closed_at` is set on entering a
