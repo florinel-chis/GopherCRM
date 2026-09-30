@@ -97,6 +97,7 @@ an admin through the app.
 | `admin-leads.spec.ts` | 11 | Leads — list, create, edit, view, delete, status filter, search, minimal data |
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
 | `admin-companies.spec.ts` | 8 | Companies — list, create with all fields, validation, duplicate domain 409 on the field, edit, search, link a customer through the customer form and see it on both detail pages, delete and the customer falls back to its text company |
+| `admin-deals.spec.ts` | 8 | Deals — list, create for a company with the formatted amount on both detail pages, validation, stage moves with the history growing, lost with a required reason (closed_at and reason shown, cleared on reopening), edit title and amount, stage filter, delete |
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
 | `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
@@ -138,6 +139,10 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
   carry their own 180 s budget (`MULTI_ENTITY_TEST_TIMEOUT_MS`), so no `--timeout` flag is needed.
 - Companies are unique by domain among live rows, so `companies.page.ts` searches by domain
   (`generateCompanyData()` stamps one per run) rather than by row position.
+- Deals are found by title: `generateDealData(stamp)` stamps one per run and `deals.page.ts`
+  searches for it. MUI Selects (the stage filter, the stage selectors on the form and the detail
+  page) and Autocompletes are addressed by `getByRole('combobox', ...)`, never `getByLabel`: once
+  open, the listbox shares the label and strict mode would match two elements.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.
