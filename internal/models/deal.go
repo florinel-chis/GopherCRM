@@ -18,8 +18,8 @@ const (
 )
 
 // DealStages lists every stage in pipeline order. The handler's `oneof`
-// binding tag repeats the same values; deal_stage_tag_test.go in package
-// handler holds the two together.
+// binding tag repeats the same values; TestDealStageBindingTagsMatchTheModel
+// in internal/handler/deal_handler_test.go holds the two together.
 var DealStages = []DealStage{
 	DealStageQualification,
 	DealStageProposal,

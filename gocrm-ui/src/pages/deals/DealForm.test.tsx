@@ -472,13 +472,58 @@ describe('DealForm', () => {
       expect(dealsApi.updateDeal).toHaveBeenCalledWith(9, expect.objectContaining({ company_id: 0 }));
     });
 
-    it('keeps the loaded probability when the stage changes after the user edited it', async () => {
+    it('takes the new stage default when the loaded probability was not edited', async () => {
       render(<DealForm />);
       await waitFor(() => expect(probability()).toHaveValue(45));
 
-      // Untouched: the new stage brings its default.
       await pickStage('Negotiation');
       expect(probability()).toHaveValue(70);
+    });
+
+    it('keeps the edited probability when the stage changes afterwards', async () => {
+      render(<DealForm />);
+      await waitFor(() => expect(probability()).toHaveValue(45));
+
+      fireEvent.change(probability(), { target: { value: '33' } });
+      await pickStage('Negotiation');
+      expect(probability()).toHaveValue(33);
+    });
+
+    // The API preloads live records only, so a deal linked to an erased
+    // customer arrives with customer_id and no customer.
+    describe('a link whose record is gone', () => {
+      const missingHelper = 'Linked record no longer available; pick another to replace it';
+
+      beforeEach(() => {
+        vi.mocked(dealsApi.getDeal).mockResolvedValue({ ...existing, customer_id: 30, customer: undefined });
+      });
+
+      it('leaves the picker empty, says so, and does not resend the stale id', async () => {
+        render(<DealForm />);
+        await waitFor(() => expect(title()).toHaveValue('Website redesign'));
+
+        expect(screen.getByLabelText('Customer')).toHaveValue('');
+        expect(screen.getByText(missingHelper)).toBeInTheDocument();
+        expect(customersApi.getCustomer).not.toHaveBeenCalled();
+        submit(/Update Deal/);
+
+        await waitFor(() => expect(dealsApi.updateDeal).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        const body = vi.mocked(dealsApi.updateDeal).mock.calls[0][1];
+        expect(body).not.toHaveProperty('customer_id');
+        expect(body).toMatchObject({ title: 'Website redesign', company_id: 7 });
+      });
+
+      it('sends the newly picked customer in its place', async () => {
+        render(<DealForm />);
+        await waitFor(() => expect(title()).toHaveValue('Website redesign'));
+
+        await pickAutocompleteOption('Customer', 'Jane Smith (Acme Widgets)');
+        expect(screen.queryByText(missingHelper)).not.toBeInTheDocument();
+        submit(/Update Deal/);
+
+        await waitFor(() => expect(dealsApi.updateDeal).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(dealsApi.updateDeal).toHaveBeenCalledWith(9, expect.objectContaining({ customer_id: 3 }));
+      });
     });
 
     it('cancel returns to the detail page', async () => {

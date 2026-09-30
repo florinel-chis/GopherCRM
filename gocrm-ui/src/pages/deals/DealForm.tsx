@@ -108,6 +108,23 @@ const positiveId = (raw: string | null): number | null => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const MISSING_LINK_TEXT = 'Linked record no longer available; pick another to replace it';
+
+// What a loaded deal seeds a picker with. A link whose record came preloaded
+// is shown as usual. An id without its record means the record was erased
+// (the API preloads live rows only): the picker stays empty with a null
+// original, so an untouched picker sends nothing and the API keeps the link,
+// and a picked record replaces it.
+const loadedLink = <T extends { id: number }>(
+  linkId: number | undefined,
+  record: T | undefined
+): { id: number | null; record: T | null; missing: boolean } => {
+  if (record && record.id === linkId) {
+    return { id: linkId, record, missing: false };
+  }
+  return { id: null, record: null, missing: linkId !== undefined };
+};
+
 // Chosen → send it; cleared on edit after being linked → 0 clears it on the
 // API; never linked and untouched → omit so the API keeps whatever it has.
 const referencePatch = (
@@ -158,6 +175,7 @@ export const Component: React.FC = () => {
   const [ownerTouched, setOwnerTouched] = useState(false);
 
   const [referenceErrors, setReferenceErrors] = useState<Partial<Record<ReferenceField, string>>>({});
+  const [missingLinks, setMissingLinks] = useState<Partial<Record<ReferenceField, boolean>>>({});
 
   // The probability follows the stage default until the user edits it; the
   // currency follows the configured default until the user edits it.
@@ -213,18 +231,23 @@ export const Component: React.FC = () => {
         source: deal.source || '',
         notes: deal.notes || '',
       });
-      const currentCompanyId = deal.company_id ?? null;
-      setCompanyId(currentCompanyId);
-      setCompany(deal.company ?? null);
-      setOriginalCompanyId(currentCompanyId);
-      const currentCustomerId = deal.customer_id ?? null;
-      setCustomerId(currentCustomerId);
-      setCustomer(deal.customer ?? null);
-      setOriginalCustomerId(currentCustomerId);
-      const currentLeadId = deal.lead_id ?? null;
-      setLeadId(currentLeadId);
-      setLead(deal.lead ?? null);
-      setOriginalLeadId(currentLeadId);
+      const companyLink = loadedLink(deal.company_id, deal.company);
+      setCompanyId(companyLink.id);
+      setCompany(companyLink.record);
+      setOriginalCompanyId(companyLink.id);
+      const customerLink = loadedLink(deal.customer_id, deal.customer);
+      setCustomerId(customerLink.id);
+      setCustomer(customerLink.record);
+      setOriginalCustomerId(customerLink.id);
+      const leadLink = loadedLink(deal.lead_id, deal.lead);
+      setLeadId(leadLink.id);
+      setLead(leadLink.record);
+      setOriginalLeadId(leadLink.id);
+      setMissingLinks({
+        company_id: companyLink.missing,
+        customer_id: customerLink.missing,
+        lead_id: leadLink.missing,
+      });
       setOwner(deal.owner ?? null);
     }
   }, [deal, methods]);
@@ -294,6 +317,11 @@ export const Component: React.FC = () => {
 
   const ownerPatch = (): Pick<CreateDealData, 'owner_id'> =>
     isAdmin && ownerTouched && owner ? { owner_id: owner.id } : {};
+
+  // The picker's helper line: a server rejection first, then the note about
+  // an erased record while nothing has been picked in its place.
+  const linkHelperText = (field: ReferenceField, current: number | null): string =>
+    referenceErrors[field] ?? (missingLinks[field] && current === null ? MISSING_LINK_TEXT : 'Optional');
 
   const onSubmit = (data: DealFormData) => {
     const payload: CreateDealData = {
@@ -447,7 +475,7 @@ export const Component: React.FC = () => {
                     clearReferenceError('company_id');
                   }}
                   error={!!referenceErrors.company_id}
-                  helperText={referenceErrors.company_id ?? 'Optional'}
+                  helperText={linkHelperText('company_id', companyId)}
                 />
                 <CustomerAutocomplete
                   value={customerId}
@@ -458,7 +486,7 @@ export const Component: React.FC = () => {
                     clearReferenceError('customer_id');
                   }}
                   error={!!referenceErrors.customer_id}
-                  helperText={referenceErrors.customer_id ?? 'Optional'}
+                  helperText={linkHelperText('customer_id', customerId)}
                 />
                 <LeadAutocomplete
                   value={leadId}
@@ -469,7 +497,7 @@ export const Component: React.FC = () => {
                     clearReferenceError('lead_id');
                   }}
                   error={!!referenceErrors.lead_id}
-                  helperText={referenceErrors.lead_id ?? 'Optional'}
+                  helperText={linkHelperText('lead_id', leadId)}
                 />
               </Box>
 
