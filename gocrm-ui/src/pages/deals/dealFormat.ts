@@ -1,5 +1,6 @@
 import { format, parseISO } from 'date-fns';
 import { formatDate, DATE_FALLBACK } from '@/utils/date';
+import type { Deal } from '@/types';
 
 /**
  * Formats integer minor units with the deal's ISO 4217 code in the viewer's
@@ -50,3 +51,17 @@ export const decimalToCents = (value: string): number => {
 
 /** Integer cents to the decimal text the form edits. */
 export const centsToDecimal = (amountCents: number): string => (amountCents / 100).toFixed(2);
+
+// The company when linked, otherwise the customer, otherwise the lead.
+export const dealAccountName = (deal: Deal): string => {
+  if (deal.company) {
+    return deal.company.name;
+  }
+  if (deal.customer) {
+    return deal.customer.company_name || deal.customer.contact_name || deal.customer.email;
+  }
+  if (deal.lead) {
+    return deal.lead.company_name || deal.lead.contact_name || deal.lead.email;
+  }
+  return '—';
+};

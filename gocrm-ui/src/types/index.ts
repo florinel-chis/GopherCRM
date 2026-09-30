@@ -159,6 +159,38 @@ export interface DealStageChange {
   changed_at: string;
 }
 
+// One currency's share of a pipeline stage (GET /deals/pipeline). Money is
+// never summed across currencies. `weighted_cents` is the sum of
+// amount_cents × probability / 100, rounded once by the API.
+export interface PipelineTotals {
+  currency: string;
+  amount_cents: number;
+  weighted_cents: number;
+}
+
+// One stage of the pipeline. The API sends all five stages in board order;
+// an empty stage has count 0 and no totals.
+export interface PipelineStage {
+  stage: DealStage;
+  count: number;
+  totals: PipelineTotals[];
+}
+
+export interface DealPipeline {
+  stages: PipelineStage[];
+}
+
+// GET /dashboard/pipeline: the pipeline plus the deals won in the current
+// calendar month (UTC), totalled per currency.
+export interface WonThisMonth {
+  count: number;
+  totals: Pick<PipelineTotals, 'currency' | 'amount_cents'>[];
+}
+
+export interface DashboardPipeline extends DealPipeline {
+  won_this_month: WonThisMonth;
+}
+
 export interface Ticket {
   id: number;
   subject: string;

@@ -129,6 +129,11 @@ export const router = createBrowserRouter([
             lazy: () => import('@/pages/deals/DealList'),
           },
           {
+            // Static segment: ranks above deals/:id.
+            path: 'deals/board',
+            lazy: () => import('@/pages/deals/DealBoard'),
+          },
+          {
             path: 'deals/new',
             lazy: () => import('@/pages/deals/DealForm'),
           },

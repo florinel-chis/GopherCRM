@@ -125,6 +125,7 @@ vi.mock('@/api/endpoints/deals', async (importOriginal) => {
     dealsApi: {
       ...actual.dealsApi,
       getDeals: vi.fn().mockResolvedValue({ deals: [], total: 0 }),
+      getPipeline: vi.fn().mockResolvedValue({ stages: [] }),
     },
   };
 });
@@ -375,7 +376,23 @@ describe('deal routes', () => {
     expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
   }, 20000);
 
-  const dealPaths = ['/deals', '/deals/new', '/deals/1', '/deals/1/edit'];
+  it.each(['admin', 'sales'] as const)(
+    'lets a %s user reach the deal board, not the detail route',
+    async (role) => {
+      authUser = createMockUser({ role });
+
+      renderAt('/deals/board');
+
+      expect(
+        await screen.findByRole('heading', { name: 'Deal pipeline' }, { timeout: 15000 })
+      ).toBeInTheDocument();
+      expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+      expect(screen.queryByText('Deal not found')).not.toBeInTheDocument();
+    },
+    20000
+  );
+
+  const dealPaths = ['/deals', '/deals/board', '/deals/new', '/deals/1', '/deals/1/edit'];
 
   it.each(dealPaths)('blocks a support user from %s', async (path) => {
     authUser = createMockUser({ role: 'support' });

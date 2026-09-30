@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
@@ -22,9 +22,11 @@ import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, type DealFilters, type DealSortColumn } from '@/api/endpoints';
-import { DEAL_STAGES, isClosedDealStage, type Deal, type DealStage } from '@/types';
+import { DEAL_STAGES, DEAL_STAGE_VALUES, isClosedDealStage, type Deal, type DealStage } from '@/types';
 import { DealStageChip } from './DealStageChip';
-import { formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
+import { DealViewToggle } from './DealViewToggle';
+import { readDealView } from './dealView';
+import { dealAccountName, formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
 
 // Columns the API accepts in sort_by (its allowlist); the others render
 // without a sort header so a click can never produce a rejected request.
@@ -37,6 +39,11 @@ const SORTABLE_COLUMNS = new Set<string>([
   'created_at',
 ]);
 
+// `?stage=` preselects the stage filter (the board's "+N more in the list"
+// link); anything that is not a stage is ignored.
+const stageFromQuery = (value: string | null): DealStage | '' =>
+  value !== null && (DEAL_STAGE_VALUES as readonly string[]).includes(value) ? (value as DealStage) : '';
+
 interface ListState {
   page: number;
   limit: number;
@@ -47,38 +54,34 @@ interface ListState {
   sort_order?: 'asc' | 'desc';
 }
 
-// The company when linked, otherwise the customer, otherwise the lead.
-const dealAccountName = (deal: Deal): string => {
-  if (deal.company) {
-    return deal.company.name;
-  }
-  if (deal.customer) {
-    return deal.customer.company_name || deal.customer.contact_name || deal.customer.email;
-  }
-  if (deal.lead) {
-    return deal.lead.company_name || deal.lead.contact_name || deal.lead.email;
-  }
-  return '—';
-};
-
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { showSuccess, showError } = useSnackbar();
+  const hasQuery = searchParams.toString() !== '';
+
+  // A viewer who last chose the board lands on it from the plain /deals link.
+  // A link carrying a query (a filtered list) is always honoured.
+  useEffect(() => {
+    if (!hasQuery && readDealView() === 'board') {
+      navigate('/deals/board', { replace: true });
+    }
+  }, [hasQuery, navigate]);
 
   // Deals are admin and sales only on the API; the route guard keeps the
   // other roles out, and only admin deletes.
   const canWrite = user?.role === 'admin' || user?.role === 'sales';
   const canDelete = user?.role === 'admin';
 
-  const [state, setState] = useState<ListState>({
+  const [state, setState] = useState<ListState>(() => ({
     page: 1,
     limit: 10,
     search: '',
-    stage: '',
+    stage: stageFromQuery(searchParams.get('stage')),
     openOnly: false,
-  });
+  }));
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; deal?: Deal }>({ open: false });
 
   const filters: DealFilters = useMemo(
@@ -206,11 +209,14 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Deals</Typography>
-        {canWrite && (
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/deals/new')}>
-            New Deal
-          </Button>
-        )}
+        <Box display="flex" gap={2} alignItems="center">
+          <DealViewToggle value="list" />
+          {canWrite && (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/deals/new')}>
+              New Deal
+            </Button>
+          )}
+        </Box>
       </Box>
 
       <Paper sx={{ mb: 2, p: 2 }}>

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as DealList } from './DealList';
 import { dealsApi } from '@/api/endpoints';
@@ -6,6 +6,7 @@ import { createMockCompany, createMockCustomer, createMockDeal, createMockUser }
 import { useNavigate } from 'react-router-dom';
 import type { User } from '@/types';
 import { formatDealAmount } from './dealFormat';
+import { DEAL_VIEW_STORAGE_KEY } from './dealView';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -84,6 +85,7 @@ describe('DealList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    localStorage.removeItem(DEAL_VIEW_STORAGE_KEY);
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
     vi.mocked(dealsApi.getDeals).mockResolvedValue({ deals: [acmeDeal, customerDeal, wonDeal], total: 3 });
   });
@@ -212,5 +214,61 @@ describe('DealList', () => {
     fireEvent.click(await screen.findByText('Website redesign'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/deals/9');
+  });
+
+  describe('list and board toggle', () => {
+    afterEach(() => {
+      localStorage.removeItem(DEAL_VIEW_STORAGE_KEY);
+      window.history.replaceState({}, '', '/');
+    });
+
+    it('switches to the board and remembers the choice', async () => {
+      render(<DealList />);
+      await rowOf('Website redesign');
+
+      expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(screen.getByRole('button', { name: 'Board' }));
+
+      expect(mockNavigate).toHaveBeenCalledWith('/deals/board');
+      expect(localStorage.getItem(DEAL_VIEW_STORAGE_KEY)).toBe('board');
+    });
+
+    it('sends a viewer who last chose the board to it', async () => {
+      localStorage.setItem(DEAL_VIEW_STORAGE_KEY, 'board');
+
+      render(<DealList />);
+
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/deals/board', { replace: true }));
+    });
+
+    it('stays on the list without a remembered choice', async () => {
+      render(<DealList />);
+      await rowOf('Website redesign');
+
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('honours a ?stage= link: preselects the filter and does not redirect to the board', async () => {
+      localStorage.setItem(DEAL_VIEW_STORAGE_KEY, 'board');
+      window.history.replaceState({}, '', '/deals?stage=won');
+
+      render(<DealList />);
+
+      await waitFor(() =>
+        expect(dealsApi.getDeals).toHaveBeenCalledWith(expect.objectContaining({ stage: 'won', offset: 0 }))
+      );
+      expect(await screen.findByRole('combobox', { name: /Stage/ })).toHaveTextContent('Won');
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('ignores a ?stage= value that is not a stage', async () => {
+      window.history.replaceState({}, '', '/deals?stage=bogus');
+
+      render(<DealList />);
+
+      await waitFor(() =>
+        expect(dealsApi.getDeals).toHaveBeenCalledWith(expect.objectContaining({ stage: undefined }))
+      );
+    });
   });
 });

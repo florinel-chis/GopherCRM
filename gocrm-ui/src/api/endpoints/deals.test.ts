@@ -239,4 +239,56 @@ describe('dealsApi', () => {
     expect(api.get).toHaveBeenCalledWith('/customers/3/deals', { params: { offset: 5, limit: 5 } });
     expect(result.total).toBe(2);
   });
+
+  it('reads the pipeline with its filters and keeps the five stages in board order', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        stages: [
+          {
+            stage: 'qualification',
+            count: 2,
+            totals: [
+              { currency: 'EUR', amount_cents: 300000, weighted_cents: 30000 },
+              { currency: 'USD', amount_cents: 50000, weighted_cents: 5000 },
+            ],
+          },
+          { stage: 'proposal', count: 0, totals: [] },
+          { stage: 'negotiation', count: 1, totals: null },
+          { stage: 'won', count: 1, totals: [{ currency: 'EUR', amount_cents: 1000, weighted_cents: 1000 }] },
+        ],
+      },
+    });
+
+    const result = await dealsApi.getPipeline({ owner_id: 4, company_id: 7 });
+
+    expect(api.get).toHaveBeenCalledWith('/deals/pipeline', { params: { owner_id: 4, company_id: 7 } });
+    expect(result.stages.map((stage) => stage.stage)).toEqual([
+      'qualification',
+      'proposal',
+      'negotiation',
+      'won',
+      'lost',
+    ]);
+    expect(result.stages[0]).toEqual({
+      stage: 'qualification',
+      count: 2,
+      totals: [
+        { currency: 'EUR', amount_cents: 300000, weighted_cents: 30000 },
+        { currency: 'USD', amount_cents: 50000, weighted_cents: 5000 },
+      ],
+    });
+    // A null totals list and a stage missing from the response read as empty.
+    expect(result.stages[2]).toEqual({ stage: 'negotiation', count: 1, totals: [] });
+    expect(result.stages[4]).toEqual({ stage: 'lost', count: 0, totals: [] });
+  });
+
+  it('reads the pipeline without filters', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { stages: [] } });
+
+    const result = await dealsApi.getPipeline();
+
+    expect(api.get).toHaveBeenCalledWith('/deals/pipeline', { params: undefined });
+    expect(result.stages).toHaveLength(5);
+    expect(result.stages.every((stage) => stage.count === 0 && stage.totals.length === 0)).toBe(true);
+  });
 });
