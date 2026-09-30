@@ -48,7 +48,7 @@ describe('LeadForm', () => {
   });
 
   const pickCompany = () =>
-    pickAutocompleteOption('Company (linked)', 'acme', 'Acme Widgets (acme.example)');
+    pickAutocompleteOption('Company (linked)', 'Acme Widgets (acme.example)');
 
   beforeEach(() => {
     vi.clearAllMocks();

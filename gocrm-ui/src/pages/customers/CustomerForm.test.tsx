@@ -49,7 +49,7 @@ const fillRequired = () => {
 };
 
 const pickCompany = () =>
-  pickAutocompleteOption('Company (linked)', 'acme', 'Acme Widgets (acme.example)');
+  pickAutocompleteOption('Company (linked)', 'Acme Widgets (acme.example)');
 
 describe('CustomerForm linked company', () => {
   const mockNavigate = vi.fn();

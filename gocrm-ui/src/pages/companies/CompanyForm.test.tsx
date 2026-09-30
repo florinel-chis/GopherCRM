@@ -173,7 +173,7 @@ describe('CompanyForm', () => {
       fireEvent.mouseDown(screen.getByLabelText(/^Employees/));
       fireEvent.click(await screen.findByRole('option', { name: '51-200' }));
 
-      await pickAutocompleteOption(/^Owner/, 'Ion', 'Ion Ionescu');
+      await pickAutocompleteOption(/^Owner/, 'Ion Ionescu');
 
       fireEvent.click(screen.getByRole('button', { name: 'Create Company' }));
 
@@ -358,7 +358,7 @@ describe('CompanyForm', () => {
       render(<CompanyForm />);
       await waitFor(() => expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu'));
 
-      await pickAutocompleteOption(/^Owner/, 'Ana', 'Ana Pop');
+      await pickAutocompleteOption(/^Owner/, 'Ana Pop');
       fireEvent.click(screen.getByRole('button', { name: 'Update Company' }));
 
       await waitFor(() => expect(companiesApi.updateCompany).toHaveBeenCalledTimes(1), {
