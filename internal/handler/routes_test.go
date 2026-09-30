@@ -117,6 +117,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		// /companies/:id/customers and /customers/:id/tickets.
 		{http.MethodGet, "/api/v1/deals"},
 		{http.MethodPost, "/api/v1/deals"},
+		{http.MethodGet, "/api/v1/deals/pipeline"},
 		{http.MethodGet, "/api/v1/deals/1"},
 		{http.MethodPut, "/api/v1/deals/1"},
 		{http.MethodDelete, "/api/v1/deals/1"},
@@ -125,6 +126,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/companies/1/deals"},
 		{http.MethodGet, "/api/v1/customers/1/deals"},
 		{http.MethodGet, "/api/v1/customers/1/tickets"},
+		{http.MethodGet, "/api/v1/dashboard/pipeline"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()
@@ -134,6 +136,35 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		}()
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s %s did not match any route", route.method, route.path)
+		}
+	}
+}
+
+// Not matching at all is only half of the risk with a static segment next to
+// a parameter: /deals/pipeline must also reach the pipeline route and not be
+// taken by /deals/:id (which would answer "Invalid deal ID"). A recorder in
+// front of every route notes which registered path gin matched.
+func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	var matched string
+	group := router.Group("/api/v1", func(c *gin.Context) {
+		matched = c.FullPath()
+		c.Abort()
+	})
+	SetupDealRoutes(group, &DealHandler{})
+	SetupDashboardRoutes(group, &DashboardHandler{})
+
+	for path, want := range map[string]string{
+		"/api/v1/deals/pipeline":     "/api/v1/deals/pipeline",
+		"/api/v1/deals/7":            "/api/v1/deals/:id",
+		"/api/v1/deals/7/history":    "/api/v1/deals/:id/history",
+		"/api/v1/dashboard/pipeline": "/api/v1/dashboard/pipeline",
+	} {
+		matched = ""
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		if matched != want {
+			t.Errorf("GET %s matched %q, want %q", path, matched, want)
 		}
 	}
 }

@@ -253,7 +253,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	dealHandler := handler.NewDealHandler(dealService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
-	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
+	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService)
 	bulkHandler := handler.NewBulkHandler(bulkService)
 	aeoHandler := handler.NewAEOHandler(aeoService)
 	formHandler := handler.NewFormHandler(formService)

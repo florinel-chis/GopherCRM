@@ -330,3 +330,151 @@ func TestCompanyRepository_DealCountAndUnlinkDeals(t *testing.T) {
 	require.NotNil(t, reloadedElsewhere.CompanyID)
 	assert.Equal(t, other.ID, *reloadedElsewhere.CompanyID, "other companies' links are untouched")
 }
+
+// --- Pipeline and WonBetween --------------------------------------------------
+
+// pipelineIndex keys the rows by "stage/currency" so the assertions do not
+// depend on the order the engine returned the groups in.
+func pipelineIndex(rows []models.DealPipelineRow) map[string]models.DealPipelineRow {
+	index := map[string]models.DealPipelineRow{}
+	for _, row := range rows {
+		index[string(row.Stage)+"/"+row.Currency] = row
+	}
+	return index
+}
+
+// One stage holding two currencies gives two groups, never one sum across
+// currencies; the weighted sum is Σ amount × probability, still unrounded;
+// stages without deals yield no group; a soft-deleted deal is not counted.
+func TestDealRepository_PipelineGroupsByStageAndCurrency(t *testing.T) {
+	db := setupDealDB(t)
+	repo := NewDealRepository(db)
+	owner := createDealTestUser(t, db, "owner@example.com")
+
+	createDeal(t, db, &models.Deal{Title: "p1", Stage: models.DealStageProposal, Currency: "EUR", AmountCents: 100000, Probability: 40, OwnerID: owner.ID})
+	createDeal(t, db, &models.Deal{Title: "p2", Stage: models.DealStageProposal, Currency: "EUR", AmountCents: 333, Probability: 33, OwnerID: owner.ID})
+	createDeal(t, db, &models.Deal{Title: "p3", Stage: models.DealStageProposal, Currency: "USD", AmountCents: 5000, Probability: 50, OwnerID: owner.ID})
+	createDeal(t, db, &models.Deal{Title: "w1", Stage: models.DealStageWon, Currency: "EUR", AmountCents: 990000, Probability: 100, OwnerID: owner.ID})
+	gone := createDeal(t, db, &models.Deal{Title: "deleted", Stage: models.DealStageProposal, Currency: "EUR", AmountCents: 7777777, Probability: 40, OwnerID: owner.ID})
+	require.NoError(t, repo.Delete(gone.ID))
+
+	rows, err := repo.Pipeline(DealPipelineFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 3, "proposal/EUR, proposal/USD and won/EUR; empty stages have no group")
+
+	index := pipelineIndex(rows)
+	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageProposal, Currency: "EUR", DealCount: 2, AmountCents: 100333, AmountTimesProbability: 100000*40 + 333*33}, index["proposal/EUR"])
+	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageProposal, Currency: "USD", DealCount: 1, AmountCents: 5000, AmountTimesProbability: 250000}, index["proposal/USD"])
+	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageWon, Currency: "EUR", DealCount: 1, AmountCents: 990000, AmountTimesProbability: 99000000}, index["won/EUR"])
+}
+
+func TestDealRepository_PipelineOwnerAndCompanyFilters(t *testing.T) {
+	db := setupDealDB(t)
+	repo := NewDealRepository(db)
+	alice := createDealTestUser(t, db, "alice@example.com")
+	bob := createDealTestUser(t, db, "bob@example.com")
+	acme := &models.Company{Name: "Acme"}
+	require.NoError(t, db.Create(acme).Error)
+	globex := &models.Company{Name: "Globex"}
+	require.NoError(t, db.Create(globex).Error)
+
+	createDeal(t, db, &models.Deal{Title: "a-acme", Currency: "EUR", AmountCents: 100, Probability: 10, OwnerID: alice.ID, CompanyID: &acme.ID})
+	createDeal(t, db, &models.Deal{Title: "a-globex", Currency: "EUR", AmountCents: 200, Probability: 10, OwnerID: alice.ID, CompanyID: &globex.ID})
+	createDeal(t, db, &models.Deal{Title: "b-acme", Currency: "EUR", AmountCents: 400, Probability: 10, OwnerID: bob.ID, CompanyID: &acme.ID})
+	createDeal(t, db, &models.Deal{Title: "b-none", Currency: "EUR", AmountCents: 800, Probability: 10, OwnerID: bob.ID})
+
+	sum := func(filter DealPipelineFilter) (int64, int64) {
+		rows, err := repo.Pipeline(filter)
+		require.NoError(t, err)
+		var count, amount int64
+		for _, row := range rows {
+			count += row.DealCount
+			amount += row.AmountCents
+		}
+		return count, amount
+	}
+
+	count, amount := sum(DealPipelineFilter{})
+	assert.Equal(t, int64(4), count)
+	assert.Equal(t, int64(1500), amount)
+
+	count, amount = sum(DealPipelineFilter{OwnerID: &alice.ID})
+	assert.Equal(t, int64(2), count)
+	assert.Equal(t, int64(300), amount)
+
+	count, amount = sum(DealPipelineFilter{CompanyID: &acme.ID})
+	assert.Equal(t, int64(2), count)
+	assert.Equal(t, int64(500), amount)
+
+	count, amount = sum(DealPipelineFilter{OwnerID: &bob.ID, CompanyID: &acme.ID})
+	assert.Equal(t, int64(1), count)
+	assert.Equal(t, int64(400), amount)
+
+	unknown := uint(9999)
+	rows, err := repo.Pipeline(DealPipelineFilter{CompanyID: &unknown})
+	require.NoError(t, err)
+	assert.Empty(t, rows, "an id that matches nothing is an empty aggregate, not an error")
+}
+
+// stampClosedAt writes closed_at directly, in UTC, the way the service stores
+// it, bypassing the service clock.
+func stampClosedAt(t *testing.T, db *gorm.DB, deal *models.Deal, closedAt time.Time) {
+	t.Helper()
+	require.NoError(t, db.Model(deal).UpdateColumn("closed_at", closedAt.UTC()).Error)
+}
+
+// The month range is half-open and compared on the stored value: on SQLite
+// closed_at is text, so this is the test that the bound-parameter predicate
+// orders the stored format correctly at both ends of the month.
+func TestDealRepository_WonBetweenMonthBoundaries(t *testing.T) {
+	db := setupDealDB(t)
+	repo := NewDealRepository(db)
+	owner := createDealTestUser(t, db, "owner@example.com")
+	other := createDealTestUser(t, db, "other@example.com")
+
+	won := func(title, currency string, amount int64, ownerID uint, closedAt time.Time) *models.Deal {
+		deal := createDeal(t, db, &models.Deal{Title: title, Stage: models.DealStageWon, Currency: currency, AmountCents: amount, Probability: 100, OwnerID: ownerID})
+		stampClosedAt(t, db, deal, closedAt)
+		return deal
+	}
+	won("first instant", "EUR", 1, owner.ID, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	won("last second", "EUR", 10, owner.ID, time.Date(2026, 9, 30, 23, 59, 59, 0, time.UTC))
+	won("last nanosecond", "USD", 100, owner.ID, time.Date(2026, 9, 30, 23, 59, 59, 999999999, time.UTC))
+	won("other owner", "EUR", 1000, other.ID, time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC))
+	won("next month", "EUR", 10000, owner.ID, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	won("previous month", "EUR", 100000, owner.ID, time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC))
+	// A lost deal closed inside the month is not won.
+	lost := createDeal(t, db, &models.Deal{Title: "lost", Stage: models.DealStageLost, Currency: "EUR", AmountCents: 1000000, OwnerID: owner.ID})
+	stampClosedAt(t, db, lost, time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC))
+	// A soft-deleted won deal inside the month is not counted.
+	gone := won("deleted", "EUR", 10000000, owner.ID, time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, repo.Delete(gone.ID))
+
+	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	rows, err := repo.WonBetween(nil, from, to)
+	require.NoError(t, err)
+	assert.Equal(t, []models.DealWonRow{
+		{Currency: "EUR", DealCount: 3, AmountCents: 1 + 10 + 1000},
+		{Currency: "USD", DealCount: 1, AmountCents: 100},
+	}, rows)
+
+	rows, err = repo.WonBetween(&other.ID, from, to)
+	require.NoError(t, err)
+	assert.Equal(t, []models.DealWonRow{{Currency: "EUR", DealCount: 1, AmountCents: 1000}}, rows)
+
+	// October: exactly the deal at its first instant.
+	rows, err = repo.WonBetween(nil, to, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Equal(t, []models.DealWonRow{{Currency: "EUR", DealCount: 1, AmountCents: 10000}}, rows)
+
+	// Bounds given in another zone mean the same instants.
+	athens := time.FixedZone("UTC+3", 3*3600)
+	rows, err = repo.WonBetween(nil, from.In(athens), to.In(athens))
+	require.NoError(t, err)
+	assert.Equal(t, []models.DealWonRow{
+		{Currency: "EUR", DealCount: 3, AmountCents: 1011},
+		{Currency: "USD", DealCount: 1, AmountCents: 100},
+	}, rows)
+}

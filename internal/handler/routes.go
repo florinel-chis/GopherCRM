@@ -76,6 +76,9 @@ func SetupDealRoutes(router *gin.RouterGroup, handler *DealHandler) {
 	{
 		deals.POST("", handler.Create)
 		deals.GET("", handler.List)
+		// Static segment next to /:id; registered first so the intent reads
+		// in order (gin's tree prefers the static match either way).
+		deals.GET("/pipeline", handler.Pipeline)
 		deals.GET("/:id", handler.Get)
 		deals.PUT("/:id", handler.Update)
 		deals.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
@@ -167,6 +170,9 @@ func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 		dashboard.GET("/upcoming-tasks", guard, handler.GetUpcomingTasks)
 		dashboard.GET("/recent-tickets", guard, handler.GetRecentTickets)
 		dashboard.GET("/new-leads", guard, handler.GetNewLeads)
+		// Same dashboard guard; the handler (and the deal service behind it)
+		// then refuses support, which has no access to deals.
+		dashboard.GET("/pipeline", guard, handler.GetPipeline)
 	}
 }
 

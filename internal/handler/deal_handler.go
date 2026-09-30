@@ -268,6 +268,45 @@ func (h *DealHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))
 }
 
+// Pipeline godoc
+// @Summary Deal pipeline by stage
+// @Description The live deals aggregated per stage (admin and sales roles; sales users always get their own deals only, whatever owner_id says, as on GET /deals). data.stages lists all five stages in pipeline order — qualification, proposal, negotiation, won, lost — each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code, and amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents × probability / 100), computed with integer arithmetic and rounded once on each stage-and-currency total, not per deal. Soft-deleted deals are not counted. owner_id (admin only) and company_id narrow the aggregate; a malformed or zero id is a 400, as on the list, and an id that matches nothing yields empty stages.
+// @Tags deals
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param owner_id query int false "Only deals owned by this user (admin; sales is always narrowed to itself)"
+// @Param company_id query int false "Only deals linked to this company"
+// @Success 200 {object} utils.APIResponse{data=models.DealPipeline} "Pipeline retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "owner_id or company_id is not a positive integer"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /deals/pipeline [get]
+func (h *DealHandler) Pipeline(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "DealHandler.Pipeline")
+
+	var filter repository.DealPipelineFilter
+	var ok bool
+	if filter.OwnerID, ok = queryID(c, "owner_id"); !ok {
+		return
+	}
+	if filter.CompanyID, ok = queryID(c, "company_id"); !ok {
+		return
+	}
+
+	// The service narrows a sales caller to itself, as the list does.
+	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), models.UserRole(c.GetString("user_role")))
+	if err != nil {
+		h.respondError(c, logger, err)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, pipeline)
+	utils.RespondSuccess(c, http.StatusOK, pipeline)
+}
+
 // Get godoc
 // @Summary Get a deal
 // @Description One deal (admin and sales roles) with its owner, company, customer and lead preloaded. Sales users can only view their own deals (403 otherwise).
@@ -640,6 +679,9 @@ func (h *DealHandler) respondError(c *gin.Context, logger *logrus.Entry, err err
 		// the requested path, so it is a 400 like an unknown label_id.
 		logger.WithError(err).Warn("Unknown deal reference")
 		utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+	case errors.Is(err, apperrors.ErrForbidden):
+		logger.WithError(err).Warn("Deal access refused")
+		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 	case errors.Is(err, apperrors.ErrValidation):
 		logger.WithError(err).Warn("Invalid deal")
 		utils.RespondBadRequest(c, err.Error())

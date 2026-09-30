@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -18,6 +20,7 @@ type DashboardHandler struct {
 	customerService service.CustomerService
 	ticketService   service.TicketService
 	taskService     service.TaskService
+	dealService     service.DealService
 }
 
 func NewDashboardHandler(
@@ -25,12 +28,14 @@ func NewDashboardHandler(
 	customerService service.CustomerService,
 	ticketService service.TicketService,
 	taskService service.TaskService,
+	dealService service.DealService,
 ) *DashboardHandler {
 	return &DashboardHandler{
 		leadService:     leadService,
 		customerService: customerService,
 		ticketService:   ticketService,
 		taskService:     taskService,
+		dealService:     dealService,
 	}
 }
 
@@ -716,4 +721,46 @@ func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, leads)
 	utils.RespondSuccess(c, http.StatusOK, leads)
+}
+// dashboardDealRoles are the roles that see the deal widgets: deals are admin
+// and sales only, so support, which passes the dashboard guard, does not.
+var dashboardDealRoles = map[models.UserRole]bool{models.RoleAdmin: true, models.RoleSales: true}
+
+// GetPipeline godoc
+// @Summary Deal pipeline and won-this-month widgets
+// @Description The pipeline widget and the won-this-month tile of the dashboard. Admin sees every live deal, sales only its own. Support passes the dashboard guard but has no access to deals and gets 403, as does the customer role. data.stages is the same payload as GET /deals/pipeline without filters: all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty, with count and per-currency totals of amount_cents and weighted_cents = round_half_up(sum of amount_cents × probability / 100), rounded once per stage-and-currency total. data.won_this_month counts the deals in the won stage whose closed_at falls in the current calendar month in UTC (from the first instant of the month, inclusive, to the first instant of the next, exclusive), with the amounts per currency. Amounts in different currencies are never added together; totals are sorted by currency code and empty lists are [], never null.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.APIResponse{data=models.DealDashboardPipeline} "Pipeline widgets retrieved successfully"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required (support has no access to deals)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /dashboard/pipeline [get]
+func (h *DashboardHandler) GetPipeline(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "DashboardHandler.GetPipeline")
+
+	role := models.UserRole(c.GetString("user_role"))
+	if !dashboardDealRoles[role] {
+		logger.WithField("role", role).Warn("Deal widgets refused")
+		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
+		return
+	}
+
+	pipeline, err := h.dealService.DashboardPipeline(c.GetUint("user_id"), role)
+	if err != nil {
+		if errors.Is(err, apperrors.ErrForbidden) {
+			logger.WithError(err).Warn("Deal widgets refused")
+			utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
+			return
+		}
+		logger.WithError(err).Error("Failed to get the deal pipeline")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, pipeline)
+	utils.RespondSuccess(c, http.StatusOK, pipeline)
 }
