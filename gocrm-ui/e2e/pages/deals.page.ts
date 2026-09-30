@@ -319,18 +319,24 @@ export class DealsPage {
     await this.page.waitForTimeout(500);
   }
 
-  /** Applies the stage filter on the list page and waits for the filtered GET /deals. */
+  /**
+   * Applies the stage filter on the list page and waits until the table shows
+   * rows of that stage only. This is deliberately not a network wait: the list
+   * query is keyed on its filters and cached for five minutes, so going back to
+   * a combination already fetched (say "All stages" after a stage) renders from
+   * the cache without a request, and a `waitForResponse` would time out.
+   * Callers assert the resulting row count and contents themselves.
+   */
   async filterByStage(label: DealStageLabel | 'All stages') {
-    const responsePromise = this.page.waitForResponse(
-      (response) =>
-        /\/deals$/.test(new URL(response.url()).pathname) &&
-        response.request().method() === 'GET' &&
-        (label === 'All stages'
-          ? !new URL(response.url()).searchParams.has('stage')
-          : new URL(response.url()).searchParams.get('stage') === label.toLowerCase())
-    );
     await this.stageSelect.click();
     await this.page.getByRole('option', { name: label, exact: true }).click();
-    await responsePromise;
+    await expect(this.stageSelect).toHaveText(label);
+    if (label !== 'All stages') {
+      const chips = this.page.getByTestId('deal-stage-chip');
+      const rowsInAnotherStage = this.tableRows
+        .filter({ has: chips })
+        .filter({ hasNot: chips.filter({ hasText: label }) });
+      await expect(rowsInAnotherStage).toHaveCount(0);
+    }
   }
 }
