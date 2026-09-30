@@ -349,6 +349,39 @@ The dashboard stats endpoint returns aggregated statistics:
 }
 ```
 
+### Deal Pipeline Response
+
+`GET /deals/pipeline` returns every stage in pipeline order, empty ones included; totals are per
+currency (sorted by code) and never summed across currencies. `weighted_cents` is round half up of
+Σ `amount_cents × probability` / 100 over the stage's deals in that currency.
+`GET /dashboard/pipeline` returns the same `stages` plus `won_this_month`: the deals in the `won`
+stage whose `closed_at` falls in the current calendar month in UTC.
+
+```json
+{
+  "success": true,
+  "data": {
+    "stages": [
+      { "stage": "qualification", "count": 1,
+        "totals": [ { "currency": "EUR", "amount_cents": 100000, "weighted_cents": 10000 } ] },
+      { "stage": "proposal", "count": 3,
+        "totals": [ { "currency": "EUR", "amount_cents": 1000333, "weighted_cents": 400110 },
+                    { "currency": "USD", "amount_cents": 5000, "weighted_cents": 2000 } ] },
+      { "stage": "negotiation", "count": 0, "totals": [] },
+      { "stage": "won", "count": 1,
+        "totals": [ { "currency": "EUR", "amount_cents": 250000, "weighted_cents": 250000 } ] },
+      { "stage": "lost", "count": 0, "totals": [] }
+    ],
+    "won_this_month": {
+      "count": 1,
+      "totals": [ { "currency": "EUR", "amount_cents": 250000 } ]
+    }
+  }
+}
+```
+
+`won_this_month` is present on `/dashboard/pipeline` only.
+
 ### Error Codes
 - `VALIDATION_ERROR` - Input validation failed
 - `UNAUTHORIZED` - Authentication required

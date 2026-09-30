@@ -2,7 +2,8 @@
 
 Playwright test-case catalog for the dashboard: the landing page at `/`, its five stat cards, the
 Quick Actions panel, the Sales Performance chart, the Recent Activities and Upcoming Tasks widgets,
-and the nine `/dashboard/*` analytics endpoints plus `/tasks/upcoming` that sit behind them. Every
+and the nine `/dashboard/*` analytics endpoints plus `/tasks/upcoming` that sit behind them, and
+(since 2026-09-30) the deal widgets behind `/dashboard/pipeline` (last section). Every
 case below records the behaviour the code produces today; where that behaviour is wrong or
 surprising the **Expected** field still states what happens now and a **Known issue** line names the
 defect. Several stat and chart semantics documented here are counter-intuitive (a conversion rate
@@ -658,3 +659,90 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   redirects to dashboard" and `gocrm-ui/e2e/tests/registration.spec.ts` "successful registration
   redirects to dashboard" both assert the landing URL; the sidebar half is planned for
   `gocrm-ui/e2e/tests/dashboard.spec.ts`
+
+---
+
+## Deal widgets (2026-09-30)
+
+`GET /dashboard/pipeline` backs the "Pipeline by stage" chart and the "Won this month" tile. It sits
+in the dashboard group behind `RequireRole(admin, sales, support)`, and the handler then refuses
+support explicitly (support has no access to deals), so the endpoint answers admin and sales only.
+Admin sees every live deal, sales its own. The payload is `{stages, won_this_month}`: `stages` is
+the `GET /deals/pipeline` payload without filters (all five stages in pipeline order, `count`,
+`totals` per currency with `amount_cents` and `weighted_cents`); `won_this_month` is
+`{count, totals: [{currency, amount_cents}]}` over the deals in the `won` stage whose `closed_at`
+falls in the current calendar month in UTC. Amounts in different currencies are never added
+together. Sources: `internal/handler/dashboard_handler.go` (`GetPipeline`),
+`internal/service/deal_service.go` (`DashboardPipeline`, `utcMonthBounds`),
+`internal/repository/deal_repository.go` (`Pipeline`, `WonBetween`). Deals created by these cases
+are the test's own; only those are deleted.
+
+### TC-DASH-038 — The pipeline chart shows each stage's totals per currency
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** admin logged in; two deals created by the test in different stages, one in a
+  second currency.
+- **Steps:**
+  1. Open `/`.
+  2. `GET /api/v1/dashboard/pipeline` as the same admin.
+- **Expected:** the response is **200** with five `stages` in the order qualification, proposal,
+  negotiation, won, lost, each present even when empty (`count: 0`, `totals: []`); each stage's
+  `totals` holds one entry per currency, sorted by code, with `amount_cents` the sum and
+  `weighted_cents` = round half up of Σ `amount_cents × probability` / 100, rounded once per
+  stage and currency. The chart plots the default currency's totals per stage and shows a legend
+  per currency when several exist.
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`. Go:
+  `dashboard_handler_test.go` `TestGetPipeline_ResponseShape`; `deal_service_test.go`
+  `TestDealService_DashboardPipeline`; `deal_pipeline_integration_test.go`
+  `TestDashboardPipeline`.
+
+### TC-DASH-039 — Winning a deal shows in the "Won this month" tile
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** admin logged in; a deal created by the test in an open stage.
+- **Steps:**
+  1. Note the tile's count and the amount in the deal's currency.
+  2. Move the deal to won.
+  3. Return to `/`.
+- **Expected:** the count grows by one and the deal's amount is added to its currency's total.
+  `closed_at` is stamped in UTC at the move; the tile counts won deals with `closed_at` in
+  [first instant of the current UTC month, first instant of the next). Moving the deal back to an
+  open stage clears `closed_at` and removes it from the tile.
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`. Go:
+  `deal_pipeline_integration_test.go` `TestDashboardPipeline`, `TestWonThisMonthFollowsTheStage`.
+
+### TC-DASH-040 — Sales sees only its own deals in the widgets
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** a sales account and a second owner, each with deals.
+- **Steps:**
+  1. As sales, `GET /api/v1/dashboard/pipeline`.
+- **Expected:** **200**; stages and the won tile count only the caller's deals. There is no
+  owner parameter on this endpoint.
+- **Automation:** blocked — needs a role-login helper. Go: `deal_service_test.go`
+  `TestDealService_DashboardPipeline`; `deal_pipeline_integration_test.go`
+  `TestDashboardPipeline`.
+
+### TC-DASH-041 — Support and customer get no deal widgets
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** a support account; a customer account.
+- **Steps:**
+  1. As each, `GET /api/v1/dashboard/pipeline`.
+- **Expected:** **403** for both: customer at the dashboard guard, support in the handler ("Deals
+  are available to the admin and sales roles only"). Unlike `/dashboard/new-leads`, which answers
+  support with an empty list, this endpoint refuses; the dashboard page must not request it for
+  support.
+- **Automation:** blocked — needs a role-login helper for support. Go: `dashboard_handler_test.go`
+  `TestGetPipeline_RoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.
+
+### TC-DASH-042 — The won month is the calendar month in UTC
+- **Priority:** P2
+- **Type:** edge
+- **Preconditions:** deals won at 2026-09-30T23:59:59Z and 2026-10-01T00:00:00Z.
+- **Steps:**
+  1. Read the tile during September and during October (UTC).
+- **Expected:** the first deal counts for September only, the second for October only. A server
+  in UTC+3 at 01:30 on 1 October local time still reports September.
+- **Automation:** blocked — needs a controllable clock. Go: `deal_repository_test.go`
+  `TestDealRepository_WonBetweenMonthBoundaries`; `deal_service_test.go` `TestUTCMonthBounds`.
