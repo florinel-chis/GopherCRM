@@ -150,12 +150,17 @@ Things to know before relying on it:
   auto-migration that runs at startup — the `migrations/` SQL is MySQL-only — and
   auto-migration is not reversible. Take the offline copy or the `VACUUM INTO`
   snapshot above first. Upgrading from v1.2.0 rewrites `leads` and `customers`
-  in place (the driver drops and copies each table to add the company link), so
-  the first start needs free disk for a full copy of both tables inside one
-  transaction, and the WAL grows by that amount until it is checkpointed.
-  Auto-migration runs with foreign-key enforcement off, as SQLite prescribes for
-  table rebuilds, checks every foreign key afterwards and refuses to start if
-  the check finds a dangling reference.
+  in place (the driver drops and copies each table to add the company link).
+  The two rebuilds run one after the other, each in its own transaction, so the
+  first start needs free disk for a full copy of one table at a time, while the
+  WAL accumulates both rebuilds until the next checkpoint. Auto-migration runs
+  with foreign-key enforcement off, as SQLite prescribes for table rebuilds,
+  checks every foreign key afterwards and refuses to start if the check finds a
+  dangling reference. A refused start has already committed the schema change;
+  only the data violation is left. Restore the backup, or fix the offending rows
+  (the message names the tables as `child -> parent`), and start again. The
+  v1.2.0 binary still opens the upgraded file — it ignores the extra table and
+  columns — so the binary can be rolled back even though the schema is not.
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 

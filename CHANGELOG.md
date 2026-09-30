@@ -31,11 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SQLite auto-migration on a populated file.** Adding a foreign key to an existing table makes
   the SQLite driver drop and recopy the table, which foreign-key enforcement rejected as soon as
-  another table referenced its rows (a ticket, a task on a customer, a converted lead): the
-  upgrade from 1.2.0 failed to start on any real database. Auto-migration on SQLite now runs
-  with enforcement off, as SQLite prescribes for table rebuilds, verifies every foreign key
-  afterwards and refuses to start on a violation. A fixture test upgrades a populated v1.2.0
-  file, including one left half-applied by a failed attempt; MySQL and MariaDB are unchanged.
+  another table referenced its rows: a 1.2.0 file upgraded only if no row in `tickets` or
+  `tasks` and no converted lead referenced a customer or lead, which rules out any database that
+  has been used. Auto-migration on SQLite now runs with enforcement off, as SQLite prescribes for
+  table rebuilds, verifies every foreign key afterwards and refuses to start on a violation. A
+  fixture test upgrades a populated v1.2.0 file, including one left half-applied by a failed
+  attempt; MySQL and MariaDB are unchanged.
 
 ## [1.2.0] - 2026-09-25
 
