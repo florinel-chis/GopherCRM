@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Register } from './Register';
 
@@ -24,6 +25,14 @@ vi.mock('@/hooks/useAuth', () => ({
   }),
 }));
 
+// The form only renders once the registration-status probe reports sign-up
+// open; these tests are about the password rules, so registration is open.
+vi.mock('@/api/endpoints', () => ({
+  authApi: {
+    getRegistrationStatus: () => Promise.resolve({ enabled: true }),
+  },
+}));
+
 const MESSAGES = {
   min: 'Password must be at least 10 characters',
   upper: 'Password must contain at least one uppercase letter',
@@ -32,11 +41,20 @@ const MESSAGES = {
   special: 'Password must contain at least one special character',
 };
 
-const renderForm = () => render(
-  <MemoryRouter>
-    <Register />
-  </MemoryRouter>
-);
+const renderForm = async () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <Register />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  // Wait out the status probe: the form appears once sign-up is confirmed open.
+  await screen.findByLabelText(/email address/i);
+};
 
 const fillForm = (password: string) => {
   fireEvent.change(screen.getByLabelText(/first name/i), {
@@ -67,7 +85,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects "Password1" (regression: 9 chars, no special char — previously accepted)', async () => {
-    renderForm();
+    await renderForm();
     fillForm('Password1');
     submit();
 
@@ -78,7 +96,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('accepts "Password1!" and submits the registration', async () => {
-    renderForm();
+    await renderForm();
     fillForm('Password1!');
     submit();
 
@@ -93,7 +111,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects passwords shorter than 10 characters with the length message', async () => {
-    renderForm();
+    await renderForm();
     fillForm('Abc1!efgh'); // 9 chars, every other rule satisfied
     submit();
 
@@ -102,7 +120,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects passwords without an uppercase letter', async () => {
-    renderForm();
+    await renderForm();
     fillForm('abcdef123!@'); // 11 chars, lower + digit + special, no upper
     submit();
 
@@ -111,7 +129,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects passwords without a lowercase letter', async () => {
-    renderForm();
+    await renderForm();
     fillForm('ABCDEF123!@'); // 11 chars, upper + digit + special, no lower
     submit();
 
@@ -120,7 +138,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects passwords without a digit', async () => {
-    renderForm();
+    await renderForm();
     fillForm('Abcdefghi!!'); // 11 chars, upper + lower + special, no digit
     submit();
 
@@ -129,7 +147,7 @@ describe('Register password validation (must match backend internal/utils/passwo
   });
 
   it('rejects passwords without a special character', async () => {
-    renderForm();
+    await renderForm();
     fillForm('Abcdefgh123'); // 11 chars, upper + lower + digit, no special
     submit();
 

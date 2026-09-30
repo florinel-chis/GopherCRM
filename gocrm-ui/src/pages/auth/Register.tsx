@@ -14,9 +14,12 @@ import {
   Link,
   InputAdornment,
   IconButton,
+  CircularProgress,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
+import { authApi } from '@/api/endpoints';
 import type { RegisterRequest } from '@/types';
 
 const registerSchema = z.object({
@@ -53,6 +56,14 @@ export const Register: React.FC = () => {
     resolver: zodResolver(registerSchema),
   });
 
+  // The backend enforces the switch on POST /auth/register; this only decides
+  // what to render. An unknown state (probe still loading, or failed) shows
+  // the notice rather than a form whose submit is doomed.
+  const { data: registrationStatus, isPending: statusPending } = useQuery({
+    queryKey: ['registration-status'],
+    queryFn: authApi.getRegistrationStatus,
+  });
+
   const onSubmit = async (data: RegisterFormData) => {
     try {
       setError(null);
@@ -69,6 +80,44 @@ export const Register: React.FC = () => {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
     }
   };
+
+  if (statusPending || !registrationStatus?.enabled) {
+    return (
+      <Container component="main" maxWidth="sm">
+        <Box
+          sx={{
+            marginTop: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
+            <Typography component="h1" variant="h5" align="center" gutterBottom>
+              Sign Up
+            </Typography>
+            {statusPending ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <>
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  Registration is disabled on this system. Contact your
+                  administrator to get an account.
+                </Alert>
+                <Box sx={{ textAlign: 'center', mt: 3 }}>
+                  <Link component={RouterLink} to="/login" variant="body2">
+                    Back to Sign In
+                  </Link>
+                </Box>
+              </>
+            )}
+          </Paper>
+        </Box>
+      </Container>
+    );
+  }
 
   return (
     <Container component="main" maxWidth="sm">
