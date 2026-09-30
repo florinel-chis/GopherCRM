@@ -4,12 +4,13 @@ End-to-end cases for the deals area added 2026-09-30: the `/deals` list with its
 filters, the create/edit form, the detail page with its stage selector and history timeline, the
 deals sections on the company and customer detail pages, and deletion (a soft delete that keeps
 the history, not an erasure). Every **Expected** states what the build does **today**, traced to
-the handlers, service and repository. The frontend pages and the e2e spec are written in parallel
-with the backend, so the intended test titles are given on every admin case and the orchestrating
-session reconciles them with `gocrm-ui/e2e/tests/admin-deals.spec.ts` once both halves are merged.
+the handlers, service and repository; every automated case names the exact test title in
+`gocrm-ui/e2e/tests/admin-deals.spec.ts`.
 
-26 cases: 0 automated, 20 planned against `admin-deals.spec.ts`, 6 blocked on the sales role-login
-helper. Every case names the Go test that already pins its API behaviour.
+26 cases: 13 automated by `gocrm-ui/e2e/tests/admin-deals.spec.ts` (12 of them partial, as in
+10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or
+Vitest), 7 planned against the same spec, 6 blocked on the sales role-login helper. Every case
+names the Go test that already pins its API behaviour.
 
 **Sources**
 
@@ -70,7 +71,7 @@ helper. Every case names the Go test that already pins its API behaviour.
   customer, stage chip, amount formatted by currency, probability, expected close and owner. The
   body is `{success:true, data:[…], meta:{page, per_page, total, total_pages}}` — `data` is the
   bare array, each item carrying `owner`, `company`, `customer` and `lead` when linked.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts`
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-deals.spec.ts`
   "admin can view the deals list page". Go: `deal_handler_test.go`
   `TestList_PassesEveryFilterAndReturnsTheArrayWithMeta`.
 
@@ -85,7 +86,9 @@ helper. Every case names the Go test that already pins its API behaviour.
   deal with `meta.total` 1. The match is a substring over `title` and `notes` (`dealSearchClause`),
   not over the company name or the owner. Case-insensitive on MySQL and MariaDB, case-sensitive
   on SQLite.
-- **Automation:** planned — `admin-deals.spec.ts` "admin can search deals". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can filter the list by stage"
+  (types the run stamp, which only the two titles of that run carry, and expects two rows; the
+  notes half and `meta.total` are pinned in Go). Go:
   `deal_repository_test.go` `TestDealRepository_ListFiltersSortsAndPaginates`,
   `deal_integration_test.go` `TestListFiltersSortAndPagination`.
 
@@ -100,7 +103,10 @@ helper. Every case names the Go test that already pins its API behaviour.
   Step 2: `…open=true…` returns every deal whose stage is neither `won` nor `lost`; the toggle is
   only sent when on. Unlike the lead status filter, these narrow the whole result set on the
   server (`DealListFilter`). `stage=closed` or `open=maybe` is a **400**.
-- **Automation:** planned — `admin-deals.spec.ts` "admin can filter deals by stage". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can filter the list by stage"
+  (picks "Proposal" on top of a search and expects the one proposal row with its stage chip,
+  then "All stages" brings both rows back; the "Open only" toggle is Vitest `DealList.test.tsx`
+  and the 400s are Go). Go:
   `deal_handler_test.go` `TestList_BadFiltersAre400`, `deal_repository_test.go`
   `TestDealRepository_ListFiltersSortsAndPaginates`.
 
@@ -144,9 +150,12 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Expected:** `POST /api/v1/deals` → **201** with the deal: `company_id` set and `company`
   preloaded, `amount_cents` the integer sent, `expected_close_date` as `YYYY-MM-DD`, `probability`
   as sent, `closed_at` absent. The detail page shows every field and one history entry
-  "→ proposal" by the admin. `GET /deals/{id}/history` has one row with `from_stage` null.
-- **Automation:** planned — `admin-deals.spec.ts` "admin can create a deal for a company and sees
-  it on the detail page". Go: `deal_handler_test.go`
+  "Created in Proposal" by the admin. `GET /deals/{id}/history` has one row with `from_stage` null.
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can create a deal for a
+  company and sees the formatted amount on both detail pages" (creates in qualification with
+  every field and the company, asserts the 201, each field and the company link on the detail
+  page, the one history row and the deal in the company's Deals section; the response body is
+  pinned in Go). Go: `deal_handler_test.go`
   `TestCreate_PassesTheFieldsAndTheCallerAsOwner`; `deal_integration_test.go`
   `TestCreateAppliesDefaultsAndValidates`.
 
@@ -174,12 +183,16 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Steps:**
   1. Submit with an empty title; with a negative amount; with currency `eur`; with probability
      101; with a title of 201 characters.
-- **Expected:** Each is a **400** and the form stays open with the message on the field. The
-  binding tags refuse the amount (`min=0`), the currency (`len=3,alpha,uppercase`) and the
-  probability (`0–100`); `lengthError` refuses values longer than their column (title 200,
+- **Expected:** The form stays open with the message on the field. The form's own schema refuses
+  most of these before any request ("Title is required", "Amount must be a positive number with
+  at most two decimals", "Currency must be a 3-letter ISO code"); whatever reaches the API is a
+  **400**: the binding tags refuse the amount (`min=0`), the currency (`len=3,alpha,uppercase`)
+  and the probability (`0–100`); `lengthError` refuses values longer than their column (title 200,
   `lost_reason` 255, `source` 100, notes 65535 bytes) and names the field; the service trims and
   refuses a blank title. A date not of the form `YYYY-MM-DD` is a 400 too.
-- **Automation:** planned — `admin-deals.spec.ts` "validation errors keep the deal form open".
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "validation errors keep the form
+  open" (an empty title, `12,5` as amount and `EU` as currency, all refused by the form before
+  any request, so the 400s of the API are pinned in Go).
   Go: `deal_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
   `TestCreate_ValuesLongerThanTheirColumnAre400`; `deal_service_test.go`
   `TestCreate_ValidationFailuresNeverReachTheWrite`; `deal_test.go`.
@@ -219,7 +232,10 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Expected:** Each amount is formatted with `Intl.NumberFormat` for its own currency from the
   integer `amount_cents` (e.g. 125000 → €1,250.00 / $1,250.00). Nothing on the page sums across
   currencies.
-- **Automation:** planned — `admin-deals.spec.ts` "amounts are formatted by currency". Go: n/a
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can create a deal for a
+  company and sees the formatted amount on both detail pages" (EUR only: `1234.56` renders as
+  `€1,234.56` on the detail page and in the company's Deals section; the second currency and the
+  list column are Vitest `dealFormat.test.ts` and `DealList.test.tsx`). Go: n/a
   (presentation); the integer contract is pinned by `deal_integration_test.go`
   `TestCreateAppliesDefaultsAndValidates`.
 
@@ -236,7 +252,9 @@ helper. Every case names the Go test that already pins its API behaviour.
   unchanged, the notes and other text fields as sent (an absent text field is cleared). Step 2:
   the body carries `company_id: 0` → `company_id` gone from the response and NULL in the
   database. `owner_id` and `currency` absent keep their values.
-- **Automation:** planned — `admin-deals.spec.ts` "admin can edit a deal". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can edit the title and amount"
+  (changes the title and the amount of an unlinked deal and asserts the 200 and the detail page;
+  the link rules are Vitest `DealForm.test.tsx` and Go). Go:
   `deal_handler_test.go` `TestUpdate_ReplacesTheFieldsAndKeepsTheOwner`,
   `TestUpdate_LinksAbsentKeepZeroClearsValueSets`; `deal_integration_test.go`
   `TestStageJourneyWithHistory`.
@@ -249,7 +267,7 @@ helper. Every case names the Go test that already pins its API behaviour.
   1. On the edit form, change the stage to "lost" and type a lost reason; save.
   2. Open the history.
 - **Expected:** **200** with `probability` 0, `closed_at` set and `lost_reason` stored; the history
-  has a new row `qualification → lost`. A `PUT` that keeps the stage adds no row and applies
+  has a new row "Qualification to Lost". A `PUT` that keeps the stage adds no row and applies
   `probability` only when sent.
 - **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_service_test.go`
   `TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges`;
@@ -279,11 +297,14 @@ helper. Every case names the Go test that already pins its API behaviour.
   2. Read the history timeline.
 - **Expected:** Each pick is `POST /api/v1/deals/{id}/stage` `{stage}` → **200** with the deal:
   `probability` 40 then 70 (the new stage's default), `closed_at` absent. The timeline lists three
-  entries oldest first: "→ qualification", "qualification → proposal", "proposal → negotiation",
-  each with the admin's name and a timestamp (`GET /deals/{id}/history`, `changed_by` carries id,
-  name and email, never the password).
-- **Automation:** planned — `admin-deals.spec.ts` "moving a deal through the stages grows the
-  history". Go: `deal_service_test.go` `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
+  entries oldest first: "Created in Qualification", "Qualification to Proposal", "Proposal to
+  Negotiation", each with the admin's name and a timestamp (`GET /deals/{id}/history`,
+  `changed_by` carries id, name and email, never the password).
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "moving through the open stages grows
+  the history by one row each time" (asserts both 200s, the stage chip, 40% then 70%, the three
+  rows with their texts and that nothing is closed; the name and timestamp on each row are Vitest
+  `DealHistory.test.tsx`). Go: `deal_service_test.go`
+  `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
   `deal_repository_test.go` `TestDealRepository_StageChangesAreListedOldestFirstWithTheUser`;
   `deal_handler_test.go` `TestHistory_ReturnsTheRowsAsGivenWithTheUser`.
 
@@ -294,8 +315,8 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Steps:**
   1. Pick "Won".
 - **Expected:** **200**: `stage` `won`, `probability` 100 whatever was sent, `closed_at` set to now
-  and shown on the detail page. The history gains "… → won".
-- **Automation:** planned — `admin-deals.spec.ts` "winning a deal shows closed_at". Go:
+  and shown on the detail page. The history gains "… to Won".
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go:
   `deal_service_test.go` `TestApplyDealTransition`; `deal_integration_test.go`
   `TestStageJourneyWithHistory`.
 
@@ -309,7 +330,10 @@ helper. Every case names the Go test that already pins its API behaviour.
   `POST /api/v1/deals/{id}/stage` `{stage:"lost", lost_reason}` → **200**: `probability` 0,
   `closed_at` set, `lost_reason` as typed. The API itself accepts an empty reason (the requirement
   is the form's); a reason over 255 characters is a **400**.
-- **Automation:** planned — `admin-deals.spec.ts` "losing a deal requires a reason". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "marking a deal lost needs a reason,
+  shows closed_at and the reason, and moving back clears them" (the empty reason is refused with
+  the dialog still open and the stage unchanged, then the 200, the Lost chip, closed_at, the
+  reason, 0% and the second history row; the 255-character limit is Go). Go:
   `deal_handler_test.go` `TestChangeStage_PassesTheBodyThroughAndReturnsTheMovedDeal`,
   `TestChangeStage_BindingRejectsBadBodies`; `deal_integration_test.go` `TestStageJourneyWithHistory`.
 
@@ -320,8 +344,11 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Steps:**
   1. Pick "Qualification".
 - **Expected:** **200**: `probability` 10, `closed_at` absent, `lost_reason` empty. The history
-  gains "lost → qualification".
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_service_test.go`
+  gains "Lost to Qualification".
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "marking a deal lost needs a reason,
+  shows closed_at and the reason, and moving back clears them" (reopens to "Proposal" rather than
+  "Qualification" and asserts the 200, the chip, closed_at and the reason gone and the third
+  history row; the probability is Go). Go: `deal_service_test.go`
   `TestApplyDealTransition`, `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`.
 
 ### TC-DEAL-019 — Asking for the current stage again changes nothing
@@ -357,8 +384,10 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Expected:** `GET /api/v1/deals/{id}` → **200** with `owner`, `company`, `customer` and `lead`
   preloaded (`dealPreloads`); the page links each to its own detail page and renders the history
   timeline from `GET /deals/{id}/history`. An unknown id is **404** "Deal not found".
-- **Automation:** planned — `admin-deals.spec.ts` "admin can create a deal for a company and sees
-  it on the detail page". Go: `deal_repository_test.go`
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can create a deal for a
+  company and sees the formatted amount on both detail pages" (a deal linked to a company only:
+  the company link and the history are asserted; the customer and lead links are Vitest
+  `DealDetail.test.tsx` and Go, the 404 is Go). Go: `deal_repository_test.go`
   `TestDealRepository_GetByIDPreloadsTheAssociations`; `deal_handler_test.go` `TestGet_NotFoundAndBadID`.
 
 ### TC-DEAL-022 — Company and customer detail pages list their deals
@@ -373,7 +402,10 @@ helper. Every case names the Go test that already pins its API behaviour.
   `data` the array newest first, `meta` the pagination; the company's `deal_count` is 1. "New
   deal" opens the form with the company pre-selected. An unknown company or customer is **404**
   "Company not found" / "Customer not found".
-- **Automation:** planned — `admin-deals.spec.ts` "a company detail page lists its deals". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can create a deal for a
+  company and sees the formatted amount on both detail pages" (the company page's Deals section
+  lists the deal with its amount; the customer page, the "New deal" pre-selection and the 404s
+  are Vitest `CompanyDetail.test.tsx` / `CustomerDetail.test.tsx` and Go). Go:
   `deal_handler_test.go` `TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404`;
   `deal_repository_test.go` `TestCompanyRepository_DealCountAndUnlinkDeals`;
   `deal_integration_test.go` `TestListFiltersSortAndPagination`.
@@ -411,7 +443,9 @@ helper. Every case names the Go test that already pins its API behaviour.
 - **Expected:** `DELETE /api/v1/deals/{id}` → **204**; the list no longer shows it; `GET` and a
   second `DELETE` are **404**. The row is soft-deleted and its `deal_stage_changes` rows remain in
   the table (they are not reachable through the API once the deal is gone).
-- **Automation:** planned — `admin-deals.spec.ts` "admin can delete a deal". Go:
+- **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can delete a deal" (deletes
+  from the list row rather than the detail page and asserts the row is gone from the narrowed
+  list; the 404s and the kept history rows are Go). Go:
   `deal_service_test.go` `TestDealService_DeleteIsSoftAndHistoryStays`; `deal_repository_test.go`
   `TestDealRepository_DeleteIsSoftAndKeepsTheHistory`; `deal_integration_test.go`
   `TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory`.

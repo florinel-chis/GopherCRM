@@ -27,8 +27,8 @@ that the test was executed as part of writing this catalog.
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
-| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete | 26 | 14 | 10 | 2 | 0 | 20 | 6 |
-| **Total** | | **535** | **156** | **237** | **142** | **119** | **337** | **79** |
+| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete | 26 | 14 | 10 | 2 | 13 | 7 | 6 |
+| **Total** | | **535** | **156** | **237** | **142** | **132** | **324** | **79** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -56,9 +56,11 @@ already pins its API behaviour. The six blocked cases are the sales and support 
 blocked for the usual reason (lesson 8).
 
 [14-deals.md](14-deals.md) was added 2026-09-30 with the deals feature. Its cases are written
-against the backend contract that ships with the feature; the frontend pages and the
-`gocrm-ui/e2e/tests/admin-deals.spec.ts` spec are written in parallel, so every admin case is
-*planned* with the intended test title and every case names the Go test that already pins its API
+against the backend contract that ships with the feature and the frontend pages the same change
+introduces. Thirteen cases are automated by the eight tests of
+`gocrm-ui/e2e/tests/admin-deals.spec.ts` (twelve of them *automated (partial)*, as in 10-labels
+and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or Vitest); the same
+spec is named on every planned case, and every case names the Go test that already pins its API
 behaviour. The six blocked cases are the sales role cases (lesson 8).
 
 ## Case format
