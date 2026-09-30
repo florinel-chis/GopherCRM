@@ -39,10 +39,17 @@ import {
   type User,
 } from '@/types';
 import { centsToDecimal, decimalToCents } from './dealFormat';
+import { invalidateDealQueries } from './dealQueries';
 
 const FALLBACK_CURRENCY = 'EUR';
 const DEFAULT_CURRENCY_KEY = 'deals.default_currency';
 const PROBABILITY_MESSAGE = 'Probability must be a whole number between 0 and 100';
+
+const AMOUNT_PATTERN = /^\d+(\.\d{1,2})?$/;
+// The API refuses amount_cents above 10^12 (models.DealAmountCentsMax). That
+// bound is far below 2^53, so the cents compare exactly as a plain number.
+const AMOUNT_CENTS_MAX = 1_000_000_000_000;
+const amountCentsWithinBound = (value: string): boolean => decimalToCents(value) <= AMOUNT_CENTS_MAX;
 
 // Bounds mirror the API's column sizes (title 200, lost_reason 255, source
 // 100); the amount is edited as a decimal and sent as integer cents.
@@ -56,8 +63,11 @@ const dealSchema = z.object({
   amount: z
     .string()
     .trim()
-    .refine((value) => value === '' || /^\d+(\.\d{1,2})?$/.test(value), {
+    .refine((value) => value === '' || AMOUNT_PATTERN.test(value), {
       message: 'Amount must be a positive number with at most two decimals',
+    })
+    .refine((value) => !AMOUNT_PATTERN.test(value) || amountCentsWithinBound(value), {
+      message: 'Amount is too large',
     }),
   currency: z
     .string()
@@ -279,7 +289,7 @@ export const Component: React.FC = () => {
   };
 
   const invalidateDeals = () => {
-    queryClient.invalidateQueries({ queryKey: ['deals'] });
+    invalidateDealQueries(queryClient);
     queryClient.invalidateQueries({ queryKey: ['company'] });
     queryClient.invalidateQueries({ queryKey: ['customer'] });
   };

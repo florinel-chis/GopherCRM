@@ -86,6 +86,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	configService := service.NewConfigurationService(configRepo, utils.NewSecretBox("test-secret-key", "configuration-secret"))
 	dealService := service.NewDealService(repository.NewDealRepository(suite.db), companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
+	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db))
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 
 	// Setup handlers
@@ -98,6 +99,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	configHandler := handler.NewConfigurationHandler(configService)
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
+	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService)
 
 	// Setup router with middleware
 	gin.SetMode(gin.TestMode)
@@ -126,6 +128,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	handler.SetupConfigurationRoutes(protected, configHandler)
 	handler.SetupTicketRoutes(protected, ticketHandler)
 	handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
+	handler.SetupDashboardRoutes(protected, dashboardHandler)
 
 	// Start test server
 	suite.server = httptest.NewServer(suite.router)

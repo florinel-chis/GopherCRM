@@ -1,16 +1,7 @@
 import React from 'react';
 import { Chip, type ChipProps } from '@mui/material';
 import { dealStageLabel, type DealStage } from '@/types';
-
-// The one place the five stages get a colour. Open stages progress from
-// neutral to warm; the two closed stages take the outcome colours.
-const STAGE_COLORS: Record<DealStage, ChipProps['color']> = {
-  qualification: 'default',
-  proposal: 'info',
-  negotiation: 'warning',
-  won: 'success',
-  lost: 'error',
-};
+import { STAGE_COLORS } from './dealStageColors';
 
 export interface DealStageChipProps {
   stage: DealStage;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -333,6 +334,153 @@ func (s *dealService) History(dealID uint) ([]models.DealStageChange, error) {
 	return changes, nil
 }
 
+// Pipeline aggregates the pipeline for the caller; see the interface for the
+// scoping rule.
+func (s *dealService) Pipeline(filter repository.DealPipelineFilter, actorID uint, role models.UserRole) (*models.DealPipeline, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"actor_id": actorID,
+		"role":     role,
+	}), "DealService", "Pipeline")
+
+	ownerID, err := dealOwnerScope(role, actorID, filter.OwnerID)
+	if err != nil {
+		logger.WithError(err).Warn("Pipeline refused")
+		return nil, err
+	}
+	filter.OwnerID = ownerID
+
+	rows, err := s.dealRepo.Pipeline(filter)
+	if err != nil {
+		utils.LogServiceResponse(logger, err)
+		return nil, err
+	}
+	return &models.DealPipeline{Stages: buildDealPipelineStages(rows)}, nil
+}
+
+// DashboardPipeline is the dashboard's pipeline widget and won-this-month
+// tile. The month is the calendar month of the current instant in UTC, laid
+// out in Go and passed down as a half-open range, as the other dashboard
+// widgets bucket time.
+func (s *dealService) DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"actor_id": actorID,
+		"role":     role,
+	}), "DealService", "DashboardPipeline")
+
+	ownerID, err := dealOwnerScope(role, actorID, nil)
+	if err != nil {
+		logger.WithError(err).Warn("Dashboard pipeline refused")
+		return nil, err
+	}
+
+	rows, err := s.dealRepo.Pipeline(repository.DealPipelineFilter{OwnerID: ownerID})
+	if err != nil {
+		utils.LogServiceResponse(logger, err)
+		return nil, err
+	}
+
+	from, to := utcMonthBounds(s.now())
+	won, err := s.dealRepo.WonBetween(ownerID, from, to)
+	if err != nil {
+		utils.LogServiceResponse(logger, err)
+		return nil, err
+	}
+
+	return &models.DealDashboardPipeline{
+		Stages:       buildDealPipelineStages(rows),
+		WonThisMonth: buildDealWonSummary(won),
+	}, nil
+}
+
+// dealOwnerScope is the owner filter the caller's role imposes on an
+// aggregate: an admin keeps the requested one (nil = everybody), a sales user
+// is narrowed to itself whatever it asked for, and every other role has no
+// access to deals at all.
+func dealOwnerScope(role models.UserRole, actorID uint, requested *uint) (*uint, error) {
+	switch role {
+	case models.RoleAdmin:
+		return requested, nil
+	case models.RoleSales:
+		own := actorID
+		return &own, nil
+	default:
+		return nil, fmt.Errorf("role %q has no access to deals: %w", role, apperrors.ErrForbidden)
+	}
+}
+
+// utcMonthBounds returns the first instant of now's calendar month in UTC and
+// the first instant of the next one: the half-open range [from, to).
+func utcMonthBounds(now time.Time) (time.Time, time.Time) {
+	now = now.UTC()
+	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return from, from.AddDate(0, 1, 0)
+}
+
+// weightedCents turns Σ amount_cents × probability into cents: the sum
+// divided by 100, rounded half up, once on the total rather than per deal.
+// Integer arithmetic only; the floor correction keeps "half up" exact for a
+// negative sum as well, which the validation rules never let happen.
+func weightedCents(amountTimesProbability int64) int64 {
+	shifted := amountTimesProbability + 50
+	quotient := shifted / 100
+	if shifted%100 < 0 {
+		quotient--
+	}
+	return quotient
+}
+
+// buildDealPipelineStages lays the aggregate rows out as the five stages in
+// pipeline order, every stage present, with its totals sorted by currency. A
+// stage the model does not know (only a hand edit of the table could produce
+// one) is appended after them in sorted order rather than dropped, as the
+// dashboard charts do with unknown statuses.
+func buildDealPipelineStages(rows []models.DealPipelineRow) []models.DealPipelineStage {
+	byStage := map[models.DealStage]*models.DealPipelineStage{}
+	stages := make([]*models.DealPipelineStage, 0, len(models.DealStages))
+	for _, stage := range models.DealStages {
+		entry := &models.DealPipelineStage{Stage: stage, Totals: []models.DealPipelineTotal{}}
+		byStage[stage] = entry
+		stages = append(stages, entry)
+	}
+
+	unknown := []*models.DealPipelineStage{}
+	for _, row := range rows {
+		entry, ok := byStage[row.Stage]
+		if !ok {
+			entry = &models.DealPipelineStage{Stage: row.Stage, Totals: []models.DealPipelineTotal{}}
+			byStage[row.Stage] = entry
+			unknown = append(unknown, entry)
+		}
+		entry.Count += row.DealCount
+		entry.Totals = append(entry.Totals, models.DealPipelineTotal{
+			Currency:      row.Currency,
+			AmountCents:   row.AmountCents,
+			WeightedCents: weightedCents(row.AmountTimesProbability),
+		})
+	}
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i].Stage < unknown[j].Stage })
+	stages = append(stages, unknown...)
+
+	result := make([]models.DealPipelineStage, 0, len(stages))
+	for _, entry := range stages {
+		sort.Slice(entry.Totals, func(i, j int) bool { return entry.Totals[i].Currency < entry.Totals[j].Currency })
+		result = append(result, *entry)
+	}
+	return result
+}
+
+// buildDealWonSummary adds the per-currency counts up and keeps the amounts
+// per currency, sorted by currency code.
+func buildDealWonSummary(rows []models.DealWonRow) models.DealWonSummary {
+	summary := models.DealWonSummary{Totals: make([]models.DealWonTotal, 0, len(rows))}
+	for _, row := range rows {
+		summary.Count += row.DealCount
+		summary.Totals = append(summary.Totals, models.DealWonTotal{Currency: row.Currency, AmountCents: row.AmountCents})
+	}
+	sort.Slice(summary.Totals, func(i, j int) bool { return summary.Totals[i].Currency < summary.Totals[j].Currency })
+	return summary
+}
+
 // defaultCurrency reads deals.default_currency. The configuration API stores
 // any string, so the value is trimmed and upper-cased here and, if it still is
 // not a three-letter code (or cannot be read at all), the shipped EUR is used
@@ -373,6 +521,9 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 	}
 	if deal.AmountCents < 0 {
 		return fmt.Errorf("amount_cents must not be negative: %w", apperrors.ErrValidation)
+	}
+	if deal.AmountCents > models.DealAmountCentsMax {
+		return fmt.Errorf("amount_cents must be at most %d: %w", models.DealAmountCentsMax, apperrors.ErrValidation)
 	}
 	if !dealCurrencyPattern.MatchString(deal.Currency) {
 		return fmt.Errorf("currency must be a three-letter upper-case ISO 4217 code: %w", apperrors.ErrValidation)

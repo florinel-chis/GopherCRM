@@ -2,12 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -26,6 +29,7 @@ type DashboardHandlerTestSuite struct {
 	mockCustomerService *mocks.CustomerService
 	mockTicketService   *mocks.TicketService
 	mockTaskService     *MockTaskService
+	mockDealService     *mocks.DealService
 	handler             *DashboardHandler
 }
 
@@ -43,11 +47,13 @@ func (suite *DashboardHandlerTestSuite) SetupTest() {
 	suite.mockCustomerService = new(mocks.CustomerService)
 	suite.mockTicketService = new(mocks.TicketService)
 	suite.mockTaskService = new(MockTaskService)
+	suite.mockDealService = new(mocks.DealService)
 	suite.handler = NewDashboardHandler(
 		suite.mockLeadService,
 		suite.mockCustomerService,
 		suite.mockTicketService,
 		suite.mockTaskService,
+		suite.mockDealService,
 	)
 }
 
@@ -56,6 +62,7 @@ func (suite *DashboardHandlerTestSuite) TearDownTest() {
 	suite.mockCustomerService.AssertExpectations(suite.T())
 	suite.mockTicketService.AssertExpectations(suite.T())
 	suite.mockTaskService.AssertExpectations(suite.T())
+	suite.mockDealService.AssertExpectations(suite.T())
 }
 
 // newRouterWithRole wires the real dashboard routes (including their
@@ -656,6 +663,108 @@ func (suite *DashboardHandlerTestSuite) TestGetNewLeads_LimitIsCapped() {
 	rec := suite.doGet(router, "/dashboard/new-leads?limit=1000")
 
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+// --- deal pipeline widgets ----------------------------------------------------
+
+// dashboardPipelineFixture is what the service hands back: five stages in
+// order, one of them with two currencies, the others empty, and a won tile.
+func dashboardPipelineFixture() *models.DealDashboardPipeline {
+	stages := make([]models.DealPipelineStage, 0, len(models.DealStages))
+	for _, stage := range models.DealStages {
+		stages = append(stages, models.DealPipelineStage{Stage: stage, Totals: []models.DealPipelineTotal{}})
+	}
+	stages[1].Count = 3
+	stages[1].Totals = []models.DealPipelineTotal{
+		{Currency: "EUR", AmountCents: 150000, WeightedCents: 60000},
+		{Currency: "USD", AmountCents: 333, WeightedCents: 110},
+	}
+	return &models.DealDashboardPipeline{
+		Stages:       stages,
+		WonThisMonth: models.DealWonSummary{Count: 1, Totals: []models.DealWonTotal{{Currency: "EUR", AmountCents: 990000}}},
+	}
+}
+
+// Admin and sales reach the service with their own id and role (the service
+// scopes sales to itself); support passes the dashboard guard but is refused
+// by the handler before any data is read, and customer is stopped by the
+// guard. The mock is primed only for the allowed roles, so a check that
+// opened up would also fail on the unexpected call.
+func (suite *DashboardHandlerTestSuite) TestGetPipeline_RoleMatrix() {
+	for _, tc := range []struct {
+		role   models.UserRole
+		status int
+	}{
+		{models.RoleAdmin, http.StatusOK},
+		{models.RoleSales, http.StatusOK},
+		{models.RoleSupport, http.StatusForbidden},
+		{models.RoleCustomer, http.StatusForbidden},
+	} {
+		suite.SetupTest()
+		if tc.status == http.StatusOK {
+			suite.mockDealService.On("DashboardPipeline", uint(1), tc.role).Return(dashboardPipelineFixture(), nil).Once()
+		}
+
+		rec := suite.doGet(suite.newRouterWithRole(tc.role), "/dashboard/pipeline")
+
+		assert.Equalf(suite.T(), tc.status, rec.Code, "%s: %s", tc.role, rec.Body.String())
+		suite.mockDealService.AssertExpectations(suite.T())
+		suite.mockDealService.AssertNumberOfCalls(suite.T(), "DashboardPipeline", map[bool]int{true: 1, false: 0}[tc.status == http.StatusOK])
+	}
+}
+
+// The JSON the dashboard receives: five stages in order, totals as arrays
+// (never null), and the won-this-month tile.
+func (suite *DashboardHandlerTestSuite) TestGetPipeline_ResponseShape() {
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleAdmin).Return(dashboardPipelineFixture(), nil)
+
+	rec := suite.doGet(suite.newRouterWithRole(models.RoleAdmin), "/dashboard/pipeline")
+
+	require.Equal(suite.T(), http.StatusOK, rec.Code, rec.Body.String())
+	var env dashboardEnvelope
+	require.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &env))
+	require.True(suite.T(), env.Success)
+	var payload struct {
+		Stages []struct {
+			Stage  string            `json:"stage"`
+			Count  int64             `json:"count"`
+			Totals []json.RawMessage `json:"totals"`
+		} `json:"stages"`
+		WonThisMonth struct {
+			Count  int64 `json:"count"`
+			Totals []struct {
+				Currency    string `json:"currency"`
+				AmountCents int64  `json:"amount_cents"`
+			} `json:"totals"`
+		} `json:"won_this_month"`
+	}
+	require.NoError(suite.T(), json.Unmarshal(env.Data, &payload))
+	names := []string{}
+	for _, stage := range payload.Stages {
+		names = append(names, stage.Stage)
+	}
+	assert.Equal(suite.T(), []string{"qualification", "proposal", "negotiation", "won", "lost"}, names)
+	assert.Equal(suite.T(), int64(3), payload.Stages[1].Count)
+	assert.JSONEq(suite.T(), `{"currency":"USD","amount_cents":333,"weighted_cents":110}`, string(payload.Stages[1].Totals[1]))
+	assert.Contains(suite.T(), string(env.Data), `"stage":"qualification","count":0,"totals":[]`, "an empty stage carries an empty array")
+	assert.Equal(suite.T(), int64(1), payload.WonThisMonth.Count)
+	assert.Equal(suite.T(), "EUR", payload.WonThisMonth.Totals[0].Currency)
+	assert.Equal(suite.T(), int64(990000), payload.WonThisMonth.Totals[0].AmountCents)
+}
+
+// The service's own refusal is a 403 too, and any other failure a 500 that
+// does not echo the error.
+func (suite *DashboardHandlerTestSuite) TestGetPipeline_ServiceErrors() {
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleSales).
+		Return(nil, fmt.Errorf("wrapped: %w", apperrors.ErrForbidden)).Once()
+	rec := suite.doGet(suite.newRouterWithRole(models.RoleSales), "/dashboard/pipeline")
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleAdmin).
+		Return(nil, errors.New("database is on fire")).Once()
+	rec = suite.doGet(suite.newRouterWithRole(models.RoleAdmin), "/dashboard/pipeline")
+	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
+	assert.NotContains(suite.T(), rec.Body.String(), "on fire")
 }
 
 // --- pure bucketing ----------------------------------------------------------

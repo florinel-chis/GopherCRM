@@ -508,6 +508,10 @@ authentication and live on the moderate tier:
   10/40/70/100/0, currency to the `deals.default_currency` setting; every link must be a live row →
   400 `INVALID_REFERENCE`; `owner_id` defaults to the caller and sales may only own it themselves;
   the first history row is written in the same transaction)*
+- `GET /api/v1/deals/pipeline` - The live deals per stage: all five stages in pipeline order, each with
+  `count` and `totals` per currency (`amount_cents`, `weighted_cents` = round half up of
+  Σ amount × probability / 100, rounded once per stage and currency); `owner_id` (admin only; sales
+  is always narrowed to itself) and `company_id` filters
 - `GET /api/v1/deals/:id` - Get a deal with its owner, company, customer and lead
 - `PUT /api/v1/deals/:id` - Replace a deal's fields *(links: absent keeps, `0` clears; a stage change
   goes through the same rules as the stage endpoint and records history)*
@@ -573,6 +577,9 @@ expired, or if its owner has been deactivated or erased.
 - `GET /api/v1/dashboard/recent-tickets` - Newest tickets
 - `GET /api/v1/dashboard/new-leads` - Newest leads *(sales sees only their own; support gets an
   empty list)*
+- `GET /api/v1/dashboard/pipeline` - The deal pipeline per stage (as `GET /deals/pipeline`) plus
+  `won_this_month` (count and amounts per currency of the deals won in the current calendar month,
+  UTC) *(admin sees all deals, sales its own; support and customer get 403 — no deal access)*
 
 ### Not currently exposed
 

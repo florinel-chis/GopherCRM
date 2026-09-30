@@ -82,6 +82,7 @@ func (suite *DealServiceTestSuite) TestCreate_ValidationFailuresNeverReachTheWri
 		"blank title":          {Title: "   ", Currency: "EUR", OwnerID: 1},
 		"title too long":       {Title: strings.Repeat("x", models.DealTitleMaxLength+1), Currency: "EUR", OwnerID: 1},
 		"negative amount":      {Title: "X", Currency: "EUR", AmountCents: -1, OwnerID: 1},
+		"amount above 10^12":   {Title: "X", Currency: "EUR", AmountCents: 1_000_000_000_001, OwnerID: 1},
 		"lowercase currency":   {Title: "X", Currency: "eur", OwnerID: 1},
 		"two-letter currency":  {Title: "X", Currency: "EU", OwnerID: 1},
 		"four-letter currency": {Title: "X", Currency: "EURO", OwnerID: 1},
@@ -100,6 +101,29 @@ func (suite *DealServiceTestSuite) TestCreate_ValidationFailuresNeverReachTheWri
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "probability -1: got %v", err)
 
 	suite.mockRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "WithTx", mock.Anything)
+}
+
+// amount_cents is bounded at 10^12 cents on every write, so that the pipeline
+// sums stay far inside a BIGINT; the message names the field and the bound.
+// The bound itself is valid.
+func (suite *DealServiceTestSuite) TestAmountBound_OnCreateAndUpdate() {
+	const maxAmount = int64(1_000_000_000_000)
+	suite.ownerExists()
+
+	err := suite.service.Create(&models.Deal{Title: "X", Currency: "EUR", AmountCents: maxAmount + 1, OwnerID: 1}, nil, 1)
+	suite.Require().Error(err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "got %v", err)
+	assert.Contains(suite.T(), err.Error(), "amount_cents must be at most 1000000000000")
+
+	stored := &models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", Stage: models.DealStageProposal, Currency: "EUR", OwnerID: 1}
+	suite.mockRepo.On("GetByID", uint(5)).Return(stored, nil).Once()
+	err = suite.service.Update(&models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", AmountCents: maxAmount + 1, OwnerID: 1}, nil, 1)
+	suite.Require().Error(err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "got %v", err)
+	assert.Contains(suite.T(), err.Error(), "amount_cents must be at most 1000000000000")
+
+	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockRepo.AssertNotCalled(suite.T(), "WithTx", mock.Anything)
 }
 
@@ -700,4 +724,184 @@ func TestDealService_ClosedAtAndChangedAtAreStoredInUTC(t *testing.T) {
 			"raw %s %q must carry a UTC offset", name, raw)
 	}
 	t.Logf("raw closed_at=%q changed_at=%q", rawClosedAt, rawChangedAt)
+}
+
+// --- Pipeline and the dashboard widgets --------------------------------------
+
+// The weighted amount is Σ amount_cents × probability / 100, rounded half up
+// once on the total.
+func TestWeightedCents_RoundsHalfUpOnce(t *testing.T) {
+	for _, tc := range []struct {
+		sum, want int64
+	}{
+		{0, 0},
+		{49, 0},              // 0.49 down
+		{50, 1},              // 1 × 50: 0.5 half up
+		{99, 1},              // 0.99 up
+		{100, 1},             // exact
+		{149, 1},             // 1.49 down
+		{150, 2},             // 1.5 half up
+		{333 * 33, 110},      // 10989 → 109.89 → 110
+		{100000 * 40, 40000}, // exact
+		{-50, 0},             // -0.5 half up is 0 (never produced; the rule holds anyway)
+		{-150, -1},           // -1.5 half up
+		{-151, -2},           // -1.51
+	} {
+		assert.Equalf(t, tc.want, weightedCents(tc.sum), "weightedCents(%d)", tc.sum)
+	}
+}
+
+// Rounding happens on the group total, not per deal: two deals of 1 cent at
+// 50 % are 0.5 + 0.5 = 1 cent, where per-deal rounding would give 2.
+func TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal(t *testing.T) {
+	stages := buildDealPipelineStages([]models.DealPipelineRow{
+		{Stage: models.DealStageProposal, Currency: "EUR", DealCount: 2, AmountCents: 2, AmountTimesProbability: 1*50 + 1*50},
+	})
+	assert.Equal(t, []models.DealPipelineTotal{{Currency: "EUR", AmountCents: 2, WeightedCents: 1}}, stages[1].Totals)
+}
+
+// All five stages in pipeline order, empty ones with count 0 and an empty
+// (non-nil) totals list; a stage's currencies sorted by code; a stage outside
+// the model appended after the five rather than dropped.
+func TestBuildDealPipelineStages_Layout(t *testing.T) {
+	stages := buildDealPipelineStages([]models.DealPipelineRow{
+		{Stage: models.DealStageWon, Currency: "USD", DealCount: 1, AmountCents: 500, AmountTimesProbability: 50000},
+		{Stage: models.DealStageNegotiation, Currency: "USD", DealCount: 1, AmountCents: 10, AmountTimesProbability: 700},
+		{Stage: models.DealStageNegotiation, Currency: "CHF", DealCount: 2, AmountCents: 20, AmountTimesProbability: 1400},
+		{Stage: "archived", Currency: "EUR", DealCount: 1, AmountCents: 1, AmountTimesProbability: 0},
+	})
+
+	names := []models.DealStage{}
+	for _, stage := range stages {
+		names = append(names, stage.Stage)
+	}
+	assert.Equal(t, []models.DealStage{"qualification", "proposal", "negotiation", "won", "lost", "archived"}, names)
+
+	for _, i := range []int{0, 1, 4} {
+		assert.Equal(t, int64(0), stages[i].Count)
+		assert.NotNil(t, stages[i].Totals, "%s: an empty stage has [] not null", stages[i].Stage)
+		assert.Empty(t, stages[i].Totals)
+	}
+	assert.Equal(t, int64(3), stages[2].Count)
+	assert.Equal(t, []models.DealPipelineTotal{
+		{Currency: "CHF", AmountCents: 20, WeightedCents: 14},
+		{Currency: "USD", AmountCents: 10, WeightedCents: 7},
+	}, stages[2].Totals)
+	assert.Equal(t, []models.DealPipelineTotal{{Currency: "USD", AmountCents: 500, WeightedCents: 500}}, stages[3].Totals)
+
+	empty := buildDealPipelineStages(nil)
+	assert.Len(t, empty, 5)
+}
+
+func TestUTCMonthBounds(t *testing.T) {
+	athens := time.FixedZone("UTC+3", 3*3600)
+	for _, tc := range []struct {
+		name     string
+		now      time.Time
+		from, to string
+	}{
+		{"mid month", time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC), "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"},
+		{"last instant", time.Date(2026, 9, 30, 23, 59, 59, 999999999, time.UTC), "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"},
+		{"first instant", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"},
+		// 01:30 on 1 October in UTC+3 is still September in UTC.
+		{"local zone ahead", time.Date(2026, 10, 1, 1, 30, 0, 0, athens), "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"},
+		{"december rolls the year", time.Date(2026, 12, 31, 8, 0, 0, 0, time.UTC), "2026-12-01T00:00:00Z", "2027-01-01T00:00:00Z"},
+		{"february of a leap year", time.Date(2028, 2, 29, 8, 0, 0, 0, time.UTC), "2028-02-01T00:00:00Z", "2028-03-01T00:00:00Z"},
+	} {
+		from, to := utcMonthBounds(tc.now)
+		assert.Equal(t, tc.from, from.Format(time.RFC3339), tc.name)
+		assert.Equal(t, tc.to, to.Format(time.RFC3339), tc.name)
+		assert.Equal(t, time.UTC, from.Location(), tc.name)
+	}
+}
+
+type dealPipelineServiceFixture struct {
+	repo    *mocks.DealRepository
+	service *dealService
+}
+
+func newDealPipelineService(t *testing.T) dealPipelineServiceFixture {
+	t.Helper()
+	utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"})
+	repo := new(mocks.DealRepository)
+	t.Cleanup(func() { repo.AssertExpectations(t) })
+	svc := NewDealService(repo, nil, nil, nil, nil, nil, nil).(*dealService)
+	return dealPipelineServiceFixture{repo: repo, service: svc}
+}
+
+// Admin keeps the filter as given (owner included), sales is narrowed to its
+// own id whatever it asked for, and every other role is refused before the
+// repository is read.
+func TestDealService_PipelineScoping(t *testing.T) {
+	company := uint(3)
+	asked := uint(4)
+
+	f := newDealPipelineService(t)
+	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}).Return([]models.DealPipelineRow{}, nil).Once()
+	pipeline, err := f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 1, models.RoleAdmin)
+	require.NoError(t, err)
+	assert.Len(t, pipeline.Stages, 5)
+
+	f.repo.On("Pipeline", repository.DealPipelineFilter{}).Return([]models.DealPipelineRow{}, nil).Once()
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 1, models.RoleAdmin)
+	require.NoError(t, err, "admin without an owner filter sees everybody")
+
+	own := uint(7)
+	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own, CompanyID: &company}).Return([]models.DealPipelineRow{}, nil).Once()
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 7, models.RoleSales)
+	require.NoError(t, err)
+	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own}).Return([]models.DealPipelineRow{}, nil).Once()
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, models.RoleSales)
+	require.NoError(t, err, "sales without an owner filter still sees only itself")
+
+	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer, ""} {
+		_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, role)
+		assert.Truef(t, errors.Is(err, apperrors.ErrForbidden), "%q: got %v", role, err)
+	}
+}
+
+// The dashboard variant: the same scoping, support refused with the forbidden
+// sentinel, and the won range is the current UTC month from the service
+// clock.
+func TestDealService_DashboardPipeline(t *testing.T) {
+	f := newDealPipelineService(t)
+	f.service.now = func() time.Time { return time.Date(2026, 10, 1, 1, 30, 0, 0, time.FixedZone("UTC+3", 3*3600)) }
+	september := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	october := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	f.repo.On("Pipeline", repository.DealPipelineFilter{}).Return([]models.DealPipelineRow{
+		{Stage: models.DealStageProposal, Currency: "EUR", DealCount: 1, AmountCents: 333, AmountTimesProbability: 333 * 33},
+	}, nil).Once()
+	f.repo.On("WonBetween", (*uint)(nil), september, october).Return([]models.DealWonRow{
+		{Currency: "USD", DealCount: 1, AmountCents: 5},
+		{Currency: "EUR", DealCount: 2, AmountCents: 7},
+	}, nil).Once()
+	result, err := f.service.DashboardPipeline(1, models.RoleAdmin)
+	require.NoError(t, err)
+	assert.Len(t, result.Stages, 5)
+	assert.Equal(t, []models.DealPipelineTotal{{Currency: "EUR", AmountCents: 333, WeightedCents: 110}}, result.Stages[1].Totals)
+	assert.Equal(t, models.DealWonSummary{Count: 3, Totals: []models.DealWonTotal{
+		{Currency: "EUR", AmountCents: 7},
+		{Currency: "USD", AmountCents: 5},
+	}}, result.WonThisMonth)
+
+	own := uint(7)
+	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own}).Return([]models.DealPipelineRow{}, nil).Once()
+	f.repo.On("WonBetween", &own, september, october).Return([]models.DealWonRow{}, nil).Once()
+	result, err = f.service.DashboardPipeline(7, models.RoleSales)
+	require.NoError(t, err)
+	assert.NotNil(t, result.WonThisMonth.Totals, "no won deal is [] not null")
+	assert.Equal(t, int64(0), result.WonThisMonth.Count)
+
+	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer} {
+		_, err = f.service.DashboardPipeline(9, role)
+		assert.Truef(t, errors.Is(err, apperrors.ErrForbidden), "%s: got %v", role, err)
+	}
+	f.repo.AssertNumberOfCalls(t, "Pipeline", 2)
+	f.repo.AssertNumberOfCalls(t, "WonBetween", 2)
+
+	// A repository failure is passed on, not turned into an empty widget.
+	f.repo.On("Pipeline", repository.DealPipelineFilter{}).Return(nil, errors.New("boom")).Once()
+	_, err = f.service.DashboardPipeline(1, models.RoleAdmin)
+	assert.EqualError(t, err, "boom")
 }

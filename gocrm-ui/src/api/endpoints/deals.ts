@@ -1,6 +1,7 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
-import type { Deal, DealStage, DealStageChange } from '@/types';
+import { DEAL_STAGES } from '@/types';
+import type { Deal, DealPipeline, DealStage, DealStageChange, PipelineStage, PipelineTotals } from '@/types';
 import { transformCustomerFromBackend } from './customers';
 import { transformLeadFromBackend } from './leads';
 
@@ -34,6 +35,13 @@ export interface DealFilters {
 export interface DealListResult {
   deals: Deal[];
   total: number;
+}
+
+// GET /deals/pipeline filters. Sales is always scoped to its own deals by the
+// API, whatever owner_id says.
+export interface DealPipelineFilters {
+  owner_id?: number;
+  company_id?: number;
 }
 
 export interface DealSubResourceParams {
@@ -107,6 +115,21 @@ export const transformDealFromBackend = (input: unknown): Deal => {
   return deal;
 };
 
+// The pipeline as the board and the dashboard read it: exactly the five
+// stages in board order, each with a totals array. A stage the response
+// lacks, or a null totals list (a Go nil slice), reads as empty.
+export const normalizePipelineStages = (input: unknown): PipelineStage[] => {
+  const rows = Array.isArray(input) ? (input as Partial<PipelineStage>[]) : [];
+  return DEAL_STAGES.map(({ value }) => {
+    const row = rows.find((candidate) => candidate?.stage === value);
+    return {
+      stage: value,
+      count: typeof row?.count === 'number' ? row.count : 0,
+      totals: Array.isArray(row?.totals) ? (row.totals as PipelineTotals[]) : [],
+    };
+  });
+};
+
 const toListResult = (response: ApiResponseWithMeta<unknown[]>): DealListResult => {
   const rows = Array.isArray(response.data) ? response.data : [];
   const deals = rows.map(transformDealFromBackend);
@@ -162,6 +185,14 @@ export const dealsApi = {
   // Admin only; the history rows stay.
   deleteDeal: async (id: number): Promise<void> => {
     await api.delete(`/deals/${id}`);
+  },
+
+  // Count and per-currency totals per stage, over the deals the caller sees.
+  getPipeline: async (filters?: DealPipelineFilters): Promise<DealPipeline> => {
+    const response = await api.get<{ stages?: unknown }>('/deals/pipeline', {
+      params: filters,
+    });
+    return { stages: normalizePipelineStages(response.data?.stages) };
   },
 
   getCompanyDeals: async (

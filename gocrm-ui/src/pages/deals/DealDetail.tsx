@@ -6,11 +6,6 @@ import {
   Paper,
   Typography,
   Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
   Divider,
   FormControl,
   InputLabel,
@@ -19,7 +14,6 @@ import {
   Stack,
   IconButton,
   Link,
-  TextField,
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -47,7 +41,9 @@ import { DEAL_STAGES, isClosedDealStage, type DealStage } from '@/types';
 import { formatDate } from '@/utils/date';
 import { DealStageChip } from './DealStageChip';
 import { DealHistory } from './DealHistory';
+import { LostReasonDialog } from './LostReasonDialog';
 import { formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
+import { invalidateDealQueries } from './dealQueries';
 
 interface FieldProps {
   icon: React.ReactNode;
@@ -88,8 +84,6 @@ export const Component: React.FC = () => {
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [lostDialog, setLostDialog] = useState(false);
-  const [lostReason, setLostReason] = useState('');
-  const [lostReasonError, setLostReasonError] = useState<string | null>(null);
 
   const { data: deal, isLoading, isError } = useQuery({
     queryKey: ['deal', id],
@@ -109,10 +103,8 @@ export const Component: React.FC = () => {
       showSuccess('Stage updated');
       queryClient.setQueryData(['deal', id], updated);
       queryClient.invalidateQueries({ queryKey: ['deal', id, 'history'] });
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      invalidateDealQueries(queryClient);
       setLostDialog(false);
-      setLostReason('');
-      setLostReasonError(null);
     },
     onError: (error) => {
       showError(serverMessage(error) ?? 'Failed to update the stage');
@@ -123,7 +115,7 @@ export const Component: React.FC = () => {
     mutationFn: () => dealsApi.deleteDeal(dealId),
     onSuccess: () => {
       showSuccess('Deal deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      invalidateDealQueries(queryClient);
       navigate('/deals');
     },
     onError: () => {
@@ -136,24 +128,13 @@ export const Component: React.FC = () => {
       return;
     }
     if (nextStage === 'lost') {
-      setLostReason(deal.lost_reason || '');
-      setLostReasonError(null);
       setLostDialog(true);
       return;
     }
     stageMutation.mutate({ stage: nextStage });
   };
 
-  const confirmLost = () => {
-    const reason = lostReason.trim();
-    if (reason === '') {
-      setLostReasonError('A reason is required to mark the deal as lost');
-      return;
-    }
-    if (reason.length > 255) {
-      setLostReasonError('Lost reason must be 255 characters or fewer');
-      return;
-    }
+  const confirmLost = (reason: string) => {
     stageMutation.mutate({ stage: 'lost', lost_reason: reason });
   };
 
@@ -319,49 +300,13 @@ export const Component: React.FC = () => {
         <DealHistory history={history} isLoading={historyLoading} />
       </Paper>
 
-      <Dialog
+      <LostReasonDialog
         open={lostDialog}
-        onClose={() => setLostDialog(false)}
-        aria-labelledby="lost-dialog-title"
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle id="lost-dialog-title">Mark deal as lost</DialogTitle>
-        <DialogContent>
-          <DialogContentText sx={{ mb: 2 }}>
-            The deal is closed with probability 0 and the reason is kept with it.
-          </DialogContentText>
-          <TextField
-            autoFocus
-            fullWidth
-            required
-            multiline
-            minRows={2}
-            label="Lost reason"
-            value={lostReason}
-            onChange={(event) => {
-              setLostReason(event.target.value);
-              setLostReasonError(null);
-            }}
-            error={lostReasonError !== null}
-            helperText={lostReasonError ?? 'Up to 255 characters'}
-            inputProps={{ maxLength: 255 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setLostDialog(false)} disabled={stageMutation.isPending}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={confirmLost}
-            disabled={stageMutation.isPending}
-          >
-            Mark as lost
-          </Button>
-        </DialogActions>
-      </Dialog>
+        initialReason={deal.lost_reason || ''}
+        pending={stageMutation.isPending}
+        onCancel={() => setLostDialog(false)}
+        onConfirm={confirmLost}
+      />
 
       <ConfirmDialog
         open={deleteDialog}

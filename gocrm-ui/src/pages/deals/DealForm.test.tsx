@@ -14,6 +14,7 @@ import {
 import { pickAutocompleteOption } from '@/test/autocomplete';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { User } from '@/types';
+import { DASHBOARD_PIPELINE_KEY, clientWithDashboardPipeline, isInvalidated, withClient } from '@/test/dealQueryCache';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -231,6 +232,23 @@ describe('DealForm', () => {
       expect(dealsApi.createDeal).not.toHaveBeenCalled();
     });
 
+    it('refuses an amount above the API bound of 1000000000000 cents and accepts the bound', async () => {
+      render(<DealForm />);
+
+      fireEvent.change(title(), { target: { value: 'Website redesign' } });
+      fireEvent.change(amount(), { target: { value: '10000000000.01' } });
+      submit(/Create Deal/);
+
+      expect(await screen.findByText('Amount is too large')).toBeInTheDocument();
+      expect(dealsApi.createDeal).not.toHaveBeenCalled();
+
+      fireEvent.change(amount(), { target: { value: '10000000000.00' } });
+      submit(/Create Deal/);
+
+      await waitFor(() => expect(dealsApi.createDeal).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      expect(dealsApi.createDeal).toHaveBeenCalledWith({ ...baseBody, amount_cents: 1000000000000 });
+    });
+
     it('fills the probability from the stage until the user overrides it', async () => {
       render(<DealForm />);
 
@@ -242,6 +260,17 @@ describe('DealForm', () => {
       fireEvent.change(probability(), { target: { value: '55' } });
       await pickStage('Won');
       expect(probability()).toHaveValue(55);
+    });
+
+    it('marks the dashboard pipeline stale after a create', async () => {
+      const client = clientWithDashboardPipeline();
+      render(withClient(client, <DealForm />));
+
+      fireEvent.change(title(), { target: { value: 'Website redesign' } });
+      submit(/Create Deal/);
+
+      await waitFor(() => expect(dealsApi.createDeal).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      await waitFor(() => expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(true));
     });
 
     it('converts the decimal amount to cents and sends the date as YYYY-MM-DD', async () => {

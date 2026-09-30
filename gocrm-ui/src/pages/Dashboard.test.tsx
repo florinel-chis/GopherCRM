@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from './Dashboard';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { formatDealAmount } from './deals/dealFormat';
 
 // recharts' ResponsiveContainer needs ResizeObserver, which jsdom lacks.
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -23,6 +24,8 @@ const mockGetStats = vi.fn();
 const mockGetRecentActivities = vi.fn();
 const mockGetSalesPerformance = vi.fn();
 const mockGetUpcomingTasks = vi.fn();
+const mockGetPipeline = vi.fn();
+const mockGetUIConfigurations = vi.fn();
 
 vi.mock('@/api/endpoints', () => ({
   dashboardApi: {
@@ -30,8 +33,36 @@ vi.mock('@/api/endpoints', () => ({
     getRecentActivities: (limit?: number) => mockGetRecentActivities(limit),
     getSalesPerformance: (period?: string) => mockGetSalesPerformance(period),
     getUpcomingTasks: (limit?: number) => mockGetUpcomingTasks(limit),
+    getPipeline: () => mockGetPipeline(),
+  },
+  configurationsApi: {
+    getUIConfigurations: () => mockGetUIConfigurations(),
   },
 }));
+
+const pipelineResponse = {
+  stages: [
+    {
+      stage: 'qualification',
+      count: 2,
+      totals: [
+        { currency: 'EUR', amount_cents: 300000, weighted_cents: 30000 },
+        { currency: 'USD', amount_cents: 80000, weighted_cents: 8000 },
+      ],
+    },
+    { stage: 'proposal', count: 1, totals: [{ currency: 'EUR', amount_cents: 100000, weighted_cents: 40000 }] },
+    { stage: 'negotiation', count: 0, totals: [] },
+    { stage: 'won', count: 2, totals: [{ currency: 'EUR', amount_cents: 500000, weighted_cents: 500000 }] },
+    { stage: 'lost', count: 0, totals: [] },
+  ],
+  won_this_month: {
+    count: 2,
+    totals: [
+      { currency: 'EUR', amount_cents: 400000 },
+      { currency: 'USD', amount_cents: 100000 },
+    ],
+  },
+};
 
 const authState = (user: User) => ({
   user,
@@ -68,6 +99,10 @@ describe('Dashboard', () => {
     mockGetRecentActivities.mockReset();
     mockGetSalesPerformance.mockReset();
     mockGetUpcomingTasks.mockReset();
+    mockGetPipeline.mockReset();
+    mockGetUIConfigurations.mockReset();
+    mockGetPipeline.mockResolvedValue(pipelineResponse);
+    mockGetUIConfigurations.mockResolvedValue([{ key: 'deals.default_currency', value: 'EUR' }]);
     mockGetStats.mockResolvedValue({
       total_leads: 10,
       total_customers: 4,
@@ -184,5 +219,103 @@ describe('Dashboard', () => {
       expect(mockGetSalesPerformance).not.toHaveBeenCalled();
       expect(mockGetUpcomingTasks).not.toHaveBeenCalled();
     });
+  });
+
+  describe('deal widgets', () => {
+    it.each(['admin', 'sales'] as const)(
+      'shows the pipeline chart and the won-this-month tile for the %s role',
+      async (role) => {
+        mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+
+        renderDashboard();
+
+        expect(await screen.findByRole('heading', { name: 'Pipeline by stage' })).toBeInTheDocument();
+        expect(await screen.findByTestId('pipeline-default-total')).toHaveTextContent(
+          `Open pipeline in EUR: ${formatDealAmount(400000, 'EUR')}`
+        );
+        // The USD deal is listed apart, never added to the EUR bars.
+        const others = screen.getByRole('table', { name: 'Other currencies' });
+        expect(within(others).getByRole('rowheader', { name: 'USD' })).toBeInTheDocument();
+
+        const tile = screen.getByRole('region', { name: 'Won this month' });
+        expect(within(tile).getByTestId('won-this-month-count')).toHaveTextContent('2');
+        expect(within(tile).getByText(formatDealAmount(400000, 'EUR'))).toBeInTheDocument();
+        expect(within(tile).getByText(formatDealAmount(100000, 'USD'))).toBeInTheDocument();
+
+        expect(screen.getByRole('link', { name: 'Open the board' })).toHaveAttribute('href', '/deals/board');
+        expect(screen.getByRole('link', { name: 'View the board' })).toHaveAttribute('href', '/deals/board');
+        expect(mockGetPipeline).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('draws the chart in the configured default currency', async () => {
+      mockGetUIConfigurations.mockResolvedValue([{ key: 'deals.default_currency', value: 'usd' }]);
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
+
+      renderDashboard();
+
+      await waitFor(() =>
+        expect(screen.getByTestId('pipeline-default-total')).toHaveTextContent(
+          `Open pipeline in USD: ${formatDealAmount(80000, 'USD')}`
+        )
+      );
+      const others = screen.getByRole('table', { name: 'Other currencies' });
+      expect(within(others).getByRole('rowheader', { name: 'EUR' })).toBeInTheDocument();
+    });
+
+    it('shows the empty states when there are no deals', async () => {
+      mockGetPipeline.mockResolvedValue({
+        stages: ['qualification', 'proposal', 'negotiation', 'won', 'lost'].map((stage) => ({
+          stage,
+          count: 0,
+          totals: [],
+        })),
+        won_this_month: { count: 0, totals: [] },
+      });
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'sales' })));
+
+      renderDashboard();
+
+      expect(await screen.findByText('No open deals yet')).toBeInTheDocument();
+      expect(screen.getByText('No deals won yet this month')).toBeInTheDocument();
+      expect(screen.getByTestId('won-this-month-count')).toHaveTextContent('0');
+    });
+
+    it('says the pipeline could not be loaded instead of showing zero when the request fails', async () => {
+      // The shape the axios client rethrows after its response interceptor.
+      mockGetPipeline.mockRejectedValue({ response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } });
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
+
+      renderDashboard();
+
+      const chart = await screen.findByRole('region', { name: 'Pipeline by stage' });
+      expect(await within(chart).findByText('Pipeline could not be loaded')).toBeInTheDocument();
+      expect(within(chart).queryByText('No open deals yet')).not.toBeInTheDocument();
+      const tile = screen.getByRole('region', { name: 'Won this month' });
+      expect(within(tile).getByText('Pipeline could not be loaded')).toBeInTheDocument();
+      expect(within(tile).queryByTestId('won-this-month-count')).not.toBeInTheDocument();
+      expect(within(tile).queryByText('No deals won yet this month')).not.toBeInTheDocument();
+    });
+
+    it.each(['support', 'customer'] as const)(
+      'shows no deal widgets and makes no pipeline request for the %s role',
+      async (role) => {
+        mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+
+        renderDashboard();
+
+        expect(screen.getByText('Dashboard')).toBeInTheDocument();
+        if (role === 'support') {
+          // The rest of the dashboard still loads for support.
+          expect(await screen.findByText('Total Leads')).toBeInTheDocument();
+        }
+        expect(screen.queryByText('Pipeline by stage')).not.toBeInTheDocument();
+        expect(screen.queryByText('Won this month')).not.toBeInTheDocument();
+        await waitFor(() => {
+          expect(mockGetPipeline).not.toHaveBeenCalled();
+          expect(mockGetUIConfigurations).not.toHaveBeenCalled();
+        });
+      }
+    );
   });
 });

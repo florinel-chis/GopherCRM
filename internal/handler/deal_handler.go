@@ -33,7 +33,7 @@ func NewDealHandler(dealService service.DealService) *DealHandler {
 type DealRequest struct {
 	Title             string           `json:"title" binding:"required"`
 	Stage             models.DealStage `json:"stage,omitempty" binding:"omitempty,oneof=qualification proposal negotiation won lost"`
-	AmountCents       int64            `json:"amount_cents" binding:"min=0"`
+	AmountCents       int64            `json:"amount_cents" binding:"min=0,max=1000000000000"`
 	Currency          string           `json:"currency,omitempty" binding:"omitempty,len=3,alpha,uppercase"`
 	Probability       *int             `json:"probability,omitempty" binding:"omitempty,min=0,max=100"`
 	ExpectedCloseDate string           `json:"expected_close_date,omitempty"`
@@ -123,7 +123,7 @@ func optionalID(id *uint) *uint {
 
 // Create godoc
 // @Summary Create a deal
-// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 or more; currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
+// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 to 1000000000000 (10^12 cents; a larger value is a 400); currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -268,6 +268,45 @@ func (h *DealHandler) List(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))
 }
 
+// Pipeline godoc
+// @Summary Deal pipeline by stage
+// @Description The live deals aggregated per stage (admin and sales roles; sales users always get their own deals only, whatever owner_id says, as on GET /deals). data.stages lists all five stages in pipeline order — qualification, proposal, negotiation, won, lost — each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code, and amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents × probability / 100), computed with integer arithmetic and rounded once on each stage-and-currency total, not per deal. Soft-deleted deals are not counted. owner_id (admin only) and company_id narrow the aggregate; a malformed or zero id is a 400, as on the list, and an id that matches nothing yields empty stages.
+// @Tags deals
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param owner_id query int false "Only deals owned by this user (admin; sales is always narrowed to itself)"
+// @Param company_id query int false "Only deals linked to this company"
+// @Success 200 {object} utils.APIResponse{data=models.DealPipeline} "Pipeline retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "owner_id or company_id is not a positive integer"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /deals/pipeline [get]
+func (h *DealHandler) Pipeline(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "DealHandler.Pipeline")
+
+	var filter repository.DealPipelineFilter
+	var ok bool
+	if filter.OwnerID, ok = queryID(c, "owner_id"); !ok {
+		return
+	}
+	if filter.CompanyID, ok = queryID(c, "company_id"); !ok {
+		return
+	}
+
+	// The service narrows a sales caller to itself, as the list does.
+	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), models.UserRole(c.GetString("user_role")))
+	if err != nil {
+		h.respondError(c, logger, err)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, pipeline)
+	utils.RespondSuccess(c, http.StatusOK, pipeline)
+}
+
 // Get godoc
 // @Summary Get a deal
 // @Description One deal (admin and sales roles) with its owner, company, customer and lead preloaded. Sales users can only view their own deals (403 otherwise).
@@ -298,7 +337,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a deal
-// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
+// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents), as on create. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -640,6 +679,9 @@ func (h *DealHandler) respondError(c *gin.Context, logger *logrus.Entry, err err
 		// the requested path, so it is a 400 like an unknown label_id.
 		logger.WithError(err).Warn("Unknown deal reference")
 		utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+	case errors.Is(err, apperrors.ErrForbidden):
+		logger.WithError(err).Warn("Deal access refused")
+		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 	case errors.Is(err, apperrors.ErrValidation):
 		logger.WithError(err).Warn("Invalid deal")
 		utils.RespondBadRequest(c, err.Error())

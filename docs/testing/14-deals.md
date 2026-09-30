@@ -7,9 +7,11 @@ the history, not an erasure). Every **Expected** states what the build does **to
 the handlers, service and repository; every automated case names the exact test title in
 `gocrm-ui/e2e/tests/admin-deals.spec.ts`.
 
-26 cases: 13 automated by `gocrm-ui/e2e/tests/admin-deals.spec.ts` (12 of them partial, as in
-10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or
-Vitest), 7 planned against the same spec, 6 blocked on the sales role-login helper. Every case
+33 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
+`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of them
+partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
+in Go or Vitest), 9 planned (7 against `admin-deals.spec.ts`, 2 against
+`admin-deals-board.spec.ts`), 8 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
 
 **Sources**
@@ -181,12 +183,16 @@ names the Go test that already pins its API behaviour.
 - **Type:** validation
 - **Preconditions:** Admin logged in.
 - **Steps:**
-  1. Submit with an empty title; with a negative amount; with currency `eur`; with probability
-     101; with a title of 201 characters.
+  1. Submit with an empty title; with a negative amount; with an amount above
+     10,000,000,000.00; with currency `eur`; with probability 101; with a title of 201
+     characters.
 - **Expected:** The form stays open with the message on the field. The form's own schema refuses
   most of these before any request ("Title is required", "Amount must be a positive number with
-  at most two decimals", "Currency must be a 3-letter ISO code"); whatever reaches the API is a
-  **400**: the binding tags refuse the amount (`min=0`), the currency (`len=3,alpha,uppercase`)
+  at most two decimals", "Amount is too large", "Currency must be a 3-letter ISO code"); whatever
+  reaches the API is a **400**: the binding tags refuse the amount (`min=0`, and
+  `max=1000000000000`, i.e. 10^12 cents, answered "AmountCents must be at most
+  1000000000000"; the service repeats the bound as `models.DealAmountCentsMax`, so the pipeline
+  sums stay inside a BIGINT), the currency (`len=3,alpha,uppercase`)
   and the probability (`0–100`); `lengthError` refuses values longer than their column (title 200,
   `lost_reason` 255, `source` 100, notes 65535 bytes) and names the field; the service trims and
   refuses a blank title. A date not of the form `YYYY-MM-DD` is a 400 too.
@@ -194,8 +200,13 @@ names the Go test that already pins its API behaviour.
   open" (an empty title, `12,5` as amount and `EU` as currency, all refused by the form before
   any request, so the 400s of the API are pinned in Go).
   Go: `deal_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
-  `TestCreate_ValuesLongerThanTheirColumnAre400`; `deal_service_test.go`
-  `TestCreate_ValidationFailuresNeverReachTheWrite`; `deal_test.go`.
+  `TestCreate_ValuesLongerThanTheirColumnAre400`,
+  `TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage` (create and update),
+  `TestDealAmountBindingTagMatchesTheModel`; `deal_service_test.go`
+  `TestCreate_ValidationFailuresNeverReachTheWrite`, `TestAmountBound_OnCreateAndUpdate`;
+  `deal_repository_test.go` `TestDealRepository_PipelineAggregatesTheMaximumAmount`;
+  `deal_test.go`. Vitest: `DealForm.test.tsx` "refuses an amount above the API bound of
+  1000000000000 cents and accepts the bound".
 
 ### TC-DEAL-009 — An unknown company, customer, lead or owner is INVALID_REFERENCE
 - **Priority:** P0
@@ -467,3 +478,118 @@ names the Go test that already pins its API behaviour.
   `deal_integration_test.go` `TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory`,
   `TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory`; `erasure_pii_sweep_test.go`
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` now lists both tables.
+
+## 14.7 Pipeline board (2026-09-30)
+
+`/deals/board` shows one column per stage, backed by `GET /deals/pipeline` for the column headers
+and by the deals list for the cards; a card's "Move to…" menu calls the stage endpoint. Sources:
+`internal/handler/deal_handler.go` (`Pipeline`), `internal/service/deal_service.go` (`Pipeline`,
+`buildDealPipelineStages`, `weightedCents`), `internal/repository/deal_repository.go`
+(`Pipeline`), `gocrm-ui/src/pages/deals/DealBoard.tsx`,
+`gocrm-ui/e2e/tests/admin-deals-board.spec.ts`. The API payload is
+`{"stages": [{"stage", "count", "totals": [{"currency", "amount_cents", "weighted_cents"}]}]}`
+with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
+
+### TC-DEAL-027 — The board shows every stage with its count and totals per currency
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin logged in; two deals created by the test in different stages.
+- **Steps:**
+  1. Open `/deals/board`.
+- **Expected:** five columns in the order qualification, proposal, negotiation, won, lost (won and
+  lost collapsed by default); each deal's card sits in its stage's column; each header shows the
+  count and one total per currency. `GET /api/v1/deals/pipeline` → **200** with the same numbers;
+  soft-deleted deals are not counted; amounts in different currencies are never added together.
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "the board shows created deals in their stage columns with counts and totals" (two deals
+  created in Qualification and Proposal sit in their columns; each header count is at least 1;
+  each column's EUR total grows by exactly the created amount; the Qualification header shows a
+  weighted line; Won and Lost start collapsed). Not asserted end to end: the column order, the API
+  response, a second currency and the exclusion of soft-deleted deals — Vitest `DealBoard.test.tsx`
+  "renders the five stage columns in order with their counts and totals" and the Go tests.
+  Go: `deal_repository_test.go`
+  `TestDealRepository_PipelineGroupsByStageAndCurrency`, `TestDealRepository_PipelineAggregatesTheMaximumAmount`; `deal_service_test.go`
+  `TestBuildDealPipelineStages_Layout`; `deal_handler_test.go` `TestPipeline_ResponseShape`;
+  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+
+### TC-DEAL-028 — Weighted totals round half up once per stage and currency
+- **Priority:** P1
+- **Type:** edge
+- **Preconditions:** Admin; deals created by the test: 333 EUR at 33 % and 1000000 EUR at 40 % in
+  proposal, 1 EUR at 50 % in negotiation.
+- **Steps:**
+  1. `GET /api/v1/deals/pipeline`.
+- **Expected:** proposal EUR `weighted_cents` = round half up of (10989 + 40000000) / 100 =
+  **400110**; negotiation EUR = 0.5 → **1**. Rounding is applied to the stage-and-currency sum,
+  not per deal (two 1-cent deals at 50 % give 1, not 2).
+- **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
+  Go: `deal_service_test.go` `TestWeightedCents_RoundsHalfUpOnce`, `TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal`;
+  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+
+### TC-DEAL-029 — "Move to…" moves a card and updates both columns
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin; a qualification deal created by the test.
+- **Steps:**
+  1. On the board, open the card's menu and choose negotiation.
+- **Expected:** `POST /api/v1/deals/{id}/stage` with `{"stage":"negotiation"}` → **200**; the
+  card appears under negotiation; both headers' counts and totals change; the history gains one
+  row.
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Negotiation through its menu moves it and updates both headers" (the stage
+  response is 200, the card leaves Qualification and appears under Negotiation, and both header
+  counts change by one). Not asserted end to end: the request body, the header totals and the
+  history row. Go: `deal_service_test.go` `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
+  Vitest `DealBoard.test.tsx` "moves a card to Proposal from its menu and refetches both columns and
+  the pipeline".
+
+### TC-DEAL-030 — Moving a card to lost asks for a reason
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin; an open deal created by the test.
+- **Steps:**
+  1. Choose "Move to… lost"; enter a reason; confirm.
+- **Expected:** the stage request carries `lost_reason`; the card moves to the lost column (with
+  probability 0, so it adds nothing to the weighted total).
+- **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Lost asks for a reason and shows it under the expanded Lost column" (the dialog
+  takes the reason, the stage response is 200, the card appears under the expanded Lost column,
+  and the detail page shows the Lost chip and the reason). Not asserted end to end: the request
+  body and the weighted total. Go: `deal_service_test.go` `TestApplyDealTransition`; Vitest
+  `DealBoard.test.tsx` "asks for a reason before moving a card to Lost and sends it".
+
+### TC-DEAL-031 — Sales sees only its own deals on the board
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** a sales account and another owner, each with deals.
+- **Steps:**
+  1. As sales, `GET /api/v1/deals/pipeline` and `GET /api/v1/deals/pipeline?owner_id=<other>`.
+- **Expected:** both **200** with the caller's own deals only; `owner_id` cannot widen it, as on
+  the list. `company_id` still narrows within the caller's deals.
+- **Automation:** blocked — needs a role-login helper. Go: `deal_service_test.go`
+  `TestDealService_PipelineScoping`; `deal_pipeline_integration_test.go`
+  `TestPipelineAsSalesIsScopedToItself`.
+
+### TC-DEAL-032 — Admin filters the pipeline by owner and company
+- **Priority:** P2
+- **Type:** functional
+- **Preconditions:** Admin; deals of two owners, some linked to a company, all created by the test.
+- **Steps:**
+  1. `GET /api/v1/deals/pipeline?owner_id=<id>`, `?company_id=<id>`, both, and
+     `?company_id=99999`.
+  2. `GET /api/v1/deals/pipeline?owner_id=abc` and `?company_id=0`.
+- **Expected:** step 1: **200**, the aggregate narrowed accordingly; an id matching nothing gives
+  five empty stages. Step 2: **400** "owner_id must be a positive integer" / "company_id must be a
+  positive integer", the list's rule.
+- **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
+  Go: `deal_handler_test.go` `TestPipeline_PassesTheFiltersAndTheCaller`, `TestPipeline_BadFiltersAre400`;
+  `deal_repository_test.go` `TestDealRepository_PipelineOwnerAndCompanyFilters`;
+  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+
+### TC-DEAL-033 — Support and customer cannot read the pipeline
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** a support account; a customer account.
+- **Steps:**
+  1. As each, `GET /api/v1/deals/pipeline`; open `/deals/board`.
+- **Expected:** **403** from the deals guard; the board route and its nav entry are not offered to
+  these roles.
+- **Automation:** blocked — needs a role-login helper for support. Go: `deal_handler_test.go`
+  `TestRoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.

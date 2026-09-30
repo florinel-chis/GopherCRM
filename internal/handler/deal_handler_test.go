@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -59,6 +60,16 @@ func TestDealStageBindingTagsMatchTheModel(t *testing.T) {
 		got := strings.Fields(tag[i+len("oneof="):])
 		assert.Equalf(t, want, got, "%s.Stage oneof tag", tc.name)
 	}
+}
+
+// The max binding on amount_cents must be models.DealAmountCentsMax, the bound
+// the service enforces as well; struct tags cannot reference the constant.
+func TestDealAmountBindingTagMatchesTheModel(t *testing.T) {
+	field, ok := reflect.TypeOf(DealRequest{}).FieldByName("AmountCents")
+	if !ok {
+		t.Fatal("DealRequest has no AmountCents field")
+	}
+	assert.Equal(t, fmt.Sprintf("min=0,max=%d", models.DealAmountCentsMax), field.Tag.Get("binding"))
 }
 
 type DealHandlerTestSuite struct {
@@ -146,6 +157,9 @@ func (suite *DealHandlerTestSuite) TestRoleMatrix() {
 		{"list", http.MethodGet, "/deals", nil, adminAndSales, func() {
 			suite.mockService.On("List", 0, 20, mock.Anything).Return([]models.Deal{}, int64(0), nil).Once()
 		}},
+		{"pipeline", http.MethodGet, "/deals/pipeline", nil, adminAndSales, func() {
+			suite.mockService.On("Pipeline", mock.Anything, uint(1), suite.role).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
+		}},
 		{"get", http.MethodGet, "/deals/5", nil, adminAndSales, func() {
 			suite.mockService.On("GetByID", uint(5)).Return(ownDeal(5), nil).Once()
 		}},
@@ -194,6 +208,95 @@ func (suite *DealHandlerTestSuite) TestRoleMatrix() {
 			suite.mockService.AssertExpectations(suite.T())
 		}
 	}
+}
+
+// --- Pipeline ---------------------------------------------------------------
+
+// The filters reach the service as parsed, next to the caller's id and role;
+// the owner rule itself is the service's (see TestDealService_PipelineScoping).
+func (suite *DealHandlerTestSuite) TestPipeline_PassesTheFiltersAndTheCaller() {
+	for _, role := range []models.UserRole{models.RoleAdmin, models.RoleSales} {
+		suite.SetupTest()
+		suite.role = role
+		suite.userID = 7
+		suite.mockService.On("Pipeline", mock.MatchedBy(func(f repository.DealPipelineFilter) bool {
+			return f.OwnerID != nil && *f.OwnerID == 4 && f.CompanyID != nil && *f.CompanyID == 3
+		}), uint(7), role).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
+
+		w := suite.do(http.MethodGet, "/deals/pipeline?owner_id=4&company_id=3", nil)
+		assert.Equalf(suite.T(), http.StatusOK, w.Code, "%s: %s", role, w.Body.String())
+		suite.mockService.AssertExpectations(suite.T())
+	}
+
+	// No filter at all is two nil pointers.
+	suite.SetupTest()
+	suite.mockService.On("Pipeline", repository.DealPipelineFilter{}, uint(1), models.RoleAdmin).
+		Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
+	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+// A malformed or zero id is a 400 before the service is asked, the list's rule.
+func (suite *DealHandlerTestSuite) TestPipeline_BadFiltersAre400() {
+	for _, query := range []string{"owner_id=abc", "owner_id=0", "owner_id=-1", "company_id=x", "company_id=0", "company_id=1.5"} {
+		w := suite.do(http.MethodGet, "/deals/pipeline?"+query, nil)
+		assert.Equalf(suite.T(), http.StatusBadRequest, w.Code, "%s: %s", query, w.Body.String())
+	}
+	suite.mockService.AssertNotCalled(suite.T(), "Pipeline", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// The payload is passed through as the service built it: five stages, the
+// totals of each, an empty stage as [] rather than null.
+func (suite *DealHandlerTestSuite) TestPipeline_ResponseShape() {
+	stages := make([]models.DealPipelineStage, 0, len(models.DealStages))
+	for _, stage := range models.DealStages {
+		stages = append(stages, models.DealPipelineStage{Stage: stage, Totals: []models.DealPipelineTotal{}})
+	}
+	stages[2] = models.DealPipelineStage{Stage: models.DealStageNegotiation, Count: 2, Totals: []models.DealPipelineTotal{
+		{Currency: "CHF", AmountCents: 1, WeightedCents: 1},
+		{Currency: "EUR", AmountCents: 100000, WeightedCents: 70000},
+	}}
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).Return(&models.DealPipeline{Stages: stages}, nil)
+
+	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
+	suite.Require().Equal(http.StatusOK, w.Code, w.Body.String())
+	var envelope struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Stages []struct {
+				Stage  string                     `json:"stage"`
+				Count  int64                      `json:"count"`
+				Totals []models.DealPipelineTotal `json:"totals"`
+			} `json:"stages"`
+		} `json:"data"`
+	}
+	suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &envelope))
+	assert.True(suite.T(), envelope.Success)
+	names := []string{}
+	for _, stage := range envelope.Data.Stages {
+		names = append(names, stage.Stage)
+	}
+	assert.Equal(suite.T(), []string{"qualification", "proposal", "negotiation", "won", "lost"}, names)
+	assert.Equal(suite.T(), int64(2), envelope.Data.Stages[2].Count)
+	assert.Equal(suite.T(), []models.DealPipelineTotal{
+		{Currency: "CHF", AmountCents: 1, WeightedCents: 1},
+		{Currency: "EUR", AmountCents: 100000, WeightedCents: 70000},
+	}, envelope.Data.Stages[2].Totals)
+	assert.Contains(suite.T(), w.Body.String(), `{"stage":"lost","count":0,"totals":[]}`)
+}
+
+// The service's refusal (a role without deal access that got past a guard) is
+// a 403, and an unclassified failure a 500.
+func (suite *DealHandlerTestSuite) TestPipeline_ServiceErrors() {
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).
+		Return(nil, fmt.Errorf("wrapped: %w", apperrors.ErrForbidden)).Once()
+	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).
+		Return(nil, errors.New("boom")).Once()
+	w = suite.do(http.MethodGet, "/deals/pipeline", nil)
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
 }
 
 // --- Create -----------------------------------------------------------------
@@ -756,4 +859,63 @@ func TestCreateDeal_ProbabilityOutOfRangeHasANumericMessage(t *testing.T) {
 		assert.Equal(t, want, resp.Error.Details["Probability"], w.Body.String())
 	}
 	svc.AssertExpectations(t)
+}
+
+// amount_cents is bounded at 10^12 cents, so the pipeline sums cannot
+// overflow a BIGINT. One cent more
+// is refused by the binding on create and on update, before the service is
+// reached; the bound itself is accepted.
+func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
+	const maxAmount = int64(1_000_000_000_000)
+	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
+	gin.SetMode(gin.TestMode)
+	svc := new(mocks.DealService)
+	router := gin.New()
+	router.Use(middleware.RequestID(), middleware.ErrorHandler())
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleAdmin))
+		c.Next()
+	})
+	SetupDealRoutes(router.Group(""), NewDealHandler(svc))
+
+	// Primed with Maybe so that a missing bound shows up as a wrong status,
+	// not as a panic on an unexpected call.
+	svc.On("GetByID", uint(5)).Return(ownDeal(5), nil).Maybe()
+	svc.On("GetByID", uint(0)).Return(nil, apperrors.ErrNotFound).Maybe()
+	svc.On("Create", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
+	svc.On("Update", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
+
+	send := func(method, path string, amount int64) *httptest.ResponseRecorder {
+		body, err := json.Marshal(gin.H{"title": "X", "amount_cents": amount})
+		require.NoError(t, err)
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/deals"},
+		{http.MethodPut, "/deals/5"},
+	} {
+		w := send(route.method, route.path, maxAmount+1)
+		assert.Equalf(t, http.StatusBadRequest, w.Code, "%s %s: %s", route.method, route.path, w.Body.String())
+		var resp struct {
+			Error struct {
+				Code    string            `json:"code"`
+				Details map[string]string `json:"details"`
+			} `json:"error"`
+		}
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+		assert.Equal(t, utils.ErrCodeValidation, resp.Error.Code)
+		assert.Equal(t, "AmountCents must be at most 1000000000000", resp.Error.Details["AmountCents"], w.Body.String())
+	}
+	svc.AssertNotCalled(t, "Create", mock.Anything, mock.Anything, mock.Anything)
+	svc.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+
+	w := send(http.MethodPost, "/deals", maxAmount)
+	assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	svc.AssertCalled(t, "Create", mock.MatchedBy(func(d *models.Deal) bool { return d.AmountCents == maxAmount }), mock.Anything, uint(1))
 }

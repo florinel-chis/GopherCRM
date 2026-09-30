@@ -217,6 +217,16 @@ type DealService interface {
 	ListByCustomer(customerID uint, ownerID *uint, offset, limit int) ([]models.Deal, int64, error)
 	// History returns the stage changes oldest first with the acting user.
 	History(dealID uint) ([]models.DealStageChange, error)
+	// Pipeline returns every stage in pipeline order with its deal count and
+	// per-currency totals (amount and weighted amount) over the live deals
+	// matching the filter. The caller's role scopes it: an admin gets the
+	// filter as given, a sales user always its own deals (filter.OwnerID is
+	// replaced by actorID), and any other role apperrors.ErrForbidden.
+	Pipeline(filter repository.DealPipelineFilter, actorID uint, role models.UserRole) (*models.DealPipeline, error)
+	// DashboardPipeline is Pipeline without filters plus the deals won in the
+	// current calendar month in UTC, with the same role scoping: admin all,
+	// sales own, anybody else (support included) apperrors.ErrForbidden.
+	DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error)
 }
 
 type APIKeyService interface {

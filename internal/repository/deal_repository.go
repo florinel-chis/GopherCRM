@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
@@ -127,6 +129,45 @@ func (r *dealRepository) ListStageChanges(dealID uint) ([]models.DealStageChange
 		Order("changed_at ASC").Order("id ASC").
 		Find(&changes).Error
 	return changes, err
+}
+
+// dealPipelineSelect is the aggregate behind Pipeline. Only the grouped
+// columns and aggregates are selected, so it is valid under MySQL's
+// ONLY_FULL_GROUP_BY; the arithmetic is integer on every engine (BIGINT ×
+// INT). MySQL and MariaDB return SUM over an integer column as DECIMAL with
+// no fractional part, which scans into int64 as SQLite's INTEGER does. The
+// aliases avoid the names of existing columns and any reserved word.
+const dealPipelineSelect = "stage, currency, COUNT(*) AS deal_count, " +
+	"SUM(amount_cents) AS amount_sum, SUM(amount_cents * probability) AS weighted_sum"
+
+// Pipeline groups the live deals (soft-deleted ones are excluded by the model
+// scope) by stage and currency. The owner and company filters are the same
+// bound predicates as the list's.
+func (r *dealRepository) Pipeline(filter DealPipelineFilter) ([]models.DealPipelineRow, error) {
+	rows := []models.DealPipelineRow{}
+	err := r.scope(r.db.Model(&models.Deal{}), DealListFilter{OwnerID: filter.OwnerID, CompanyID: filter.CompanyID}).
+		Select(dealPipelineSelect).
+		Group("stage").Group("currency").
+		Order("stage").Order("currency").
+		Scan(&rows).Error
+	return rows, err
+}
+
+// WonBetween groups the live won deals closed in [from, to) by currency. The
+// range is two bound parameters and no date function, so it means the same on
+// MySQL, MariaDB and SQLite. On SQLite closed_at is text; the service writes
+// it in UTC and the bounds are converted to UTC here, so the text comparison
+// orders the same way the instants do.
+func (r *dealRepository) WonBetween(ownerID *uint, from, to time.Time) ([]models.DealWonRow, error) {
+	rows := []models.DealWonRow{}
+	err := r.scope(r.db.Model(&models.Deal{}), DealListFilter{OwnerID: ownerID}).
+		Select("currency, COUNT(*) AS deal_count, SUM(amount_cents) AS amount_sum").
+		Where("stage = ?", models.DealStageWon).
+		Where("closed_at >= ? AND closed_at < ?", from.UTC(), to.UTC()).
+		Group("currency").
+		Order("currency").
+		Scan(&rows).Error
+	return rows, err
 }
 
 func (r *dealRepository) WithTx(tx *gorm.DB) DealRepository {

@@ -229,6 +229,13 @@ type DealListFilter struct {
 	SortOrder  string
 }
 
+// DealPipelineFilter narrows DealRepository.Pipeline. A nil pointer means
+// "no filter".
+type DealPipelineFilter struct {
+	OwnerID   *uint
+	CompanyID *uint
+}
+
 // DealRepository backs the deals module. Deals hold no personal data, so
 // nothing here takes part in the erasure; the stage history is append-only.
 type DealRepository interface {
@@ -250,6 +257,16 @@ type DealRepository interface {
 	// ListStageChanges returns the deal's history oldest first with ChangedBy
 	// preloaded.
 	ListStageChanges(dealID uint) ([]models.DealStageChange, error)
+	// Pipeline aggregates the live deals matching the filter per (stage,
+	// currency): the count, the sum of amount_cents and the sum of
+	// amount_cents × probability, all integer arithmetic in SQL. Only groups
+	// that hold a deal are returned, in no particular order.
+	Pipeline(filter DealPipelineFilter) ([]models.DealPipelineRow, error)
+	// WonBetween aggregates the live won deals whose closed_at lies in
+	// [from, to) per currency: the count and the sum of amount_cents. A nil
+	// ownerID means every owner. The bounds are bound parameters, converted
+	// to UTC, the zone closed_at is written in.
+	WonBetween(ownerID *uint, from, to time.Time) ([]models.DealWonRow, error)
 	WithTx(tx *gorm.DB) DealRepository
 }
 

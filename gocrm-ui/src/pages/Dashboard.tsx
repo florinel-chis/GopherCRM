@@ -27,6 +27,9 @@ import {
 } from '@mui/icons-material';
 import { dashboardApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
+import { PipelineChart } from '@/components/dashboard/PipelineChart';
+import { WonThisMonthTile } from '@/components/dashboard/WonThisMonthTile';
+import { useDefaultDealCurrency } from '@/pages/deals/useDefaultDealCurrency';
 import { formatDate } from '@/utils/date';
 import { Button } from '@mui/material';
 import { 
@@ -122,6 +125,22 @@ export const Dashboard: React.FC = () => {
     enabled: canViewStats,
   });
 
+  // Deals are admin and sales only (GET /dashboard/pipeline answers 403 to
+  // support and customer), so the other roles get neither the widgets nor the
+  // request. The API scopes sales to its own deals.
+  const canViewDeals = user?.role === 'admin' || user?.role === 'sales';
+
+  const {
+    data: pipeline,
+    isLoading: pipelineLoading,
+    isError: pipelineError,
+  } = useQuery({
+    queryKey: ['dashboard', 'pipeline'],
+    queryFn: dashboardApi.getPipeline,
+    enabled: canViewDeals,
+  });
+  const defaultCurrency = useDefaultDealCurrency(canViewDeals);
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
@@ -202,6 +221,27 @@ export const Dashboard: React.FC = () => {
           )}
         </Box>
       </Box>
+      )}
+
+      {/* Deal widgets (admin and sales only) */}
+      {canViewDeals && (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mb: 3 }}>
+          <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 calc(66.666% - 12px)' } }}>
+            <PipelineChart
+              stages={pipeline?.stages}
+              defaultCurrency={defaultCurrency}
+              isLoading={pipelineLoading}
+              isError={pipelineError}
+            />
+          </Box>
+          <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 calc(33.333% - 12px)' } }}>
+            <WonThisMonthTile
+              wonThisMonth={pipeline?.won_this_month}
+              isLoading={pipelineLoading}
+              isError={pipelineError}
+            />
+          </Box>
+        </Box>
       )}
 
       {/* Quick Actions Panel */}

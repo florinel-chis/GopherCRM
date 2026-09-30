@@ -4,6 +4,8 @@
 package mocks
 
 import (
+	time "time"
+
 	models "github.com/florinel-chis/gophercrm/internal/models"
 	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
@@ -116,6 +118,36 @@ func (_m *DealRepository) ListStageChanges(dealID uint) ([]models.DealStageChang
 	var r0 []models.DealStageChange
 	if ret.Get(0) != nil {
 		r0 = ret.Get(0).([]models.DealStageChange)
+	}
+	return r0, ret.Error(1)
+}
+
+// Pipeline provides a mock function with given fields: filter
+func (_m *DealRepository) Pipeline(filter repository.DealPipelineFilter) ([]models.DealPipelineRow, error) {
+	ret := _m.Called(filter)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Pipeline")
+	}
+
+	var r0 []models.DealPipelineRow
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.DealPipelineRow)
+	}
+	return r0, ret.Error(1)
+}
+
+// WonBetween provides a mock function with given fields: ownerID, from, to
+func (_m *DealRepository) WonBetween(ownerID *uint, from time.Time, to time.Time) ([]models.DealWonRow, error) {
+	ret := _m.Called(ownerID, from, to)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WonBetween")
+	}
+
+	var r0 []models.DealWonRow
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.DealWonRow)
 	}
 	return r0, ret.Error(1)
 }
