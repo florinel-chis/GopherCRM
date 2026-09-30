@@ -82,5 +82,8 @@ build-tools:
 	go build -o bin/create-admin cmd/create-admin/main.go
 
 .PHONY: swagger
+# -B gobuildid stamps an LC_UUID load command: swag's module targets an older
+# Go, whose linker default omits it, and current macOS refuses to run such a
+# binary ("missing LC_UUID load command"). The flag is a no-op elsewhere.
 swagger:
-	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/main.go --output api --outputTypes json,yaml --parseDependency
+	go run -ldflags "-B gobuildid" github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/main.go --output api --outputTypes json,yaml --parseDependency
