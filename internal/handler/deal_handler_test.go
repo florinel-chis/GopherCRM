@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -848,4 +849,63 @@ func TestCreateDeal_ProbabilityOutOfRangeHasANumericMessage(t *testing.T) {
 		assert.Equal(t, want, resp.Error.Details["Probability"], w.Body.String())
 	}
 	svc.AssertExpectations(t)
+}
+
+// amount_cents is bounded at 2^53 - 1, the largest integer a JavaScript number
+// holds exactly, so the pipeline sums cannot overflow a BIGINT. One cent more
+// is refused by the binding on create and on update, before the service is
+// reached; the bound itself is accepted.
+func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
+	const maxAmount = int64(1<<53 - 1) // 9007199254740991
+	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
+	gin.SetMode(gin.TestMode)
+	svc := new(mocks.DealService)
+	router := gin.New()
+	router.Use(middleware.RequestID(), middleware.ErrorHandler())
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleAdmin))
+		c.Next()
+	})
+	SetupDealRoutes(router.Group(""), NewDealHandler(svc))
+
+	// Primed with Maybe so that a missing bound shows up as a wrong status,
+	// not as a panic on an unexpected call.
+	svc.On("GetByID", uint(5)).Return(ownDeal(5), nil).Maybe()
+	svc.On("GetByID", uint(0)).Return(nil, apperrors.ErrNotFound).Maybe()
+	svc.On("Create", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
+	svc.On("Update", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
+
+	send := func(method, path string, amount int64) *httptest.ResponseRecorder {
+		body, err := json.Marshal(gin.H{"title": "X", "amount_cents": amount})
+		require.NoError(t, err)
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/deals"},
+		{http.MethodPut, "/deals/5"},
+	} {
+		w := send(route.method, route.path, maxAmount+1)
+		assert.Equalf(t, http.StatusBadRequest, w.Code, "%s %s: %s", route.method, route.path, w.Body.String())
+		var resp struct {
+			Error struct {
+				Code    string            `json:"code"`
+				Details map[string]string `json:"details"`
+			} `json:"error"`
+		}
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+		assert.Equal(t, utils.ErrCodeValidation, resp.Error.Code)
+		assert.Equal(t, "AmountCents must be at most 9007199254740991", resp.Error.Details["AmountCents"], w.Body.String())
+	}
+	svc.AssertNotCalled(t, "Create", mock.Anything, mock.Anything, mock.Anything)
+	svc.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+
+	w := send(http.MethodPost, "/deals", maxAmount)
+	assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	svc.AssertCalled(t, "Create", mock.MatchedBy(func(d *models.Deal) bool { return d.AmountCents == maxAmount }), mock.Anything, uint(1))
 }

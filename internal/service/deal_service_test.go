@@ -82,6 +82,7 @@ func (suite *DealServiceTestSuite) TestCreate_ValidationFailuresNeverReachTheWri
 		"blank title":          {Title: "   ", Currency: "EUR", OwnerID: 1},
 		"title too long":       {Title: strings.Repeat("x", models.DealTitleMaxLength+1), Currency: "EUR", OwnerID: 1},
 		"negative amount":      {Title: "X", Currency: "EUR", AmountCents: -1, OwnerID: 1},
+		"amount above 2^53-1":  {Title: "X", Currency: "EUR", AmountCents: 1 << 53, OwnerID: 1},
 		"lowercase currency":   {Title: "X", Currency: "eur", OwnerID: 1},
 		"two-letter currency":  {Title: "X", Currency: "EU", OwnerID: 1},
 		"four-letter currency": {Title: "X", Currency: "EURO", OwnerID: 1},
@@ -100,6 +101,29 @@ func (suite *DealServiceTestSuite) TestCreate_ValidationFailuresNeverReachTheWri
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "probability -1: got %v", err)
 
 	suite.mockRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "WithTx", mock.Anything)
+}
+
+// amount_cents is bounded at 2^53 - 1 on every write, so that the pipeline
+// sums stay far inside a BIGINT; the message names the field and the bound.
+// The bound itself is valid.
+func (suite *DealServiceTestSuite) TestAmountBound_OnCreateAndUpdate() {
+	const maxAmount = int64(1<<53 - 1)
+	suite.ownerExists()
+
+	err := suite.service.Create(&models.Deal{Title: "X", Currency: "EUR", AmountCents: maxAmount + 1, OwnerID: 1}, nil, 1)
+	suite.Require().Error(err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "got %v", err)
+	assert.Contains(suite.T(), err.Error(), "amount_cents must be at most 9007199254740991")
+
+	stored := &models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", Stage: models.DealStageProposal, Currency: "EUR", OwnerID: 1}
+	suite.mockRepo.On("GetByID", uint(5)).Return(stored, nil).Once()
+	err = suite.service.Update(&models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", AmountCents: maxAmount + 1, OwnerID: 1}, nil, 1)
+	suite.Require().Error(err)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "got %v", err)
+	assert.Contains(suite.T(), err.Error(), "amount_cents must be at most 9007199254740991")
+
+	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockRepo.AssertNotCalled(suite.T(), "WithTx", mock.Anything)
 }
 

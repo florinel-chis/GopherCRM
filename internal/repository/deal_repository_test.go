@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -366,6 +367,31 @@ func TestDealRepository_PipelineGroupsByStageAndCurrency(t *testing.T) {
 	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageProposal, Currency: "EUR", DealCount: 2, AmountCents: 100333, AmountTimesProbability: 100000*40 + 333*33}, index["proposal/EUR"])
 	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageProposal, Currency: "USD", DealCount: 1, AmountCents: 5000, AmountTimesProbability: 250000}, index["proposal/USD"])
 	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageWon, Currency: "EUR", DealCount: 1, AmountCents: 990000, AmountTimesProbability: 99000000}, index["won/EUR"])
+}
+
+// Deals at the largest accepted amount (2^53 - 1 cents) and probability 100
+// aggregate without an overflow. One such row adds about 9.007e17 to the
+// weighted SUM and 9.007e15 to the amount SUM; a BIGINT holds 2^63 - 1, about
+// 9.22e18. The headroom is therefore about 10 maximal deals at probability
+// 100 in one stage and currency for the weighted SUM (and about 1,000 for the
+// amount SUM) before the aggregate could overflow. Every one of them would be
+// a deal worth ninety trillion in its currency, which is not a real workload.
+// Five keep the test inside that headroom on every engine.
+func TestDealRepository_PipelineAggregatesTheMaximumAmount(t *testing.T) {
+	const maxAmount = int64(1<<53 - 1)
+	const deals = 5
+	db := setupDealDB(t)
+	repo := NewDealRepository(db)
+	owner := createDealTestUser(t, db, "max@example.com")
+
+	for i := 0; i < deals; i++ {
+		createDeal(t, db, &models.Deal{Title: fmt.Sprintf("max %d", i), Stage: models.DealStageWon, Currency: "EUR", AmountCents: maxAmount, Probability: 100, OwnerID: owner.ID})
+	}
+
+	rows, err := repo.Pipeline(DealPipelineFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, models.DealPipelineRow{Stage: models.DealStageWon, Currency: "EUR", DealCount: deals, AmountCents: deals * maxAmount, AmountTimesProbability: deals * maxAmount * 100}, rows[0])
 }
 
 func TestDealRepository_PipelineOwnerAndCompanyFilters(t *testing.T) {
