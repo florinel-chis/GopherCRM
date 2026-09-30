@@ -1,5 +1,6 @@
 import { api } from '../client';
-import type { DashboardStats, Lead, Task, Ticket } from '@/types';
+import type { DashboardPipeline, DashboardStats, Lead, Task, Ticket, WonThisMonth } from '@/types';
+import { normalizePipelineStages } from './deals';
 
 export interface Activity {
   id: string;
@@ -65,6 +66,22 @@ export const dashboardApi = {
   getRecentTickets: async (limit: number = 5): Promise<Ticket[]> => {
     const response = await api.get<Ticket[]>('/dashboard/recent-tickets', { params: { limit } });
     return response.data;
+  },
+
+  // Admin and sales only (support and customer get 403): the deal pipeline
+  // plus the deals won in the current calendar month (UTC).
+  getPipeline: async (): Promise<DashboardPipeline> => {
+    const response = await api.get<{ stages?: unknown; won_this_month?: Partial<WonThisMonth> }>(
+      '/dashboard/pipeline'
+    );
+    const won = response.data?.won_this_month;
+    return {
+      stages: normalizePipelineStages(response.data?.stages),
+      won_this_month: {
+        count: typeof won?.count === 'number' ? won.count : 0,
+        totals: Array.isArray(won?.totals) ? won.totals : [],
+      },
+    };
   },
 
   getNewLeads: async (limit: number = 5): Promise<Lead[]> => {
