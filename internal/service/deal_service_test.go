@@ -661,3 +661,43 @@ func TestCompanyServiceDelete_UnlinksDealsToo(t *testing.T) {
 	require.NotNil(t, reloaded.CompanyID)
 	assert.Equal(t, company.ID, *reloaded.CompanyID)
 }
+
+// TestDealService_ClosedAtAndChangedAtAreStoredInUTC pins the stamps to UTC
+// whatever zone the clock reports in. GORM's own created_at/updated_at are UTC,
+// and on SQLite the columns are text with the offset, so a table holding mixed
+// offsets would compare and sort wrongly in range queries over closed_at.
+func TestDealService_ClosedAtAndChangedAtAreStoredInUTC(t *testing.T) {
+	db := setupDealServiceDB(t)
+	owner := seedDealOwner(t, db)
+	svc := newRealDealService(t, db, repository.NewDealRepository(db), &stubCurrency{value: "EUR"})
+	bucharest := time.FixedZone("EEST", 3*60*60)
+	svc.(*dealService).now = func() time.Time { return time.Now().In(bucharest) }
+
+	deal := &models.Deal{Title: "Zoned", OwnerID: owner.ID}
+	require.NoError(t, svc.Create(deal, nil, owner.ID))
+
+	moved, err := svc.ChangeStage(deal.ID, models.DealStageWon, nil, nil, owner.ID)
+	require.NoError(t, err)
+	require.NotNil(t, moved.ClosedAt)
+	assert.Equal(t, time.UTC, moved.ClosedAt.Location(), "returned closed_at")
+
+	stored, err := svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.ClosedAt)
+	assert.Equal(t, time.UTC, stored.ClosedAt.Location(), "closed_at read back")
+
+	history := historyOf(t, db, deal.ID)
+	require.Len(t, history, 2)
+	for _, h := range history {
+		assert.Equal(t, time.UTC, h.ChangedAt.Location(), "changed_at read back for %s", h.ToStage)
+	}
+
+	var rawClosedAt, rawChangedAt string
+	require.NoError(t, db.Raw("SELECT closed_at FROM deals WHERE id = ?", deal.ID).Scan(&rawClosedAt).Error)
+	require.NoError(t, db.Raw("SELECT changed_at FROM deal_stage_changes WHERE deal_id = ? ORDER BY id DESC LIMIT 1", deal.ID).Scan(&rawChangedAt).Error)
+	for name, raw := range map[string]string{"closed_at": rawClosedAt, "changed_at": rawChangedAt} {
+		assert.True(t, strings.HasSuffix(raw, "Z") || strings.HasSuffix(raw, "+00:00"),
+			"raw %s %q must carry a UTC offset", name, raw)
+	}
+	t.Logf("raw closed_at=%q changed_at=%q", rawClosedAt, rawChangedAt)
+}

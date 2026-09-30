@@ -59,6 +59,13 @@ func NewDealService(
 	}
 }
 
+// stamp is the time written to closed_at and deal_stage_changes.changed_at,
+// always in UTC like GORM's created_at/updated_at: SQLite stores these columns
+// as text with the offset, so mixed offsets would compare and sort wrongly.
+func (s *dealService) stamp() time.Time {
+	return s.now().UTC()
+}
+
 func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("deal_title", deal.Title), "DealService", "Create")
 
@@ -80,7 +87,7 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 	// A create is a transition from nowhere into the stage: the same rules
 	// decide probability, closed_at and lost_reason, and the same history row
 	// is written, with from_stage NULL.
-	applyDealTransition(deal, deal.Stage, probability, deal.LostReason, s.now())
+	applyDealTransition(deal, deal.Stage, probability, deal.LostReason, s.stamp())
 
 	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -96,7 +103,7 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 			FromStage:   nil,
 			ToStage:     deal.Stage,
 			ChangedByID: actorID,
-			ChangedAt:   s.now(),
+			ChangedAt:   s.stamp(),
 		})
 	})
 	if err != nil {
@@ -152,7 +159,7 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 	from := stored.Stage
 	changed := deal.Stage != from
 	if changed {
-		applyDealTransition(deal, deal.Stage, probability, deal.LostReason, s.now())
+		applyDealTransition(deal, deal.Stage, probability, deal.LostReason, s.stamp())
 	} else {
 		// Same stage: closed_at stands, an explicit probability is applied
 		// (the closed stages still pin theirs), and lost_reason only survives
@@ -184,7 +191,7 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 			FromStage:   &from,
 			ToStage:     deal.Stage,
 			ChangedByID: actorID,
-			ChangedAt:   s.now(),
+			ChangedAt:   s.stamp(),
 		})
 	})
 	if err != nil {
@@ -229,7 +236,7 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 	}
 
 	from := deal.Stage
-	applyDealTransition(deal, stage, probability, reason, s.now())
+	applyDealTransition(deal, stage, probability, reason, s.stamp())
 
 	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -245,7 +252,7 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 			FromStage:   &from,
 			ToStage:     stage,
 			ChangedByID: actorID,
-			ChangedAt:   s.now(),
+			ChangedAt:   s.stamp(),
 		})
 	})
 	if err != nil {
