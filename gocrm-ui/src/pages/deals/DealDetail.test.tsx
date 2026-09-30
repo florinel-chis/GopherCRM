@@ -14,6 +14,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User } from '@/types';
 import { formatDealAmount } from './dealFormat';
+import { DASHBOARD_PIPELINE_KEY, clientWithDashboardPipeline, isInvalidated, withClient } from '@/test/dealQueryCache';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -159,6 +160,32 @@ describe('DealDetail', () => {
     await waitFor(() => expect(screen.getByTestId('deal-stage-chip')).toHaveTextContent('Negotiation'));
     await waitFor(() => expect(dealsApi.getDealHistory).toHaveBeenCalledTimes(2));
     expect(showSuccess).toHaveBeenCalledWith('Stage updated');
+  });
+
+  it('marks the dashboard pipeline and the deal lists stale after a stage change', async () => {
+    vi.mocked(dealsApi.changeStage).mockResolvedValue({ ...deal, stage: 'negotiation' as const, probability: 70 });
+    const client = clientWithDashboardPipeline();
+    client.setQueryData(['deals', 'pipeline'], { stages: [] });
+    render(withClient(client, <DealDetail />));
+    await screen.findByRole('heading', { name: 'Website redesign' });
+
+    await pickStage('Negotiation');
+
+    await waitFor(() => expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(true));
+    expect(isInvalidated(client, ['deals', 'pipeline'])).toBe(true);
+  });
+
+  it('marks the dashboard pipeline stale after a delete', async () => {
+    vi.mocked(dealsApi.deleteDeal).mockResolvedValue();
+    const client = clientWithDashboardPipeline();
+    render(withClient(client, <DealDetail />));
+    await screen.findByRole('heading', { name: 'Website redesign' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete deal' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete Deal' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(true));
   });
 
   it('does nothing when the current stage is picked again', async () => {

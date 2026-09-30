@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import type { User } from '@/types';
 import { formatDealAmount } from './dealFormat';
 import { DEAL_VIEW_STORAGE_KEY } from './dealView';
+import { DASHBOARD_PIPELINE_KEY, clientWithDashboardPipeline, isInvalidated, withClient } from '@/test/dealQueryCache';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -196,6 +197,19 @@ describe('DealList', () => {
 
     await waitFor(() => expect(dealsApi.deleteDeal).toHaveBeenCalledWith(9));
     await waitFor(() => expect(showSuccess).toHaveBeenCalledWith('Deal deleted successfully'));
+  });
+
+  it('marks the dashboard pipeline stale after a delete', async () => {
+    vi.mocked(dealsApi.deleteDeal).mockResolvedValue();
+    const client = clientWithDashboardPipeline();
+    render(withClient(client, <DealList />));
+
+    const row = await rowOf('Website redesign');
+    fireEvent.click(row.querySelector('button svg[data-testid="DeleteIcon"]')?.parentElement as HTMLElement);
+    const dialog = await screen.findByRole('dialog', { name: 'Delete Deal' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(true));
   });
 
   it('lets sales create and edit but not delete', async () => {

@@ -27,6 +27,7 @@ import { DealStageChip } from './DealStageChip';
 import { DealViewToggle } from './DealViewToggle';
 import { readDealView } from './dealView';
 import { dealAccountName, formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
+import { invalidateDealQueries } from './dealQueries';
 
 // Columns the API accepts in sort_by (its allowlist); the others render
 // without a sort header so a click can never produce a rejected request.
@@ -106,7 +107,7 @@ export const Component: React.FC = () => {
     mutationFn: (id: number) => dealsApi.deleteDeal(id),
     onSuccess: () => {
       showSuccess('Deal deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      invalidateDealQueries(queryClient);
       setDeleteDialog({ open: false });
     },
     onError: () => {

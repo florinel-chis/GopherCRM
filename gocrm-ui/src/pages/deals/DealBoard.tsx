@@ -38,6 +38,7 @@ import { dealStagePaletteColor } from './dealStageColors';
 import { dealAccountName, formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
 import { DealViewToggle } from './DealViewToggle';
 import { LostReasonDialog } from './LostReasonDialog';
+import { invalidateDealQueries } from './dealQueries';
 
 // The API caps a page at 100; a column shows the first page and links to the
 // list for the rest.
@@ -328,8 +329,7 @@ export const Component: React.FC = () => {
       setLostTarget(null);
       // The card leaves one column and joins another, both headers change,
       // and the dashboard widgets and the detail page read the same deals.
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'pipeline'] });
+      invalidateDealQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ['deal'] });
     },
     onError: (error) => {

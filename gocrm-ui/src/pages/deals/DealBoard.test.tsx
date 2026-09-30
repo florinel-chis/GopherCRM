@@ -8,6 +8,7 @@ import { createMockCompany, createMockCustomer, createMockDeal, createMockUser }
 import type { Deal, DealPipeline, DealStage, User } from '@/types';
 import { formatDealAmount } from './dealFormat';
 import { DEAL_VIEW_STORAGE_KEY } from './dealView';
+import { DASHBOARD_PIPELINE_KEY, clientWithDashboardPipeline, isInvalidated, withClient } from '@/test/dealQueryCache';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -272,6 +273,18 @@ describe('DealBoard', () => {
     expect(await within(column('proposal')).findByText('Website redesign', {}, SLOW)).toBeInTheDocument();
     expect(within(column('qualification')).queryByText('Website redesign')).not.toBeInTheDocument();
     expect(showSuccess).toHaveBeenCalledWith('Moved "Website redesign" to Proposal');
+  });
+
+  it('marks the dashboard pipeline stale after a move', async () => {
+    vi.mocked(dealsApi.changeStage).mockResolvedValue({ ...acmeDeal, stage: 'proposal' });
+    const client = clientWithDashboardPipeline();
+    render(withClient(client, <DealBoard />));
+
+    await openCardMenu('Website redesign');
+    expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(false);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Move to Proposal' }));
+
+    await waitFor(() => expect(isInvalidated(client, DASHBOARD_PIPELINE_KEY)).toBe(true), SLOW);
   });
 
   it('asks for a reason before moving a card to Lost and sends it', async () => {

@@ -43,6 +43,7 @@ import { DealStageChip } from './DealStageChip';
 import { DealHistory } from './DealHistory';
 import { LostReasonDialog } from './LostReasonDialog';
 import { formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
+import { invalidateDealQueries } from './dealQueries';
 
 interface FieldProps {
   icon: React.ReactNode;
@@ -102,7 +103,7 @@ export const Component: React.FC = () => {
       showSuccess('Stage updated');
       queryClient.setQueryData(['deal', id], updated);
       queryClient.invalidateQueries({ queryKey: ['deal', id, 'history'] });
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      invalidateDealQueries(queryClient);
       setLostDialog(false);
     },
     onError: (error) => {
@@ -114,7 +115,7 @@ export const Component: React.FC = () => {
     mutationFn: () => dealsApi.deleteDeal(dealId),
     onSuccess: () => {
       showSuccess('Deal deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      invalidateDealQueries(queryClient);
       navigate('/deals');
     },
     onError: () => {

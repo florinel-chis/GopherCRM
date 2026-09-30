@@ -39,6 +39,7 @@ import {
   type User,
 } from '@/types';
 import { centsToDecimal, decimalToCents } from './dealFormat';
+import { invalidateDealQueries } from './dealQueries';
 
 const FALLBACK_CURRENCY = 'EUR';
 const DEFAULT_CURRENCY_KEY = 'deals.default_currency';
@@ -292,7 +293,7 @@ export const Component: React.FC = () => {
   };
 
   const invalidateDeals = () => {
-    queryClient.invalidateQueries({ queryKey: ['deals'] });
+    invalidateDealQueries(queryClient);
     queryClient.invalidateQueries({ queryKey: ['company'] });
     queryClient.invalidateQueries({ queryKey: ['customer'] });
   };
