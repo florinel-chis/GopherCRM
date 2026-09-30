@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deals won in the current calendar month in UTC, counted and summed per currency (admin all,
   sales own; support and customer 403). Aggregation is integer arithmetic grouped in SQL with no
   date functions, the same on MySQL, MariaDB and SQLite; no schema change.
+- **Deal amount bound.** `amount_cents` on `POST`/`PUT /deals` is now capped at 1000000000000
+  (10,000,000,000.00 in major units) so the pipeline sums keep ample headroom; larger values are
+  refused with a 400 naming the bound.
 - **Deals with stage history.** A sales opportunity with a fixed pipeline and an append-only
   record of every stage it has been through.
   - `/deals` (admin and sales; sales sees and edits its own, delete is admin only): list with
