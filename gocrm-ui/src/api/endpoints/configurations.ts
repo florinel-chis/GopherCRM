@@ -5,7 +5,7 @@ export interface Configuration {
   key: string;
   value: string;
   type: 'string' | 'boolean' | 'integer' | 'float' | 'json' | 'array';
-  category: 'general' | 'leads' | 'customers' | 'tickets' | 'tasks' | 'security' | 'integration' | 'ui';
+  category: 'general' | 'leads' | 'customers' | 'tickets' | 'tasks' | 'deals' | 'security' | 'integration' | 'ui';
   description: string;
   default_value: string;
   is_system: boolean;
