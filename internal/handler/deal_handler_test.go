@@ -18,6 +18,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -710,4 +711,49 @@ func (suite *DealHandlerTestSuite) TestSubLists_SalesIsNarrowedAdminIsNotAndMiss
 
 func TestDealHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(DealHandlerTestSuite))
+}
+
+// Through the production error handler, not the suite's minimal one: an
+// out-of-range probability is a number, so its message is a value bound and
+// not a length.
+func TestCreateDeal_ProbabilityOutOfRangeHasANumericMessage(t *testing.T) {
+	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
+	gin.SetMode(gin.TestMode)
+	svc := new(mocks.DealService)
+	router := gin.New()
+	router.Use(middleware.RequestID(), middleware.ErrorHandler())
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		c.Set("user_role", string(models.RoleAdmin))
+		c.Next()
+	})
+	SetupDealRoutes(router.Group(""), NewDealHandler(svc))
+
+	for probability, want := range map[int]string{
+		101: "Probability must be at most 100",
+		-1:  "Probability must be at least 0",
+	} {
+		body, err := json.Marshal(gin.H{"title": "X", "probability": probability})
+		assert.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/deals", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp struct {
+			Success bool `json:"success"`
+			Error   struct {
+				Code    string            `json:"code"`
+				Message string            `json:"message"`
+				Details map[string]string `json:"details"`
+			} `json:"error"`
+		}
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+		assert.False(t, resp.Success)
+		assert.Equal(t, utils.ErrCodeValidation, resp.Error.Code)
+		assert.Equal(t, "Validation failed", resp.Error.Message)
+		assert.Equal(t, want, resp.Error.Details["Probability"], w.Body.String())
+	}
+	svc.AssertExpectations(t)
 }
