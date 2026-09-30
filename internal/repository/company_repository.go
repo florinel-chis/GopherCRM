@@ -135,6 +135,13 @@ func (r *companyRepository) UnlinkCustomers(companyID uint) error {
 		Update("company_id", nil).Error
 }
 
+// UnlinkDeals is UnlinkLeads for deals.
+func (r *companyRepository) UnlinkDeals(companyID uint) error {
+	return r.db.Unscoped().Model(&models.Deal{}).
+		Where("company_id = ?", companyID).
+		Update("company_id", nil).Error
+}
+
 // ListCustomers returns one page of the live customers linked to the company,
 // newest first, plus the total.
 func (r *companyRepository) ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error) {
@@ -179,10 +186,11 @@ func (r *companyRepository) ListLeads(companyID uint, ownerID *uint, offset, lim
 	return leads, total, err
 }
 
-// fillCounts sets CustomerCount and LeadCount on each company from two grouped
-// queries over the live rows. GORM's soft-delete scope applies because the
-// queries go through Model(), so erased customers and leads are not counted.
-// Two queries rather than a LEFT JOIN … GROUP BY on the companies query, for
+// fillCounts sets CustomerCount, LeadCount and DealCount on each company from
+// three grouped queries over the live rows. GORM's soft-delete scope applies
+// because the queries go through Model(), so erased customers and leads and
+// deleted deals are not counted. Separate queries rather than a LEFT JOIN …
+// GROUP BY on the companies query, for
 // the reason given on labelRepository.List: that shape is only legal under
 // MySQL 8's ONLY_FULL_GROUP_BY by way of functional-dependency detection.
 func (r *companyRepository) fillCounts(companies []*models.Company) error {
@@ -202,9 +210,14 @@ func (r *companyRepository) fillCounts(companies []*models.Company) error {
 	if err != nil {
 		return err
 	}
+	deals, err := r.countByCompany(&models.Deal{}, ids)
+	if err != nil {
+		return err
+	}
 	for _, company := range companies {
 		company.CustomerCount = customers[company.ID]
 		company.LeadCount = leads[company.ID]
+		company.DealCount = deals[company.ID]
 	}
 	return nil
 }

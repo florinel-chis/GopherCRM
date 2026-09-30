@@ -22,8 +22,8 @@ func setupCompanyDB(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, db.Migrator().DropTable(&models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}))
+	require.NoError(t, db.Migrator().DropTable(&models.Deal{}, &models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}))
 
 	t.Cleanup(func() {
 		if sqlDB, err := db.DB(); err == nil {

@@ -76,10 +76,10 @@ func (s *companyService) Update(company *models.Company) error {
 	return nil
 }
 
-// Delete soft-deletes the company after clearing company_id on every lead and
-// customer that points at it, all in ONE transaction: a company must never
-// vanish behind a link that still names it, and a failure halfway must leave
-// the links exactly as they were.
+// Delete soft-deletes the company after clearing company_id on every lead,
+// customer and deal that points at it, all in ONE transaction: a company must
+// never vanish behind a link that still names it, and a failure halfway must
+// leave the links exactly as they were.
 func (s *companyService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("company_id", id), "CompanyService", "Delete")
 
@@ -102,6 +102,9 @@ func (s *companyService) Delete(id uint) error {
 			return err
 		}
 		if err := repo.UnlinkCustomers(id); err != nil {
+			return err
+		}
+		if err := repo.UnlinkDeals(id); err != nil {
 			return err
 		}
 		if err := repo.Delete(id); err != nil {
