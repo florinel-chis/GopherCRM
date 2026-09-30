@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@/test/test-utils';
+import { render, screen, fireEvent, within } from '@/test/test-utils';
 import { Component as CustomerDetail } from './CustomerDetail';
-import { customersApi, ticketsApi } from '@/api/endpoints';
-import { createMockCustomer, createMockCompany } from '@/test/factories';
+import { customersApi, dealsApi, ticketsApi } from '@/api/endpoints';
+import { createMockCustomer, createMockCompany, createMockDeal, createMockUser } from '@/test/factories';
+import type { User } from '@/types';
 import { useNavigate, useParams } from 'react-router-dom';
 
 vi.mock('react-router-dom', async () => {
@@ -22,7 +23,25 @@ vi.mock('@/api/endpoints', () => ({
   ticketsApi: {
     getTickets: vi.fn(),
   },
+  dealsApi: {
+    getCustomerDeals: vi.fn(),
+  },
 }));
+
+const mockUseAuth = vi.fn();
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
+const authState = (user: User) => ({
+  user,
+  isLoading: false,
+  isAuthenticated: true,
+  login: vi.fn(),
+  register: vi.fn(),
+  logout: vi.fn(),
+  refreshUser: vi.fn(),
+});
 
 vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({ showSuccess: vi.fn(), showError: vi.fn() }),
@@ -34,6 +53,8 @@ describe('CustomerDetail company', () => {
     vi.mocked(useNavigate).mockReturnValue(vi.fn());
     vi.mocked(useParams).mockReturnValue({ id: '5' });
     vi.mocked(ticketsApi.getTickets).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, total_pages: 0 });
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({ deals: [], total: 0 });
   });
 
   it('links to the company record when the customer is linked', async () => {
@@ -57,5 +78,51 @@ describe('CustomerDetail company', () => {
 
     expect((await screen.findAllByText('Loose Text Ltd')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('link', { name: 'Loose Text Ltd' })).not.toBeInTheDocument();
+  });
+});
+
+describe('CustomerDetail deals section', () => {
+  const mockNavigate = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '5' });
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, total_pages: 0 });
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(createMockCustomer({ id: 5, company_name: 'Bolt Robotics' }));
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'sales' })));
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({
+      deals: [createMockDeal({ id: 10, title: 'Support renewal', stage: 'negotiation', amount_cents: 99900, currency: 'USD' })],
+      total: 1,
+    });
+  });
+
+  it('lists the customer deals with a link to each and a prefilled "New Deal"', async () => {
+    render(<CustomerDetail />);
+
+    const section = await screen.findByRole('region', { name: /Deals/ });
+    expect(dealsApi.getCustomerDeals).toHaveBeenCalledWith(5, { offset: 0, limit: 5 });
+    expect(await within(section).findByRole('link', { name: 'Support renewal' })).toHaveAttribute('href', '/deals/10');
+    expect(within(section).getByTestId('deal-stage-chip')).toHaveTextContent('Negotiation');
+
+    fireEvent.click(within(section).getByRole('button', { name: 'New Deal' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/deals/new?customer_id=5');
+  });
+
+  it('says so when the customer has no deals', async () => {
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({ deals: [], total: 0 });
+    render(<CustomerDetail />);
+
+    const section = await screen.findByRole('region', { name: /Deals/ });
+    expect(within(section).getByText('No deals for this customer')).toBeInTheDocument();
+  });
+
+  it('hides the deals section from support', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role: 'support' })));
+    render(<CustomerDetail />);
+
+    await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+    expect(screen.queryByRole('region', { name: /Deals/ })).not.toBeInTheDocument();
+    expect(dealsApi.getCustomerDeals).not.toHaveBeenCalled();
   });
 });

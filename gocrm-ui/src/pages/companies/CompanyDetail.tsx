@@ -36,7 +36,8 @@ import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { companiesApi } from '@/api/endpoints';
+import { companiesApi, dealsApi } from '@/api/endpoints';
+import { DealsSection } from '@/pages/deals/DealsSection';
 import { formatDate } from '@/utils/date';
 
 const SUB_TABLE_ROWS_PER_PAGE = [5, 10, 25];
@@ -72,6 +73,8 @@ export const Component: React.FC = () => {
   // GET /companies/:id/leads is admin+sales; support has no leads access at
   // all, so the section is not rendered rather than shown as a 403.
   const canSeeLeads = user?.role === 'admin' || user?.role === 'sales';
+  // Deals are admin and sales on the API, like leads.
+  const canSeeDeals = canSeeLeads;
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [customersPage, setCustomersPage] = useState({ page: 0, limit: 5 });
@@ -301,7 +304,7 @@ export const Component: React.FC = () => {
       </Paper>
 
       {canSeeLeads && (
-        <Paper sx={{ p: 3 }} component="section" aria-labelledby="company-leads-heading">
+        <Paper sx={{ p: 3, mb: 3 }} component="section" aria-labelledby="company-leads-heading">
           <Typography variant="h6" id="company-leads-heading" mb={2}>
             Leads{company.lead_count !== undefined && ` (${company.lead_count})`}
           </Typography>
@@ -347,6 +350,17 @@ export const Component: React.FC = () => {
             <Typography color="text.secondary">No leads linked to this company</Typography>
           )}
         </Paper>
+      )}
+
+      {canSeeDeals && (
+        <DealsSection
+          queryKey={['company', id, 'deals']}
+          fetchDeals={(params) => dealsApi.getCompanyDeals(companyId, params)}
+          newDealPath={`/deals/new?company_id=${company.id}`}
+          canWrite={canWrite}
+          headingId="company-deals-heading"
+          emptyText="No deals for this company"
+        />
       )}
 
       <ConfirmDialog

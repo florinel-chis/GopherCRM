@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as CompanyDetail } from './CompanyDetail';
-import { companiesApi } from '@/api/endpoints';
-import { createMockCompany, createMockCustomer, createMockLead, createMockUser } from '@/test/factories';
+import { companiesApi, dealsApi } from '@/api/endpoints';
+import { createMockCompany, createMockCustomer, createMockDeal, createMockLead, createMockUser } from '@/test/factories';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User } from '@/types';
 
@@ -21,6 +21,9 @@ vi.mock('@/api/endpoints', () => ({
     getCompanyCustomers: vi.fn(),
     getCompanyLeads: vi.fn(),
     deleteCompany: vi.fn(),
+  },
+  dealsApi: {
+    getCompanyDeals: vi.fn(),
   },
 }));
 
@@ -72,6 +75,10 @@ describe('CompanyDetail', () => {
         createMockCustomer({ id: 12, contact_name: 'Joe Bloggs', email: 'joe@acme.example' }),
       ],
       total: 2,
+    });
+    vi.mocked(dealsApi.getCompanyDeals).mockResolvedValue({
+      deals: [createMockDeal({ id: 9, title: 'Website redesign', stage: 'proposal', amount_cents: 1250000, currency: 'EUR' })],
+      total: 1,
     });
     vi.mocked(companiesApi.getCompanyLeads).mockResolvedValue({
       leads: [createMockLead({ id: 21, contact_name: 'Ion Ionescu', email: 'ion@acme.example', status: 'qualified' })],
@@ -186,5 +193,51 @@ describe('CompanyDetail', () => {
 
     expect(await screen.findByText('No customers linked to this company')).toBeInTheDocument();
     expect(await screen.findByText('No leads linked to this company')).toBeInTheDocument();
+  });
+});
+
+describe('CompanyDetail deals section', () => {
+  const mockNavigate = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '7' });
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
+    vi.mocked(companiesApi.getCompany).mockResolvedValue(createMockCompany({ id: 7, name: 'Acme Widgets' }));
+    vi.mocked(companiesApi.getCompanyCustomers).mockResolvedValue({ customers: [], total: 0 });
+    vi.mocked(companiesApi.getCompanyLeads).mockResolvedValue({ leads: [], total: 0 });
+    vi.mocked(dealsApi.getCompanyDeals).mockResolvedValue({
+      deals: [createMockDeal({ id: 9, title: 'Website redesign', stage: 'proposal', amount_cents: 1250000, currency: 'EUR' })],
+      total: 1,
+    });
+  });
+
+  it('lists the company deals from the sub-resource endpoint with a link to each', async () => {
+    render(<CompanyDetail />);
+
+    const section = await screen.findByRole('region', { name: /Deals/ });
+    expect(dealsApi.getCompanyDeals).toHaveBeenCalledWith(7, { offset: 0, limit: 5 });
+    expect(await within(section).findByRole('link', { name: 'Website redesign' })).toHaveAttribute('href', '/deals/9');
+    expect(within(section).getByTestId('deal-stage-chip')).toHaveTextContent('Proposal');
+    expect(within(section).getByRole('heading', { name: 'Deals (1)' })).toBeInTheDocument();
+  });
+
+  it('opens a prefilled deal form from "New Deal"', async () => {
+    render(<CompanyDetail />);
+
+    const section = await screen.findByRole('region', { name: /Deals/ });
+    fireEvent.click(within(section).getByRole('button', { name: 'New Deal' }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/deals/new?company_id=7');
+  });
+
+  it('hides the deals section from support', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role: 'support' })));
+    render(<CompanyDetail />);
+
+    await screen.findByRole('heading', { name: 'Acme Widgets' });
+    expect(screen.queryByRole('region', { name: /Deals/ })).not.toBeInTheDocument();
+    expect(dealsApi.getCompanyDeals).not.toHaveBeenCalled();
   });
 });
