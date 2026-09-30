@@ -160,8 +160,10 @@ Things to know before relying on it:
   dangling reference. A refused start has already committed the schema change;
   only the data violation is left. Restore the backup, or fix the offending rows
   (the message names the tables as `child -> parent`), and start again. The
-  v1.2.0 binary still opens the upgraded file — it ignores the extra table and
+  v1.2.0 binary still opens the upgraded file — it ignores the extra tables and
   columns — so the binary can be rolled back even though the schema is not.
+  The deals release adds the `deals` and `deal_stage_changes` tables only: it
+  rebuilds no existing table, and the previous binary still opens the file.
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 

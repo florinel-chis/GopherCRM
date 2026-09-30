@@ -185,8 +185,10 @@ already committed the schema change; only the data violation is left.
 `docker compose -f docker-compose.sqlite.yml logs backend` names the tables
 involved as `child -> parent`; either restore the backup or fix those rows, then
 start again. The 1.2.0 image still opens the upgraded file — it ignores the
-extra table and columns — so the image can be rolled back even though the
-schema is not.
+extra tables and columns — so the image can be rolled back even though the
+schema is not. The deals release adds the `deals` and `deal_stage_changes`
+tables only: it rebuilds no existing table, and the previous image still opens
+the file.
 
 ## Rebuilding after code changes
 
