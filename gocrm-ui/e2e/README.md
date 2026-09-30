@@ -98,6 +98,7 @@ an admin through the app.
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
 | `admin-companies.spec.ts` | 8 | Companies — list, create with all fields, validation, duplicate domain 409 on the field, edit, search, link a customer through the customer form and see it on both detail pages, delete and the customer falls back to its text company |
 | `admin-deals.spec.ts` | 8 | Deals — list, create for a company with the formatted amount on both detail pages, validation, stage moves with the history growing, lost with a required reason (closed_at and reason shown, cleared on reopening), edit title and amount, stage filter, delete |
+| `admin-deals-board.spec.ts` | 5 | Deals board — created deals in their stage columns with counts and totals, move to Negotiation through the card menu (both headers update), move to Lost with a reason under the expanded Lost column, dashboard "Won this month" tile counts a deal moved to Won, list/board toggle round-trip and remembered choice |
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
 | `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
@@ -143,6 +144,12 @@ Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.
   searches for it. MUI Selects (the stage filter, the stage selectors on the form and the detail
   page) and Autocompletes are addressed by `getByRole('combobox', ...)`, never `getByLabel`: once
   open, the listbox shares the label and strict mode would match two elements.
+- The deals board (`deals-board.page.ts`) addresses a column as the region named by its stage and a
+  card by its stamped title inside that column. Other deals share the database, so header counts are
+  read before a move and compared relatively, never as absolute totals. The board's cards are the
+  first 100 per stage sorted by expected close, so the spec gives its deals a near date. The List /
+  Board choice lives in `localStorage` (`gcrm.deals.view`); each test starts with a fresh browser
+  context, so a spec that picks the board does not leak into the next one.
 - Never hardcode an email in a spec that creates records. Whether a fixed address is free depends on
   what earlier runs left behind, so the create step turns into an intermittent 409. The only
   hardcoded account is the seeded admin, which global setup owns.

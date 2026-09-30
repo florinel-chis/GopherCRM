@@ -1,4 +1,4 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 
 export class DashboardPage {
   readonly page: Page;
@@ -43,6 +43,23 @@ export class DashboardPage {
 
   get pendingTasksCard() {
     return this.page.locator('text=Pending Tasks').locator('..').locator('..');
+  }
+
+  // Deal widgets (admin and sales)
+  get wonThisMonthTile() {
+    return this.page.getByRole('region', { name: 'Won this month' });
+  }
+
+  get wonThisMonthCount() {
+    return this.page.getByTestId('won-this-month-count');
+  }
+
+  /** Loads the dashboard and returns the "Won this month" count once it has rendered. */
+  async readWonThisMonth(): Promise<number> {
+    await this.page.goto('/');
+    await expect(this.pageTitle).toBeVisible();
+    await expect(this.wonThisMonthCount).toHaveText(/^\d+$/);
+    return parseInt((await this.wonThisMonthCount.textContent()) ?? '', 10);
   }
 
   get conversionRateCard() {
