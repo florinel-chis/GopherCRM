@@ -61,6 +61,25 @@ export class DealsBoardPage {
     return parseInt((await count.textContent()) ?? '', 10);
   }
 
+  /**
+   * The header total of one currency in a column, in cents, parsed from the
+   * formatted amount (every digit of "€1,234.56" is significant: 123456). A
+   * currency with no deals in the column has no total and reads as 0. Waits
+   * for the pipeline to have loaded, as countIn does.
+   */
+  async totalCentsIn(label: DealStageLabel, currency: string): Promise<number> {
+    await this.countIn(label);
+    const total = this.columnHeader(label).locator(
+      `[data-testid="deal-board-total"][data-currency="${currency}"]`
+    );
+    if ((await total.count()) === 0) {
+      return 0;
+    }
+    // The first line is the amount; the second, on open stages, the weighted amount.
+    const text = (await total.locator('p').first().textContent()) ?? '';
+    return parseInt(text.replace(/\D/g, ''), 10);
+  }
+
   async expand(label: 'Won' | 'Lost') {
     const toggle = this.closedColumnToggle(label);
     if ((await toggle.getAttribute('aria-expanded')) !== 'true') {

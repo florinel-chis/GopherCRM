@@ -14,6 +14,11 @@ function soon(): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** "1234.56" to 123456, the way the API stores the amount the form sent. */
+function amountCents(amount: string): number {
+  return Math.round(Number(amount) * 100);
+}
+
 test.describe('Admin - Deals board', () => {
   let adminAuth: AdminAuthHelper;
   let dealsPage: DealsPage;
@@ -35,6 +40,12 @@ test.describe('Admin - Deals board', () => {
   };
 
   test('the board shows created deals in their stage columns with counts and totals', async () => {
+    // The suite runs on one worker, so nothing else writes deals between the
+    // two readings and each euro total grows by exactly the created amount.
+    await boardPage.goto();
+    const qualificationBefore = await boardPage.totalCentsIn('Qualification', 'EUR');
+    const proposalBefore = await boardPage.totalCentsIn('Proposal', 'EUR');
+
     const first = await createDeal('Qualification');
     const second = await createDeal('Proposal');
 
@@ -52,6 +63,8 @@ test.describe('Admin - Deals board', () => {
     await expect(boardPage.columnHeader('Qualification')).toContainText('€');
     await expect(boardPage.columnHeader('Qualification')).toContainText('Weighted');
     await expect(boardPage.columnHeader('Proposal')).toContainText('€');
+    expect(await boardPage.totalCentsIn('Qualification', 'EUR')).toBe(qualificationBefore + amountCents(first.amount));
+    expect(await boardPage.totalCentsIn('Proposal', 'EUR')).toBe(proposalBefore + amountCents(second.amount));
 
     // Won and lost start collapsed.
     await expect(boardPage.closedColumnToggle('Won')).toHaveAttribute('aria-expanded', 'false');
