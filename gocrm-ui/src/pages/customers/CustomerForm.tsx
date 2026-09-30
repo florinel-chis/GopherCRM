@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -14,9 +14,11 @@ import {
 } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { FormTextField, FormSwitch } from '@/components/form';
+import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { customersApi, type CreateCustomerData, type UpdateCustomerData } from '@/api/endpoints';
+import type { Company } from '@/types';
 
 const customerSchema = z.object({
   company_name: z.string().min(1, 'Company name is required'),
@@ -38,12 +40,38 @@ const customerSchema = z.object({
 
 type CustomerFormData = z.infer<typeof customerSchema>;
 
+// What the axios client leaves in `error.response.data`: the `error` object of
+// the API envelope ({code, message, details}), not the envelope itself.
+interface ServerErrorPayload {
+  code?: string;
+  message?: string;
+}
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
+  const [searchParams] = useSearchParams();
   const isEditMode = !!id;
+
+  // "New Customer" on a company page arrives as /customers/new?company_id=N.
+  const prefilledCompanyId = (() => {
+    const raw = searchParams.get('company_id');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  })();
+
+  // The curated link to a Company record, kept next to the free-text
+  // `company_name`. `originalCompanyId` remembers the link at load time:
+  // clearing it on edit must send `company_id: 0`, while an untouched, unset
+  // link is omitted.
+  const [linkedCompanyId, setLinkedCompanyId] = useState<number | null>(
+    isEditMode ? null : prefilledCompanyId
+  );
+  const [linkedCompany, setLinkedCompany] = useState<Company | null>(null);
+  const [originalCompanyId, setOriginalCompanyId] = useState<number | null>(null);
+  const [companyError, setCompanyError] = useState<string | null>(null);
 
   const methods = useForm<CustomerFormData>({
     resolver: zodResolver(customerSchema),
@@ -72,6 +100,19 @@ export const Component: React.FC = () => {
     enabled: isEditMode,
   });
 
+  // An unknown or deleted company_id comes back as 400 INVALID_REFERENCE with
+  // no details and the field named in the message ("unknown company_id 7:
+  // company not found"); that message belongs on the company picker.
+  // Returns the server's message, if any, for the snackbar.
+  const reportCompanyReference = (error: unknown): string | undefined => {
+    const payload = (error as { response?: { data?: ServerErrorPayload } })?.response?.data;
+    const message = typeof payload?.message === 'string' ? payload.message : undefined;
+    if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
+      setCompanyError(message);
+    }
+    return message;
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: CreateCustomerData) => customersApi.createCustomer(data),
     onSuccess: () => {
@@ -79,8 +120,8 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['customers'] });
       navigate('/customers');
     },
-    onError: () => {
-      showError('Failed to create customer');
+    onError: (error: unknown) => {
+      showError(reportCompanyReference(error) || 'Failed to create customer');
     },
   });
 
@@ -93,8 +134,8 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['customer', id] });
       navigate('/customers');
     },
-    onError: () => {
-      showError('Failed to update customer');
+    onError: (error: unknown) => {
+      showError(reportCompanyReference(error) || 'Failed to update customer');
     },
   });
 
@@ -117,8 +158,34 @@ export const Component: React.FC = () => {
         notes: customer.notes || '',
         is_active: customer.is_active,
       });
+      const currentCompanyId = customer.company_id ?? null;
+      setLinkedCompanyId(currentCompanyId);
+      setLinkedCompany(customer.company_record ?? null);
+      setOriginalCompanyId(currentCompanyId);
     }
   }, [customer, methods]);
+
+  const handleCompanyChange = (companyId: number | null, company: Company | null) => {
+    setLinkedCompanyId(companyId);
+    setLinkedCompany(company);
+    setCompanyError(null);
+    // Convenience only: seed the free-text company when it is still blank.
+    if (company && methods.getValues('company_name').trim() === '') {
+      methods.setValue('company_name', company.name, { shouldValidate: true });
+    }
+  };
+
+  // Chosen → send it; cleared on edit after being linked → 0 clears it on
+  // the API; never linked and untouched → omit so the API keeps whatever it has.
+  const companyIdPatch = (): Pick<CreateCustomerData, 'company_id'> => {
+    if (linkedCompanyId !== null) {
+      return { company_id: linkedCompanyId };
+    }
+    if (isEditMode && originalCompanyId !== null) {
+      return { company_id: 0 };
+    }
+    return {};
+  };
 
   const onSubmit = (data: CustomerFormData) => {
     const submitData = {
@@ -126,6 +193,7 @@ export const Component: React.FC = () => {
       website: data.website || undefined,
       annual_revenue: data.annual_revenue || undefined,
       employee_count: data.employee_count || undefined,
+      ...companyIdPatch(),
     };
 
     if (isEditMode) {
@@ -156,14 +224,22 @@ export const Component: React.FC = () => {
               <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
                 <FormTextField
                   name="company_name"
-                  label="Company Name"
+                  label="Company (as entered)"
                   required
                 />
-                <FormTextField
-                  name="industry"
-                  label="Industry"
+                <CompanyAutocomplete
+                  value={linkedCompanyId}
+                  initialCompany={linkedCompany}
+                  onChange={handleCompanyChange}
+                  error={companyError !== null}
+                  helperText={companyError ?? 'Link this customer to a company record (optional)'}
                 />
               </Box>
+
+              <FormTextField
+                name="industry"
+                label="Industry"
+              />
 
               <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
                 <FormTextField

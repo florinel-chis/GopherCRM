@@ -59,6 +59,7 @@ Represents potential customers in the sales pipeline.
 | notes | text | No | - | - | Additional notes |
 | owner_id | uint | Yes | - | FK to users | Assigned sales user |
 | customer_id | uint | No | - | FK to customers | ID when converted to customer |
+| company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
 
 ### Lead Status Values
 - `new` - Newly created lead
@@ -76,6 +77,32 @@ Represents potential customers in the sales pipeline.
 - `email_campaign` - Email marketing
 - `trade_show` - Events/trade shows
 - `other` - Other sources
+
+## Company Model
+
+An organisation that leads and customers link to through `company_id`. Holds no personal data;
+deleting one soft-deletes the row and clears the links. `domain` is unique among live rows,
+checked in the service rather than by an index.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200 | Company name (trimmed; not unique) |
+| domain | string | No | - | max 255, unique among live rows | Normalised host, e.g. `acme.example` |
+| website | string | No | - | max 255, http(s) URL | Website |
+| industry | string | No | - | max 100 | Free text |
+| employee_range | string | No | - | one of `1-10`, `11-50`, `51-200`, `201-500`, `501-1000`, `1000+` | Head-count band |
+| phone | string | No | - | max 50 | Phone number |
+| address | string | No | - | max 255 | Street address |
+| city | string | No | - | max 100 | City |
+| state | string | No | - | max 100 | State/Province |
+| country | string | No | - | max 100 | Country |
+| postal_code | string | No | - | max 20 | ZIP/Postal code |
+| notes | text | No | - | max 65535 bytes | Free text |
+| owner_id | uint | No | - | FK to users | Account manager |
+
+`customer_count` and `lead_count` are computed on read (live rows only) and are not columns.
 
 ## Customer Model
 
@@ -98,6 +125,7 @@ Represents confirmed customers in the system.
 | postal_code | string | No | - | max 20 | ZIP/Postal code |
 | notes | text | No | - | - | Additional notes |
 | user_id | uint | No | - | FK to users | Associated user account |
+| company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
 
 ### Relationships
 - May have an associated User account

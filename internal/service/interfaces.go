@@ -156,6 +156,31 @@ type LabelService interface {
 	List() ([]models.Label, error)
 }
 
+// CompanyService drives the companies module. Create and Update trim the name,
+// normalise the domain (lower case, scheme, path and leading "www." stripped),
+// require the website to be an http(s) URL, require owner_id to name a live
+// account (apperrors.ErrAssigneeNotFound otherwise) and reject a domain another
+// live company already uses with apperrors.ErrDuplicateCompanyDomain. Plain
+// validation failures unwrap to apperrors.ErrValidation.
+type CompanyService interface {
+	Create(company *models.Company) error
+	// GetByID returns the company with its owner and its customer and lead
+	// counts.
+	GetByID(id uint) (*models.Company, error)
+	Update(company *models.Company) error
+	// Delete clears company_id on every lead and customer pointing at the
+	// company and soft-deletes it, in one transaction.
+	Delete(id uint) error
+	// List returns one page plus the total matching the search; sortBy is
+	// checked against the companies allowlist and an unknown column is an error.
+	List(offset, limit int, search, sortBy, sortOrder string) ([]models.Company, int64, error)
+	// ListCustomers and ListLeads page through the rows linked to the company
+	// and report apperrors.ErrNotFound for an unknown company. A nil ownerID
+	// means every owner.
+	ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error)
+	ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error)
+}
+
 type APIKeyService interface {
 	// Generate mints a key for userID. A non-nil expiresAt is stored on the key
 	// and enforced at authentication time by AuthService.ValidateAPIKey.

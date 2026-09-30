@@ -67,17 +67,34 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   the next boot treats the row as a crash and recovers it — but the run's remaining results are
   lost. Closing it properly means a `WaitGroup` plus a cancellable run context joined before the
   close, and a clear owner for the database handle so nothing outlives it.
-- **Fixture-based upgrade tests for SQLite** — auto-migration
+- **Extend the SQLite upgrade fixtures per release** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
-  the SQL files in `migrations/` target MySQL. Nothing exercises an N-1 → N
-  upgrade against a populated file, so back the database up before upgrading
-  (see [DOCKER.md](DOCKER.md#backing-up-the-sqlite-database)) until a fixture
-  suite covers it.
+  the SQL files in `migrations/` target MySQL. The v1.2.0 → next upgrade is
+  covered by a fixture (`internal/models/testdata/sqlite-v1.2.0-schema.sql`
+  and `database_sqlite_upgrade_test.go`: a populated file with referenced
+  rows, and the half-applied state a failed first start leaves behind). Each
+  release that changes the schema should add its own N-1 fixture, dumped from
+  a fresh file of the previous release, so the chain keeps being exercised.
+  Backing up before upgrading (see
+  [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
 - **Revisit the SQLite driver pin** — `github.com/glebarez/sqlite` pulls
   `github.com/glebarez/go-sqlite` v1.21.2, whose own `go.mod` pins
   `modernc.org/sqlite` v1.23.1; module resolution here settles on v1.59.0
   (engine 3.53.4), a much newer build than its author tested against. It works,
   but the pairing is worth re-checking whenever glebarez cuts a release.
+
+## Companies — follow-ups
+
+- **Backfill `company_id` from the free-text column** — every lead and customer created before
+  2026-09-29 carries only the text `company`. A one-off script that groups the distinct texts,
+  proposes a company per group (name from the text, domain from the email addresses) and links
+  the rows after a human review would seed the companies table; it is deliberately not part of
+  the migration, which only adds the nullable column.
+- **Domain-based auto-link from forms** — a public form submission that creates a lead could
+  set `company_id` when the submitter's email domain matches a live company's `domain`
+  (free-mail domains excluded). Today the forms module writes only the text column, so a lead
+  from `jane@acme.example` is not linked to the Acme company even when it exists; linking by hand
+  on the lead form is the only path.
 
 ## Follow-ups from the backend build-out
 

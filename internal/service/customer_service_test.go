@@ -20,6 +20,7 @@ type CustomerServiceTestSuite struct {
 	suite.Suite
 	mockRepo     *mocks.CustomerRepository
 	mockUserRepo *mocks.UserRepository
+	mockCompany  *mocks.CompanyRepository
 	service      CustomerService
 }
 
@@ -35,12 +36,14 @@ func (suite *CustomerServiceTestSuite) SetupSuite() {
 func (suite *CustomerServiceTestSuite) SetupTest() {
 	suite.mockRepo = new(mocks.CustomerRepository)
 	suite.mockUserRepo = new(mocks.UserRepository)
-	suite.service = NewCustomerService(suite.mockRepo, suite.mockUserRepo)
+	suite.mockCompany = new(mocks.CompanyRepository)
+	suite.service = NewCustomerService(suite.mockRepo, suite.mockUserRepo, suite.mockCompany)
 }
 
 func (suite *CustomerServiceTestSuite) TearDownTest() {
 	suite.mockRepo.AssertExpectations(suite.T())
 	suite.mockUserRepo.AssertExpectations(suite.T())
+	suite.mockCompany.AssertExpectations(suite.T())
 }
 
 func (suite *CustomerServiceTestSuite) TestCreate_Success() {

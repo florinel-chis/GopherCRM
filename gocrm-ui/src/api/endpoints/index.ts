@@ -2,6 +2,7 @@ export * from './auth';
 export * from './users';
 export * from './leads';
 export * from './customers';
+export * from './companies';
 export * from './tickets';
 export * from './tasks';
 export * from './labels';

@@ -23,7 +23,7 @@ func setupCustomerExportDB(t *testing.T) *gorm.DB {
 	// tables are dropped and recreated rather than accumulating rows between
 	// tests.
 	require.NoError(t, db.Migrator().DropTable(&models.Customer{}, &models.User{}))
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Customer{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()

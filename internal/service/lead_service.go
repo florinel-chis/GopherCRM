@@ -14,15 +14,33 @@ import (
 type leadService struct {
 	leadRepo     repository.LeadRepository
 	customerRepo repository.CustomerRepository
+	companyRepo  repository.CompanyRepository
 	txManager    *utils.TransactionManager
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, txManager *utils.TransactionManager) LeadService {
+func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, companyRepo repository.CompanyRepository, txManager *utils.TransactionManager) LeadService {
 	return &leadService{
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
+		companyRepo:  companyRepo,
 		txManager:    txManager,
 	}
+}
+
+// checkCompanyLink rejects a company_id that matches no live company with
+// apperrors.ErrCompanyNotFound, which the handler answers with 400
+// INVALID_REFERENCE. A nil id is no link and always fine.
+func (s *leadService) checkCompanyLink(companyID *uint) error {
+	if companyID == nil {
+		return nil
+	}
+	if _, err := s.companyRepo.GetByID(*companyID); err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("unknown company_id %d: %w", *companyID, apperrors.ErrCompanyNotFound)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *leadService) Create(lead *models.Lead) error {
@@ -31,6 +49,11 @@ func (s *leadService) Create(lead *models.Lead) error {
 	// Set default status if not provided
 	if lead.Status == "" {
 		lead.Status = models.LeadStatusNew
+	}
+
+	if err := s.checkCompanyLink(lead.CompanyID); err != nil {
+		logger.WithError(err).Warn("Lead rejected")
+		return err
 	}
 	
 	err := s.leadRepo.Create(lead)
@@ -44,8 +67,9 @@ func (s *leadService) Create(lead *models.Lead) error {
 }
 
 func (s *leadService) GetByID(id uint) (*models.Lead, error) {
-	// For individual lead retrieval, preload Owner for display purposes
-	return s.leadRepo.GetByIDWithPreloads(id, "Owner")
+	// For individual lead retrieval, preload Owner and the linked company for
+	// display purposes
+	return s.leadRepo.GetByIDWithPreloads(id, "Owner", "CompanyRecord")
 }
 
 func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
@@ -135,6 +159,17 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	}
 	if ownerID, ok := updates["owner_id"].(uint); ok {
 		lead.OwnerID = ownerID
+	}
+	// company_id is a *uint: a nil pointer clears the link, a non-nil one must
+	// name a live company. The key being absent leaves the link alone.
+	if raw, ok := updates["company_id"]; ok {
+		companyID, _ := raw.(*uint)
+		if err := s.checkCompanyLink(companyID); err != nil {
+			logger.WithError(err).Warn("Lead update rejected")
+			return nil, err
+		}
+		lead.CompanyID = companyID
+		lead.CompanyRecord = nil
 	}
 
 	if err := s.leadRepo.Update(lead); err != nil {

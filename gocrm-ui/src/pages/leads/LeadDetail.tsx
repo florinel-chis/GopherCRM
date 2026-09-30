@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
@@ -16,6 +16,7 @@ import {
   ListItemText,
   ListItemIcon,
   IconButton,
+  Link,
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -216,7 +217,16 @@ export const Component: React.FC = () => {
                       <Typography variant="caption" color="text.secondary">
                         Company
                       </Typography>
-                      <Typography>{lead.company_name}</Typography>
+                      {/* The linked record wins; the free text is the fallback. */}
+                      <Typography>
+                        {lead.company_record ? (
+                          <Link component={RouterLink} to={`/companies/${lead.company_record.id}`}>
+                            {lead.company_record.name}
+                          </Link>
+                        ) : (
+                          lead.company_name
+                        )}
+                      </Typography>
                     </Box>
                   </Box>
                   <Box display="flex" alignItems="center" gap={1}>

@@ -12,13 +12,31 @@ import (
 type customerService struct {
 	customerRepo repository.CustomerRepository
 	userRepo     repository.UserRepository
+	companyRepo  repository.CompanyRepository
 }
 
-func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository) CustomerService {
+func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository, companyRepo repository.CompanyRepository) CustomerService {
 	return &customerService{
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
+		companyRepo:  companyRepo,
 	}
+}
+
+// checkCompanyLink rejects a company_id that matches no live company with
+// apperrors.ErrCompanyNotFound, which the handler answers with 400
+// INVALID_REFERENCE. A nil id is no link and always fine.
+func (s *customerService) checkCompanyLink(companyID *uint) error {
+	if companyID == nil {
+		return nil
+	}
+	if _, err := s.companyRepo.GetByID(*companyID); err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("unknown company_id %d: %w", *companyID, apperrors.ErrCompanyNotFound)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *customerService) Create(customer *models.Customer) error {
@@ -32,6 +50,11 @@ func (s *customerService) Create(customer *models.Customer) error {
 	if err == nil && existing != nil {
 		logger.Warn("Attempted to create customer with duplicate email")
 		return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
+	}
+
+	if err := s.checkCompanyLink(customer.CompanyID); err != nil {
+		logger.WithError(err).Warn("Customer rejected")
+		return err
 	}
 	
 	if err := s.customerRepo.Create(customer); err != nil {
@@ -90,6 +113,11 @@ func (s *customerService) Update(customer *models.Customer) error {
 			logger.Warn("Attempted to update customer with duplicate email")
 			return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
+	}
+
+	if err := s.checkCompanyLink(customer.CompanyID); err != nil {
+		logger.WithError(err).Warn("Customer update rejected")
+		return err
 	}
 	
 	if err := s.customerRepo.Update(customer); err != nil {

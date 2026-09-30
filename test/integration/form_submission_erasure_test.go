@@ -23,7 +23,7 @@ func setupFormErasureDB(t *testing.T) *gorm.DB {
 	db := setupDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		&models.APIKey{},
 		&models.RefreshToken{},

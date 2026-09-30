@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { Component as LeadForm } from './LeadForm';
-import { leadsApi } from '@/api/endpoints';
-import { createMockLead } from '@/test/factories';
+import { leadsApi, companiesApi } from '@/api/endpoints';
+import { createMockLead, createMockCompany } from '@/test/factories';
+import { pickAutocompleteOption } from '@/test/autocomplete';
 import { useNavigate, useParams } from 'react-router-dom';
 
 vi.mock('react-router-dom', async () => {
@@ -20,6 +21,10 @@ vi.mock('@/api/endpoints', () => ({
     createLead: vi.fn(),
     updateLead: vi.fn(),
   },
+  companiesApi: {
+    getCompanies: vi.fn(),
+    getCompany: vi.fn(),
+  },
 }));
 
 vi.mock('@/hooks/useSnackbar', () => ({
@@ -32,10 +37,25 @@ vi.mock('@/hooks/useSnackbar', () => ({
 describe('LeadForm', () => {
   const mockNavigate = vi.fn();
 
+  const acme = createMockCompany({ id: 7, name: 'Acme Widgets', domain: 'acme.example' });
+
+  // The rejection the form sees for an unknown company_id: the API answers
+  // `{success:false, error:{code:"INVALID_REFERENCE", message, details:null}}`
+  // and the axios client (src/api/client.ts) replaces `response.data` with
+  // that `error` object before the endpoint module rethrows.
+  const invalidReference = (message: string) => ({
+    response: { status: 400, data: { code: 'INVALID_REFERENCE', message, details: null } },
+  });
+
+  const pickCompany = () =>
+    pickAutocompleteOption('Company (linked)', 'Acme Widgets (acme.example)');
+
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (useParams as any).mockReturnValue({});
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({});
+    vi.mocked(companiesApi.getCompanies).mockResolvedValue({ companies: [acme], total: 1 });
+    vi.mocked(companiesApi.getCompany).mockResolvedValue(acme);
   });
 
   describe('Create Mode', () => {
@@ -43,7 +63,7 @@ describe('LeadForm', () => {
       render(<LeadForm />);
 
       expect(screen.getByText('Create New Lead')).toBeInTheDocument();
-      expect(screen.getByLabelText(/Company Name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^Company \(as entered\)/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/Contact Name/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/Email/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/Phone/i)).toBeInTheDocument();
@@ -52,11 +72,11 @@ describe('LeadForm', () => {
     });
 
     it('submits form with valid data', async () => {
-      (leadsApi.createLead as any).mockResolvedValue(createMockLead());
+      vi.mocked(leadsApi.createLead).mockResolvedValue(createMockLead());
       
       render(<LeadForm />);
 
-      fireEvent.change(screen.getByLabelText(/Company Name/i), {
+      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
         target: { value: 'New Company' },
       });
       fireEvent.change(screen.getByLabelText(/Contact Name/i), {
@@ -108,7 +128,7 @@ describe('LeadForm', () => {
       });
 
       // Fill in some fields but leave email invalid
-      fireEvent.change(screen.getByLabelText(/Company Name/i), {
+      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
         target: { value: 'Test Company' },
       });
       fireEvent.change(screen.getByLabelText(/Contact Name/i), {
@@ -136,6 +156,68 @@ describe('LeadForm', () => {
       });
     });
 
+    it('renders both company fields with distinct labels', () => {
+      render(<LeadForm />);
+
+      expect(screen.getByLabelText(/^Company \(as entered\)/i)).toBeInTheDocument();
+      expect(screen.getByLabelText('Company (linked)')).toBeInTheDocument();
+    });
+
+    it('sends company_id when a company is linked and seeds the blank free-text company', async () => {
+      vi.mocked(leadsApi.createLead).mockResolvedValue(createMockLead());
+
+      render(<LeadForm />);
+
+      await pickCompany();
+      await waitFor(
+        () => expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme Widgets'),
+        { timeout: 3000 }
+      );
+
+      fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: 'John Doe' } });
+      fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'john@acme.example' } });
+      fireEvent.mouseDown(screen.getByLabelText(/Lead Source/i));
+      fireEvent.click(await screen.findByRole('option', { name: 'Website' }));
+
+      fireEvent.click(screen.getByText('Create Lead'));
+
+      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      expect(leadsApi.createLead).toHaveBeenCalledWith(
+        expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
+      );
+    });
+
+    it('puts an INVALID_REFERENCE message on the linked-company picker', async () => {
+      const message = 'unknown company_id 7: company not found';
+      vi.mocked(leadsApi.createLead).mockRejectedValue(invalidReference(message));
+
+      render(<LeadForm />);
+
+      await pickCompany();
+      fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: 'John Doe' } });
+      fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'john@acme.example' } });
+      fireEvent.mouseDown(screen.getByLabelText(/Lead Source/i));
+      fireEvent.click(await screen.findByRole('option', { name: 'Website' }));
+
+      fireEvent.click(screen.getByText('Create Lead'));
+
+      await waitFor(() => expect(leadsApi.createLead).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      expect(await screen.findByText(message, undefined, { timeout: 3000 })).toBeInTheDocument();
+      expect(screen.getByLabelText('Company (linked)')).toHaveAccessibleDescription(message);
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite a free-text company the user already typed', async () => {
+      render(<LeadForm />);
+
+      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
+        target: { value: 'Acme (Cluj branch)' },
+      });
+      await pickCompany();
+
+      expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme (Cluj branch)');
+    });
+
     it('navigates back on cancel', () => {
       render(<LeadForm />);
 
@@ -159,8 +241,8 @@ describe('LeadForm', () => {
     });
 
     beforeEach(() => {
-      (useParams as any).mockReturnValue({ id: '1' });
-      (leadsApi.getLead as any).mockResolvedValue(mockLead);
+      vi.mocked(useParams).mockReturnValue({ id: '1' });
+      vi.mocked(leadsApi.getLead).mockResolvedValue(mockLead);
     });
 
     it('renders edit form with existing data', async () => {
@@ -177,7 +259,7 @@ describe('LeadForm', () => {
     });
 
     it('updates lead successfully', async () => {
-      (leadsApi.updateLead as any).mockResolvedValue(mockLead);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(mockLead);
       
       render(<LeadForm />);
 
@@ -186,7 +268,7 @@ describe('LeadForm', () => {
       });
 
       // Update company name
-      const companyInput = screen.getByLabelText(/Company Name/i);
+      const companyInput = screen.getByLabelText(/^Company \(as entered\)/i);
       fireEvent.change(companyInput, {
         target: { value: 'Updated Company' },
       });
@@ -205,6 +287,56 @@ describe('LeadForm', () => {
           notes: 'Important lead',
         });
         expect(mockNavigate).toHaveBeenCalledWith('/leads');
+      });
+    });
+
+    it('omits company_id when the lead had no link and none is chosen', async () => {
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(mockLead);
+
+      render(<LeadForm />);
+      await waitFor(() => expect(screen.getByDisplayValue('Existing Company')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Update Lead'));
+
+      await waitFor(() => expect(leadsApi.updateLead).toHaveBeenCalled());
+      expect(vi.mocked(leadsApi.updateLead).mock.calls[0][1]).not.toHaveProperty('company_id');
+    });
+
+    it('preselects the linked company and sends its id back untouched', async () => {
+      const linked = createMockLead({ ...mockLead, company_id: 7, company_record: acme });
+      vi.mocked(leadsApi.getLead).mockResolvedValue(linked);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(linked);
+
+      render(<LeadForm />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
+      });
+      expect(companiesApi.getCompany).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText('Update Lead'));
+
+      await waitFor(() => {
+        expect(leadsApi.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ company_id: 7 }));
+      });
+    });
+
+    it('sends company_id 0 when a previously linked company is cleared', async () => {
+      const linked = createMockLead({ ...mockLead, company_id: 7, company_record: acme });
+      vi.mocked(leadsApi.getLead).mockResolvedValue(linked);
+      vi.mocked(leadsApi.updateLead).mockResolvedValue(linked);
+
+      render(<LeadForm />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
+      });
+
+      fireEvent.click(screen.getByLabelText('Clear'));
+      await waitFor(() => expect(screen.getByLabelText('Company (linked)')).toHaveValue(''));
+
+      fireEvent.click(screen.getByText('Update Lead'));
+
+      await waitFor(() => {
+        expect(leadsApi.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ company_id: 0 }));
       });
     });
   });

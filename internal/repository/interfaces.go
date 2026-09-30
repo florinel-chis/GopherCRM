@@ -180,6 +180,39 @@ type LabelRepository interface {
 	WithTx(tx *gorm.DB) LabelRepository
 }
 
+// CompanyRepository backs the companies module. Companies hold no personal
+// data, so Delete is a plain soft delete; the links from leads and customers
+// are cleared by the service in the same transaction through UnlinkLeads and
+// UnlinkCustomers.
+type CompanyRepository interface {
+	Create(company *models.Company) error
+	// GetByID returns the company with Owner preloaded and CustomerCount and
+	// LeadCount populated.
+	GetByID(id uint) (*models.Company, error)
+	Update(company *models.Company) error
+	// Delete soft-deletes the company and reports gorm.ErrRecordNotFound when
+	// no live row matched.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same search. sortBy is
+	// checked against utils.AllowedSortColumns["companies"] (id, name, domain,
+	// industry, created_at, updated_at); an unknown column is an error, an
+	// empty one means created_at descending.
+	List(offset, limit int, search, sortBy, sortOrder string) ([]models.Company, int64, error)
+	// ExistsByDomain backs the service's duplicate-domain pre-check over LIVE
+	// rows, compared with LOWER(). excludeID is the row an update may collide
+	// with; 0 for a create.
+	ExistsByDomain(domain string, excludeID uint) (bool, error)
+	// UnlinkLeads and UnlinkCustomers set company_id to NULL on every row,
+	// soft-deleted ones included, that points at the company.
+	UnlinkLeads(companyID uint) error
+	UnlinkCustomers(companyID uint) error
+	// ListCustomers and ListLeads page through the live rows linked to the
+	// company, newest first. A nil ownerID means every owner.
+	ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error)
+	ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error)
+	WithTx(tx *gorm.DB) CompanyRepository
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)

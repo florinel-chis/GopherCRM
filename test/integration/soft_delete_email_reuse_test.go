@@ -66,7 +66,7 @@ func assertNoDriverInternals(t *testing.T, body string) {
 
 func setupEmailReuseDB(t *testing.T) *gorm.DB {
 	db := setupDB(t)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Customer{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}))
 	return db
 }
 
@@ -287,7 +287,7 @@ func TestCustomerCreateRejectsEmailOfSoftDeletedCustomer(t *testing.T) {
 	db := setupEmailReuseDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
 
 	original := &models.Customer{FirstName: "Bob", LastName: "Original", Email: "bob@example.com"}
 	require.NoError(t, customerService.Create(original))
@@ -313,7 +313,7 @@ func TestCustomerCreateStillRejectsLiveDuplicateEmail(t *testing.T) {
 	db := setupEmailReuseDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
 
 	require.NoError(t, customerService.Create(&models.Customer{
 		FirstName: "Live", LastName: "One", Email: "live-customer@example.com",
@@ -357,7 +357,7 @@ func TestCreateCustomerHandlerDoesNotLeakDriverErrorForSoftDeletedEmail(t *testi
 
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
 	customerHandler := handler.NewCustomerHandler(customerService)
 
 	gin.SetMode(gin.TestMode)

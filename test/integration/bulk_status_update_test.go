@@ -31,7 +31,7 @@ func setupBulkStatusDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		&models.Ticket{},
 		&models.Task{},

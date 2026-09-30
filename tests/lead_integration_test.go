@@ -49,7 +49,7 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	suite.NoError(err)
 	
 	// Migrate the schema
-	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Lead{}, &models.Customer{},
+	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Lead{}, &models.Customer{},
 		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 	suite.NoError(err)
 	
@@ -71,7 +71,7 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(db)
-	suite.leadService = service.NewLeadService(leadRepo, customerRepo, txManager)
+	suite.leadService = service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
 	
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)

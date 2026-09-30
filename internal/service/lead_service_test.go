@@ -22,6 +22,7 @@ type LeadServiceTestSuite struct {
 	suite.Suite
 	mockLeadRepo     *mocks.LeadRepository
 	mockCustomerRepo *mocks.CustomerRepository
+	mockCompanyRepo  *mocks.CompanyRepository
 	leadService      LeadService
 	db               *gorm.DB
 	txManager        *utils.TransactionManager
@@ -45,7 +46,8 @@ func (suite *LeadServiceTestSuite) SetupSuite() {
 func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
-	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.txManager)
+	suite.mockCompanyRepo = new(mocks.CompanyRepository)
+	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockCompanyRepo, suite.txManager)
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {
@@ -120,7 +122,7 @@ func (suite *LeadServiceTestSuite) TestGetByID_Success() {
 		Status:    models.LeadStatusNew,
 	}
 
-	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(1), "Owner").Return(expectedLead, nil)
+	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(1), "Owner", "CompanyRecord").Return(expectedLead, nil)
 
 	lead, err := suite.leadService.GetByID(1)
 	assert.NoError(suite.T(), err)
@@ -128,7 +130,7 @@ func (suite *LeadServiceTestSuite) TestGetByID_Success() {
 }
 
 func (suite *LeadServiceTestSuite) TestGetByID_NotFound() {
-	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(999), "Owner").Return(nil, errors.New("record not found"))
+	suite.mockLeadRepo.On("GetByIDWithPreloads", uint(999), "Owner", "CompanyRecord").Return(nil, errors.New("record not found"))
 
 	lead, err := suite.leadService.GetByID(999)
 	assert.Error(suite.T(), err)

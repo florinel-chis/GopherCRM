@@ -41,4 +41,11 @@ type Lead struct {
 	Owner          User               `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 	CustomerID     *uint              `json:"customer_id,omitempty"`
 	Customer       *Customer          `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+
+	// CompanyID links the lead to a curated Company record. It is a business
+	// link, not personal data, so erasure leaves it in place (see
+	// leadErasurePlan). The free-text Company column above is untouched by it:
+	// the text is what forms and imports write, the link is what staff set.
+	CompanyID     *uint    `gorm:"index" json:"company_id,omitempty"`
+	CompanyRecord *Company `gorm:"foreignKey:CompanyID" json:"company_record,omitempty"`
 }

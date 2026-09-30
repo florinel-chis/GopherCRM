@@ -18,7 +18,7 @@ func setupTestDatabaseForLeads(t *testing.T) *gorm.DB {
 	// Migrate tables
 	err := db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 	)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestLeadConversionTransaction(t *testing.T) {
 
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
 
 	// Create a test user for lead ownership
 	user := &models.User{
@@ -156,7 +156,7 @@ func TestLeadConversionTransactionEdgeCases(t *testing.T) {
 
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
 
 	t.Run("conversion with partial customer data", func(t *testing.T) {
 		// Create test user

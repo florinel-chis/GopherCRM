@@ -21,6 +21,10 @@ export interface Lead {
   notes: string;
   owner_id: number;
   owner?: User;
+  // Curated link to a Company record. `company_name` (the free-text column)
+  // stays the forms contract; the link is set from the CRM only.
+  company_id?: number;
+  company_record?: Company;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +51,42 @@ export interface Customer {
   owner?: User;
   assigned_to_id?: number;
   assigned_to?: User;
+  company_id?: number;
+  company_record?: Company;
+  created_at: string;
+  updated_at: string;
+}
+
+export const COMPANY_EMPLOYEE_RANGES = [
+  '1-10',
+  '11-50',
+  '51-200',
+  '201-500',
+  '501-1000',
+  '1000+',
+] as const;
+
+export type CompanyEmployeeRange = (typeof COMPANY_EMPLOYEE_RANGES)[number] | '';
+
+export interface Company {
+  id: number;
+  name: string;
+  domain: string;
+  website: string;
+  industry: string;
+  employee_range: CompanyEmployeeRange;
+  phone: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postal_code: string;
+  notes: string;
+  owner_id?: number;
+  owner?: User;
+  // Only GET /companies/:id reports the counts.
+  customer_count?: number;
+  lead_count?: number;
   created_at: string;
   updated_at: string;
 }

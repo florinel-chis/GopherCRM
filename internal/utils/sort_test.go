@@ -22,6 +22,8 @@ func TestValidateSort_ValidColumns(t *testing.T) {
 		{"customers by last_name desc", "customers", "last_name", "desc", "last_name", "desc"},
 		{"tickets by priority asc", "tickets", "priority", "asc", "priority", "asc"},
 		{"tasks by due_date desc", "tasks", "due_date", "desc", "due_date", "desc"},
+		{"companies by domain asc", "companies", "domain", "asc", "domain", "asc"},
+		{"companies by name desc", "companies", "name", "desc", "name", "desc"},
 	}
 
 	for _, tt := range tests {
@@ -45,6 +47,13 @@ func TestValidateSort_InvalidColumn_ReturnsError(t *testing.T) {
 	_, _, err := ValidateSort("users", "nonexistent", "asc")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid sort column")
+
+	// The companies allowlist is the documented columns plus id: the owner
+	// and phone columns exist but are not sortable, nor are the computed counts.
+	for _, column := range []string{"owner_id", "phone", "customer_count", "lead_count"} {
+		_, _, err := ValidateSort("companies", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable company column", column)
+	}
 }
 
 func TestValidateSort_SQLInjection_ReturnsError(t *testing.T) {

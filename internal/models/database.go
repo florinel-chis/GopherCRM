@@ -44,27 +44,33 @@ func CloseDatabase() error {
 	return nil
 }
 
+// MigrateDatabase brings the schema up to date. database.Migrate wraps the
+// call for SQLite, where adding a foreign key rebuilds the table and has to run
+// with enforcement off; on MySQL and MariaDB it is a plain AutoMigrate.
 func MigrateDatabase() error {
-	return DB.AutoMigrate(
-		&User{},
-		&Lead{},
-		&Customer{},
-		&Ticket{},
-		&Label{},
-		&Task{},
-		&APIKey{},
-		&Configuration{},
-		&RefreshToken{},
-		&PasswordResetToken{},
-		&BulkOperation{},
-		&BulkOperationItem{},
-		&AEOProfile{},
-		&AEOPrompt{},
-		&AEORun{},
-		&AEOAnswer{},
-		&AEOCitation{},
-		&Form{},
-		&FormSubmission{},
-		&FormConfirmationToken{},
-	)
+	return database.Migrate(DB, func(tx *gorm.DB) error {
+		return tx.AutoMigrate(
+			&User{},
+			&Company{},
+			&Lead{},
+			&Customer{},
+			&Ticket{},
+			&Label{},
+			&Task{},
+			&APIKey{},
+			&Configuration{},
+			&RefreshToken{},
+			&PasswordResetToken{},
+			&BulkOperation{},
+			&BulkOperationItem{},
+			&AEOProfile{},
+			&AEOPrompt{},
+			&AEORun{},
+			&AEOAnswer{},
+			&AEOCitation{},
+			&Form{},
+			&FormSubmission{},
+			&FormConfirmationToken{},
+		)
+	})
 }

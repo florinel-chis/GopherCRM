@@ -1,4 +1,4 @@
-import type { User, Lead, Customer, Ticket, Task, Comment, Label } from '@/types';
+import type { User, Lead, Customer, Ticket, Task, Comment, Label, Company } from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
   id: 1,
@@ -103,5 +103,26 @@ export const createMockComment = (overrides?: Partial<Comment>): Comment => ({
   user: createMockUser(),
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
+  ...overrides,
+});
+
+export const createMockCompany = (overrides?: Partial<Company>): Company => ({
+  id: 1,
+  name: 'Acme Widgets',
+  domain: 'acme.example',
+  website: 'https://www.acme.example',
+  industry: 'Manufacturing',
+  employee_range: '51-200',
+  phone: '+40 21 555 0100',
+  address: '1 Foundry Lane',
+  city: 'Cluj',
+  state: 'CJ',
+  country: 'Romania',
+  postal_code: '400001',
+  notes: '',
+  owner_id: 1,
+  owner: createMockUser(),
+  created_at: '2026-09-29T08:00:00Z',
+  updated_at: '2026-09-29T08:00:00Z',
   ...overrides,
 });

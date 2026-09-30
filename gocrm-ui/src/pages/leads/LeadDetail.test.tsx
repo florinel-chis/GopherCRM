@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as LeadDetail } from './LeadDetail';
 import { leadsApi } from '@/api/endpoints';
-import { createMockLead } from '@/test/factories';
+import { createMockLead, createMockCompany } from '@/test/factories';
 import { useNavigate, useParams } from 'react-router-dom';
 
 vi.mock('react-router-dom', async () => {
@@ -41,9 +41,9 @@ describe('LeadDetail conversion', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (useParams as any).mockReturnValue({ id: '1' });
-    (leadsApi.getLead as any).mockResolvedValue(createMockLead({ status: 'qualified', email: '' }));
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '1' });
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ status: 'qualified', email: '' }));
   });
 
   const convertThroughDialog = async () => {
@@ -54,7 +54,7 @@ describe('LeadDetail conversion', () => {
 
   it("shows the server's reason when a conversion is refused", async () => {
     const reason = 'This lead has no email address. Add one before converting it: every customer needs an email.';
-    (leadsApi.convertLead as any).mockRejectedValue({ response: { status: 400, data: { message: reason } } });
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({ response: { status: 400, data: { message: reason } } });
 
     render(<LeadDetail />);
     await convertThroughDialog();
@@ -64,11 +64,44 @@ describe('LeadDetail conversion', () => {
   });
 
   it('falls back to a generic message when the server gives none', async () => {
-    (leadsApi.convertLead as any).mockRejectedValue(new Error('Network Error'));
+    vi.mocked(leadsApi.convertLead).mockRejectedValue(new Error('Network Error'));
 
     render(<LeadDetail />);
     await convertThroughDialog();
 
     await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to convert lead'));
+  });
+});
+
+describe('LeadDetail company', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(vi.fn());
+    vi.mocked(useParams).mockReturnValue({ id: '1' });
+  });
+
+  it('links to the company record when the lead is linked', async () => {
+    vi.mocked(leadsApi.getLead).mockResolvedValue(
+      createMockLead({
+        company_name: 'Acme (as typed)',
+        company_id: 7,
+        company_record: createMockCompany({ id: 7, name: 'Acme Widgets' }),
+      })
+    );
+
+    render(<LeadDetail />);
+
+    const link = await screen.findByRole('link', { name: 'Acme Widgets' });
+    expect(link).toHaveAttribute('href', '/companies/7');
+  });
+
+  it('shows the free-text company when there is no link', async () => {
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ company_name: 'Loose Text Ltd' }));
+
+    render(<LeadDetail />);
+
+    // The header and the Company field both carry the text; neither is a link.
+    expect((await screen.findAllByText('Loose Text Ltd')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'Loose Text Ltd' })).not.toBeInTheDocument();
   });
 });

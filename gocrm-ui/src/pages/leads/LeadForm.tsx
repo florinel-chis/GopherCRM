@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -14,10 +14,12 @@ import {
 } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { FormTextField, FormSelect } from '@/components/form';
+import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useAuth } from '@/hooks/useAuth';
 import { leadsApi, type CreateLeadData, type UpdateLeadData } from '@/api/endpoints';
+import type { Company } from '@/types';
 
 const leadSchema = z
   .object({
@@ -67,6 +69,15 @@ export const Component: React.FC = () => {
   const { user } = useAuth();
   const isEditMode = !!id;
 
+  // The curated link to a Company record, kept next to the free-text
+  // `company_name` (the forms contract). `originalCompanyId` remembers what
+  // the lead was linked to when loaded: clearing it on edit must send
+  // `company_id: 0`, while an untouched, unset link is omitted.
+  const [linkedCompanyId, setLinkedCompanyId] = useState<number | null>(null);
+  const [linkedCompany, setLinkedCompany] = useState<Company | null>(null);
+  const [originalCompanyId, setOriginalCompanyId] = useState<number | null>(null);
+  const [companyError, setCompanyError] = useState<string | null>(null);
+
   const methods = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema),
     defaultValues: {
@@ -86,6 +97,23 @@ export const Component: React.FC = () => {
     enabled: isEditMode,
   });
 
+  // An unknown or deleted company_id comes back as 400 INVALID_REFERENCE with
+  // no details and the field named in the message ("unknown company_id 7:
+  // company not found"); that message belongs on the company picker. The axios
+  // client leaves the envelope's `error` object ({code, message}) in
+  // `response.data`. Returns true when the error was reported here.
+  const reportCompanyReference = (error: unknown): boolean => {
+    const payload = (error as { response?: { data?: { code?: string; message?: string } } })
+      ?.response?.data;
+    const message = typeof payload?.message === 'string' ? payload.message : undefined;
+    if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
+      setCompanyError(message);
+      showError(message);
+      return true;
+    }
+    return false;
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: CreateLeadData) => leadsApi.createLead(data),
     onSuccess: () => {
@@ -94,6 +122,9 @@ export const Component: React.FC = () => {
       navigate('/leads');
     },
     onError: (error: any) => {
+      if (reportCompanyReference(error)) {
+        return;
+      }
       // Handle validation errors
       if (error.response?.data?.details) {
         const validationErrors = error.response.data.details;
@@ -131,6 +162,9 @@ export const Component: React.FC = () => {
       navigate('/leads');
     },
     onError: (error: any) => {
+      if (reportCompanyReference(error)) {
+        return;
+      }
       // Handle validation errors
       if (error.response?.data?.details) {
         const validationErrors = error.response.data.details;
@@ -169,17 +203,44 @@ export const Component: React.FC = () => {
         source: lead.source,
         notes: lead.notes || '',
       });
+      const currentCompanyId = lead.company_id ?? null;
+      setLinkedCompanyId(currentCompanyId);
+      setLinkedCompany(lead.company_record ?? null);
+      setOriginalCompanyId(currentCompanyId);
     }
   }, [lead, methods]);
 
+  const handleCompanyChange = (companyId: number | null, company: Company | null) => {
+    setLinkedCompanyId(companyId);
+    setLinkedCompany(company);
+    setCompanyError(null);
+    // Convenience only: seed the free-text company when it is still blank.
+    if (company && methods.getValues('company_name').trim() === '') {
+      methods.setValue('company_name', company.name, { shouldValidate: true });
+    }
+  };
+
+  // Chosen → send it; cleared on edit after being linked → 0 clears it on
+  // the API; never linked and untouched → omit so the API keeps whatever it has.
+  const companyIdPatch = (): Pick<CreateLeadData, 'company_id'> => {
+    if (linkedCompanyId !== null) {
+      return { company_id: linkedCompanyId };
+    }
+    if (isEditMode && originalCompanyId !== null) {
+      return { company_id: 0 };
+    }
+    return {};
+  };
+
   const onSubmit = (data: LeadFormData) => {
     if (isEditMode) {
-      updateMutation.mutate({ id: Number(id), data });
+      updateMutation.mutate({ id: Number(id), data: { ...data, ...companyIdPatch() } });
     } else {
       // For admin users, include the owner_id (assign to themselves by default)
       const createData: CreateLeadData = {
         ...data,
         ...(user?.role === 'admin' && { owner_id: user.id }),
+        ...companyIdPatch(),
       };
       createMutation.mutate(createData);
     }
@@ -206,7 +267,7 @@ export const Component: React.FC = () => {
               <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
                 <FormTextField
                   name="company_name"
-                  label="Company Name"
+                  label="Company (as entered)"
                   required
                 />
                 <FormTextField
@@ -215,6 +276,14 @@ export const Component: React.FC = () => {
                   required
                 />
               </Box>
+
+              <CompanyAutocomplete
+                value={linkedCompanyId}
+                initialCompany={linkedCompany}
+                onChange={handleCompanyChange}
+                error={companyError !== null}
+                helperText={companyError ?? 'Link this lead to a company record (optional)'}
+              />
 
               <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
                 <FormTextField

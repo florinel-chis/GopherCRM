@@ -35,6 +35,9 @@ type CreateCustomerRequest struct {
 	Country    string `json:"country,omitempty"`
 	PostalCode string `json:"postal_code,omitempty"`
 	Notes      string `json:"notes,omitempty"`
+	// CompanyID links the customer to a company record; 0 or absent means
+	// none. It is independent of the free-text Company field above.
+	CompanyID *uint `json:"company_id,omitempty"`
 }
 
 type UpdateCustomerRequest struct {
@@ -50,6 +53,9 @@ type UpdateCustomerRequest struct {
 	Country    string `json:"country,omitempty"`
 	PostalCode string `json:"postal_code,omitempty"`
 	Notes      string `json:"notes,omitempty"`
+	// CompanyID: absent leaves the link alone, 0 clears it, any other value
+	// must name a live company.
+	CompanyID *uint `json:"company_id,omitempty"`
 }
 
 // AssignCustomerRequest carries the staff account a customer is being handed to.
@@ -68,7 +74,7 @@ var customerExportColumns = []string{
 
 // Create godoc
 // @Summary Create a new customer
-// @Description Create a new customer (admin and sales roles only)
+// @Description Create a new customer (admin and sales roles only). Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -76,7 +82,7 @@ var customerExportColumns = []string{
 // @Security ApiKeyAuth
 // @Param request body CreateCustomerRequest true "Customer creation request"
 // @Success 201 {object} utils.APIResponse{data=models.Customer} "Customer created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or an unknown company_id (INVALID_REFERENCE)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Customer with this email already exists"
@@ -114,12 +120,20 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 		PostalCode: req.PostalCode,
 		Notes:      req.Notes,
 	}
+	if req.CompanyID != nil && *req.CompanyID != 0 {
+		customer.CompanyID = req.CompanyID
+	}
 
 	if err := h.customerService.Create(customer); err != nil {
 		logger.WithError(err).Error("Failed to create customer")
-		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+		switch {
+		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
-		} else {
+		case errors.Is(err, apperrors.ErrCompanyNotFound):
+			// A bad company id is a bad reference in the body, not a missing
+			// resource at the requested path, so it is a 400 like label_ids.
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+		default:
 			utils.RespondInternalError(c)
 		}
 		return
@@ -270,7 +284,7 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a customer
-// @Description Update a customer (admin and sales roles only). Only non-empty fields in the request are applied; empty fields leave the stored value unchanged.
+// @Description Update a customer (admin and sales roles only). Only non-empty fields in the request are applied; empty fields leave the stored value unchanged. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -279,7 +293,7 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 // @Param id path int true "Customer ID"
 // @Param request body UpdateCustomerRequest true "Customer update request"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data, or an unknown company_id (INVALID_REFERENCE)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
@@ -361,12 +375,24 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	if req.Notes != "" {
 		customer.Notes = req.Notes
 	}
+	// The scalar counterpart of the label_ids rule: absent keeps, 0 clears.
+	if req.CompanyID != nil {
+		if *req.CompanyID == 0 {
+			customer.CompanyID = nil
+		} else {
+			customer.CompanyID = req.CompanyID
+		}
+		customer.CompanyRecord = nil
+	}
 
 	if err := h.customerService.Update(customer); err != nil {
 		logger.WithError(err).Error("Failed to update customer")
-		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+		switch {
+		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
-		} else {
+		case errors.Is(err, apperrors.ErrCompanyNotFound):
+			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
+		default:
 			utils.RespondInternalError(c)
 		}
 		return

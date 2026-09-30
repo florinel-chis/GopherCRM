@@ -28,6 +28,12 @@ type Customer struct {
 	AssignedToID *uint `json:"assigned_to_id,omitempty"`
 	AssignedTo   *User `gorm:"foreignKey:AssignedToID" json:"assigned_to,omitempty"`
 
+	// CompanyID links the customer to a curated Company record. Like
+	// AssignedToID it is a business link, not personal data, so the erasure in
+	// repository/customer_repository.go leaves it alone. The free-text Company
+	// column above stays as entered.
+	CompanyID     *uint    `gorm:"index" json:"company_id,omitempty"`
+	CompanyRecord *Company `gorm:"foreignKey:CompanyID" json:"company_record,omitempty"`
 
 	Tickets      []Ticket `gorm:"foreignKey:CustomerID" json:"tickets,omitempty"`
 }

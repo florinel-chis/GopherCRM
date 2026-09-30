@@ -43,7 +43,7 @@ func (s *BulkOperationPersistenceSuite) SetupTest() {
 	// tables would make every user deletion fail.
 	s.Require().NoError(db.AutoMigrate(
 		&models.User{},
-		&models.Lead{},
+		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		&models.Ticket{},
 		&models.Task{},
@@ -424,6 +424,7 @@ func (s *BulkOperationPersistenceSuite) TestBulkDeleteCustomers_ErasesTheOrigina
 	leadService := NewLeadService(
 		repository.NewLeadRepository(s.db),
 		repository.NewCustomerRepository(s.db),
+		repository.NewCompanyRepository(s.db),
 		utils.NewTransactionManager(s.db),
 	)
 	customer, err := leadService.ConvertToCustomer(lead.ID, &models.Customer{})
@@ -458,6 +459,7 @@ func (s *BulkOperationPersistenceSuite) TestBulkDeleteLeads_ErasesTheConvertedCu
 	leadService := NewLeadService(
 		repository.NewLeadRepository(s.db),
 		repository.NewCustomerRepository(s.db),
+		repository.NewCompanyRepository(s.db),
 		utils.NewTransactionManager(s.db),
 	)
 	customer, err := leadService.ConvertToCustomer(lead.ID, &models.Customer{})

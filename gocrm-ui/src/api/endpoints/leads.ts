@@ -18,12 +18,16 @@ export interface CreateLeadData {
   source: string;
   notes?: string;
   owner_id?: number;
+  // Link to a Company record. On update, 0 clears the link and an absent
+  // field keeps it (the scalar counterpart of the task label rule).
+  company_id?: number;
 }
 
 export type UpdateLeadData = Partial<CreateLeadData>;
 
-// Helper function to transform backend lead to frontend format
-const transformLeadFromBackend = (backendLead: any): Lead => {
+// Helper function to transform backend lead to frontend format. Exported for
+// the company sub-resource endpoint, which returns the same raw rows.
+export const transformLeadFromBackend = (backendLead: any): Lead => {
   return {
     ...backendLead,
     company_name: backendLead.company || '',
@@ -68,6 +72,9 @@ export const leadsApi = {
     if (data.owner_id !== undefined) {
       transformedData.owner_id = data.owner_id;
     }
+    if (data.company_id !== undefined) {
+      transformedData.company_id = data.company_id;
+    }
     
     const response = await api.post<any>('/leads', transformedData);
     return transformLeadFromBackend(response.data);
@@ -89,6 +96,7 @@ export const leadsApi = {
     if (data.status !== undefined) transformedData.status = data.status;
     if (data.source !== undefined) transformedData.source = data.source;
     if (data.notes !== undefined) transformedData.notes = data.notes;
+    if (data.company_id !== undefined) transformedData.company_id = data.company_id;
     
     const response = await api.put<any>(`/leads/${id}`, transformedData);
     return transformLeadFromBackend(response.data);

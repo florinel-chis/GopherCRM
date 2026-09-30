@@ -24,7 +24,7 @@ import (
 
 // @title GopherCRM API
 // @version 1.2.0
-// @description CRM API for managing users, leads, customers, tickets, tasks and API keys.
+// @description CRM API for managing users, leads, customers, companies, tickets, tasks and API keys.
 // @BasePath /api/v1
 
 // @securityDefinitions.apikey BearerAuth
@@ -181,6 +181,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	ticketRepo := repository.NewTicketRepository(models.DB)
 	taskRepo := repository.NewTaskRepository(models.DB)
 	labelRepo := repository.NewLabelRepository(models.DB)
+	companyRepo := repository.NewCompanyRepository(models.DB)
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)
 	configRepo := repository.NewConfigurationRepository(models.DB)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(models.DB)
@@ -197,8 +198,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(models.DB)
-	leadService := service.NewLeadService(leadRepo, customerRepo, txManager)
-	customerService := service.NewCustomerService(customerRepo, userRepo)
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
+	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
 	labelService := service.NewLabelService(labelRepo)
@@ -245,6 +247,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	taskHandler := handler.NewTaskHandler(taskService)
 	labelHandler := handler.NewLabelHandler(labelService)
+	companyHandler := handler.NewCompanyHandler(companyService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService)
@@ -309,6 +312,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupUserRoutes(protected, userHandler)
 		handler.SetupLeadRoutes(protected, leadHandler)
 		handler.SetupCustomerRoutes(protected, customerHandler)
+		handler.SetupCompanyRoutes(protected, companyHandler)
 		handler.SetupTicketRoutes(protected, ticketHandler)
 		handler.SetupTaskRoutes(protected, taskHandler)
 		handler.SetupLabelRoutes(protected, labelHandler)

@@ -107,6 +107,17 @@ vi.mock('@/api/endpoints/customers', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/companies', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/companies')>();
+  return {
+    ...actual,
+    companiesApi: {
+      ...actual.companiesApi,
+      getCompanies: vi.fn().mockResolvedValue({ companies: [], total: 0 }),
+    },
+  };
+});
+
 vi.mock('@/api/endpoints/tickets', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/endpoints/tickets')>();
   return {
@@ -250,6 +261,70 @@ describe('ticket routes', () => {
 
     expect(
       await screen.findByRole('heading', { name: 'Tickets' }, { timeout: 15000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+  }, 20000);
+});
+
+// Companies are admin/sales/support on the API; writes are admin/sales. The
+// list and detail sit under one pathless guard, the forms under a nested,
+// narrower one, so a support deep link to the form is refused.
+describe('company routes', () => {
+  beforeEach(() => {
+    authUser = null;
+  });
+
+  it.each(['admin', 'sales', 'support'] as const)(
+    'lets a %s user reach the company list',
+    async (role) => {
+      authUser = createMockUser({ role });
+
+      renderAt('/companies');
+
+      expect(
+        await screen.findByRole('heading', { name: 'Companies' }, { timeout: 15000 })
+      ).toBeInTheDocument();
+      expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
+    },
+    20000
+  );
+
+  it.each(['/companies', '/companies/1', '/companies/new', '/companies/1/edit'])(
+    'blocks a customer user from %s',
+    async (path) => {
+      authUser = createMockUser({ role: 'customer' });
+
+      renderAt(path);
+
+      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    }
+  );
+
+  it.each(['/companies/new', '/companies/1/edit'])(
+    'blocks a support user from %s',
+    async (path) => {
+      authUser = createMockUser({ role: 'support' });
+
+      renderAt(path);
+
+      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', { name: /company/i })
+      ).not.toBeInTheDocument();
+    }
+  );
+
+  it('lets a sales user reach the company create form', async () => {
+    authUser = createMockUser({ role: 'sales' });
+
+    renderAt('/companies/new');
+
+    expect(
+      await screen.findByRole(
+        'heading',
+        { name: 'Create New Company' },
+        { timeout: 15000 }
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText('Access Denied')).not.toBeInTheDocument();
   }, 20000);
