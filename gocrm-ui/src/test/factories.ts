@@ -1,4 +1,15 @@
-import type { User, Lead, Customer, Ticket, Task, Comment, Label, Company } from '@/types';
+import type {
+  User,
+  Lead,
+  Customer,
+  Ticket,
+  Task,
+  Comment,
+  Label,
+  Company,
+  Deal,
+  DealStageChange,
+} from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
   id: 1,
@@ -124,5 +135,37 @@ export const createMockCompany = (overrides?: Partial<Company>): Company => ({
   owner: createMockUser(),
   created_at: '2026-09-29T08:00:00Z',
   updated_at: '2026-09-29T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockDeal = (overrides?: Partial<Deal>): Deal => ({
+  id: 1,
+  title: 'Website redesign',
+  stage: 'qualification',
+  amount_cents: 1250000,
+  currency: 'EUR',
+  probability: 10,
+  expected_close_date: '2026-12-15',
+  closed_at: null,
+  lost_reason: '',
+  source: 'referral',
+  notes: '',
+  owner_id: 1,
+  owner: createMockUser(),
+  created_at: '2026-09-29T08:00:00Z',
+  updated_at: '2026-09-29T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockDealStageChange = (
+  overrides?: Partial<DealStageChange>
+): DealStageChange => ({
+  id: 1,
+  deal_id: 1,
+  from_stage: null,
+  to_stage: 'qualification',
+  changed_by_id: 1,
+  changed_by: { id: 1, first_name: 'Test', last_name: 'User', email: 'test@example.com' },
+  changed_at: '2026-09-29T08:00:00Z',
   ...overrides,
 });
