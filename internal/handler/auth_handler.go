@@ -82,13 +82,14 @@ type MessageResponse struct {
 
 // Register godoc
 // @Summary Register a new account
-// @Description Public self-service registration. The account is always created with the customer role — the request body carries no role field and no client input can influence it. Elevated roles are assignable only through the admin-guarded POST /users endpoint. On success a JWT for the new account is returned alongside the user. The password must be at least 10 characters and contain an uppercase letter, a lowercase letter, a digit and a special character.
+// @Description Public self-service registration, available only while the security.allow_public_registration configuration is enabled (it ships disabled; GET /auth/registration reports the current state). The account is always created with the customer role — the request body carries no role field and no client input can influence it. Elevated roles are assignable only through the admin-guarded POST /users endpoint. On success a JWT for the new account is returned alongside the user. The password must be at least 10 characters and contain an uppercase letter, a lowercase letter, a digit and a special character.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body RegisterRequest true "Registration request"
 // @Success 201 {object} utils.APIResponse{data=AuthResponse} "Account created; JWT and user returned"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Malformed body, failed field validation, or password complexity not met"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Public registration is disabled (security.allow_public_registration)"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A user with this email already exists"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Rate limit exceeded (10 requests per minute per IP)"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"

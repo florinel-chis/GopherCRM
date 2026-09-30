@@ -427,9 +427,14 @@ returns the unified envelope `{ success, data, error, meta }`.
 `GET /health` is served outside the API prefix and needs no authentication.
 
 ### Authentication (public)
-- `POST /api/v1/auth/register` - Register a new user. **Always creates a `customer`**; a
+- `POST /api/v1/auth/register` - Register a new user. **Gated by the
+  `security.allow_public_registration` configuration, which ships disabled** — while off, the
+  endpoint answers `403` and the login page offers no sign-up (an administrator can turn it on
+  under Settings > Configuration). **Always creates a `customer`**; a
   client-supplied role is ignored. Password policy: min 10 chars with upper, lower, digit and
   special character. A duplicate email returns `409`.
+- `GET /api/v1/auth/registration` - Report whether public registration is currently open
+  (`{"enabled": bool}`), for the login/register screens; no authentication required.
 - `POST /api/v1/auth/login` - User login. Returns an access token and a rotating refresh token.
 - `POST /api/v1/auth/refresh` - Exchange a refresh token for a new token pair. Rotation is strict:
   the presented token is revoked, replaying it returns `401`.

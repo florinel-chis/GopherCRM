@@ -1894,6 +1894,11 @@ definitions:
     - last_name
     - password
     type: object
+  internal_handler.RegistrationStatusResponse:
+    properties:
+      enabled:
+        type: boolean
+    type: object
   internal_handler.SaveAEOProfileRequest:
     properties:
       brand_aliases:
@@ -4302,12 +4307,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: Public self-service registration. The account is always created
-        with the customer role — the request body carries no role field and no client
-        input can influence it. Elevated roles are assignable only through the admin-guarded
-        POST /users endpoint. On success a JWT for the new account is returned alongside
-        the user. The password must be at least 10 characters and contain an uppercase
-        letter, a lowercase letter, a digit and a special character.
+      description: Public self-service registration, available only while the security.allow_public_registration
+        configuration is enabled (it ships disabled; GET /auth/registration reports
+        the current state). The account is always created with the customer role —
+        the request body carries no role field and no client input can influence it.
+        Elevated roles are assignable only through the admin-guarded POST /users endpoint.
+        On success a JWT for the new account is returned alongside the user. The password
+        must be at least 10 characters and contain an uppercase letter, a lowercase
+        letter, a digit and a special character.
       parameters:
       - description: Registration request
         in: body
@@ -4330,6 +4337,15 @@ paths:
         "400":
           description: Malformed body, failed field validation, or password complexity
             not met
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Public registration is disabled (security.allow_public_registration)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -4365,6 +4381,37 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
       summary: Register a new account
+      tags:
+      - auth
+  /auth/registration:
+    get:
+      description: Public, unauthenticated probe of the security.allow_public_registration
+        configuration, for the login and registration screens to decide whether to
+        offer sign-up (the authenticated /configurations/ui endpoint cannot serve
+        a visitor who has no session yet). A configuration read failure is reported
+        as disabled — the same answer the gate on POST /auth/register would enforce.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Whether POST /auth/register accepts sign-ups
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.RegistrationStatusResponse'
+              type: object
+        "429":
+          description: Rate limit exceeded (10 requests per minute per IP)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Report whether public registration is open
       tags:
       - auth
   /companies:
