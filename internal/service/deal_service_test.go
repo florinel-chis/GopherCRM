@@ -544,6 +544,80 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 	assert.True(t, errors.Is(err, apperrors.ErrNotFound))
 }
 
+// A deal keeps its links when the customer, the lead or the owning user behind
+// them is erased (erasure soft-deletes the row), and it must stay editable: an
+// update that leaves the links as they are goes through, a link the request
+// clears is cleared, and a link the request sets is still checked against the
+// live rows.
+func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
+	db := setupDealServiceDB(t)
+	// Erasure purges the owner's credentials and scrubs the lead's form
+	// submissions in the same transaction, so those tables have to exist.
+	require.NoError(t, db.AutoMigrate(&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{},
+		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
+	owner := seedDealOwner(t, db)
+	actor := &models.User{Email: "deal-editor@example.com", Password: "x", FirstName: "A", LastName: "D", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, db.Create(actor).Error)
+	customer := &models.Customer{FirstName: "Erased", LastName: "Customer", Email: "erased-customer@example.com"}
+	require.NoError(t, db.Create(customer).Error)
+	lead := &models.Lead{FirstName: "Erased", LastName: "Lead", Email: "erased-lead@example.com", OwnerID: owner.ID}
+	require.NoError(t, db.Create(lead).Error)
+	svc := newRealDealService(t, db, repository.NewDealRepository(db), &stubCurrency{value: "EUR"})
+
+	deal := &models.Deal{Title: "Outlives its links", OwnerID: owner.ID, CustomerID: &customer.ID, LeadID: &lead.ID}
+	require.NoError(t, svc.Create(deal, nil, actor.ID))
+
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, repository.NewUserRepository(db).Delete(owner.ID))
+
+	// The handler hands over the stored deal with the body applied; a link
+	// absent from the body is exactly as stored.
+	stored, err := svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
+	stored.Title = "Edited after the erasure"
+	require.NoError(t, svc.Update(stored, nil, actor.ID), "links the request did not set are not re-checked")
+
+	stored, err = svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Edited after the erasure", stored.Title)
+	require.NotNil(t, stored.CustomerID)
+	assert.Equal(t, customer.ID, *stored.CustomerID, "the link to the erased customer is kept")
+	require.NotNil(t, stored.LeadID)
+	assert.Equal(t, lead.ID, *stored.LeadID, "the link to the erased lead is kept")
+	assert.Equal(t, owner.ID, stored.OwnerID, "the erased owner is kept")
+	assert.Len(t, historyOf(t, db, deal.ID), 1, "a same-stage edit writes no history row")
+
+	// A link the request does set is still checked: an unknown customer is
+	// refused, 0 (nil on the deal) clears, a live customer is taken.
+	unknown := uint(999999)
+	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
+	stored.CustomerID = &unknown
+	err = svc.Update(stored, nil, actor.ID)
+	assert.True(t, errors.Is(err, apperrors.ErrCustomerNotFound), "got %v", err)
+
+	stored, err = svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
+	stored.CustomerID = nil
+	require.NoError(t, svc.Update(stored, nil, actor.ID))
+	stored, err = svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.CustomerID, "clearing the link to an erased customer still works")
+	require.NotNil(t, stored.LeadID, "the other links are untouched")
+
+	live := &models.Customer{FirstName: "Live", LastName: "Customer", Email: "live-customer@example.com"}
+	require.NoError(t, db.Create(live).Error)
+	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
+	stored.CustomerID = &live.ID
+	require.NoError(t, svc.Update(stored, nil, actor.ID))
+	stored, err = svc.GetByID(deal.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.CustomerID)
+	assert.Equal(t, live.ID, *stored.CustomerID, "a live customer replaces the erased one")
+}
+
 func TestDealService_DeleteIsSoftAndHistoryStays(t *testing.T) {
 	db := setupDealServiceDB(t)
 	owner := seedDealOwner(t, db)

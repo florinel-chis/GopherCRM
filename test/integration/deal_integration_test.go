@@ -468,6 +468,35 @@ func (suite *DealIntegrationTestSuite) TestDefaultCurrencyFollowsTheConfiguratio
 	assert.Equal(suite.T(), "USD", explicit["currency"], "an explicit currency wins")
 }
 
+// Erasing the customer behind a deal keeps the link, and the deal stays
+// editable: a PUT that does not name the link leaves it alone and unchecked; a
+// link the body does set is still checked against the live rows, and 0 clears.
+func (suite *DealIntegrationTestSuite) TestUpdateSurvivesTheErasureOfALinkedCustomer() {
+	status, envelope := suite.call(http.MethodPost, "/customers", suite.adminToken, map[string]interface{}{
+		"first_name": "Soon", "last_name": "Erased", "email": "erased-deal-customer@example.com",
+	})
+	suite.Require().Equal(http.StatusCreated, status, "%v", envelope.Error)
+	customerID := idOf(envelope)
+	id, _ := suite.createDeal(suite.adminToken, map[string]interface{}{"title": "Outlives the customer", "customer_id": customerID})
+
+	status, _ = suite.call(http.MethodDelete, fmt.Sprintf("/customers/%d", customerID), suite.adminToken, nil)
+	suite.Require().Equal(http.StatusNoContent, status)
+
+	status, envelope = suite.call(http.MethodPut, fmt.Sprintf("/deals/%d", id), suite.adminToken, map[string]interface{}{"title": "Edited after the erasure"})
+	suite.Require().Equal(http.StatusOK, status, "a PUT without customer_id must not re-check the erased link: %v", envelope.Error)
+	assert.Equal(suite.T(), "Edited after the erasure", dataMap(envelope)["title"])
+	assert.Equal(suite.T(), float64(customerID), dataMap(envelope)["customer_id"], "the link is kept")
+	assert.Nil(suite.T(), dataMap(envelope)["customer"], "the erased customer is not preloaded")
+
+	status, envelope = suite.call(http.MethodPut, fmt.Sprintf("/deals/%d", id), suite.adminToken, map[string]interface{}{"title": "X", "customer_id": 999999})
+	assert.Equal(suite.T(), http.StatusBadRequest, status)
+	assert.Equal(suite.T(), apperrors.CodeInvalidReference, envelope.Error.Code, "a link the body sets is still checked")
+
+	status, envelope = suite.call(http.MethodPut, fmt.Sprintf("/deals/%d", id), suite.adminToken, map[string]interface{}{"title": "Unlinked", "customer_id": 0})
+	suite.Require().Equal(http.StatusOK, status, "%v", envelope.Error)
+	assert.Nil(suite.T(), dataMap(envelope)["customer_id"], "0 still clears the link")
+}
+
 func TestDealIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(DealIntegrationTestSuite))
 }
