@@ -561,6 +561,54 @@ definitions:
       updated_at:
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealDashboardPipeline:
+    properties:
+      stages:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage'
+        type: array
+      won_this_month:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealWonSummary'
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealPipeline:
+    properties:
+      stages:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage'
+        type: array
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage:
+    properties:
+      count:
+        example: 3
+        type: integer
+      stage:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealStage'
+        example: proposal
+      totals:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineTotal'
+        type: array
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealPipelineTotal:
+    properties:
+      amount_cents:
+        description: |-
+          AmountCents is the sum of amount_cents of the stage's deals in this
+          currency.
+        example: 1250000
+        type: integer
+      currency:
+        example: EUR
+        type: string
+      weighted_cents:
+        description: |-
+          WeightedCents is round_half_up(Σ amount_cents × probability / 100),
+          rounded once on the sum.
+        example: 500000
+        type: integer
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.DealStage:
     enum:
     - qualification
@@ -591,6 +639,25 @@ definitions:
         type: integer
       to_stage:
         $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealStage'
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealWonSummary:
+    properties:
+      count:
+        example: 2
+        type: integer
+      totals:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealWonTotal'
+        type: array
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.DealWonTotal:
+    properties:
+      amount_cents:
+        example: 990000
+        type: integer
+      currency:
+        example: EUR
+        type: string
     type: object
   github_com_florinel-chis_gophercrm_internal_models.Form:
     properties:
@@ -6575,6 +6642,76 @@ paths:
       summary: Newest leads
       tags:
       - dashboard
+  /dashboard/pipeline:
+    get:
+      description: 'The pipeline widget and the won-this-month tile of the dashboard.
+        Admin sees every live deal, sales only its own. Support passes the dashboard
+        guard but has no access to deals and gets 403, as does the customer role.
+        data.stages is the same payload as GET /deals/pipeline without filters: all
+        five stages in pipeline order (qualification, proposal, negotiation, won,
+        lost), each present even when empty, with count and per-currency totals of
+        amount_cents and weighted_cents = round_half_up(sum of amount_cents × probability
+        / 100), rounded once per stage-and-currency total. data.won_this_month counts
+        the deals in the won stage whose closed_at falls in the current calendar month
+        in UTC (from the first instant of the month, inclusive, to the first instant
+        of the next, exclusive), with the amounts per currency. Amounts in different
+        currencies are never added together; totals are sorted by currency code and
+        empty lists are [], never null.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pipeline widgets retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealDashboardPipeline'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin or sales role required (support has no access
+            to deals)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Deal pipeline and won-this-month widgets
+      tags:
+      - dashboard
   /dashboard/recent-tickets:
     get:
       description: 'The most recently created tickets, as a bare array ordered by
@@ -7662,6 +7799,93 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: Move a deal to another stage
+      tags:
+      - deals
+  /deals/pipeline:
+    get:
+      description: The live deals aggregated per stage (admin and sales roles; sales
+        users always get their own deals only, whatever owner_id says, as on GET /deals).
+        data.stages lists all five stages in pipeline order — qualification, proposal,
+        negotiation, won, lost — each present even when empty (count 0, totals []).
+        count is the number of deals in the stage; totals holds one entry per currency,
+        sorted by currency code, and amounts in different currencies are never added
+        together. amount_cents is the sum of the deals' amounts; weighted_cents is
+        round_half_up(sum of amount_cents × probability / 100), computed with integer
+        arithmetic and rounded once on each stage-and-currency total, not per deal.
+        Soft-deleted deals are not counted. owner_id (admin only) and company_id narrow
+        the aggregate; a malformed or zero id is a 400, as on the list, and an id
+        that matches nothing yields empty stages.
+      parameters:
+      - description: Only deals owned by this user (admin; sales is always narrowed
+          to itself)
+        in: query
+        name: owner_id
+        type: integer
+      - description: Only deals linked to this company
+        in: query
+        name: company_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pipeline retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipeline'
+              type: object
+        "400":
+          description: owner_id or company_id is not a positive integer
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Deal pipeline by stage
       tags:
       - deals
   /forms:

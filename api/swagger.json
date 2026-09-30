@@ -7921,6 +7921,118 @@
                 }
             }
         },
+        "/dashboard/pipeline": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "The pipeline widget and the won-this-month tile of the dashboard. Admin sees every live deal, sales only its own. Support passes the dashboard guard but has no access to deals and gets 403, as does the customer role. data.stages is the same payload as GET /deals/pipeline without filters: all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty, with count and per-currency totals of amount_cents and weighted_cents = round_half_up(sum of amount_cents × probability / 100), rounded once per stage-and-currency total. data.won_this_month counts the deals in the won stage whose closed_at falls in the current calendar month in UTC (from the first instant of the month, inclusive, to the first instant of the next, exclusive), with the amounts per currency. Amounts in different currencies are never added together; totals are sorted by currency code and empty lists are [], never null.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Deal pipeline and won-this-month widgets",
+                "responses": {
+                    "200": {
+                        "description": "Pipeline widgets retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealDashboardPipeline"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden - admin or sales role required (support has no access to deals)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests - rate limit exceeded",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/dashboard/recent-tickets": {
             "get": {
                 "security": [
@@ -8953,6 +9065,150 @@
                     },
                     "403": {
                         "description": "Forbidden - admin or sales role required; sales may only own deals themselves",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests - rate limit exceeded",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/deals/pipeline": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "The live deals aggregated per stage (admin and sales roles; sales users always get their own deals only, whatever owner_id says, as on GET /deals). data.stages lists all five stages in pipeline order — qualification, proposal, negotiation, won, lost — each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code, and amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents × probability / 100), computed with integer arithmetic and rounded once on each stage-and-currency total, not per deal. Soft-deleted deals are not counted. owner_id (admin only) and company_id narrow the aggregate; a malformed or zero id is a 400, as on the list, and an id that matches nothing yields empty stages.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deals"
+                ],
+                "summary": "Deal pipeline by stage",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only deals owned by this user (admin; sales is always narrowed to itself)",
+                        "name": "owner_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only deals linked to this company",
+                        "name": "company_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pipeline retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipeline"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "owner_id or company_id is not a positive integer",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden - admin or sales role required",
                         "schema": {
                             "allOf": [
                                 {
@@ -16957,6 +17213,73 @@
                 }
             }
         },
+        "github_com_florinel-chis_gophercrm_internal_models.DealDashboardPipeline": {
+            "type": "object",
+            "properties": {
+                "stages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage"
+                    }
+                },
+                "won_this_month": {
+                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealWonSummary"
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.DealPipeline": {
+            "type": "object",
+            "properties": {
+                "stages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage"
+                    }
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.DealPipelineStage": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "stage": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealStage"
+                        }
+                    ],
+                    "example": "proposal"
+                },
+                "totals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealPipelineTotal"
+                    }
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.DealPipelineTotal": {
+            "type": "object",
+            "properties": {
+                "amount_cents": {
+                    "description": "AmountCents is the sum of amount_cents of the stage's deals in this\ncurrency.",
+                    "type": "integer",
+                    "example": 1250000
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "weighted_cents": {
+                    "description": "WeightedCents is round_half_up(Σ amount_cents × probability / 100),\nrounded once on the sum.",
+                    "type": "integer",
+                    "example": 500000
+                }
+            }
+        },
         "github_com_florinel-chis_gophercrm_internal_models.DealStage": {
             "type": "string",
             "enum": [
@@ -16997,6 +17320,34 @@
                 },
                 "to_stage": {
                     "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealStage"
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.DealWonSummary": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "totals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.DealWonTotal"
+                    }
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.DealWonTotal": {
+            "type": "object",
+            "properties": {
+                "amount_cents": {
+                    "type": "integer",
+                    "example": 990000
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
                 }
             }
         },
