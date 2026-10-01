@@ -56,9 +56,10 @@ jobs:
         run: make verify-frontend
 
   e2e:
-    # One leg per database engine: MySQL 8, and MariaDB 10.11, which is what
-    # production runs. Both are required checks, so nothing reaches main (and
-    # the automated deploy) without passing on production's own engine.
+    # One leg per database engine: MySQL 8; MariaDB 10.11, which is what
+    # production runs; and SQLite, a supported production backend since 1.2.0.
+    # The MySQL and MariaDB legs are required checks, so nothing reaches main
+    # (and the automated deploy) without passing on production's own engine.
     name: E2E (Playwright on ${{ matrix.db.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -68,12 +69,21 @@ jobs:
         db:
           - name: MySQL 8
             id: mysql8
+            driver: mysql
             image: mysql:8.0
             health: mysqladmin ping -h 127.0.0.1 -pe2e-root-password
           - name: MariaDB 10.11
             id: mariadb1011
+            driver: mysql
             image: mariadb:10.11
             health: healthcheck.sh --connect --innodb_initialized
+          # No server: the runner skips a service whose image is empty, and
+          # run.sh gives the backend a new SQLite file instead.
+          - name: SQLite
+            id: sqlite
+            driver: sqlite
+            image: ''
+            health: ''
     services:
       db:
         image: ${{ matrix.db.image }}
@@ -89,7 +99,9 @@ jobs:
           --health-cmd="${{ matrix.db.health }}"
           --health-interval=5s --health-timeout=5s --health-retries=30
     env:
+      E2E_DB_DRIVER: ${{ matrix.db.driver }}
       # A throwaway database in a service container; these are not secrets.
+      # The sqlite leg ignores them.
       DB_HOST: 127.0.0.1
       DB_PORT: '3306'
       DB_USER: gophercrm
@@ -111,8 +123,9 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Generate a per-run JWT secret
         run: echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> "$GITHUB_ENV"
-      # The same script as `make e2e` locally: reset gocrm_e2e, start the backend
-      # on a free port, run Playwright with no retries, always stop the backend.
+      # The same script as `make e2e` locally: reset gocrm_e2e (or, on the
+      # sqlite leg, use a new SQLite file), start the backend on a free port,
+      # run Playwright with no retries, always stop the backend.
       - name: Run e2e
         run: make e2e
       - name: Upload Playwright report and backend log
