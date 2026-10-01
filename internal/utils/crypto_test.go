@@ -116,3 +116,43 @@ func TestMigrationPath(t *testing.T) {
 		assert.True(t, IsHMACHash(hmacHash))
 	})
 }
+
+// The expected values below were computed outside Go:
+//
+//	printf '%s' test-api-key-value | openssl dgst -sha256 -hmac test-secret-for-hmac
+//	printf '%s' test-api-key-value | openssl dgst -sha256 -hmac wrong-secret
+//	printf '%s' test-api-key-value | shasum -a 256
+//
+// Stored API key hashes depend on these exact outputs, so any change to the
+// hashing breaks every issued key.
+const (
+	vectorKey             = "test-api-key-value"
+	vectorSecret          = "test-secret-for-hmac"
+	vectorHMAC            = "hmac$a6f6563d9982bc355812f93f148588e85cc4f92c0fd7bed8e93e7e7164c6323c"
+	vectorHMACOtherSecret = "hmac$97d323897ac8141e0b33eeb88c2623df1f6098e3c41be11a4e7d07279ce98830"
+	vectorLegacySHA256    = "5b918bc91303c604e6bdfdad525f6a7b41bd905703e47c377b6998f61f9fc9d9"
+)
+
+func TestHashAPIKeyHMAC_FixedVector(t *testing.T) {
+	t.Run("matches the reference HMAC-SHA256 with the hmac$ prefix", func(t *testing.T) {
+		assert.Equal(t, vectorHMAC, HashAPIKeyHMAC(vectorKey, vectorSecret))
+	})
+
+	t.Run("strips the gcrm_ prefix before hashing", func(t *testing.T) {
+		assert.Equal(t, vectorHMAC, HashAPIKeyHMAC("gcrm_"+vectorKey, vectorSecret))
+	})
+
+	t.Run("is keyed by the secret", func(t *testing.T) {
+		assert.Equal(t, vectorHMACOtherSecret, HashAPIKeyHMAC(vectorKey, "wrong-secret"))
+	})
+}
+
+func TestHashAPIKey_FixedVector(t *testing.T) {
+	t.Run("matches the reference SHA-256 without a prefix", func(t *testing.T) {
+		assert.Equal(t, vectorLegacySHA256, HashAPIKey(vectorKey))
+	})
+
+	t.Run("strips the gcrm_ prefix before hashing", func(t *testing.T) {
+		assert.Equal(t, vectorLegacySHA256, HashAPIKey("gcrm_"+vectorKey))
+	})
+}
