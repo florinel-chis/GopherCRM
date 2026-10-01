@@ -18,7 +18,9 @@ import {
   IconButton,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
+import { authApi } from '@/api/endpoints';
 import type { LoginRequest } from '@/types';
 
 const loginSchema = z.object({
@@ -35,6 +37,15 @@ export const Login: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const from = location.state?.from?.pathname || '/';
+
+  // Sign-up is offered only when the backend confirms it is open: while the
+  // probe is loading or failing, the link stays hidden — the backend would
+  // refuse the registration anyway.
+  const { data: registrationStatus } = useQuery({
+    queryKey: ['registration-status'],
+    queryFn: authApi.getRegistrationStatus,
+  });
+  const registrationOpen = registrationStatus?.enabled === true;
 
   const {
     register,
@@ -138,9 +149,11 @@ export const Login: React.FC = () => {
               <Link component={RouterLink} to="/forgot-password" variant="body2">
                 Forgot password?
               </Link>
-              <Link component={RouterLink} to="/register" variant="body2">
-                Don't have an account? Sign Up
-              </Link>
+              {registrationOpen && (
+                <Link component={RouterLink} to="/register" variant="body2">
+                  Don't have an account? Sign Up
+                </Link>
+              )}
             </Box>
           </Box>
         </Paper>

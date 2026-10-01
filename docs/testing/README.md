@@ -15,7 +15,7 @@ that the test was executed as part of writing this catalog.
 
 | Document | Area | Cases | P0 | P1 | P2 | Automated | Planned | Blocked |
 |---|---|---|---|---|---|---|---|---|
-| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset | 44 | 11 | 18 | 15 | 22 | 19 | 3 |
+| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 26 | 19 | 3 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 42 | 11 | 18 | 13 | 2 | 31 | 9 |
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 58 | 14 | 28 | 16 | 18 | 31 | 9 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 41 | 14 | 15 | 12 | 10 | 21 | 10 |
@@ -28,7 +28,7 @@ that the test was executed as part of writing this catalog.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
-| **Total** | | **547** | **160** | **243** | **144** | **136** | **327** | **84** |
+| **Total** | | **551** | **161** | **246** | **144** | **140** | **327** | **84** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

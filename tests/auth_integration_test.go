@@ -365,3 +365,42 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 func TestAuthIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthIntegrationTestSuite))
 }
+// cmd/main.go mounts POST /auth/register behind
+// middleware.RequireRegistrationEnabled. The suite's shared router mounts the
+// bare handler, so this test builds the gated route the way main.go does,
+// against a real configuration service on the suite database: the shipped
+// default answers 403, and flipping security.allow_public_registration opens
+// the endpoint.
+func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint_GatedByConfiguration() {
+	suite.NoError(suite.db.AutoMigrate(&models.Configuration{}))
+	configService := service.NewConfigurationService(repository.NewConfigurationRepository(suite.db), nil)
+	suite.NoError(configService.InitializeDefaults())
+
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)
+	router.POST("/auth/register", middleware.RequireRegistrationEnabled(configService), authHandler.Register)
+
+	payload := map[string]interface{}{
+		"email":      "gated-registration@example.com",
+		"password":   "Password123!",
+		"first_name": "Gated",
+		"last_name":  "User",
+	}
+	body, err := json.Marshal(payload)
+	suite.NoError(err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	suite.Equal(http.StatusForbidden, w.Code, "shipped default must refuse public registration")
+
+	suite.NoError(configService.Set(models.ConfigKeyAllowPublicRegistration, true))
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	suite.Equal(http.StatusCreated, w.Code, "enabling the configuration must open registration")
+}

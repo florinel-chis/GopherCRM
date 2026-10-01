@@ -141,3 +141,27 @@ func TestDefaultConfigurations_OnlyAnswerEngineKeysAreSensitive(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultConfigurations_PublicRegistrationShipsDisabled pins the security
+// default: public sign-up is opt-in per deployment, so a fresh install (and the
+// production deploy that first seeds the key) starts with it off. Flipping this
+// default to "true" is an owner decision, not a refactor.
+func TestDefaultConfigurations_PublicRegistrationShipsDisabled(t *testing.T) {
+	var entry *Configuration
+	defaults := DefaultConfigurations()
+	for i := range defaults {
+		if defaults[i].Key == ConfigKeyAllowPublicRegistration {
+			entry = &defaults[i]
+			break
+		}
+	}
+	require.NotNil(t, entry, "security.allow_public_registration is not seeded")
+
+	assert.Equal(t, "false", entry.Value)
+	assert.Equal(t, "false", entry.DefaultValue)
+	assert.Equal(t, ConfigTypeBoolean, entry.Type)
+	assert.Equal(t, CategorySecurity, entry.Category)
+	assert.True(t, entry.IsSystem)
+	assert.False(t, entry.IsReadOnly)
+	assert.False(t, entry.IsSensitive)
+}

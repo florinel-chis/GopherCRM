@@ -18,6 +18,8 @@ export default defineConfig({
   testDir: './e2e/screenshots',
   /* Seed the admin account the suites log in as */
   globalSetup: './e2e/global-setup.ts',
+  /* Restore the registration switch to what global setup found */
+  globalTeardown: './e2e/global-teardown.ts',
   /* One shared database — never parallelise */
   fullyParallel: false,
   workers: 1,

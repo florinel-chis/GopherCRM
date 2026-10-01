@@ -51,6 +51,8 @@ file, not by trusting the coverage matrix.
 - **Priority:** P0
 - **Type:** functional
 - **Preconditions:** Logged out. `const user = generateTestUser()`.
+  `security.allow_public_registration` enabled (the e2e global-setup turns it on; it ships
+  disabled — see TC-AUTH-045).
 - **Steps:**
   1. Go to `/register`.
   2. Fill First Name, Last Name, Email Address, Password, Confirm Password from `user`.
@@ -616,3 +618,47 @@ file, not by trusting the coverage matrix.
   tokens only for status 401 or 403; every other failure, including the rate limiter's 429, leaves
   the stored credentials alone.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (extended)
+
+### TC-AUTH-045 — Public registration ships disabled and the API refuses sign-up
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** `security.allow_public_registration` at its shipped default (`false`), or set
+  to `false` via `PUT /api/v1/configurations/security.allow_public_registration` as admin.
+- **Steps:**
+  1. `POST /api/v1/auth/register` with a valid registration payload.
+- **Expected:** **403** `{success:false}` ("Public registration is disabled"); no account is
+  created. The gate fails closed: a missing configuration row or a configuration read error
+  answers the same 403.
+- **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "a direct POST /auth/register is refused with 403"; Go: `internal/middleware/registration_test.go`, `tests/auth_integration_test.go` `TestRegisterEndpoint_GatedByConfiguration`
+
+### TC-AUTH-046 — GET /auth/registration reports the sign-up switch without authentication
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** None (public endpoint, strict rate tier).
+- **Steps:**
+  1. `GET /api/v1/auth/registration` with no `Authorization` header, with the switch off, then on.
+- **Expected:** **200** `{success:true, data:{enabled:false}}` and `{enabled:true}` respectively.
+  A configuration read failure is reported as `enabled:false`, matching what the gate enforces.
+- **Automation:** automated — Go: `internal/handler/auth_registration_test.go`
+
+### TC-AUTH-047 — Login page hides the Sign Up link while registration is disabled
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** `security.allow_public_registration` = `false`.
+- **Steps:**
+  1. Go to `/login` and wait for the `GET /auth/registration` probe to answer.
+- **Expected:** The "Forgot password?" link renders; "Don't have an account? Sign Up" does not.
+  The link also stays hidden while the probe is in flight or failing — it appears only on a
+  confirmed `enabled:true`.
+- **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "login page offers no sign-up link"; Vitest: `src/pages/auth/Login.test.tsx`
+
+### TC-AUTH-048 — /register shows a disabled notice instead of the form
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** `security.allow_public_registration` = `false`.
+- **Steps:**
+  1. Go to `/register` directly.
+- **Expected:** An info alert "Registration is disabled on this system…" with a "Back to Sign In"
+  link; no form fields render, so nothing can be submitted. With the switch on, the form renders
+  as in TC-AUTH-001.
+- **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "the register page shows the disabled notice instead of the form"; Vitest: `src/pages/auth/Register.gating.test.tsx`

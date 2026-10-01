@@ -36,6 +36,11 @@ const (
 	CategoryDeals ConfigurationCategory = "deals"
 )
 
+// ConfigKeyAllowPublicRegistration gates the public POST /auth/register
+// endpoint. It ships disabled: open sign-up is opt-in per deployment, switched
+// on by an administrator in Settings > Configuration.
+const ConfigKeyAllowPublicRegistration = "security.allow_public_registration"
+
 // Configuration represents a system configuration setting
 type Configuration struct {
 	BaseModel
@@ -303,6 +308,16 @@ func DefaultConfigurations() []Configuration {
 			Description:  "Company name displayed in the application",
 			DefaultValue: "GopherCRM",
 			IsSystem:     false,
+			IsReadOnly:   false,
+		},
+		{
+			Key:          ConfigKeyAllowPublicRegistration,
+			Value:        "false",
+			Type:         ConfigTypeBoolean,
+			Category:     CategorySecurity,
+			Description:  "Whether the public /auth/register endpoint accepts new sign-ups (the accounts it creates are always customer-role)",
+			DefaultValue: "false",
+			IsSystem:     true,
 			IsReadOnly:   false,
 		},
 		{
