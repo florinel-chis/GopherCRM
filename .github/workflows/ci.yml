@@ -2,14 +2,19 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue runs the suite on its temporary branch before merging, so
+  # a pull request that went green on a stale base still has to pass on top
+  # of the current main.
+  merge_group:
   push:
     branches: [main]
 
 permissions:
   contents: read
 
-# Superseded pull-request runs are cancelled; runs on main always finish so
-# every commit on main keeps a completed status.
+# Superseded pull-request runs are cancelled; runs on main and merge-queue
+# runs always finish so every commit on main keeps a completed status and the
+# queue gets the result it is waiting for.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
