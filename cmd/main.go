@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -84,12 +83,12 @@ func main() {
 	router := setupRouter(backgroundCtx, cfg)
 
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
+		Addr:    cfg.Server.Address(),
 		Handler: router,
 	}
 
 	go func() {
-		utils.Logger.Infof("Starting server on port %d", cfg.Server.Port)
+		utils.Logger.Infof("Starting server on %s", cfg.Server.Address())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}

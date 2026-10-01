@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -44,6 +45,11 @@ type DatabaseConfig struct {
 }
 
 type ServerConfig struct {
+	// Host is the interface the HTTP server binds to, from SERVER_HOST. Empty
+	// (the default) listens on every interface; set 127.0.0.1 when a reverse
+	// proxy on the same machine is the only intended client. The value is not
+	// validated here: a bad one fails at net.Listen with the resolver's message.
+	Host           string
 	Port           int
 	Mode           string
 	TrustedProxies []string // Comma-separated CIDRs from TRUSTED_PROXIES env var; empty means trust no proxies
@@ -200,6 +206,7 @@ func Load() (*Config, error) {
 			Password: getEnv("DB_PASSWORD", ""),
 		},
 		Server: ServerConfig{
+			Host:             getEnv("SERVER_HOST", ""),
 			Port:             getEnvAsInt("SERVER_PORT", 8080),
 			Mode:             getEnv("SERVER_MODE", "development"),
 			TrustedProxies:   parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
@@ -280,6 +287,13 @@ func Load() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// Address is the host:port the HTTP server listens on. net.JoinHostPort
+// brackets IPv6 literals ("[::1]:8080") and leaves an empty host as
+// ":8080", the every-interface form the server has always used.
+func (s ServerConfig) Address() string {
+	return net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 }
 
 func (c *DatabaseConfig) DSN() string {
