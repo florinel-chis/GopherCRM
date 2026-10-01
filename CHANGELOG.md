@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
   licensing as unresolved.
 
+### Changed
+
+- **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite
+  passes on the queue's temporary branch, on top of the current `main`, before a pull request
+  merges. Production deploys still follow only CI runs of pushes to `main`.
+
 ### Fixed
 
 - **SQLite auto-migration on a populated file.** Adding a foreign key to an existing table makes
