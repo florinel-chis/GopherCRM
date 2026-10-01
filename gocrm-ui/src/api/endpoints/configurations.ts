@@ -80,47 +80,4 @@ export const configurationsApi = {
         return config.value;
     }
   },
-
-  // Specific configuration getters
-  getLeadConversionStatuses: async (): Promise<string[]> => {
-    try {
-      const configs = await configurationsApi.getUIConfigurations();
-      const config = configs.find(c => c.key === 'leads.conversion.allowed_statuses');
-      if (config) {
-        return configurationsApi.getValue(config) as string[];
-      }
-    } catch (error) {
-      console.warn('Failed to get lead conversion statuses from config:', error);
-    }
-    // Fallback to default
-    return ['qualified'];
-  },
-
-  getCompanyName: async (): Promise<string> => {
-    try {
-      const configs = await configurationsApi.getUIConfigurations();
-      const config = configs.find(c => c.key === 'general.company_name');
-      if (config) {
-        return configurationsApi.getValue(config) as string;
-      }
-    } catch (error) {
-      console.warn('Failed to get company name from config:', error);
-    }
-    // Fallback to default
-    return 'GoCRM';
-  },
-
-  getPrimaryColor: async (): Promise<string> => {
-    try {
-      const configs = await configurationsApi.getUIConfigurations();
-      const config = configs.find(c => c.key === 'ui.theme.primary_color');
-      if (config) {
-        return configurationsApi.getValue(config) as string;
-      }
-    } catch (error) {
-      console.warn('Failed to get primary color from config:', error);
-    }
-    // Fallback to default
-    return '#1976d2';
-  },
 };
