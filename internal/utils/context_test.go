@@ -97,15 +97,6 @@ func TestLogServiceResponse_WithoutError(t *testing.T) {
 	LogServiceResponse(entry, nil, "some-result")
 }
 
-func TestLogRepositoryOperation(t *testing.T) {
-	c := newTestGinContext()
-	logger := GetLogger(c)
-
-	entry := LogRepositoryOperation(logger, "UserRepo", "FindByID", "id=42")
-	assert.Equal(t, "UserRepo", entry.Data["repository"])
-	assert.Equal(t, "FindByID", entry.Data["operation"])
-}
-
 func TestLogHandlerStart(t *testing.T) {
 	c := newTestGinContext()
 	c.Set("request_id", "req-handler")

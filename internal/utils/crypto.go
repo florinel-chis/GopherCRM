@@ -33,15 +33,3 @@ func HashAPIKeyHMAC(key, secret string) string {
 	mac.Write([]byte(key))
 	return "hmac$" + hex.EncodeToString(mac.Sum(nil))
 }
-
-// VerifyAPIKeyHMAC verifies an API key against an HMAC-SHA256 hash using
-// constant-time comparison to prevent timing attacks.
-func VerifyAPIKeyHMAC(key, hash, secret string) bool {
-	expected := HashAPIKeyHMAC(key, secret)
-	return hmac.Equal([]byte(expected), []byte(hash))
-}
-
-// IsHMACHash reports whether the hash was produced by HashAPIKeyHMAC.
-func IsHMACHash(hash string) bool {
-	return strings.HasPrefix(hash, "hmac$")
-}
