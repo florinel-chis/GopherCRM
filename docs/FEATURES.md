@@ -289,7 +289,7 @@ row below is unit/integration only, which is why none is marked *covered*.
 | 11.4 | **Error Handling** | Consistent error format across all endpoints | `admin-entity-suite.spec.ts`: admin can handle error scenarios gracefully | `error_handler_test.go`: 6 tests; `recovery_test.go`: 4 tests; `response_test.go`: 27 tests | `ErrorBoundary.test.tsx`: 4 tests (children render, fallback on throw, reload action, routed-page fallback) | `error_handling_test.go`: 6 tests (400, 401, 403, 404, 500, consistent format) | **covered** | -- |
 | 11.5 | **Pagination Parameters** | `page`, `limit`, `offset` parsing via `ParseOffsetLimit` (every list endpoint; `per_page` is no longer read anywhere) | -- | `response_test.go`: TestParseOffsetLimit_Defaults, _Custom, _ExceedsMax, _NeverReturnsZeroLimit, _RejectsNegativeOffset; `task_handler_test.go`: limit-honoured / cap / offset / page-conversion tests | -- | -- | **covered** | `?limit=0` used to reach the pagination arithmetic and panic, turning every list endpoint into a 500 via one query parameter. `TestParseOffsetLimit_NeverReturnsZeroLimit` is the regression test. Tasks previously read `page`/`per_page` and ignored the frontend's `limit` |
 | 11.6 | **Sort Validation** | `sort_by` is validated against per-entity column allowlists | -- | `sort_test.go`: 11 tests; per-handler `TestList_SortByInvalidColumn` | -- | -- | **covered** | -- |
-| 11.7 | **Transactions** | Multi-step operations run in one transaction | -- | `transaction_test.go`: 7 tests | -- | `lead_conversion_transaction_test.go`, `user_registration_transaction_test.go`, `erasure_atomicity_test.go` | **covered** | -- |
+| 11.7 | **Transactions** | Multi-step operations run in one transaction | -- | `transaction_test.go`: 4 tests | -- | `lead_conversion_transaction_test.go`, `user_registration_transaction_test.go`, `erasure_atomicity_test.go` | **covered** | -- |
 | 11.8 | **CRM Workflow** | Complete flow: Lead -> Customer -> Ticket -> Task | `admin-entity-suite.spec.ts`: complete CRM workflow: Lead -> Customer -> Task | -- | -- | -- | **partial** | Only E2E; no integration test for the full flow. The E2E title covers Lead -> Customer -> Task, not tickets |
 
 ---
@@ -418,10 +418,10 @@ test --list` reports 100.
 | `middleware/request_id_test.go` | 4 | Middleware |
 | `middleware/logger_test.go` | 3 | Middleware |
 | `utils/response_test.go` | 27 | Utility |
-| `utils/context_test.go` | 11 | Utility |
+| `utils/context_test.go` | 10 | Utility |
 | `utils/sort_test.go` | 11 | Utility |
 | `utils/cookie_test.go` | 9 | Utility |
-| `utils/transaction_test.go` | 7 | Utility |
+| `utils/transaction_test.go` | 4 | Utility |
 | `utils/crypto_test.go` | 5 | Utility |
 | `utils/password_test.go` | 1 (8 cases) | Utility |
 | `config/config_test.go` | 13 | Config |

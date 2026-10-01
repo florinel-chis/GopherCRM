@@ -51,21 +51,6 @@ func LogServiceResponse(logger *logrus.Entry, err error, result ...interface{}) 
 	}
 }
 
-// LogRepositoryOperation logs repository operations
-func LogRepositoryOperation(logger *logrus.Entry, repo, operation string, query ...interface{}) *logrus.Entry {
-	entry := logger.WithFields(logrus.Fields{
-		"repository": repo,
-		"operation":  operation,
-	})
-
-	if len(query) > 0 {
-		entry = entry.WithField("query", query)
-	}
-
-	entry.Debug("Repository operation started")
-	return entry
-}
-
 // LogHandlerStart logs the start of a handler
 func LogHandlerStart(c *gin.Context, handler string) *logrus.Entry {
 	logger := GetLogger(c).WithField("handler", handler)
