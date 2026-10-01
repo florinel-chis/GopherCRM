@@ -5,7 +5,6 @@ This document guides the refactoring to remove global state and add context.Cont
 
 ## Completed
 ✅ Created `internal/database/database.go` - Database service wrapper
-✅ Created `internal/logging/logger.go` - Logger service wrapper
 ✅ **Reference Implementation:** User/Auth domain fully refactored
 
 ## Pattern Summary
@@ -91,7 +90,7 @@ logger := utils.LogServiceCall(utils.Logger, "Service", "Method")
 ```go
 // Inject logger into services/repositories
 type userService struct {
-    logger   *logging.Logger
+    logger   *logrus.Logger
     userRepo repository.UserRepository
 }
 
@@ -100,6 +99,8 @@ func (s *userService) GetByID(ctx context.Context, id uint) (*models.User, error
     return s.userRepo.GetByID(ctx, id)
 }
 ```
+
+Note that `WithContext` only attaches `ctx` to the log entry; it does not add `request_id`, `user_id` or `user_role` as fields. Add them explicitly with `WithField`, or in handlers start from `utils.GetLogger(c)` (takes the `*gin.Context` and sets all three from it) and pass that `*logrus.Entry` to `utils.LogServiceCall(logger, service, method, args...)`, which only adds `service`, `method` and `args`.
 
 ## Domains to Refactor
 
@@ -207,8 +208,8 @@ user, err := service.GetByID(1)
 **After:**
 ```go
 mockRepo := new(MockUserRepository)
-mockLogger := &logging.Logger{}
-service := NewUserService(mockRepo, mockLogger)
+logger := logrus.New()
+service := NewUserService(mockRepo, logger)
 
 ctx := context.Background()
 user, err := service.GetByID(ctx, 1)
@@ -233,10 +234,10 @@ For each domain, follow these steps:
    - Add `ctx context.Context` as first parameter
 
 4. **Update Service Implementation**
-   - Add `logger *logging.Logger` to struct
+   - Add `logger *logrus.Logger` to struct
    - Add context parameter
    - Pass context to repository calls
-   - Use logger.WithContext(ctx) for logging
+   - Use logger.WithContext(ctx) for logging (request fields are not added by it; see the note above)
    - Use database.Transaction() for multi-step operations
 
 5. **Update Handler**
