@@ -16,7 +16,8 @@
 #   E2E_API_PORT   backend port (default: first free port from 18091)
 #   E2E_UI_PORT    Vite port    (default: first free port from 15173)
 #   E2E_PLAN_ONLY  1: print the resolved plan and exit before any tool, database
-#                  or server is used (the self-test relies on it)
+#                  or server is used (the self-test relies on it); any other
+#                  value runs the suite
 #
 # With E2E_DB_DRIVER=sqlite no database server is used and E2E_DB_NAME and the
 # DB_* credentials are ignored: the backend and create-admin (Playwright's global
@@ -137,7 +138,7 @@ export API_PREFIX=/api/v1 SERVER_MODE=development \
   AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
   APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
-if [ -n "${E2E_PLAN_ONLY:-}" ]; then
+if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   echo "e2e plan: driver=$DB_DRIVER"
   if [ "$db_driver" = sqlite ]; then
     echo "e2e plan: db_path=$DB_PATH"

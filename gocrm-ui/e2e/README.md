@@ -50,9 +50,11 @@ the file is copied to `test-results/e2e-sqlite.db` next to the backend log for i
 not live there during the run, because Playwright empties `test-results/` when it starts). Only
 `JWT_SECRET` is still required, from the environment or the root `.env`.
 
-`E2E_PLAN_ONLY=1` prints the resolved plan (driver, database or file, reset, required tools, ports)
-and exits before anything is used; `scripts/e2e/selftest.sh` (part of `make verify-hygiene`)
-checks both modes through it.
+`E2E_PLAN_ONLY=1` (exactly `1`; any other value runs the suite) prints the resolved plan (driver,
+database or file, reset, required tools, ports) and exits before anything is used.
+`scripts/e2e/selftest.sh` (part of `make verify-hygiene`) checks both modes through it, and then
+starts the runner with `mysql`, `go`, `npx` and `curl` replaced by recording shims to prove that a
+SQLite run never calls `mysql` while a MySQL run resets `gocrm_e2e` first.
 
 New or changed user-visible behaviour brings its e2e spec in the same pull request. Destructive
 steps act only on records the test created.
