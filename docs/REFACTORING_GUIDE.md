@@ -100,6 +100,8 @@ func (s *userService) GetByID(ctx context.Context, id uint) (*models.User, error
 }
 ```
 
+Note that `WithContext` only attaches `ctx` to the log entry; it does not add `request_id`, `user_id` or `user_role` as fields. Add them explicitly with `WithField`, or in handlers start from `utils.GetLogger(c)` (takes the `*gin.Context` and sets all three from it) and pass that `*logrus.Entry` to `utils.LogServiceCall(logger, service, method, args...)`, which only adds `service`, `method` and `args`.
+
 ## Domains to Refactor
 
 Each domain follows the same pattern. Refactor in this order:
@@ -235,7 +237,7 @@ For each domain, follow these steps:
    - Add `logger *logrus.Logger` to struct
    - Add context parameter
    - Pass context to repository calls
-   - Use logger.WithContext(ctx) for logging
+   - Use logger.WithContext(ctx) for logging (request fields are not added by it; see the note above)
    - Use database.Transaction() for multi-step operations
 
 5. **Update Handler**
