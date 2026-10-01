@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -58,10 +60,35 @@ func sqliteDSN(path string, busyTimeoutMS int) string {
 		path, busyTimeoutMS)
 }
 
+// gormLogLevel maps the application's LOG_LEVEL to the GORM log level.
+// Only debug and trace log every statement; any other value, including an
+// empty one from a hand-built DatabaseConfig, logs errors and slow queries.
+func gormLogLevel(level string) logger.LogLevel {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug", "trace":
+		return logger.Info
+	default:
+		return logger.Warn
+	}
+}
+
+// newGormLogger builds the SQL logger. It writes where logger.Default writes
+// (stdout) with GORM's default slow threshold, and ParameterizedQueries keeps
+// bound values (emails, names, token hashes) out of the log: statements are
+// printed with placeholders at every level.
+func newGormLogger(level string) logger.Interface {
+	return logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:        200 * time.Millisecond,
+		LogLevel:             gormLogLevel(level),
+		Colorful:             true,
+		ParameterizedQueries: true,
+	})
+}
+
 // Open connects to the configured database and returns the GORM handle.
 func Open(cfg *config.DatabaseConfig) (*gorm.DB, error) {
 	gormConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: newGormLogger(cfg.LogLevel),
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
