@@ -1,7 +1,7 @@
 # E2E Test Suite — GopherCRM
 
 123 end-to-end tests across 12 spec files, run with Playwright against the Vite frontend and a
-real backend on MySQL.
+real backend on MySQL (or MariaDB) or SQLite.
 
 Only the `chromium` project is configured. Tests run serially (`fullyParallel: false`, `workers: 1`)
 because they share one database.
@@ -14,11 +14,12 @@ From the repository root:
 (cd gocrm-ui && npm ci && npx playwright install chromium)   # once per machine / after dependency changes
 make e2e                                                    # whole suite
 make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths relative to gocrm-ui/)
+make e2e E2E_DB_DRIVER=sqlite                               # whole suite on SQLite, no MySQL needed
 ```
 
 `scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, every
 merge-queue group and every push to `main`, once per database engine (jobs "E2E (Playwright on
-MySQL 8)" and "E2E (Playwright on MariaDB 10.11)"):
+MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on SQLite)"):
 
 1. Drops and recreates the **`gocrm_e2e`** database (`E2E_DB_NAME`; it refuses any name not ending
    in `_e2e`), so every run starts empty and never touches the development database.
@@ -29,7 +30,7 @@ MySQL 8)" and "E2E (Playwright on MariaDB 10.11)"):
    reporters.
 4. Always stops the backend and exits with Playwright's result.
 
-The run pins the backend's environment: MySQL (never SQLite), the default API prefix, no SMTP (the
+The run pins the backend's environment: the chosen driver, the default API prefix, no SMTP (the
 log-only mailer), no reCAPTCHA, no answer-engine keys and no AEO schedule, whatever the root `.env`
 says. On macOS it keeps the machine awake (`caffeinate -i`), since an idle sleep mid-run shows up as
 a cascade of page-load timeouts.
@@ -37,6 +38,21 @@ a cascade of page-load timeouts.
 Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The
 MySQL user needs privileges on `gocrm_e2e.*` (for example
 `GRANT ALL PRIVILEGES ON gocrm_e2e.* TO 'gophercrm'@'localhost'`).
+
+### On SQLite
+
+`E2E_DB_DRIVER=sqlite` (default `mysql`) runs the same steps without a database server. Step 1
+changes: nothing is dropped or created, `gocrm_e2e` is not touched, and neither the `mysql` client
+nor any `DB_*` credentials are needed (`E2E_DB_NAME` is ignored). The backend gets
+`DB_DRIVER=sqlite` and `DB_PATH` pointing at a new, empty file in the run's temporary directory, and
+`create-admin` in global setup inherits the same two variables, so both write to that file. On exit
+the file is copied to `test-results/e2e-sqlite.db` next to the backend log for inspection (it does
+not live there during the run, because Playwright empties `test-results/` when it starts). Only
+`JWT_SECRET` is still required, from the environment or the root `.env`.
+
+`E2E_PLAN_ONLY=1` prints the resolved plan (driver, database or file, reset, required tools, ports)
+and exits before anything is used; `scripts/e2e/selftest.sh` (part of `make verify-hygiene`)
+checks both modes through it.
 
 New or changed user-visible behaviour brings its e2e spec in the same pull request. Destructive
 steps act only on records the test created.
@@ -119,7 +135,7 @@ Counts are per `test(...)` block and will drift; `npx playwright test --list` is
 
 ```
 e2e/
-├── global-setup.ts     # Seeds the admin account via cmd/create-admin
+├── global-setup.ts     # Seeds the admin account via cmd/create-admin (same DB_DRIVER/DB_PATH or DB_NAME as the backend)
 ├── fixtures/           # admin-user.ts (credentials + faker generators), test-data.ts
 ├── helpers/            # admin-auth.ts — login helper for the admin suites
 ├── pages/              # Page Object Models: one per screen, selectors live here

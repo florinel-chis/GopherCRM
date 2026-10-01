@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Migration `20260929120000_add_companies` for MySQL and MariaDB; auto-migration covers SQLite.
 - `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
   licensing as unresolved.
+- **E2E on SQLite in CI.** The e2e suite now also runs against SQLite on every pull request
+  (job "E2E (Playwright on SQLite)", no database service). `make e2e E2E_DB_DRIVER=sqlite` runs it
+  locally on a new SQLite file and leaves the `gocrm_e2e` MySQL database alone; the default
+  (`mysql`) is unchanged.
 
 ### Changed
 
