@@ -57,27 +57,6 @@ export class AdminAuthHelper {
   }
 
   /**
-   * Logs in an existing admin user
-   */
-  async loginExistingAdmin(adminUser: AdminUser): Promise<void> {
-    const loginPage = new LoginPage(this.page);
-    const dashboardPage = new DashboardPage(this.page);
-
-    await loginPage.goto();
-    await loginPage.login(adminUser.email, adminUser.password);
-    
-    // Wait for login response
-    const response = await loginPage.submitAndWaitForResponse();
-    expect(response.status()).toBe(200);
-    
-    // Wait for redirect to dashboard
-    await this.page.waitForURL('/', { timeout: 10000 });
-    await dashboardPage.waitForDashboardToLoad();
-    
-    this.adminUser = adminUser;
-  }
-
-  /**
    * Ensures admin is logged in (creates new admin if needed)
    */
   async ensureAdminLoggedIn(): Promise<AdminUser> {
@@ -146,13 +125,6 @@ export class AdminAuthHelper {
     }
     
     this.adminUser = null;
-  }
-
-  /**
-   * Returns the current admin user
-   */
-  getCurrentAdmin(): AdminUser | null {
-    return this.adminUser;
   }
 
   /**

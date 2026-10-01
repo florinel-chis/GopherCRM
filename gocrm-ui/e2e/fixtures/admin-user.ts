@@ -8,16 +8,6 @@ export interface AdminUser {
   role: 'admin';
 }
 
-export function generateAdminUser(): AdminUser {
-  return {
-    firstName: faker.person.firstName(),
-    lastName: faker.person.lastName(),
-    email: `admin_${Date.now()}_${faker.string.alphanumeric(6)}@example.com`,
-    password: 'AdminPass123!',
-    role: 'admin'
-  };
-}
-
 export const testAdminCredentials = {
   email: 'test-admin@gocrm.test',
   password: 'AdminPass123!'
