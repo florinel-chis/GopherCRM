@@ -72,39 +72,17 @@ var (
 // Error codes
 const (
 	// Auth errors
-	CodeInvalidCredentials      = "INVALID_CREDENTIALS"
-	CodeAccountDisabled         = "ACCOUNT_DISABLED"
-	CodeInvalidToken            = "INVALID_TOKEN"
-	CodeTokenExpired            = "TOKEN_EXPIRED"
-	CodeInvalidAPIKey           = "INVALID_API_KEY"
-	CodeAPIKeyExpired           = "API_KEY_EXPIRED"
-	CodeUnauthorized            = "UNAUTHORIZED"
 	CodeInsufficientPermissions = "INSUFFICIENT_PERMISSIONS"
 
 	// Validation errors
-	CodeValidationFailed = "VALIDATION_FAILED"
-	CodeRequiredField    = "REQUIRED_FIELD"
-	CodeInvalidFormat    = "INVALID_FORMAT"
 	CodeInvalidInput     = "INVALID_INPUT"
 	CodeInvalidReference = "INVALID_REFERENCE"
 
 	// Business logic errors
-	CodeEmailExists              = "EMAIL_EXISTS"
-	CodeLeadAlreadyConverted     = "LEAD_ALREADY_CONVERTED"
-	CodeInvalidStatusTransition  = "INVALID_STATUS_TRANSITION"
-	CodeResourceConflict         = "RESOURCE_CONFLICT"
+	CodeInvalidStatusTransition = "INVALID_STATUS_TRANSITION"
 
 	// Repository errors
-	CodeNotFound            = "NOT_FOUND"
-	CodeDuplicateKey        = "DUPLICATE_KEY"
-	CodeConstraintViolation = "CONSTRAINT_VIOLATION"
-	CodeDatabaseError       = "DATABASE_ERROR"
-
-	// Configuration errors
-	CodeConfigNotFound      = "CONFIG_NOT_FOUND"
-	CodeConfigReadOnly      = "CONFIG_READ_ONLY"
-	CodeInvalidConfigValue  = "INVALID_CONFIG_VALUE"
-	CodeConfigTypeMismatch  = "CONFIG_TYPE_MISMATCH"
+	CodeNotFound = "NOT_FOUND"
 
 	// General errors
 	CodeInternal = "INTERNAL_ERROR"
@@ -112,31 +90,11 @@ const (
 
 // httpStatusMap maps error codes to HTTP status codes
 var httpStatusMap = map[string]int{
-	CodeInvalidCredentials:      http.StatusUnauthorized,
-	CodeAccountDisabled:         http.StatusForbidden,
-	CodeInvalidToken:            http.StatusUnauthorized,
-	CodeTokenExpired:            http.StatusUnauthorized,
-	CodeInvalidAPIKey:           http.StatusUnauthorized,
-	CodeAPIKeyExpired:           http.StatusUnauthorized,
-	CodeUnauthorized:            http.StatusUnauthorized,
 	CodeInsufficientPermissions: http.StatusForbidden,
-	CodeValidationFailed:        http.StatusBadRequest,
-	CodeRequiredField:           http.StatusBadRequest,
-	CodeInvalidFormat:           http.StatusBadRequest,
 	CodeInvalidInput:            http.StatusBadRequest,
 	CodeInvalidReference:        http.StatusBadRequest,
-	CodeEmailExists:             http.StatusConflict,
-	CodeLeadAlreadyConverted:    http.StatusConflict,
 	CodeInvalidStatusTransition: http.StatusBadRequest,
-	CodeResourceConflict:        http.StatusConflict,
 	CodeNotFound:                http.StatusNotFound,
-	CodeDuplicateKey:            http.StatusConflict,
-	CodeConstraintViolation:     http.StatusConflict,
-	CodeDatabaseError:           http.StatusInternalServerError,
-	CodeConfigNotFound:          http.StatusNotFound,
-	CodeConfigReadOnly:          http.StatusForbidden,
-	CodeInvalidConfigValue:      http.StatusBadRequest,
-	CodeConfigTypeMismatch:      http.StatusBadRequest,
 	CodeInternal:                http.StatusInternalServerError,
 }
 
