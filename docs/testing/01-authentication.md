@@ -376,10 +376,9 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** Fresh browser context, both storages empty. Seeded admin exists.
 - **Steps:**
   1. Log in as the seeded admin leaving "Remember me" unticked.
-  2. Read `gophercrm_token` and `gophercrm_refresh_token` from both storages, plus the `remember_me`
-     key.
-- **Expected:** Both tokens are in `sessionStorage`; both are absent from `localStorage`;
-  `localStorage.remember_me` is absent. `AuthContext.login()` passes
+  2. Read `gophercrm_token` and `gophercrm_refresh_token` from both storages.
+- **Expected:** Both tokens are in `sessionStorage`; both are absent from `localStorage`.
+  `AuthContext.login()` passes
   `persist = Boolean(data.remember_me)` into `setToken` / `setRefreshToken`, and `writeToken`
   removes the key from the other storage before writing.
 - **Known issue:** Any helper that asserts `localStorage.getItem('gophercrm_token')` after an
@@ -394,9 +393,9 @@ file, not by trusting the coverage matrix.
   1. Log in as the seeded admin with `input[name="remember_me"]` checked.
   2. Read both storages.
   3. Open a new page in the same context and navigate to `/`.
-- **Expected:** Both tokens are in `localStorage` and absent from `sessionStorage`;
-  `localStorage.remember_me` is `"true"`. The new page is authenticated without a further login,
-  because `readToken` falls back from `sessionStorage` to `localStorage`.
+- **Expected:** Both tokens are in `localStorage` and absent from `sessionStorage`. The new page
+  is authenticated without a further login, because `readToken` falls back from `sessionStorage`
+  to `localStorage`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new)
 
 ---

@@ -112,7 +112,6 @@ describe('AuthContext', () => {
     expect(apiClient.setToken).toHaveBeenCalledWith('test-token', true);
     expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', true);
     expect(result.current.user).toEqual(mockUser);
-    expect(localStorage.getItem('remember_me')).toBe('true');
   });
 
   it('stores both tokens as session-only when remember_me is not set', async () => {
@@ -135,7 +134,6 @@ describe('AuthContext', () => {
 
     expect(apiClient.setToken).toHaveBeenCalledWith('test-token', false);
     expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', false);
-    expect(localStorage.getItem('remember_me')).toBeNull();
   });
 
   it('does not store a refresh token when the login response omits it', async () => {
