@@ -5,7 +5,6 @@ This document guides the refactoring to remove global state and add context.Cont
 
 ## Completed
 ✅ Created `internal/database/database.go` - Database service wrapper
-✅ Created `internal/logging/logger.go` - Logger service wrapper
 ✅ **Reference Implementation:** User/Auth domain fully refactored
 
 ## Pattern Summary
@@ -91,7 +90,7 @@ logger := utils.LogServiceCall(utils.Logger, "Service", "Method")
 ```go
 // Inject logger into services/repositories
 type userService struct {
-    logger   *logging.Logger
+    logger   *logrus.Logger
     userRepo repository.UserRepository
 }
 
@@ -207,8 +206,8 @@ user, err := service.GetByID(1)
 **After:**
 ```go
 mockRepo := new(MockUserRepository)
-mockLogger := &logging.Logger{}
-service := NewUserService(mockRepo, mockLogger)
+logger := logrus.New()
+service := NewUserService(mockRepo, logger)
 
 ctx := context.Background()
 user, err := service.GetByID(ctx, 1)
@@ -233,7 +232,7 @@ For each domain, follow these steps:
    - Add `ctx context.Context` as first parameter
 
 4. **Update Service Implementation**
-   - Add `logger *logging.Logger` to struct
+   - Add `logger *logrus.Logger` to struct
    - Add context parameter
    - Pass context to repository calls
    - Use logger.WithContext(ctx) for logging
