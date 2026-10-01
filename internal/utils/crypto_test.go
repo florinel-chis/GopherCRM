@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,8 +10,7 @@ import (
 func TestHashAPIKeyHMAC(t *testing.T) {
 	t.Run("produces hmac$ prefixed hash", func(t *testing.T) {
 		hash := HashAPIKeyHMAC("my-api-key", "my-secret")
-		assert.True(t, IsHMACHash(hash))
-		assert.Contains(t, hash, "hmac$")
+		assert.True(t, strings.HasPrefix(hash, "hmac$"))
 	})
 
 	t.Run("strips gcrm_ prefix before hashing", func(t *testing.T) {
@@ -38,54 +38,6 @@ func TestHashAPIKeyHMAC(t *testing.T) {
 	})
 }
 
-func TestVerifyAPIKeyHMAC(t *testing.T) {
-	secret := "test-secret-for-hmac"
-	key := "test-api-key-value"
-
-	t.Run("verifies valid key against its hash", func(t *testing.T) {
-		hash := HashAPIKeyHMAC(key, secret)
-		assert.True(t, VerifyAPIKeyHMAC(key, hash, secret))
-	})
-
-	t.Run("rejects wrong key", func(t *testing.T) {
-		hash := HashAPIKeyHMAC(key, secret)
-		assert.False(t, VerifyAPIKeyHMAC("wrong-key", hash, secret))
-	})
-
-	t.Run("rejects wrong secret", func(t *testing.T) {
-		hash := HashAPIKeyHMAC(key, secret)
-		assert.False(t, VerifyAPIKeyHMAC(key, hash, "wrong-secret"))
-	})
-
-	t.Run("rejects tampered hash", func(t *testing.T) {
-		hash := HashAPIKeyHMAC(key, secret)
-		tampered := hash[:len(hash)-1] + "X"
-		assert.False(t, VerifyAPIKeyHMAC(key, tampered, secret))
-	})
-
-	t.Run("works with gcrm_ prefix", func(t *testing.T) {
-		hash := HashAPIKeyHMAC("gcrm_"+key, secret)
-		assert.True(t, VerifyAPIKeyHMAC("gcrm_"+key, hash, secret))
-		assert.True(t, VerifyAPIKeyHMAC(key, hash, secret))
-	})
-}
-
-func TestIsHMACHash(t *testing.T) {
-	t.Run("identifies HMAC hash", func(t *testing.T) {
-		hash := HashAPIKeyHMAC("key", "secret")
-		assert.True(t, IsHMACHash(hash))
-	})
-
-	t.Run("rejects legacy SHA256 hash", func(t *testing.T) {
-		hash := HashAPIKey("key")
-		assert.False(t, IsHMACHash(hash))
-	})
-
-	t.Run("rejects empty string", func(t *testing.T) {
-		assert.False(t, IsHMACHash(""))
-	})
-}
-
 func TestHashAPIKey_Legacy(t *testing.T) {
 	t.Run("legacy hash differs from HMAC hash", func(t *testing.T) {
 		legacyHash := HashAPIKey("my-api-key")
@@ -95,7 +47,7 @@ func TestHashAPIKey_Legacy(t *testing.T) {
 
 	t.Run("legacy hash is not prefixed with hmac$", func(t *testing.T) {
 		hash := HashAPIKey("my-api-key")
-		assert.False(t, IsHMACHash(hash))
+		assert.False(t, strings.HasPrefix(hash, "hmac$"))
 	})
 
 	t.Run("strips gcrm_ prefix", func(t *testing.T) {
@@ -111,9 +63,9 @@ func TestMigrationPath(t *testing.T) {
 		hmacHash := HashAPIKeyHMAC("some-key", "some-secret")
 
 		// Legacy hashes are plain hex - no prefix
-		assert.False(t, IsHMACHash(legacyHash))
+		assert.False(t, strings.HasPrefix(legacyHash, "hmac$"))
 		// HMAC hashes have the hmac$ prefix
-		assert.True(t, IsHMACHash(hmacHash))
+		assert.True(t, strings.HasPrefix(hmacHash, "hmac$"))
 	})
 }
 

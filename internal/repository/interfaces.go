@@ -14,16 +14,6 @@ type TransactionManager interface {
 	WithTransactionAndRetry(ctx context.Context, fn func(ctx context.Context) error, maxRetries int) error
 }
 
-// TransactionContext allows repositories to work within a transaction
-type TransactionContext struct {
-	DB *gorm.DB
-}
-
-// RepositoryWithTransaction extends base repository with transaction support
-type RepositoryWithTransaction interface {
-	WithTx(tx *gorm.DB) interface{}
-}
-
 type UserRepository interface {
 	Create(user *models.User) error
 	GetByID(id uint) (*models.User, error)

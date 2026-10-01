@@ -10,8 +10,3 @@ func JSONMarshal(v interface{}) string {
 	}
 	return string(bytes)
 }
-
-// JSONUnmarshal unmarshals a JSON string to a value
-func JSONUnmarshal(data string, v interface{}) error {
-	return json.Unmarshal([]byte(data), v)
-}
