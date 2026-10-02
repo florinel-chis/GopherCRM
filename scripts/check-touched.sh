@@ -72,15 +72,20 @@ go_build_pkgs=()
 if [ -n "$mod_changed" ]; then
   echo "check-touched: go.mod or go.sum changed; every Go package counts as touched"
   # The lists come from go list, whose failure must not pass for "nothing to
-  # run": its output is captured and its status checked before it is used.
-  listed=$(go list ./... 2>&1) || {
+  # run": stdout is captured and the status checked before it is used. Stderr
+  # is kept apart, because a cold module cache makes go list print
+  # "go: downloading ..." there and still succeed, and such a line is not a
+  # package name.
+  list_err=$(mktemp "${TMPDIR:-/tmp}/check-touched-list.XXXXXX")
+  trap 'rm -f "$list_err"' EXIT
+  listed=$(go list ./... 2>"$list_err") || {
     echo "check-touched: go list ./... failed, so the Go packages cannot be determined:" >&2
-    echo "$listed" >&2
+    cat "$list_err" >&2
     exit 2
   }
-  buildable=$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... 2>&1) || {
+  buildable=$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... 2>"$list_err") || {
     echo "check-touched: go list -f ... ./... failed, so the Go packages cannot be determined:" >&2
-    echo "$buildable" >&2
+    cat "$list_err" >&2
     exit 2
   }
   while IFS= read -r pkg; do
