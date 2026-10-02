@@ -71,14 +71,16 @@ esac
 
 # `make -n` puts n among the short flags of MAKEFLAGS: the first word when it
 # does not start with a dash ("n", "nk"), or a dashed word when long options
-# come first (" --no-print-directory -n"). Words after "--" are variable
-# overrides, not flags.
+# come first (" --no-print-directory -n"). Command-line variable overrides
+# follow the flags, after "--" when there are flags ("n -- SPECS=x") and bare
+# when there are none ("SPECS=x" in make 3.81); a word with "=" ends the scan.
 make_dry_run() {
   local word first=1
   for word in ${MAKEFLAGS:-}; do
     case "$word" in
       --) return 1 ;;
       --*) ;;
+      *=*) return 1 ;;
       -*) [[ $word == *n* ]] && return 0 ;;
       *) [ "$first" = 1 ] && [[ $word == *n* ]] && return 0 ;;
     esac
@@ -114,7 +116,12 @@ holder_alive() { kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1; }
 holder_summary() {
   local pid
   pid=$(holder_field pid)
-  echo "pid ${pid:-unknown} ($(holder_field label), started $(holder_field start), in $(holder_field cwd))"
+  if [ -z "$pid" ]; then
+    # Between mkdir and the holder file being written, or during a release.
+    echo "a holder not yet recorded (the lock is being taken or released)"
+  else
+    echo "pid $pid ($(holder_field label), started $(holder_field start), in $(holder_field cwd))"
+  fi
 }
 # Renaming first makes the removal exclusive: of several waiters that found the
 # same stale lock, one mv succeeds and the others fall through to mkdir, so

@@ -8,7 +8,9 @@
 #    is refused;
 # 3. verify, verify-backend, verify-frontend and e2e go through
 #    scripts/gate-lock.sh, and a dry run of them prints the steps without
-#    waiting for a lock somebody else holds.
+#    waiting for a lock somebody else holds;
+# 4. a real `make e2e` (plan-only, so nothing is built or started) waits for
+#    an occupied lock and otherwise takes and releases it.
 #
 # The Go package lists are passed on the command line so that `go list` never
 # runs (the hygiene job in CI has no Go toolchain), and `go env GOFLAGS` is
@@ -116,7 +118,36 @@ if [ "$rc" -ne 0 ] ||
 fi
 command grep -q '^label=occupant$' "$lock/holder" || fail "a dry run disturbed the occupied lock"
 
+# --- 4. a real make run takes the lock -----------------------------------------------
+# `make e2e` with E2E_PLAN_ONLY=1 goes through the lock for real and then has
+# run.sh print its plan and exit before any tool, database or server is used
+# (scripts/e2e/selftest.sh relies on the same switch). SPECS=…login… puts a
+# word with an n into MAKEFLAGS, which must not pass for a dry run.
+real_e2e() {
+  env -u VERIFY_JOBS -u CI -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS -u DB_PATH -u DB_NAME \
+    GATE_LOCK_DIR="$lock" GATE_LOCK_TIMEOUT=1 GATE_LOCK_POLL=0.1 \
+    E2E_PLAN_ONLY=1 E2E_CAFFEINATED=1 JWT_SECRET=selftest-secret-selftest-secret-selftest \
+    E2E_API_PORT=1 E2E_UI_PORT=2 DB_HOST=192.0.2.1 \
+    make e2e E2E_DB_DRIVER=sqlite SPECS=e2e/tests/login.spec.ts
+}
+set +e
+output=$(real_e2e 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] || [[ $output != *"gate-lock: e2e gave up after"* ]] || [[ $output == *"e2e plan:"* ]]; then
+  fail "make e2e ran although another gate holds the lock (exit $rc): $output"
+fi
+rm -rf "$lock"
+set +e
+output=$(real_e2e 2>&1)
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] || [[ $output != *"gate-lock: e2e holds the gate lock"* ]] || [[ $output != *"e2e plan: driver=sqlite"* ]] || [[ $output != *"gate-lock: e2e released the gate lock (exit 0"* ]]; then
+  fail "make e2e did not take and release the lock around the plan (exit $rc): $output"
+fi
+[ ! -e "$lock" ] || fail "make e2e left the lock directory behind"
+
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "Makefile self-test passed: the verify-*-steps command lines are unchanged without VERIFY_JOBS; VERIFY_JOBS=N adds GOFLAGS -p=N (merged) and Vitest --maxWorkers=N and refuses other values; verify, verify-backend, verify-frontend and e2e run under scripts/gate-lock.sh and their dry runs never wait."
+echo "Makefile self-test passed: the verify-*-steps command lines are unchanged without VERIFY_JOBS; VERIFY_JOBS=N adds GOFLAGS -p=N (merged) and Vitest --maxWorkers=N and refuses other values; verify, verify-backend, verify-frontend and e2e run under scripts/gate-lock.sh, their dry runs never wait, and a real make e2e waits for an occupied lock and otherwise takes and releases it."

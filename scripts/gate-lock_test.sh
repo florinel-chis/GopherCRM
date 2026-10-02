@@ -98,10 +98,12 @@ command grep -q 'removed a stale gate lock (no holder recorded for 1s)' "$tmp/em
 [ ! -e "$lock" ] || fail "lock directory still exists after the empty retake"
 
 # --- 3, 5, 6. bypasses, timeout and dry run against a live holder --------------
-run_gate "$gate" holder-c sleep 4 2>/dev/null &
+# holder-c would sleep for a minute; it is terminated once the cases are done.
+run_gate "$gate" holder-c sleep 60 2>/dev/null &
 c_pid=$!
 wait_for_holder || fail "holder-c never wrote its holder file"
-for bypass in "GATE_LOCK=0" "CI=true" "CI=1" "MAKEFLAGS=n" "MAKEFLAGS=nk" "MAKEFLAGS= --no-print-directory -n" "MAKEFLAGS=n -- VERIFY_JOBS=2"; do
+c_wrapper_pid=$(sed -n 's/^pid=//p' "$lock/holder")
+for bypass in "GATE_LOCK=0" "CI=true" "CI=1" "MAKEFLAGS=n" "MAKEFLAGS=nk" "MAKEFLAGS= --no-print-directory -n" "MAKEFLAGS=n -- VERIFY_JOBS=2" "MAKEFLAGS=n -- SPECS=e2e/tests/login.spec.ts"; do
   before=$(seconds)
   set +e
   output=$(run_gate "$bypass" "$gate" bypasser sh -c 'echo ran; echo "held=${GATE_LOCK_HELD:-}"' 2>&1)
@@ -114,7 +116,9 @@ for bypass in "GATE_LOCK=0" "CI=true" "CI=1" "MAKEFLAGS=n" "MAKEFLAGS=nk" "MAKEF
 done
 # Entries hold one or two NAME=VALUE assignments separated by "|", because a
 # value may itself contain spaces.
-for waits in "CI=true|GATE_LOCK=1" "MAKEFLAGS=k" "MAKEFLAGS=-- VERIFY_JOBS=n" "MAKEFLAGS= --no-print-directory -k"; do
+# "SPECS=…login…" and "GO_BUILD_PKGS=…" are what make 3.81 puts in MAKEFLAGS
+# for a plain `make e2e SPECS=…`: variable overrides, not an -n.
+for waits in "CI=true|GATE_LOCK=1" "MAKEFLAGS=k" "MAKEFLAGS=-- VERIFY_JOBS=n" "MAKEFLAGS= --no-print-directory -k" "MAKEFLAGS=SPECS=e2e/tests/login.spec.ts" "MAKEFLAGS=GO_BUILD_PKGS=./internal/utils" "MAKEFLAGS= -- GO_PKGS=./internal/utils"; do
   IFS='|' read -r first_var second_var <<<"$waits"
   before=$(seconds)
   set +e
@@ -131,8 +135,14 @@ output=$(run_gate GATE_LOCK=2 "$gate" bad true 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 2 ] && [[ $output == *"GATE_LOCK must be 0 or 1"* ]] || fail "GATE_LOCK=2 was accepted (exit $rc): $output"
-wait "$c_pid" || fail "holder-c exited non-zero"
-[ ! -e "$lock" ] || fail "lock directory still exists after holder-c"
+command grep -q '^label=holder-c$' "$lock/holder" || fail "holder-c lost the lock during the cases above"
+kill -TERM "$c_wrapper_pid"
+set +e
+wait "$c_pid"
+c_rc=$?
+set -e
+[ "$c_rc" -eq 143 ] || fail "holder-c exited $c_rc after SIGTERM, expected 143"
+[ ! -e "$lock" ] || fail "lock directory still exists after holder-c was terminated"
 
 # --- 4. re-entrancy -------------------------------------------------------------
 rm -f "$log"
