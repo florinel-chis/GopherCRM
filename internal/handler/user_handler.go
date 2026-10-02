@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,7 +11,13 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
+
+// passwordNotUpdatableMessage answers a password sent to a profile update. The
+// profile routes ask for no current password and revoke no session, so the one
+// way to change one's own password is POST /auth/change-password.
+const passwordNotUpdatableMessage = "password cannot be changed here; use POST /auth/change-password"
 
 type UserHandler struct {
 	userService service.UserService
@@ -34,13 +41,32 @@ type UpdateUserRequest struct {
 	LastName  string           `json:"last_name,omitempty"`
 	Role      models.UserRole  `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
 	IsActive  *bool            `json:"is_active,omitempty"`
+	// Password is honoured for admins only (account recovery); anyone else
+	// sending the key gets a 400 that names POST /auth/change-password.
+	Password string `json:"password,omitempty"`
 }
 
 type UpdateMeRequest struct {
 	Email     string `json:"email,omitempty" binding:"omitempty,email"`
 	FirstName string `json:"first_name,omitempty"`
 	LastName  string `json:"last_name,omitempty"`
-	Password  string `json:"password,omitempty" binding:"omitempty,min=10"`
+}
+
+// bindJSONWithKeys reads the request body once and binds it into req. It also
+// reports which top-level keys the body carries, so a handler can refuse a key
+// the struct deliberately does not hold instead of ignoring it silently. A body
+// that is not a JSON object yields no keys and fails the binding.
+func bindJSONWithKeys(c *gin.Context, req interface{}) (map[string]json.RawMessage, error) {
+	body, err := c.GetRawData()
+	if err != nil {
+		return nil, err
+	}
+	if err := binding.JSON.BindBody(body, req); err != nil {
+		return nil, err
+	}
+	var keys map[string]json.RawMessage
+	_ = json.Unmarshal(body, &keys)
+	return keys, nil
 }
 
 // Create godoc
@@ -260,9 +286,24 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	var req UpdateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	keys, err := bindJSONWithKeys(c, &req)
+	if err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
 		return
+	}
+
+	// Setting a password here is the admin's account-recovery path; everyone
+	// else changes their own through POST /auth/change-password.
+	_, hasPassword := keys["password"]
+	if hasPassword {
+		if currentUserRole != string(models.RoleAdmin) {
+			utils.RespondBadRequest(c, passwordNotUpdatableMessage)
+			return
+		}
+		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+			utils.RespondBadRequest(c, err.Error())
+			return
+		}
 	}
 
 	// Build updates map
@@ -284,6 +325,9 @@ func (h *UserHandler) Update(c *gin.Context) {
 		}
 		if req.IsActive != nil {
 			updates["is_active"] = *req.IsActive
+		}
+		if hasPassword {
+			updates["password"] = req.Password
 		}
 	}
 
@@ -418,16 +462,15 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	
 	var req UpdateMeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	keys, err := bindJSONWithKeys(c, &req)
+	if err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
 		return
 	}
 
-	if req.Password != "" {
-		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
-			utils.RespondBadRequest(c, err.Error())
-			return
-		}
+	if _, ok := keys["password"]; ok {
+		utils.RespondBadRequest(c, passwordNotUpdatableMessage)
+		return
 	}
 
 	// Build updates map
@@ -441,10 +484,6 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	if req.LastName != "" {
 		updates["last_name"] = req.LastName
 	}
-	if req.Password != "" {
-		updates["password"] = req.Password
-	}
-
 	user, err := h.userService.Update(userID, updates)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
