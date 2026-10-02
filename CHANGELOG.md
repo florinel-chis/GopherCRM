@@ -96,10 +96,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record. API change: clients that changed a password through `PUT /users/me` must switch to
   `POST /auth/change-password`, which asks for the current password. The frontend never used
   the field.
-- **An admin setting a password ends that user's sessions.** `PUT /users/{id}` by an admin
-  still sets a password (the account-recovery path), now under the password policy (400 on a
-  violation, nothing else applied), and revokes every refresh token of that user, as
-  `POST /auth/change-password` does. Other users' sessions are untouched.
+- **Admins can set another user's password, and doing so ends that user's sessions.**
+  `PUT /users/{id}` by an admin now accepts a `password` for another account (the recovery
+  path; the field did not exist before): the password policy applies (400 on a violation,
+  nothing else applied) and every refresh token of that user is revoked, as
+  `POST /auth/change-password` does. An admin's own record is refused like everyone else's,
+  with the same 400, so the only way to change one's own password asks for the current one.
+  Other users' sessions are untouched. The key is recognised in any letter case.
 
 ## [1.2.0] - 2026-09-25
 

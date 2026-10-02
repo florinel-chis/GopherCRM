@@ -16191,7 +16191,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else. The password field is for admins only (account recovery): it must meet the password policy, and setting it revokes every refresh token of that user. A non-admin sending a password key gets a 400 naming POST /auth/change-password, and nothing in the request is applied.",
+                "description": "Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else. The password field is for admins only (account recovery): it must meet the password policy, and setting it revokes every refresh token of that user. A non-admin sending a password key, or an admin sending one on their own record, gets a 400 naming POST /auth/change-password, and nothing in the request is applied.",
                 "consumes": [
                     "application/json"
                 ],

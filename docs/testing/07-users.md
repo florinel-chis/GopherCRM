@@ -526,10 +526,11 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Look for Password / Confirm Password inputs.
 - **Expected:** Neither field exists — `UserForm` renders them only when `isEditMode` is false. An
   admin therefore has no UI to reset someone else's password. Through the API, `PUT /users/:id` by
-  an admin accepts a `password` (account recovery): the password policy applies (400 on a violation,
-  nothing else applied) and every refresh token of that user is revoked. A non-admin sending
-  `password` to `PUT /users/:id` on their own record gets a 400 naming `POST /auth/change-password`,
-  as on `PUT /users/me`. A user changes their own password only through `POST /auth/change-password`
+  an admin accepts a `password` for ANOTHER account (account recovery, added 2026-10-02; the field
+  did not exist before): the password policy applies (400 on a violation, nothing else applied)
+  and every refresh token of that user is revoked. A non-admin sending `password` to
+  `PUT /users/:id` on their own record, or an admin on their own record, gets a 400 naming
+  `POST /auth/change-password`, as on `PUT /users/me`; the key is refused in any letter case. A user changes their own password only through `POST /auth/change-password`
   or the self-service `/auth/password-reset` flow. Covered at API level by
   `TestUpdateUser_AdminSetsPassword`, `TestUpdateUser_AdminPasswordMustMeetPolicy`,
   `TestUpdateUser_AdminPasswordChangeRevokesRefreshTokens` and

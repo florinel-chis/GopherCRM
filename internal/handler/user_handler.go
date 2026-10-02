@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -28,19 +29,19 @@ func NewUserHandler(userService service.UserService) *UserHandler {
 }
 
 type CreateUserRequest struct {
-	Email     string           `json:"email" binding:"required,email"`
-	Password  string           `json:"password" binding:"required,min=10"`
-	FirstName string           `json:"first_name" binding:"required"`
-	LastName  string           `json:"last_name" binding:"required"`
-	Role      models.UserRole  `json:"role" binding:"required,oneof=admin sales support customer"`
+	Email     string          `json:"email" binding:"required,email"`
+	Password  string          `json:"password" binding:"required,min=10"`
+	FirstName string          `json:"first_name" binding:"required"`
+	LastName  string          `json:"last_name" binding:"required"`
+	Role      models.UserRole `json:"role" binding:"required,oneof=admin sales support customer"`
 }
 
 type UpdateUserRequest struct {
-	Email     string           `json:"email,omitempty" binding:"omitempty,email"`
-	FirstName string           `json:"first_name,omitempty"`
-	LastName  string           `json:"last_name,omitempty"`
-	Role      models.UserRole  `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
-	IsActive  *bool            `json:"is_active,omitempty"`
+	Email     string          `json:"email,omitempty" binding:"omitempty,email"`
+	FirstName string          `json:"first_name,omitempty"`
+	LastName  string          `json:"last_name,omitempty"`
+	Role      models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
+	IsActive  *bool           `json:"is_active,omitempty"`
 	// Password is honoured for admins only (account recovery); anyone else
 	// sending the key gets a 400 that names POST /auth/change-password.
 	Password string `json:"password,omitempty"`
@@ -64,8 +65,14 @@ func bindJSONWithKeys(c *gin.Context, req interface{}) (map[string]json.RawMessa
 	if err := binding.JSON.BindBody(body, req); err != nil {
 		return nil, err
 	}
-	var keys map[string]json.RawMessage
-	_ = json.Unmarshal(body, &keys)
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(body, &raw)
+	// encoding/json matches struct fields case-insensitively, so the keys
+	// are folded the same way or "Password" would slip past a refusal.
+	keys := make(map[string]json.RawMessage, len(raw))
+	for k, v := range raw {
+		keys[strings.ToLower(k)] = v
+	}
 	return keys, nil
 }
 
@@ -87,7 +94,7 @@ func bindJSONWithKeys(c *gin.Context, req interface{}) (map[string]json.RawMessa
 // @Router /users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Create")
-	
+
 	var req CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -221,7 +228,7 @@ func (h *UserHandler) List(c *gin.Context) {
 // @Router /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Get")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -231,7 +238,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 	// Check permissions - users can only view themselves unless admin
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "You can only view your own profile")
 		return
@@ -250,7 +257,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else. The password field is for admins only (account recovery): it must meet the password policy, and setting it revokes every refresh token of that user. A non-admin sending a password key gets a 400 naming POST /auth/change-password, and nothing in the request is applied.
+// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else. The password field is for admins only (account recovery): it must meet the password policy, and setting it revokes every refresh token of that user. A non-admin sending a password key, or an admin sending one on their own record, gets a 400 naming POST /auth/change-password, and nothing in the request is applied.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -269,7 +276,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Router /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Update")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -279,7 +286,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	// Check permissions - users can only update themselves unless admin
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "You can only update your own profile")
 		return
@@ -292,11 +299,12 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Setting a password here is the admin's account-recovery path; everyone
-	// else changes their own through POST /auth/change-password.
+	// Setting a password here is the admin's recovery path for OTHER
+	// accounts; everyone, admins included, changes their own through
+	// POST /auth/change-password, which asks for the current one.
 	_, hasPassword := keys["password"]
 	if hasPassword {
-		if currentUserRole != string(models.RoleAdmin) {
+		if currentUserRole != string(models.RoleAdmin) || uint(id) == currentUserID {
 			utils.RespondBadRequest(c, passwordNotUpdatableMessage)
 			return
 		}
@@ -317,7 +325,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.LastName != "" {
 		updates["last_name"] = req.LastName
 	}
-	
+
 	// Only admins can update role and active status
 	if currentUserRole == string(models.RoleAdmin) {
 		if req.Role != "" {
@@ -372,7 +380,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 // @Router /users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Delete")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -425,9 +433,9 @@ func (h *UserHandler) Delete(c *gin.Context) {
 // @Router /users/me [get]
 func (h *UserHandler) GetMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.GetMe")
-	
+
 	userID := c.GetUint("user_id")
-	
+
 	user, err := h.userService.GetByID(userID)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get current user")
@@ -458,9 +466,9 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Router /users/me [put]
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.UpdateMe")
-	
+
 	userID := c.GetUint("user_id")
-	
+
 	var req UpdateMeRequest
 	keys, err := bindJSONWithKeys(c, &req)
 	if err != nil {
