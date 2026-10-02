@@ -111,8 +111,9 @@ if ! [ -d "$parent_dir" ] || ! [ -w "$parent_dir" ]; then
 fi
 
 holder_file=$lock_dir/holder
+command_line=$*
 now() { date +%s; }
-holder_field() { sed -n "s/^$1=//p" "$holder_file" 2>/dev/null | head -n 1; }
+holder_field() { sed -n "s/^$1=//p" "${2:-$holder_file}" 2>/dev/null | head -n 1; }
 holder_alive() { kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1; }
 holder_summary() {
   local pid
@@ -124,27 +125,78 @@ holder_summary() {
     echo "pid $pid ($(holder_field label), started $(holder_field start), in $(holder_field cwd))"
   fi
 }
-# Renaming first makes the removal exclusive: of several waiters that found the
-# same stale lock, one mv succeeds and the others fall through to mkdir, so
-# nobody removes a lock a competitor has just taken.
-retake() {
-  local stale="$lock_dir.stale.$$"
-  if mv "$lock_dir" "$stale" 2>/dev/null; then
-    echo "gate-lock: $label removed a stale gate lock ($1)" >&2
-    rm -rf "$stale"
+write_holder() {
+  printf 'pid=%s\nstart=%s\nlabel=%s\ncwd=%s\ncmd=%s\n' \
+    "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$label" "$PWD" "$command_line" >"$1"
+}
+# Taking over a lock directory that already exists: the holder file is written
+# under a private name and linked to its final one. link(2) fails when the
+# name is taken, so of several claimants exactly one succeeds and nobody
+# overwrites a holder another process has just recorded.
+claim() {
+  local mine="$lock_dir/holder.$$"
+  if write_holder "$mine" 2>/dev/null && ln "$mine" "$holder_file" 2>/dev/null; then
+    rm -f "$mine"
+    return 0
   fi
+  rm -f "$mine"
+  return 1
+}
+# A stale claim is removed in two steps that keep the lock directory in place,
+# so that no mkdir can slip in meanwhile. The holder file is renamed first,
+# which is exclusive (of several waiters that found the same dead pid, one
+# rename succeeds), and the renamed file is then checked: if it still names
+# the pid judged dead, the claim is gone and the caller may claim the lock; if
+# it names another pid, a competitor took the lock over between this waiter's
+# liveness check and its rename, the file is linked back under its name and
+# this waiter keeps waiting. The only other way into a directory that has no
+# holder file is a claim after GATE_LOCK_GRACE seconds without one, and the
+# file is back long before that.
+#
+# Returns 0 when the stale claim is gone, 1 when there was nothing to remove
+# (the holder released, or the file was a competitor's and is back in place)
+# and 2 when the holder file cannot be renamed, with the reason in reap_error:
+# a lock directory this user cannot write to, as with a lock taken under
+# another account in a sticky /tmp, or an immutable flag.
+reap_error=
+reap() {
+  local dead=$1 moved="$lock_dir/holder.dead.$$" pid
+  if ! reap_error=$(mv "$holder_file" "$moved" 2>&1); then
+    [ -e "$holder_file" ] || return 1
+    return 2
+  fi
+  pid=$(holder_field pid "$moved")
+  if [ "$pid" = "$dead" ] && ! { [ -n "$pid" ] && holder_alive "$pid"; }; then
+    rm -f "$moved"
+    return 0
+  fi
+  if ln "$moved" "$holder_file" 2>/dev/null; then
+    echo "gate-lock: $label found the stale gate lock retaken by pid $pid meanwhile and keeps waiting" >&2
+  else
+    echo "gate-lock: $label moved the holder file of pid $pid aside and cannot put it back; that gate may run unlocked ($lock_dir)" >&2
+  fi
+  rm -f "$moved"
+  return 1
 }
 
 start=$(now)
 last_report=$start
 announced=
 missing_since=
-while ! mkdir "$lock_dir" 2>/dev/null; do
+while :; do
+  if mkdir "$lock_dir" 2>/dev/null; then
+    write_holder "$holder_file"
+    break
+  fi
   pid=$(holder_field pid)
   if [ -n "$pid" ]; then
     missing_since=
     if ! holder_alive "$pid"; then
-      retake "pid $pid is gone; it ran $(holder_field label)"
+      dead_label=$(holder_field label)
+      if reap "$pid" && claim; then
+        echo "gate-lock: $label removed a stale gate lock (pid $pid is gone; it ran $dead_label)" >&2
+        break
+      fi
       continue
     fi
   else
@@ -152,7 +204,12 @@ while ! mkdir "$lock_dir" 2>/dev/null; do
     # about to be written, or its owner died between the two steps.
     [ -n "$missing_since" ] || missing_since=$(now)
     if [ $(($(now) - missing_since)) -ge "$grace" ]; then
-      retake "no holder recorded for ${grace}s"
+      # A holder file without a pid line is junk from outside and goes the
+      # same way as a dead holder's.
+      if { [ ! -e "$holder_file" ] || reap ""; } && claim; then
+        echo "gate-lock: $label removed a stale gate lock (no holder recorded for ${grace}s)" >&2
+        break
+      fi
       continue
     fi
   fi
@@ -169,8 +226,6 @@ while ! mkdir "$lock_dir" 2>/dev/null; do
   sleep "$poll"
 done
 
-printf 'pid=%s\nstart=%s\nlabel=%s\ncwd=%s\ncmd=%s\n' \
-  "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$label" "$PWD" "$*" >"$holder_file"
 if [ -n "$announced" ]; then
   echo "gate-lock: $label acquired the gate lock after $(($(now) - start))s" >&2
 else

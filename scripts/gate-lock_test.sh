@@ -5,7 +5,8 @@
 # 1. a second caller waits until the holder has finished, says who it is
 #    waiting for, and the command's exit status comes back unchanged;
 # 2. a stale lock (holder pid gone, or no holder recorded within the grace
-#    period) is removed and retaken;
+#    period) is removed and retaken, and two waiters that find the same stale
+#    lock never both run;
 # 3. GATE_LOCK=0 and CI=true run the command without waiting, while
 #    GATE_LOCK=1 under CI=true waits;
 # 4. a nested invocation under the same lock (GATE_LOCK_HELD) does not
@@ -97,6 +98,43 @@ set -e
 command grep -q 'removed a stale gate lock (no holder recorded for 1s)' "$tmp/empty.err" || fail "empty lock removal was not reported: $(cat "$tmp/empty.err")"
 [ $(($(seconds) - before)) -le 4 ] || fail "empty lock took $(($(seconds) - before))s to retake at GATE_LOCK_GRACE=1"
 [ ! -e "$lock" ] || fail "lock directory still exists after the empty retake"
+
+# --- 2c. two waiters find the same dead holder -----------------------------------
+# slow's ps takes a second, so it judges the dead pid gone only after quick
+# has removed the stale claim, taken the lock and started its command. slow
+# must notice that what it would remove is quick's claim, leave it and wait:
+# the two commands must not overlap, and only one stale removal may happen.
+sh -c 'exit 0' &
+dead_pid=$!
+wait "$dead_pid"
+mkdir "$lock"
+printf 'pid=%s\nstart=earlier\nlabel=crashed\ncwd=/nowhere\ncmd=sleep\n' "$dead_pid" >"$lock/holder"
+mkdir "$tmp/slowbin"
+printf '#!/bin/sh\nsleep 1\nexec %s "$@"\n' "$(command -v ps)" >"$tmp/slowbin/ps"
+chmod +x "$tmp/slowbin/ps"
+rm -f "$log"
+run_gate PATH="$tmp/slowbin:$PATH" "$gate" slow sh -c "echo slow-start >>'$log'; echo slow-end >>'$log'" 2>"$tmp/slow.err" &
+slow_pid=$!
+sleep 0.2
+run_gate "$gate" quick sh -c "echo quick-start >>'$log'; sleep 1.5; echo quick-end >>'$log'" 2>"$tmp/quick.err" &
+quick_pid=$!
+sleep 0.4
+quick_wrapper=$(sed -n 's/^pid=//p' "$lock/holder" 2>/dev/null || true)
+set +e
+wait "$slow_pid"
+slow_rc=$?
+wait "$quick_pid"
+quick_rc=$?
+set -e
+[ "$slow_rc" -eq 0 ] && [ "$quick_rc" -eq 0 ] || fail "the racing waiters exited $slow_rc (slow) and $quick_rc (quick): $(cat "$tmp/slow.err" "$tmp/quick.err")"
+if [ "$(tr '\n' ' ' <"$log")" != "quick-start quick-end slow-start slow-end " ]; then
+  fail "the two commands overlapped after a shared stale lock: log is '$(tr '\n' ' ' <"$log")'; slow: $(cat "$tmp/slow.err"); quick: $(cat "$tmp/quick.err")"
+fi
+[ "$(cat "$tmp/slow.err" "$tmp/quick.err" | command grep -c 'removed a stale gate lock')" -eq 1 ] || fail "expected exactly one stale removal across both waiters: $(cat "$tmp/slow.err" "$tmp/quick.err")"
+command grep -q "slow found the stale gate lock retaken by pid $quick_wrapper meanwhile" "$tmp/slow.err" || fail "slow did not report quick's takeover: $(cat "$tmp/slow.err")"
+command grep -q "slow is waiting for the gate lock held by pid $quick_wrapper (quick," "$tmp/slow.err" || fail "slow did not wait for quick after the shared stale lock: $(cat "$tmp/slow.err")"
+[ ! -e "$lock" ] || fail "lock directory still exists after the racing waiters"
+[ -z "$(ls -d "$tmp"/gate.lock* 2>/dev/null)" ] || fail "lock directories left behind by the racing waiters: $(ls -d "$tmp"/gate.lock*)"
 
 # --- 3, 5, 6. bypasses, timeout and dry run against a live holder --------------
 # holder-c would sleep for a minute; it is terminated once the cases are done.
@@ -256,4 +294,4 @@ set -e
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken; GATE_LOCK=0, CI=true and make -n skip the lock while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock; INT and TERM reach a trap inside the command."
+echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken and two waiters over one stale lock never both run; GATE_LOCK=0, CI=true and make -n skip the lock while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock; INT and TERM reach a trap inside the command."
