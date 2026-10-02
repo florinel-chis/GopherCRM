@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/handler"
@@ -127,6 +128,7 @@ func (suite *UserIntegrationTestSuite) SetupTest() {
 	// Clean up database before each test
 	suite.db.Exec("DELETE FROM users WHERE email != ?", "admin@example.com")
 	suite.db.Exec("DELETE FROM api_keys")
+	suite.db.Exec("DELETE FROM refresh_tokens")
 	
 	// Refresh admin user reference to ensure we have the correct ID
 	suite.db.Where("email = ?", "admin@example.com").First(&suite.adminUser)
@@ -463,6 +465,84 @@ func (suite *UserIntegrationTestSuite) TestUpdateMe_RefusesPassword() {
 
 	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Password123!"), "the old password still logs in")
 	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "NewPassword123!"), "the submitted password was not set")
+}
+
+// PUT /users/:id by an admin sets a password: it is the account-recovery path
+// and the only one besides POST /auth/change-password that may change it.
+func (suite *UserIntegrationTestSuite) TestUpdateUser_AdminSetsPassword() {
+	user, _ := suite.createCustomer("recover@example.com", "Password123!")
+
+	rec := suite.putJSON(fmt.Sprintf("/api/v1/users/%d", user.ID), suite.adminToken, map[string]interface{}{
+		"password": "Recovered456!",
+	})
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Recovered456!"), "the new password logs in")
+	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "Password123!"), "the old password no longer does")
+}
+
+// The password policy applies on the admin path as everywhere else, and a
+// refused password leaves the stored one untouched.
+func (suite *UserIntegrationTestSuite) TestUpdateUser_AdminPasswordMustMeetPolicy() {
+	user, _ := suite.createCustomer("recoverweak@example.com", "Password123!")
+
+	rec := suite.putJSON(fmt.Sprintf("/api/v1/users/%d", user.ID), suite.adminToken, map[string]interface{}{
+		"password": "alllowercaseonly",
+	})
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Password123!"), "the old password is untouched")
+}
+
+// A password set by an admin ends every session of that user, as a change
+// through POST /auth/change-password does; other users' sessions stay.
+func (suite *UserIntegrationTestSuite) TestUpdateUser_AdminPasswordChangeRevokesRefreshTokens() {
+	user, _ := suite.createCustomer("recoversessions@example.com", "Password123!")
+	suite.insertRefreshToken(user.ID, "recover-session-1")
+	suite.insertRefreshToken(user.ID, "recover-session-2")
+	suite.insertRefreshToken(suite.adminUser.ID, "admin-session")
+
+	rec := suite.putJSON(fmt.Sprintf("/api/v1/users/%d", user.ID), suite.adminToken, map[string]interface{}{
+		"password": "Recovered456!",
+	})
+	suite.Require().Equal(http.StatusOK, rec.Code)
+
+	assert.Equal(suite.T(), int64(0), suite.liveRefreshTokens(user.ID), "every session of the user is revoked")
+	assert.Equal(suite.T(), int64(1), suite.liveRefreshTokens(suite.adminUser.ID), "the admin's own session is untouched")
+}
+
+// Without the admin role, PUT /users/:id on one's own record answers as
+// PUT /users/me does: the key is refused, not silently dropped, and the
+// stored password stays.
+func (suite *UserIntegrationTestSuite) TestUpdateUser_SelfCannotSetPasswordHere() {
+	user, token := suite.createCustomer("selfrecover@example.com", "Password123!")
+
+	rec := suite.putJSON(fmt.Sprintf("/api/v1/users/%d", user.ID), token, map[string]interface{}{
+		"password": "NewPassword123!",
+	})
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	apiErr := suite.decodeError(rec)
+	assert.Contains(suite.T(), apiErr.Message, "/auth/change-password")
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Password123!"), "the old password still logs in")
+	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "NewPassword123!"), "the submitted password was not set")
+}
+
+// insertRefreshToken stores a live refresh token row for the user.
+func (suite *UserIntegrationTestSuite) insertRefreshToken(userID uint, hash string) {
+	suite.Require().NoError(suite.db.Create(&models.RefreshToken{
+		UserID:    userID,
+		TokenHash: hash,
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}).Error)
+}
+
+// liveRefreshTokens counts the user's refresh tokens that are not revoked.
+func (suite *UserIntegrationTestSuite) liveRefreshTokens(userID uint) int64 {
+	var n int64
+	suite.Require().NoError(suite.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND is_revoked = ?", userID, false).Count(&n).Error)
+	return n
 }
 
 // createCustomer inserts an active customer with the given credentials and
