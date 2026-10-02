@@ -97,8 +97,9 @@ not a way to run the suite faster, only a way to stop the login limiter from pro
 `npm run test:e2e:admin:cleanup` runs `e2e/scripts/cleanup-admin-test-data.sh`, kept from the time
 the specs ran against the development database only. It connects with `mysql` as `DB_USER`
 (default `root`) to `DB_NAME` (default `gocrm`) and deletes rows by name and title patterns, among
-them every lead, customer and user with an `@example.com` address and every ticket or task whose
-title contains `Test`, then resets the auto-increment counters. `make e2e` never needs it, because
+them every lead and customer with an `@example.com` address, users whose address matches
+`%admin_%@example.com` or `%test_%@example.com`, and every ticket or task whose title contains
+`Test`, then resets the auto-increment counters. `make e2e` never needs it, because
 it drops `gocrm_e2e` first. Run it only against a database you are willing to clean that way.
 
 ## Admin Account
