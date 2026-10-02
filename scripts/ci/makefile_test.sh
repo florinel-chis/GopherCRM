@@ -42,14 +42,21 @@ chmod +x "$tmp/bin/go"
 # Every make runs without the caller's gate or job settings, and with a private
 # lock directory that a live holder occupies: a dry run that waited for it
 # would time out and fail.
+#
+# GNU make 4 prints "make[1]: Entering directory" and "Leaving directory" lines
+# around every sub-make, and also when it is itself a sub-make (MAKELEVEL set,
+# as under `make verify-hygiene`). --no-print-directory, which sub-makes
+# inherit through MAKEFLAGS, turns that off, and the lines are stripped from
+# the output before the comparison as well, for a make that prints them anyway.
 lock="$tmp/gate.lock"
 mkdir "$lock"
 printf 'pid=%s\nstart=now\nlabel=occupant\ncwd=%s\ncmd=sleep\n' "$$" "$tmp" >"$lock/holder"
 dry() {
   env -u VERIFY_JOBS -u GOFLAGS -u CI -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS \
     PATH="$tmp/bin:$PATH" GATE_LOCK_DIR="$lock" GATE_LOCK_TIMEOUT=1 GATE_LOCK_POLL=0.1 \
-    make -n "$@" GO_PKGS='./a ./b' GO_BUILD_PKGS='./a'
+    make -n --no-print-directory "$@" GO_PKGS='./a ./b' GO_BUILD_PKGS='./a'
 }
+without_directory_lines() { sed -E '/^make\[[0-9]+\]: (Entering|Leaving) directory /d'; }
 expect_output() {
   local what=$1 expected=$2
   shift 2
@@ -58,6 +65,7 @@ expect_output() {
   output=$(dry "$@" 2>&1)
   rc=$?
   set -e
+  output=$(without_directory_lines <<<"$output")
   if [ "$rc" -ne 0 ] || [ "$output" != "$expected" ]; then
     fail "$what (exit $rc): expected
 $expected
@@ -93,7 +101,7 @@ done
 
 # --- 3. the lock around the gates, and dry runs that do not wait -----------------
 # $(MAKE) expands to the running make's own path, which the lock lines echo.
-make_path=$(printf 'x:\n\t@echo $(MAKE)\n' | make -f - x)
+make_path=$(printf 'x:\n\t@echo $(MAKE)\n' | make --no-print-directory -f - x | without_directory_lines)
 expect_output "verify-backend under the lock" \
   "scripts/gate-lock.sh verify-backend $make_path verify-backend-steps
 go build ./a
