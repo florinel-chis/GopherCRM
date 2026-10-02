@@ -44,6 +44,9 @@ case "\${1:-}" in
       echo "go: shim refuses to list" >&2
       exit 1
     fi
+    # A cold module cache makes go list report progress on stderr and still
+    # succeed; those lines must never be taken for package names.
+    echo "go: downloading example.com/dep v1.0.0" >&2
     if [[ \$* == *-f* ]]; then echo example.com/x/a; else printf '%s\n' example.com/x/a example.com/x/b; fi
     ;;
   build) [ -z "\${CT_FAIL_BUILD:-}" ] || exit 1 ;;
