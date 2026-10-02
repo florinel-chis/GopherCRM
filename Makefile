@@ -37,7 +37,7 @@ help:
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
 	@echo "                      (make e2e E2E_DB_DRIVER=sqlite runs it on a new SQLite file instead)"
-	@echo "  make check-touched- Build, vet and test -race only the Go packages changed since origin/main, and the"
+	@echo "  make check-touched - Build, vet and test -race only the Go packages changed since origin/main, and the"
 	@echo "                      Vitest files related to changed frontend sources; the quick check for a branch in progress"
 	@echo "  Gates serialise:    verify, verify-backend, verify-frontend and e2e take a machine-wide lock"
 	@echo "                      (scripts/gate-lock.sh; waits up to GATE_LOCK_TIMEOUT=1800 s; GATE_LOCK=0 skips it, CI does)"
