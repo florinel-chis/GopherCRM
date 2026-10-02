@@ -533,8 +533,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   `POST /auth/change-password`, as on `PUT /users/me`; the key is refused in any letter case. A user changes their own password only through `POST /auth/change-password`
   or the self-service `/auth/password-reset` flow. Covered at API level by
   `TestUpdateUser_AdminSetsPassword`, `TestUpdateUser_AdminPasswordMustMeetPolicy`,
-  `TestUpdateUser_AdminPasswordChangeRevokesRefreshTokens` and
-  `TestUpdateUser_SelfCannotSetPasswordHere` in `test/integration/user_test.go`.
+  `TestUpdateUser_AdminPasswordChangeRevokesRefreshTokens`,
+  `TestUpdateUser_SelfCannotSetPasswordHere`, `TestUpdateUser_AdminCannotSetOwnPasswordHere` and
+  `TestUpdateMe_RefusesPasswordKeyInAnyCase` in `test/integration/user_test.go`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -680,17 +681,19 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Steps:**
   1. Expand "Settings" in the drawer and click "Profile" (or navigate to `/settings/profile`).
   2. Look for the current user's email, name and any editable field.
-- **Expected:** The page renders a single `h1` reading "Profile" and nothing else —
-  `gocrm-ui/src/pages/settings/Profile.tsx` is a heading-only stub. No `GET /users/me` request is
-  made by the page (the app already calls it once at startup from `authApi.getCurrentUser` to
-  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name and
-  last name, and refuses a `password` key with a 400 naming `POST /auth/change-password` without
-  applying anything (`TestUpdateMe_RefusesPassword` in `test/integration/user_test.go` and
-  `internal/handler/user_handler_test.go`) — has no caller anywhere in the frontend. The route is deliberately outside the admin-guarded layout route, so every role can
-  reach the stub.
-- **Known issue:** FEATURES.md row 7.9 is marked partial and gap G19 records the missing
-  `profile.spec.ts`. There is nothing to drive until the page is built.
-- **Automation:** blocked — the UI page is a heading-only stub; `PUT /users/me` has no UI caller
+- **Expected:** The page (`gocrm-ui/src/pages/settings/Profile.tsx`) shows the signed-in
+  account's details read-only (email, name, role) from `AuthContext` and a "Change password" form
+  with current, new and confirm fields that posts to `POST /auth/change-password`
+  (`authApi.changePassword`). No field edits email or name, and nothing in the frontend calls
+  `PUT /users/me`; the backend endpoint accepts email, first name and last name and refuses a
+  `password` key with a 400 naming `POST /auth/change-password` without applying anything
+  (`TestUpdateMe_RefusesPassword` in `test/integration/user_test.go` and
+  `internal/handler/user_handler_test.go`). The route is outside the admin-guarded layout route, so
+  every role can reach it.
+- **Known issue:** editing one's own email or name has no UI; FEATURES.md row 7.9 records the gap.
+- **Automation:** automated — `e2e/tests/settings.spec.ts` ("Settings — Profile": shows the
+  signed-in account details; changes the password and the new one works on the next login; rejects
+  a wrong current password with the server message).
 
 ### TC-USER-039 — Use the topbar avatar menu
 - **Priority:** P1
