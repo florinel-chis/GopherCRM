@@ -32,7 +32,9 @@
 #                      verify-* targets it runs take none.
 #
 # A lock whose holder pid is gone is stale (the holder was killed with SIGKILL,
-# or the machine rebooted); it is removed and retaken. A dry run of make (`-n`
+# or the machine rebooted); it is removed and retaken. A stale lock this user
+# cannot remove (taken under another account in a sticky /tmp, say) is
+# reported and waited out until the timeout. A dry run of make (`-n`
 # in MAKEFLAGS) takes no lock either: it runs nothing that needs one and must
 # never wait behind a real gate.
 #
@@ -183,21 +185,29 @@ start=$(now)
 last_report=$start
 announced=
 missing_since=
+stuck=
+stuck_announced=
+# Every pass through the loop that does not take the lock ends in the timeout
+# check, the progress line and the sleep: a stale lock that cannot be removed
+# is reported and waited out until the timeout, never retried without pause.
 while :; do
   if mkdir "$lock_dir" 2>/dev/null; then
     write_holder "$holder_file"
     break
   fi
+  stuck=
+  outcome=1
   pid=$(holder_field pid)
   if [ -n "$pid" ]; then
     missing_since=
     if ! holder_alive "$pid"; then
       dead_label=$(holder_field label)
-      if reap "$pid" && claim; then
+      reap "$pid"
+      outcome=$?
+      if [ "$outcome" -eq 0 ] && claim; then
         echo "gate-lock: $label removed a stale gate lock (pid $pid is gone; it ran $dead_label)" >&2
         break
       fi
-      continue
     fi
   else
     # A lock directory without a holder file was created a moment ago and is
@@ -206,20 +216,34 @@ while :; do
     if [ $(($(now) - missing_since)) -ge "$grace" ]; then
       # A holder file without a pid line is junk from outside and goes the
       # same way as a dead holder's.
-      if { [ ! -e "$holder_file" ] || reap ""; } && claim; then
+      outcome=0
+      if [ -e "$holder_file" ]; then
+        reap ""
+        outcome=$?
+      fi
+      if [ "$outcome" -eq 0 ] && claim; then
         echo "gate-lock: $label removed a stale gate lock (no holder recorded for ${grace}s)" >&2
         break
       fi
-      continue
     fi
+  fi
+  if [ "$outcome" -eq 2 ]; then
+    stuck="cannot remove stale lock held by $(holder_summary): $reap_error"
+  else
+    stuck_announced=
   fi
   elapsed=$(($(now) - start))
   if [ "$elapsed" -ge "$timeout" ]; then
-    echo "gate-lock: $label gave up after ${elapsed}s (GATE_LOCK_TIMEOUT=$timeout): $lock_dir is held by $(holder_summary)" >&2
+    echo "gate-lock: $label gave up after ${elapsed}s (GATE_LOCK_TIMEOUT=$timeout): $lock_dir is held by $(holder_summary)${stuck:+; $stuck}" >&2
     exit 124
   fi
-  if [ -z "$announced" ] || [ $(($(now) - last_report)) -ge "$progress" ]; then
-    echo "gate-lock: $label is waiting for the gate lock held by $(holder_summary); ${elapsed}s of ${timeout}s" >&2
+  if [ -z "$announced" ] || [ $(($(now) - last_report)) -ge "$progress" ] || { [ -n "$stuck" ] && [ -z "$stuck_announced" ]; }; then
+    if [ -n "$stuck" ]; then
+      echo "gate-lock: $label $stuck; ${elapsed}s of ${timeout}s" >&2
+      stuck_announced=1
+    else
+      echo "gate-lock: $label is waiting for the gate lock held by $(holder_summary); ${elapsed}s of ${timeout}s" >&2
+    fi
     announced=1
     last_report=$(now)
   fi

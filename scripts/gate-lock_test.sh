@@ -46,6 +46,14 @@ wait_for_holder() {
   [ -s "$lock/holder" ]
 }
 seconds() { date +%s; }
+wait_up_to() { # seconds pid: waits for the process to exit; 1 when it is still running
+  local i=0 limit=$(($1 * 10))
+  while kill -0 "$2" 2>/dev/null && [ "$i" -lt "$limit" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! kill -0 "$2" 2>/dev/null
+}
 
 # --- 1. exclusion, order, holder report, exit status --------------------------
 rm -f "$log"
@@ -98,6 +106,65 @@ set -e
 command grep -q 'removed a stale gate lock (no holder recorded for 1s)' "$tmp/empty.err" || fail "empty lock removal was not reported: $(cat "$tmp/empty.err")"
 [ $(($(seconds) - before)) -le 4 ] || fail "empty lock took $(($(seconds) - before))s to retake at GATE_LOCK_GRACE=1"
 [ ! -e "$lock" ] || fail "lock directory still exists after the empty retake"
+
+# --- 2b. a stale lock that cannot be removed ---------------------------------------
+# The holder is alive when the waiter starts and dies once the lock directory
+# is read-only: the waiter still reads the holder file and judges its pid
+# dead, but cannot rename it. It must say so, keep polling at GATE_LOCK_POLL
+# and give up at the timeout, instead of retrying without a pause. Root is
+# not stopped by directory permissions; there the holder file gets an
+# immutable flag, or the case is skipped when the file system has none.
+immobilise() {
+  if [ "$(id -u)" != 0 ]; then
+    chmod a-w "$lock"
+  else
+    chattr +i "$lock/holder" 2>/dev/null || chflags uchg "$lock/holder" 2>/dev/null
+  fi
+}
+mobilise() {
+  chmod u+w "$lock" 2>/dev/null || true
+  chattr -i "$lock/holder" 2>/dev/null || chflags nouchg "$lock/holder" 2>/dev/null || true
+}
+sleep 30 &
+sleeper=$!
+mkdir "$lock"
+printf 'pid=%s\nstart=earlier\nlabel=doomed\ncwd=/nowhere\ncmd=sleep\n' "$sleeper" >"$lock/holder"
+rm -f "$tmp/stuck.out"
+before=$(seconds)
+run_gate GATE_LOCK_TIMEOUT=2 "$gate" stuck sh -c "echo ran >'$tmp/stuck.out'" 2>"$tmp/stuck.err" &
+stuck_pid=$!
+i=0
+while ! command grep -q 'stuck is waiting' "$tmp/stuck.err" 2>/dev/null && [ "$i" -lt 50 ]; do
+  sleep 0.1
+  i=$((i + 1))
+done
+if immobilise; then
+  kill "$sleeper"
+  wait "$sleeper" 2>/dev/null || true
+  if wait_up_to 6 "$stuck_pid"; then
+    set +e
+    wait "$stuck_pid"
+    stuck_rc=$?
+    set -e
+    [ "$stuck_rc" -eq 124 ] || fail "a stale lock that cannot be removed gave exit $stuck_rc, expected 124: $(cat "$tmp/stuck.err")"
+    [ $(($(seconds) - before)) -le 4 ] || fail "the waiter took $(($(seconds) - before))s to give up at GATE_LOCK_TIMEOUT=2 on an immovable stale lock"
+  else
+    pkill -KILL -P "$stuck_pid" 2>/dev/null || true
+    kill -KILL "$stuck_pid" 2>/dev/null || true
+    fail "the waiter did not give up within 6s on a stale lock it cannot remove (GATE_LOCK_TIMEOUT=2): $(head -c 2000 "$tmp/stuck.err")"
+  fi
+  command grep -q "stuck cannot remove stale lock held by pid $sleeper (doomed," "$tmp/stuck.err" || fail "the immovable stale lock was not reported: $(head -c 2000 "$tmp/stuck.err")"
+  command grep -q 'stuck gave up after' "$tmp/stuck.err" || fail "no timeout line for the immovable stale lock: $(head -c 2000 "$tmp/stuck.err")"
+  [ ! -e "$tmp/stuck.out" ] || fail "the command ran although the stale lock could not be removed"
+  [ "$(command grep -c . "$tmp/stuck.err")" -le 30 ] || fail "the waiter printed $(command grep -c . "$tmp/stuck.err") lines over a 2s wait on an immovable stale lock: $(head -c 2000 "$tmp/stuck.err")"
+else
+  echo "gate-lock_test: skipping the immovable stale lock case: cannot make the holder file immovable as root on this file system" >&2
+  kill "$sleeper"
+  wait "$sleeper" 2>/dev/null || true
+  wait "$stuck_pid" 2>/dev/null || true
+fi
+mobilise
+rm -rf "$lock"
 
 # --- 2c. two waiters find the same dead holder -----------------------------------
 # slow's ps takes a second, so it judges the dead pid gone only after quick
@@ -228,14 +295,6 @@ fi
 # signal's conventional status, which the wrapper reports. The INT case failed
 # until the command got a process group of its own: bash starts a background
 # job with SIGINT ignored, and the command inherited that across exec.
-wait_up_to() { # seconds pid: waits for the process to exit; 1 when it is still running
-  local i=0 limit=$(($1 * 10))
-  while kill -0 "$2" 2>/dev/null && [ "$i" -lt "$limit" ]; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  ! kill -0 "$2" 2>/dev/null
-}
 for case in INT:130 TERM:143; do
   sig=${case%%:*}
   code=${case#*:}
