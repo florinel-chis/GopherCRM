@@ -39,7 +39,13 @@ printf 'go %s\n' "\$*" >>"$calls"
 printf 'GOFLAGS=%s\n' "\${GOFLAGS:-}" >>"$calls"
 case "\${1:-}" in
   env) echo "-mod=mod" ;;
-  list) if [[ \$* == *-f* ]]; then echo example.com/x/a; else printf '%s\n' example.com/x/a example.com/x/b; fi ;;
+  list)
+    if [ -n "\${CT_FAIL_LIST:-}" ]; then
+      echo "go: shim refuses to list" >&2
+      exit 1
+    fi
+    if [[ \$* == *-f* ]]; then echo example.com/x/a; else printf '%s\n' example.com/x/a example.com/x/b; fi
+    ;;
   build) [ -z "\${CT_FAIL_BUILD:-}" ] || exit 1 ;;
   test) [ -z "\${CT_FAIL_TEST:-}" ] || exit 1 ;;
 esac
@@ -75,7 +81,7 @@ g update-ref refs/remotes/origin/main HEAD
 
 run() {
   rm -f "$calls"
-  (cd "${RUN_DIR:-$repo}" && env -u VERIFY_JOBS -u GOFLAGS -u CT_FAIL_BUILD -u CT_FAIL_TEST PATH="$tmp/bin:$PATH" "$@" "$script" 2>&1)
+  (cd "${RUN_DIR:-$repo}" && env -u VERIFY_JOBS -u GOFLAGS -u CT_FAIL_BUILD -u CT_FAIL_TEST -u CT_FAIL_LIST PATH="$tmp/bin:$PATH" "$@" "$script" 2>&1)
 }
 # Both newlines are added: command substitution drops the file's last one.
 recorded() { [ -f "$calls" ] && [[ $'\n'$(cat "$calls")$'\n' == *$'\n'"$1"$'\n'* ]]; }
@@ -181,6 +187,17 @@ set -e
 [[ $output == *"every Go package counts as touched"* ]] || fail "a go.mod change was not widened: $output"
 recorded "go build example.com/x/a" || fail "go.mod: build list did not come from go list: $(calls_text)"
 recorded "go vet example.com/x/a example.com/x/b" || fail "go.mod: vet list did not come from go list: $(calls_text)"
+# A go list that fails must not pass for "nothing to run".
+set +e
+output=$(RUN_DIR="$wt" run CT_FAIL_LIST=1)
+rc=$?
+set -e
+if [ "$rc" -ne 2 ] || [[ $output != *"go list ./... failed"* ]] || [[ $output != *"shim refuses to list"* ]] || [[ $output == *"nothing to run"* ]]; then
+  fail "a failing go list after a go.mod change did not give exit 2 with its message (exit $rc): $output"
+fi
+if recorded "go build example.com/x/a" || command grep -q '^go vet\|^go test' "$calls" 2>/dev/null; then
+  fail "go.mod: build, vet or test ran although go list failed: $(calls_text)"
+fi
 gw checkout -q -- go.mod
 
 printf 'export const q = 1;\n' >"$wt/gocrm-ui/src/q.ts"

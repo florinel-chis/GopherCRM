@@ -71,12 +71,24 @@ go_pkgs=()
 go_build_pkgs=()
 if [ -n "$mod_changed" ]; then
   echo "check-touched: go.mod or go.sum changed; every Go package counts as touched"
+  # The lists come from go list, whose failure must not pass for "nothing to
+  # run": its output is captured and its status checked before it is used.
+  listed=$(go list ./... 2>&1) || {
+    echo "check-touched: go list ./... failed, so the Go packages cannot be determined:" >&2
+    echo "$listed" >&2
+    exit 2
+  }
+  buildable=$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... 2>&1) || {
+    echo "check-touched: go list -f ... ./... failed, so the Go packages cannot be determined:" >&2
+    echo "$buildable" >&2
+    exit 2
+  }
   while IFS= read -r pkg; do
     [ -n "$pkg" ] && go_pkgs+=("$pkg")
-  done < <(go list ./... 2>/dev/null | grep -v /gocrm-ui/)
+  done < <(printf '%s\n' "$listed" | grep -v /gocrm-ui/)
   while IFS= read -r pkg; do
     [ -n "$pkg" ] && go_build_pkgs+=("$pkg")
-  done < <(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null | grep -v /gocrm-ui/)
+  done < <(printf '%s\n' "$buildable" | grep -v /gocrm-ui/)
 else
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
