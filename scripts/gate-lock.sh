@@ -36,8 +36,9 @@
 # in MAKEFLAGS) takes no lock either: it runs nothing that needs one and must
 # never wait behind a real gate.
 #
-# Signals: INT, TERM and HUP are forwarded to the command, whose exit status
-# the script returns; the lock is released on exit however it ends.
+# Signals: INT, TERM and HUP are forwarded to the command's process group,
+# traps inside the command included, and the script returns the command's
+# exit status; the lock is released on exit however it ends.
 set -uo pipefail
 
 usage() {
@@ -182,18 +183,28 @@ release() {
   fi
 }
 child=
-forward() { [ -n "$child" ] && kill "-$1" "$child" 2>/dev/null; }
+forward() { [ -n "$child" ] && kill "-$1" -- "-$child" 2>/dev/null; }
 trap release EXIT
 trap 'forward INT' INT
 trap 'forward TERM' TERM
 trap 'forward HUP' HUP
 
 # The command runs as a background job so that a signal reaches the trap at
-# once instead of after the command ends; the redirection keeps its stdin,
-# which bash would otherwise replace with /dev/null for a background job.
+# once instead of after the command ends. It is started under job control
+# (set -m) so that it gets a process group of its own with the default signal
+# dispositions: without job control bash starts a background job with SIGINT
+# and SIGQUIT ignored, the command inherits that across exec, and a forwarded
+# INT would never arrive. Signals are forwarded to the whole group, so the
+# helpers a command starts get them too. Job control goes off again right
+# after the start, so bash prints no job status lines; the redirection keeps
+# the command's stdin explicit (bash leaves it alone under job control and
+# would replace it with /dev/null otherwise). A command that reads from the
+# terminal would be stopped (SIGTTIN) in its own group; the gates do not.
 export GATE_LOCK_HELD=$lock_dir
+set -m
 "$@" <&0 &
 child=$!
+set +m
 wait "$child"
 rc=$?
 # A forwarded signal interrupts wait before the command has exited; wait again

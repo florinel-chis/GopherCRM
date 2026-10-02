@@ -12,7 +12,8 @@
 #    deadlock and takes no second lock;
 # 5. waiting beyond GATE_LOCK_TIMEOUT exits 124 without running the command;
 # 6. a dry run of make (n in MAKEFLAGS) takes no lock;
-# 7. SIGTERM to the wrapper stops the command and releases the lock.
+# 7. SIGTERM to the wrapper stops the command and releases the lock, and INT
+#    and TERM reach a trap inside the command.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -183,6 +184,60 @@ fi
 [ -z "$child_pid" ] && fail "the command never recorded its pid"
 [ ! -e "$lock" ] || fail "lock directory still exists after SIGTERM"
 
+# --- 7b. INT and TERM reach a trap in the command ---------------------------------
+# A shell step that traps the signal (scripts/e2e/run.sh stops its backend
+# from an INT trap) must see it: the trap writes a marker and exits with the
+# signal's conventional status, which the wrapper reports. The INT case failed
+# until the command got a process group of its own: bash starts a background
+# job with SIGINT ignored, and the command inherited that across exec.
+wait_up_to() { # seconds pid: waits for the process to exit; 1 when it is still running
+  local i=0 limit=$(($1 * 10))
+  while kill -0 "$2" 2>/dev/null && [ "$i" -lt "$limit" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! kill -0 "$2" 2>/dev/null
+}
+for case in INT:130 TERM:143; do
+  sig=${case%%:*}
+  code=${case#*:}
+  rm -f "$tmp/child.pid" "$tmp/trap.$sig"
+  # Started under job control, as a terminal or make starts it: a background
+  # job of this script without job control would itself have SIGINT ignored
+  # and could not trap it, whatever it does for its command.
+  set -m
+  run_gate "$gate" holder-e sh -c "trap 'echo trapped >\"$tmp/trap.$sig\"; exit $code' $sig; echo \$\$ >'$tmp/child.pid'; while :; do sleep 0.1; done" 2>"$tmp/e.err" &
+  e_pid=$!
+  set +m
+  wait_for_holder || fail "holder-e never wrote its holder file ($sig)"
+  i=0
+  while [ ! -s "$tmp/child.pid" ] && [ "$i" -lt 50 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  child_pid=$(cat "$tmp/child.pid" 2>/dev/null || true)
+  wrapper_pid=$(sed -n 's/^pid=//p' "$lock/holder")
+  kill "-$sig" "$wrapper_pid"
+  if ! wait_up_to 5 "$e_pid"; then
+    fail "the wrapper (pid $wrapper_pid) did not finish within 5s of SIG$sig; the command never saw the signal"
+    kill -KILL "$child_pid" "$wrapper_pid" 2>/dev/null || true
+    pkill -KILL -P "$child_pid" 2>/dev/null || true
+  fi
+  set +e
+  wait "$e_pid"
+  e_rc=$?
+  set -e
+  [ "$e_rc" -eq "$code" ] || fail "wrapper exited $e_rc after SIG$sig, expected the trap's $code"
+  [ -s "$tmp/trap.$sig" ] || fail "the command's $sig trap did not run"
+  if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
+    kill -KILL "$child_pid" 2>/dev/null || true
+    fail "the command (pid $child_pid) survived SIG$sig to the wrapper"
+  fi
+  command grep -q "holder-e released the gate lock (exit $code" "$tmp/e.err" || fail "the release line after SIG$sig is missing or wrong: $(cat "$tmp/e.err")"
+  [ ! -e "$lock" ] || fail "lock directory still exists after SIG$sig"
+  rm -rf "$lock"
+done
+
 # --- usage ----------------------------------------------------------------------
 for args in "" "only-label" "-x true"; do
   set +e
@@ -201,4 +256,4 @@ set -e
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken; GATE_LOCK=0, CI=true and make -n skip the lock while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock."
+echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken; GATE_LOCK=0, CI=true and make -n skip the lock while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock; INT and TERM reach a trap inside the command."
