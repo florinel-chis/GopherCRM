@@ -48,6 +48,43 @@ npm run test:e2e:report# Open the last Playwright HTML report
 npx playwright test e2e/tests/login.spec.ts
 ```
 
+### Gates and targeted checks
+
+```bash
+make verify            # everything CI runs except e2e: size check, Go build/vet/test -race, frontend build/lint/Vitest
+make verify-backend    # the Go half; make verify-frontend for the frontend half; make verify-hygiene for the self-tests
+make e2e               # Playwright against a real backend (see gocrm-ui/e2e/README.md)
+make check-touched     # the quick check for a branch in progress (below)
+make verify VERIFY_JOBS=4   # the same gate with Go and Vitest parallelism capped at 4
+```
+
+The full gates (`verify`, `verify-backend`, `verify-frontend`, `e2e`) run **one at a time per
+machine**, across terminals and sessions, through `scripts/gate-lock.sh`. Two gates side by side
+slow each other down until tests time out for load alone, and a red gate then proves nothing. A
+second gate waits for the first (up to `GATE_LOCK_TIMEOUT`, default 1800 s, then exits 124 without
+running) and prints a progress line every `GATE_LOCK_PROGRESS` seconds (default 30) naming the
+holder: its pid, target, start time and directory, read from the lock directory
+`GATE_LOCK_DIR` (default `/tmp/gophercrm-gate.lock`, a fixed path because `TMPDIR` differs per
+login session on macOS). A lock whose holder process is gone is removed and retaken. `make verify`
+takes the lock once and the `verify-*` targets it runs inside see it (`GATE_LOCK_HELD`) and do not
+wait; `make -n` never takes it. `GATE_LOCK=0` skips the lock; CI sets `CI=true`, which the script
+treats the same, since every CI job has a runner of its own. The command lines themselves are
+unchanged: `verify-backend-steps` and `verify-frontend-steps` are what runs under the lock, and
+`scripts/ci/makefile_test.sh` pins them.
+
+`VERIFY_JOBS=N` caps parallelism: the Go commands get `GOFLAGS="<existing GOFLAGS> -p=N"` and
+Vitest `--maxWorkers=N`. Unset, the commands are byte for byte what CI runs.
+
+`make check-touched` is for a branch in progress. It takes the merge base of `HEAD` and
+`origin/main` (`CHECK_BASE` overrides the ref), collects every path changed since then, committed,
+staged, unstaged or untracked, and runs `go build` (packages with non-test sources), `go vet` and
+`go test -race -count=1` on the changed Go packages only, then `vitest related` on the changed files
+under `gocrm-ui/src`. A changed `go.mod` or `go.sum` widens the Go part to every package; a package
+whose Go files were all deleted is dropped. Dependants of a changed package are not rebuilt; the full
+gate covers them. It takes no lock, works from a git worktree, honours `VERIFY_JOBS`, and exits 1
+when a step fails or 2 when it could not run (no merge base, or no `node_modules` in the tree's
+`gocrm-ui` for the Vitest part). Each step's exit status is printed, never inferred from a pipe.
+
 ## Repository hooks
 
 Activate the repository's guardrails once per clone:

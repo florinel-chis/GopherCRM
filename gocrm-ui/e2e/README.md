@@ -17,6 +17,12 @@ make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths rela
 make e2e E2E_DB_DRIVER=sqlite                               # whole suite on SQLite, no MySQL needed
 ```
 
+`make e2e` is one of the full gates and takes the machine-wide gate lock (`scripts/gate-lock.sh`),
+like `make verify`: a second gate on the same machine waits for the first instead of running
+alongside it and timing out for load. The waiting run prints who holds the lock every 30 s;
+`GATE_LOCK=0` skips the lock, and CI (`CI=true`) never takes it. Details in
+[docs/DEVELOPMENT.md](../../docs/DEVELOPMENT.md), "Gates and targeted checks".
+
 `scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, every
 merge-queue group and every push to `main`, once per database engine (jobs "E2E (Playwright on
 MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on SQLite)"):

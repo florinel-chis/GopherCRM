@@ -37,6 +37,12 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
     passes 38 of 38 files.
   - **Fix options:** longer timeouts for these interaction-heavy tests, fewer Vitest workers in
     `make verify`, or run the frontend gate before the race-enabled Go tests.
+  - **Done so far (2026-10-02):** the three files that timed out under load on 2026-10-02
+    (`src/pages/tickets/TicketForm.test.tsx`, `src/pages/forms/FormBuilder.test.tsx`,
+    `src/pages/customers/CustomerForm.test.tsx`) raise their own `testTimeout` to 15 s with
+    `vi.setConfig`; `VERIFY_JOBS=N` caps Vitest workers and `go test -p`; and the full gates
+    serialise through `scripts/gate-lock.sh`, which removes the overlap that caused the load.
+    `src/routes/index.test.tsx` keeps the default and stays on this list.
 - **AEO Citations copy describes the wrong denominator** — the backend computes
   `owned_citation_rate` and every `citation_rate` as citations to that company or domain divided by
   all citations in the window (`internal/service/aeo_service.go`, `Citations`), so the company rates
