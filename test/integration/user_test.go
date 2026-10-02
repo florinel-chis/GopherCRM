@@ -528,6 +528,36 @@ func (suite *UserIntegrationTestSuite) TestUpdateUser_SelfCannotSetPasswordHere(
 	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "NewPassword123!"), "the submitted password was not set")
 }
 
+// TestUpdateUser_AdminCannotSetOwnPasswordHere: the recovery path is for
+// other accounts. An admin changes their own password through
+// POST /auth/change-password like everyone else, with the current one.
+func (suite *UserIntegrationTestSuite) TestUpdateUser_AdminCannotSetOwnPasswordHere() {
+	rec := suite.putJSON(fmt.Sprintf("/api/v1/users/%d", suite.adminUser.ID), suite.adminToken, map[string]interface{}{
+		"password": "NewPassword123!",
+	})
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	apiErr := suite.decodeError(rec)
+	assert.Contains(suite.T(), apiErr.Message, "/auth/change-password")
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(suite.adminUser.Email, "admin123"), "the old password still logs in")
+	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(suite.adminUser.Email, "NewPassword123!"), "the submitted password was not set")
+}
+
+// TestUpdateMe_RefusesPasswordKeyInAnyCase: encoding/json matches struct
+// fields case-insensitively, so the refusal must not depend on the spelling
+// of the key.
+func (suite *UserIntegrationTestSuite) TestUpdateMe_RefusesPasswordKeyInAnyCase() {
+	user, token := suite.createCustomer("casefold@example.com", "Password123!")
+
+	rec := suite.putJSON("/api/v1/users/me", token, map[string]interface{}{
+		"Password": "NewPassword123!",
+	})
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Password123!"), "the old password still logs in")
+	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "NewPassword123!"), "the submitted password was not set")
+}
+
 // insertRefreshToken stores a live refresh token row for the user.
 func (suite *UserIntegrationTestSuite) insertRefreshToken(userID uint, hash string) {
 	suite.Require().NoError(suite.db.Create(&models.RefreshToken{
