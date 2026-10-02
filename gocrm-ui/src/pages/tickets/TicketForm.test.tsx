@@ -6,6 +6,11 @@ import { createMockTicket, createMockCustomer, createMockUser } from '@/test/fac
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 
+// Interaction-heavy file: on a loaded machine its tests exceed Vitest's default
+// 5 s test timeout (docs/ROADMAP.md, "Vitest cases that time out on a loaded
+// machine"); the limit is raised for this file only.
+vi.setConfig({ testTimeout: 15_000 });
+
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
   return {

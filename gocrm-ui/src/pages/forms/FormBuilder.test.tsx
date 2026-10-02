@@ -6,6 +6,11 @@ import { usersApi } from '@/api/endpoints/users';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 
+// Interaction-heavy file: on a loaded machine its tests exceed Vitest's default
+// 5 s test timeout (docs/ROADMAP.md, "Vitest cases that time out on a loaded
+// machine"); the limit is raised for this file only.
+vi.setConfig({ testTimeout: 15_000 });
+
 const mockUseAuth = vi.fn();
 const mockNavigate = vi.fn();
 const showSuccess = vi.fn();
