@@ -92,7 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixed at its most verbose level, so every statement went to stdout with its bound values
   (email addresses, names, token hashes) whatever `LOG_LEVEL` said. Statements are now logged
   only at `debug` or `trace`; every other level logs failed and slow statements only. At every
-  level statements are printed with `?` placeholders instead of the bound values.
+  level statements are printed with `?` placeholders instead of the bound values, and quoted
+  values in driver error messages (MySQL's `Duplicate entry 'alice@example.com'`) are redacted
+  as well. A record-not-found result is no longer logged as a failed statement.
 
 ## [1.2.0] - 2026-09-25
 

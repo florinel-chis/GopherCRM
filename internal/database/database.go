@@ -4,11 +4,14 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,14 +78,65 @@ func gormLogLevel(level string) logger.LogLevel {
 // newGormLogger builds the SQL logger. It writes where logger.Default writes
 // (stdout) with GORM's default slow threshold, and ParameterizedQueries keeps
 // bound values (emails, names, token hashes) out of the log: statements are
-// printed with placeholders at every level.
+// printed with placeholders at every level. Driver errors are redacted as
+// well, because MySQL and MariaDB repeat the offending value in messages such
+// as "Duplicate entry 'alice@example.com' for key 'users.email'".
 func newGormLogger(level string) logger.Interface {
-	return logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+	return newGormLoggerTo(os.Stdout, level)
+}
+
+func newGormLoggerTo(w io.Writer, level string) logger.Interface {
+	return redactingLogger{logger.New(log.New(w, "\r\n", log.LstdFlags), logger.Config{
 		SlowThreshold:        200 * time.Millisecond,
 		LogLevel:             gormLogLevel(level),
 		Colorful:             true,
 		ParameterizedQueries: true,
-	})
+		// A First() miss is a 404 for the service layer, not a database
+		// error; at Warn level it would otherwise print a line per lookup.
+		IgnoreRecordNotFoundError: true,
+	})}
+}
+
+// quotedValue matches the single-quoted spans the MySQL and MariaDB drivers
+// put into their error messages (the duplicate value, the key name).
+var quotedValue = regexp.MustCompile(`'[^']*'`)
+
+// redactingLogger passes every call through to the wrapped GORM logger but
+// strips quoted values from the error that Trace prints.
+type redactingLogger struct {
+	logger.Interface
+}
+
+func (r redactingLogger) LogMode(level logger.LogLevel) logger.Interface {
+	return redactingLogger{r.Interface.LogMode(level)}
+}
+
+func (r redactingLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	r.Interface.Trace(ctx, begin, fc, redactError(err))
+}
+
+// ParamsFilter is how GORM applies ParameterizedQueries: it asks the logger
+// through a type assertion, so the wrapper has to expose it itself or bound
+// values come back.
+func (r redactingLogger) ParamsFilter(ctx context.Context, sql string, params ...interface{}) (string, []interface{}) {
+	if f, ok := r.Interface.(gorm.ParamsFilter); ok {
+		return f.ParamsFilter(ctx, sql, params...)
+	}
+	return sql, params
+}
+
+// redactError replaces quoted spans in err's text with '?'. Errors without
+// quotes, including gorm.ErrRecordNotFound, are returned unchanged so the
+// wrapped logger's own classification of them still applies.
+func redactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "'") {
+		return err
+	}
+	return errors.New(quotedValue.ReplaceAllString(msg, "'?'"))
 }
 
 // Open connects to the configured database and returns the GORM handle.
