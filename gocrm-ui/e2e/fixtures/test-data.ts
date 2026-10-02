@@ -16,17 +16,6 @@ export function generateTestUser(): TestUser {
   };
 }
 
-// For easy cleanup, prefix all test emails
-export function isTestEmail(email: string): boolean {
-  return email.startsWith('test_') && email.endsWith('@example.com');
-}
-
-// Generate a user with specific password requirements
-export function generateUserWithPassword(password: string): TestUser {
-  const user = generateTestUser();
-  return { ...user, password };
-}
-
 // Test data for various scenarios
 export const testPasswords = {
   valid: 'TestPassword123!',
