@@ -98,32 +98,28 @@ The entity suite includes realistic CRM workflows:
 
 ## Running the Tests
 
-### Prerequisites
-1. GoCRM backend server running on http://localhost:8080
-2. MySQL database accessible
-3. Frontend development server (optional, tests can run against built version)
-
-### Available Commands
+The standard way is `make e2e` from the repository root (details in `gocrm-ui/e2e/README.md`): it
+resets the `gocrm_e2e` database, builds and starts the backend and a Vite server on free ports,
+runs Playwright and stops the backend again, so nothing has to be running first and nothing has
+to be cleaned up afterwards. `SPECS` selects specs by path relative to `gocrm-ui/`:
 
 ```bash
-# Run all admin tests (headless)
-npm run test:e2e:admin
+make e2e SPECS="e2e/tests/admin-leads.spec.ts"          # one entity suite
+make e2e SPECS="e2e/tests/admin-entity-suite.spec.ts"   # the workflow suite
+```
 
-# Run all admin tests (with browser UI)
-npm run test:e2e:admin:headed
+### By hand
 
-# Run comprehensive workflow suite only
-npm run test:e2e:admin:suite
+Against a backend you started yourself on the port `VITE_API_BASE_URL` names, with
+`DISABLE_RATE_LIMIT=true`, from `gocrm-ui/` (the Vite dev server is started by the Playwright
+config):
 
-# Run specific entity tests
-npx playwright test e2e/tests/admin-leads.spec.ts --headed
-npx playwright test e2e/tests/admin-customers.spec.ts --headed
-npx playwright test e2e/tests/admin-tickets.spec.ts --headed
-npx playwright test e2e/tests/admin-tasks.spec.ts --headed
-npx playwright test e2e/tests/admin-users.spec.ts --headed
-
-# Clean up test data
-npm run test:e2e:admin:cleanup
+```bash
+npm run test:e2e:admin                                   # all admin specs, headless
+npm run test:e2e:admin:headed                            # same, visible browser
+npm run test:e2e:admin:suite                             # the workflow suite, visible browser
+npx playwright test e2e/tests/admin-leads.spec.ts --headed   # one spec
+npm run test:e2e:admin:cleanup   # pattern-based delete on the development database; see e2e/README.md
 ```
 
 ### Test Configuration
