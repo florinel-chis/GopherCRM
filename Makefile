@@ -15,6 +15,7 @@ help:
 	@echo "  make verify       - Everything CI runs except e2e: size check, Go build/vet/test -race, frontend build/lint/test"
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
+	@echo "                      (make e2e E2E_DB_DRIVER=sqlite runs it on a new SQLite file instead)"
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
@@ -56,10 +57,12 @@ verify-frontend:
 
 # e2e resets the gocrm_e2e database, starts the backend on a free port and runs
 # Playwright against it; CI runs the same script. SPECS narrows the run (paths
-# relative to gocrm-ui/). Needs MySQL, Go, Node and `npx playwright install chromium`.
+# relative to gocrm-ui/). E2E_DB_DRIVER=sqlite uses a new SQLite file instead of
+# MySQL and leaves gocrm_e2e alone. Needs Go, Node, `npx playwright install
+# chromium` and, for the default mysql driver, MySQL.
 .PHONY: e2e
 e2e:
-	scripts/e2e/run.sh $(SPECS)
+	E2E_DB_DRIVER="$(E2E_DB_DRIVER)" scripts/e2e/run.sh $(SPECS)
 
 .PHONY: migrate
 migrate: run
