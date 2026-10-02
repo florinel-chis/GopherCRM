@@ -2111,9 +2111,6 @@ definitions:
         type: string
       last_name:
         type: string
-      password:
-        minLength: 10
-        type: string
     type: object
   internal_handler.UpdateTaskRequest:
     properties:
@@ -2191,6 +2188,11 @@ definitions:
       is_active:
         type: boolean
       last_name:
+        type: string
+      password:
+        description: |-
+          Password is honoured for admins only (account recovery); anyone else
+          sending the key gets a 400 that names POST /auth/change-password.
         type: string
       role:
         allOf:
@@ -11272,9 +11274,13 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a user. Any authenticated user may update their own record;
-        updating another user's record requires the admin role. The role and is_active
+      description: 'Update a user. Any authenticated user may update their own record;
+        updating another user''s record requires the admin role. The role and is_active
         fields are applied only for admins and silently ignored for everyone else.
+        The password field is for admins only (account recovery): it must meet the
+        password policy, and setting it revokes every refresh token of that user.
+        A non-admin sending a password key gets a 400 naming POST /auth/change-password,
+        and nothing in the request is applied.'
       parameters:
       - description: User ID
         in: path
@@ -11300,7 +11306,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
               type: object
         "400":
-          description: Invalid user ID or request data
+          description: Invalid user ID or request data, password does not meet complexity
+            requirements, or password sent by a non-admin
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -11420,10 +11427,12 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update the profile of the currently authenticated user. Only email,
-        name and password can be changed here — role and active status are not settable
-        through this endpoint. A 404 here means the account was deleted while the
-        session was still live.
+      description: 'Update the profile of the currently authenticated user. Only email
+        and name can be changed here — role and active status are not settable through
+        this endpoint. The password is not changed here either: a body carrying a
+        password key is refused with a 400 naming POST /auth/change-password, and
+        nothing in the request is applied. A 404 here means the account was deleted
+        while the session was still live.'
       parameters:
       - description: Profile update request
         in: body
@@ -11444,7 +11453,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
               type: object
         "400":
-          description: Invalid request data or password does not meet complexity requirements
+          description: Invalid request data, or a password key (use POST /auth/change-password)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

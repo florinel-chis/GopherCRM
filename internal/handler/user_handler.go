@@ -250,7 +250,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else.
+// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else. The password field is for admins only (account recovery): it must meet the password policy, and setting it revokes every refresh token of that user. A non-admin sending a password key gets a 400 naming POST /auth/change-password, and nothing in the request is applied.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -259,7 +259,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param request body UpdateUserRequest true "User update request"
 // @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or request data"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or request data, password does not meet complexity requirements, or password sent by a non-admin"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only update your own profile unless you are an admin"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
@@ -441,7 +441,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 // UpdateMe godoc
 // @Summary Update the current user
-// @Description Update the profile of the currently authenticated user. Only email, name and password can be changed here — role and active status are not settable through this endpoint. A 404 here means the account was deleted while the session was still live.
+// @Description Update the profile of the currently authenticated user. Only email and name can be changed here — role and active status are not settable through this endpoint. The password is not changed here either: a body carrying a password key is refused with a 400 naming POST /auth/change-password, and nothing in the request is applied. A 404 here means the account was deleted while the session was still live.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -449,7 +449,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param request body UpdateMeRequest true "Profile update request"
 // @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data or password does not meet complexity requirements"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or a password key (use POST /auth/change-password)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found - the authenticated account no longer exists"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
