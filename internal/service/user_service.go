@@ -6,6 +6,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -17,11 +18,21 @@ func isNotFound(err error) bool {
 }
 
 type userService struct {
-	userRepo repository.UserRepository
+	userRepo         repository.UserRepository
+	refreshTokenRepo repository.RefreshTokenRepository
 }
 
 func NewUserService(userRepo repository.UserRepository) UserService {
 	return &userService{userRepo: userRepo}
+}
+
+// NewUserServiceWithSessions constructs the user service with session
+// revocation enabled: a password set through Update revokes every refresh
+// token of that user, as POST /auth/change-password does. NewUserService
+// (above) remains for callers that need no sessions; on such an instance a
+// password change revokes nothing.
+func NewUserServiceWithSessions(userRepo repository.UserRepository, refreshTokenRepo repository.RefreshTokenRepository) UserService {
+	return &userService{userRepo: userRepo, refreshTokenRepo: refreshTokenRepo}
 }
 
 func (s *userService) Register(user *models.User, password string) error {
@@ -91,19 +102,38 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 	}
 	
 	// Handle password update
+	passwordChanged := false
 	if password, ok := updates["password"].(string); ok && password != "" {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, err
 		}
 		user.Password = string(hashedPassword)
+		passwordChanged = true
 	}
 
 	if err := s.userRepo.Update(user); err != nil {
 		return nil, err
 	}
 
+	if passwordChanged {
+		s.revokeAllSessionsBestEffort(id)
+	}
+
 	return user, nil
+}
+
+// revokeAllSessionsBestEffort kills every refresh token of the user after a
+// password was set. The password is already stored, so a revocation failure
+// is logged loudly rather than reported as a failure of the update.
+func (s *userService) revokeAllSessionsBestEffort(userID uint) {
+	if s.refreshTokenRepo == nil {
+		return
+	}
+	if err := s.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+		utils.Logger.WithError(err).WithField("user_id", userID).
+			Error("Failed to revoke refresh tokens after password change")
+	}
 }
 
 // Delete erases the user's personal data and then soft-deletes the row. It is a

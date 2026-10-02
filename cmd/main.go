@@ -196,7 +196,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	authService := service.NewAuthServiceWithSessions(
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserServiceWithSessions(userRepo, refreshTokenRepo)
 	txManager := utils.NewTransactionManager(models.DB)
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
