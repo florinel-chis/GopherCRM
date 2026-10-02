@@ -4,10 +4,9 @@ import { testAdminCredentials } from '../../fixtures/admin-user';
 /**
  * Logs the seeded admin in through the real login form.
  *
- * The shared AdminAuthHelper asserts the JWT lands in localStorage, but the app
- * only persists there when "remember me" is ticked (otherwise sessionStorage).
- * This helper ticks the box and checks the app-level outcome (the redirect)
- * instead of a storage implementation detail.
+ * "Remember me" is ticked so the JWT is persisted to localStorage, the same
+ * choice the shared AdminAuthHelper makes (an unticked login keeps it in
+ * sessionStorage). Success is judged by the redirect, not by storage.
  */
 export async function ensureAdminLoggedIn(page: Page): Promise<void> {
   await page.goto('/login');
