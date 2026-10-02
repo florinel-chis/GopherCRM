@@ -86,6 +86,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture test upgrades a populated v1.2.0 file, including one left half-applied by a failed
   attempt; MySQL and MariaDB are unchanged.
 
+### Security
+
+- **`PUT /users/me` no longer changes the password.** The route asked for no current password
+  and revoked no session, so a valid access token or API key was enough to set a new password
+  and the sessions opened before it stayed valid. A body carrying a `password` key is now
+  refused with a 400 whose message names `POST /auth/change-password`, and nothing in the
+  request is applied; the same holds for `PUT /users/{id}` sent by a non-admin on their own
+  record. API change: clients that changed a password through `PUT /users/me` must switch to
+  `POST /auth/change-password`, which asks for the current password. The frontend never used
+  the field.
+- **An admin setting a password ends that user's sessions.** `PUT /users/{id}` by an admin
+  still sets a password (the account-recovery path), now under the password policy (400 on a
+  violation, nothing else applied), and revokes every refresh token of that user, as
+  `POST /auth/change-password` does. Other users' sessions are untouched.
+
 ## [1.2.0] - 2026-09-25
 
 ### Added

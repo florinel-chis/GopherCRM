@@ -525,9 +525,15 @@ Expected field still describes it and a **Known issue** line records the defect.
   1. Open `/users/<id>/edit`.
   2. Look for Password / Confirm Password inputs.
 - **Expected:** Neither field exists — `UserForm` renders them only when `isEditMode` is false. An
-  admin therefore has no UI to reset someone else's password; the only password paths are the user's
-  own `POST /auth/change-password` and the self-service `/auth/password-reset` flow. `PUT /users/:id`
-  does not accept a password either (only `PUT /users/me` does).
+  admin therefore has no UI to reset someone else's password. Through the API, `PUT /users/:id` by
+  an admin accepts a `password` (account recovery): the password policy applies (400 on a violation,
+  nothing else applied) and every refresh token of that user is revoked. A non-admin sending
+  `password` to `PUT /users/:id` on their own record gets a 400 naming `POST /auth/change-password`,
+  as on `PUT /users/me`. A user changes their own password only through `POST /auth/change-password`
+  or the self-service `/auth/password-reset` flow. Covered at API level by
+  `TestUpdateUser_AdminSetsPassword`, `TestUpdateUser_AdminPasswordMustMeetPolicy`,
+  `TestUpdateUser_AdminPasswordChangeRevokesRefreshTokens` and
+  `TestUpdateUser_SelfCannotSetPasswordHere` in `test/integration/user_test.go`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -676,9 +682,10 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** The page renders a single `h1` reading "Profile" and nothing else —
   `gocrm-ui/src/pages/settings/Profile.tsx` is a heading-only stub. No `GET /users/me` request is
   made by the page (the app already calls it once at startup from `authApi.getCurrentUser` to
-  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name, last
-  name and password, and enforces the same 10-character complexity rules — has no caller anywhere in
-  the frontend. The route is deliberately outside the admin-guarded layout route, so every role can
+  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name and
+  last name, and refuses a `password` key with a 400 naming `POST /auth/change-password` without
+  applying anything (`TestUpdateMe_RefusesPassword` in `test/integration/user_test.go` and
+  `internal/handler/user_handler_test.go`) — has no caller anywhere in the frontend. The route is deliberately outside the admin-guarded layout route, so every role can
   reach the stub.
 - **Known issue:** FEATURES.md row 7.9 is marked partial and gap G19 records the missing
   `profile.spec.ts`. There is nothing to drive until the page is built.
