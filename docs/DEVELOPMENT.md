@@ -225,6 +225,8 @@ settings:
 - `JWT_SECRET` — required, minimum 32 characters
 - `API_KEY_SECRET` — optional, falls back to `JWT_SECRET`
 - `SERVER_PORT` (default 8080), `SERVER_MODE` (`development` / `production`)
+- `SERVER_HOST` — interface to bind; empty (default) listens on every interface, `127.0.0.1`
+  behind a reverse proxy on the same machine; IPv6 literals are bracketed automatically
 - `API_PREFIX` (default `/api/v1`)
 - `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)

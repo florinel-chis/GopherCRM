@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SERVER_HOST`.** Optional listen interface for the API server. Empty, the default, keeps
+  the previous behaviour of binding every interface; `127.0.0.1` restricts the server to the
+  local machine behind a reverse proxy. The startup log now names the full listen address.
 - **Deal pipeline aggregates.** `GET /deals/pipeline` (admin and sales; sales always sees its own
   deals, admin may filter by `owner_id` and `company_id`) returns all five stages in pipeline
   order with each stage's deal count and totals per currency: the amount and the weighted amount,

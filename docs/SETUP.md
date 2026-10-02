@@ -28,6 +28,7 @@ cp .env.example .env
 # - DB_PASS (your MySQL password)
 # - DB_NAME (should be 'gocrm')
 # - SERVER_PORT (default: 8080)
+# - SERVER_HOST (default: empty = every interface; 127.0.0.1 behind a reverse proxy)
 # - JWT_SECRET (generate a secure random string)
 ```
 
