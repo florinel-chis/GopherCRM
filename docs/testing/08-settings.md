@@ -13,7 +13,7 @@ blocked until the page is built.
 - `gocrm-ui/src/pages/settings/APIKeys.tsx`, `gocrm-ui/src/pages/settings/ConfigurationSettings.tsx`
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
   `gocrm-ui/src/api/endpoints/apikeys.test.ts`, `gocrm-ui/src/api/client.ts`
-- `gocrm-ui/src/contexts/ConfigurationContext.tsx`, `gocrm-ui/src/components/ConfigurationOverview.tsx`
+- `gocrm-ui/src/contexts/ConfigurationContext.tsx`
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`
 - `internal/handler/apikey_handler.go`, `internal/handler/configuration_handler.go`,

@@ -67,12 +67,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         apiClient.setRefreshToken(response.refresh_token, persist);
       }
       setUser(response.user);
-
-      if (persist) {
-        localStorage.setItem('remember_me', 'true');
-      } else {
-        localStorage.removeItem('remember_me');
-      }
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
