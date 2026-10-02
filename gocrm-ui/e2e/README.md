@@ -20,7 +20,8 @@ make e2e E2E_DB_DRIVER=sqlite                               # whole suite on SQL
 `make e2e` is one of the full gates and takes the machine-wide gate lock (`scripts/gate-lock.sh`),
 like `make verify`: a second gate on the same machine waits for the first instead of running
 alongside it and timing out for load. The waiting run prints who holds the lock every 30 s;
-`GATE_LOCK=0` skips the lock, and CI (`CI=true`) never takes it. Details in
+`GATE_LOCK=0` skips the lock, and CI (`CI=true` or `GITHUB_ACTIONS=true`) never takes it, saying
+so in one line. Details in
 [docs/DEVELOPMENT.md](../../docs/DEVELOPMENT.md), "Gates and targeted checks".
 
 `scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, every

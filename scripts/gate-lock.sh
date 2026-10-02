@@ -13,8 +13,10 @@
 #
 # Environment:
 #   GATE_LOCK          0 runs the command without the lock. Meant for CI, where
-#                      every job has a machine of its own; CI=true is treated
-#                      the same unless GATE_LOCK=1 insists on the lock.
+#                      every job has a machine of its own; CI=true (or 1) and
+#                      GITHUB_ACTIONS=true are treated the same, with one line
+#                      on stderr saying so, unless GATE_LOCK=1 insists on the
+#                      lock.
 #   GATE_LOCK_DIR      the lock directory (default /tmp/gophercrm-gate.lock).
 #                      A fixed path on purpose: TMPDIR is per user and per login
 #                      session on macOS, which would give two sessions two locks.
@@ -95,7 +97,16 @@ make_dry_run() {
 case "${GATE_LOCK:-}" in
   0) exec "$@" ;;
   1) ;;
-  '') case "${CI:-}" in true | 1) exec "$@" ;; esac ;;
+  '')
+    for ci_var in CI GITHUB_ACTIONS; do
+      case "${!ci_var:-}" in
+        true | 1)
+          echo "gate-lock: $label runs without the gate lock ($ci_var=${!ci_var}; GATE_LOCK=1 would take it)" >&2
+          exec "$@"
+          ;;
+      esac
+    done
+    ;;
   *)
     echo "gate-lock: GATE_LOCK must be 0 or 1, got '$GATE_LOCK'" >&2
     exit 2
@@ -234,7 +245,7 @@ while :; do
   fi
   elapsed=$(($(now) - start))
   if [ "$elapsed" -ge "$timeout" ]; then
-    echo "gate-lock: $label gave up after ${elapsed}s (GATE_LOCK_TIMEOUT=$timeout): $lock_dir is held by $(holder_summary)${stuck:+; $stuck}" >&2
+    echo "gate-lock: $label gave up after ${elapsed}s (GATE_LOCK_TIMEOUT=$timeout): ${stuck:-$lock_dir is held by $(holder_summary)}" >&2
     exit 124
   fi
   if [ -z "$announced" ] || [ $(($(now) - last_report)) -ge "$progress" ] || { [ -n "$stuck" ] && [ -z "$stuck_announced" ]; }; then

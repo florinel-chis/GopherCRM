@@ -7,8 +7,9 @@
 # 2. a stale lock (holder pid gone, or no holder recorded within the grace
 #    period) is removed and retaken, and two waiters that find the same stale
 #    lock never both run;
-# 3. GATE_LOCK=0 and CI=true run the command without waiting, while
-#    GATE_LOCK=1 under CI=true waits;
+# 3. GATE_LOCK=0, CI=true and GITHUB_ACTIONS=true run the command without
+#    waiting (the CI ones say so on stderr), while GATE_LOCK=1 under either
+#    waits;
 # 4. a nested invocation under the same lock (GATE_LOCK_HELD) does not
 #    deadlock and takes no second lock;
 # 5. waiting beyond GATE_LOCK_TIMEOUT exits 124 without running the command;
@@ -34,7 +35,7 @@ trap 'rm -rf "$tmp"' EXIT
 # caller's own CI, GATE_LOCK*, and make variables must not leak in. Extra
 # NAME=VALUE arguments before the script path override these defaults.
 run_gate() {
-  env -u CI -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS \
+  env -u CI -u GITHUB_ACTIONS -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS \
     GATE_LOCK_DIR="$lock" GATE_LOCK_POLL=0.1 GATE_LOCK_PROGRESS=1 GATE_LOCK_TIMEOUT=10 "$@"
 }
 wait_for_holder() {
@@ -209,22 +210,31 @@ run_gate "$gate" holder-c sleep 60 2>/dev/null &
 c_pid=$!
 wait_for_holder || fail "holder-c never wrote its holder file"
 c_wrapper_pid=$(sed -n 's/^pid=//p' "$lock/holder")
-for bypass in "GATE_LOCK=0" "CI=true" "CI=1" "MAKEFLAGS=n" "MAKEFLAGS=nk" "MAKEFLAGS= --no-print-directory -n" "MAKEFLAGS=n -- VERIFY_JOBS=2" "MAKEFLAGS=n -- SPECS=e2e/tests/login.spec.ts"; do
+# The CI bypasses say so on stderr, once; the explicit GATE_LOCK=0 and a dry
+# run of make stay silent.
+for bypass in "GATE_LOCK=0" "CI=true" "CI=1" "GITHUB_ACTIONS=true" "MAKEFLAGS=n" "MAKEFLAGS=nk" "MAKEFLAGS= --no-print-directory -n" "MAKEFLAGS=n -- VERIFY_JOBS=2" "MAKEFLAGS=n -- SPECS=e2e/tests/login.spec.ts"; do
   before=$(seconds)
   set +e
-  output=$(run_gate "$bypass" "$gate" bypasser sh -c 'echo ran; echo "held=${GATE_LOCK_HELD:-}"' 2>&1)
+  output=$(run_gate "$bypass" "$gate" bypasser sh -c 'echo ran; echo "held=${GATE_LOCK_HELD:-}"' 2>"$tmp/bypass.err")
   rc=$?
   set -e
   if [ "$rc" -ne 0 ] || [ "$output" != $'ran\nheld=' ] || [ $(($(seconds) - before)) -gt 1 ]; then
-    fail "'$bypass' did not run the command directly (exit $rc, $(($(seconds) - before))s): $output"
+    fail "'$bypass' did not run the command directly (exit $rc, $(($(seconds) - before))s): $output $(cat "$tmp/bypass.err")"
   fi
+  case "$bypass" in
+    CI=* | GITHUB_ACTIONS=*)
+      [ "$(cat "$tmp/bypass.err")" = "gate-lock: bypasser runs without the gate lock ($bypass; GATE_LOCK=1 would take it)" ] ||
+        fail "'$bypass' did not announce the bypass on stderr: $(cat "$tmp/bypass.err")"
+      ;;
+    *) [ ! -s "$tmp/bypass.err" ] || fail "'$bypass' printed to stderr: $(cat "$tmp/bypass.err")" ;;
+  esac
   command grep -q '^label=holder-c$' "$lock/holder" || fail "'$bypass' disturbed the live lock"
 done
 # Entries hold one or two NAME=VALUE assignments separated by "|", because a
 # value may itself contain spaces.
 # "SPECS=…login…" and "GO_BUILD_PKGS=…" are what make 3.81 puts in MAKEFLAGS
 # for a plain `make e2e SPECS=…`: variable overrides, not an -n.
-for waits in "CI=true|GATE_LOCK=1" "MAKEFLAGS=k" "MAKEFLAGS=-- VERIFY_JOBS=n" "MAKEFLAGS= --no-print-directory -k" "MAKEFLAGS=SPECS=e2e/tests/login.spec.ts" "MAKEFLAGS=GO_BUILD_PKGS=./internal/utils" "MAKEFLAGS= -- GO_PKGS=./internal/utils"; do
+for waits in "CI=true|GATE_LOCK=1" "GITHUB_ACTIONS=true|GATE_LOCK=1" "MAKEFLAGS=k" "MAKEFLAGS=-- VERIFY_JOBS=n" "MAKEFLAGS= --no-print-directory -k" "MAKEFLAGS=SPECS=e2e/tests/login.spec.ts" "MAKEFLAGS=GO_BUILD_PKGS=./internal/utils" "MAKEFLAGS= -- GO_PKGS=./internal/utils"; do
   IFS='|' read -r first_var second_var <<<"$waits"
   before=$(seconds)
   set +e
@@ -353,4 +363,4 @@ set -e
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken and two waiters over one stale lock never both run; GATE_LOCK=0, CI=true and make -n skip the lock while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock; INT and TERM reach a trap inside the command."
+echo "gate-lock self-test passed: a second caller waits and names the holder; stale locks (dead pid, no holder) are retaken and two waiters over one stale lock never both run; GATE_LOCK=0, CI=true, GITHUB_ACTIONS=true and make -n skip the lock (the CI ones say so on stderr) while GATE_LOCK=1 insists; a nested call under the same lock does not wait; the timeout exits 124; SIGTERM stops the command and releases the lock; INT and TERM reach a trap inside the command."

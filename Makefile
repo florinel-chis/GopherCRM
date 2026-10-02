@@ -8,8 +8,9 @@ GO_BUILD_PKGS = $(shell go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./...
 # The full gates (verify, verify-backend, verify-frontend, e2e) run one at a
 # time per machine, across terminals and sessions, through scripts/gate-lock.sh
 # (see there for GATE_LOCK_DIR, GATE_LOCK_TIMEOUT and the rest). CI sets
-# CI=true, which the script treats as GATE_LOCK=0: every job has a machine of
-# its own. A dry run (make -n) never takes the lock.
+# CI=true (GitHub Actions also GITHUB_ACTIONS=true), which the script treats as
+# GATE_LOCK=0 and says so on stderr: every job has a machine of its own. A dry
+# run (make -n) never takes the lock.
 GATE = scripts/gate-lock.sh
 
 # VERIFY_JOBS=N bounds the parallelism of the gates: Go gets -p=N through

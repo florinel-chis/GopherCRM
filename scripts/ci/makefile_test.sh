@@ -52,7 +52,7 @@ lock="$tmp/gate.lock"
 mkdir "$lock"
 printf 'pid=%s\nstart=now\nlabel=occupant\ncwd=%s\ncmd=sleep\n' "$$" "$tmp" >"$lock/holder"
 dry() {
-  env -u VERIFY_JOBS -u GOFLAGS -u CI -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS \
+  env -u VERIFY_JOBS -u GOFLAGS -u CI -u GITHUB_ACTIONS -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS \
     PATH="$tmp/bin:$PATH" GATE_LOCK_DIR="$lock" GATE_LOCK_TIMEOUT=1 GATE_LOCK_POLL=0.1 \
     make -n --no-print-directory "$@" GO_PKGS='./a ./b' GO_BUILD_PKGS='./a'
 }
@@ -132,7 +132,7 @@ command grep -q '^label=occupant$' "$lock/holder" || fail "a dry run disturbed t
 # (scripts/e2e/selftest.sh relies on the same switch). SPECS=…login… puts a
 # word with an n into MAKEFLAGS, which must not pass for a dry run.
 real_e2e() {
-  env -u VERIFY_JOBS -u CI -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS -u DB_PATH -u DB_NAME \
+  env -u VERIFY_JOBS -u CI -u GITHUB_ACTIONS -u GATE_LOCK -u GATE_LOCK_HELD -u MAKEFLAGS -u MFLAGS -u DB_PATH -u DB_NAME \
     GATE_LOCK_DIR="$lock" GATE_LOCK_TIMEOUT=1 GATE_LOCK_POLL=0.1 \
     E2E_PLAN_ONLY=1 E2E_CAFFEINATED=1 JWT_SECRET=selftest-secret-selftest-secret-selftest \
     E2E_API_PORT=1 E2E_UI_PORT=2 DB_HOST=192.0.2.1 \

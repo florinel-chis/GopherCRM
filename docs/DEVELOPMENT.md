@@ -67,8 +67,11 @@ holder: its pid, target, start time and directory, read from the lock directory
 `GATE_LOCK_DIR` (default `/tmp/gophercrm-gate.lock`, a fixed path because `TMPDIR` differs per
 login session on macOS). A lock whose holder process is gone is removed and retaken. `make verify`
 takes the lock once and the `verify-*` targets it runs inside see it (`GATE_LOCK_HELD`) and do not
-wait; `make -n` never takes it. `GATE_LOCK=0` skips the lock; CI sets `CI=true`, which the script
-treats the same, since every CI job has a runner of its own. The command lines themselves are
+wait; `make -n` never takes it. `GATE_LOCK=0` skips the lock; CI sets `CI=true` (GitHub Actions
+also `GITHUB_ACTIONS=true`), which the script treats the same and says so in one line on stderr,
+since every CI job has a runner of its own; `GATE_LOCK=1` insists on the lock there. A stale lock
+the script cannot remove (one taken under another account, say) is reported and waited out until
+the timeout. The command lines themselves are
 unchanged: `verify-backend-steps` and `verify-frontend-steps` are what runs under the lock, and
 `scripts/ci/makefile_test.sh` pins them.
 
