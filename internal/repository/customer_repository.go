@@ -131,29 +131,6 @@ func (r *customerRepository) List(offset, limit int) ([]models.Customer, error) 
 	return customers, err
 }
 
-func (r *customerRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Customer, error) {
-	var customer models.Customer
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.First(&customer, id).Error
-	if err != nil {
-		return nil, err
-	}
-	return &customer, nil
-}
-
-func (r *customerRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Customer, error) {
-	var customers []models.Customer
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&customers).Error
-	return customers, err
-}
-
 func (r *customerRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error) {
 	var customers []models.Customer
 	query := r.db

@@ -169,43 +169,6 @@ func (_m *TaskRepository) GetByAssignedToID(assignedToID uint, offset int, limit
 	return r0, r1
 }
 
-// GetByAssignedToIDWithPreloads provides a mock function with given fields: assignedToID, offset, limit, preloads
-func (_m *TaskRepository) GetByAssignedToIDWithPreloads(assignedToID uint, offset int, limit int, preloads ...string) ([]models.Task, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, assignedToID, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByAssignedToIDWithPreloads")
-	}
-
-	var r0 []models.Task
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) ([]models.Task, error)); ok {
-		return rf(assignedToID, offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) []models.Task); ok {
-		r0 = rf(assignedToID, offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Task)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, int, int, ...string) error); ok {
-		r1 = rf(assignedToID, offset, limit, preloads...)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // GetByID provides a mock function with given fields: id
 func (_m *TaskRepository) GetByID(id uint) (*models.Task, error) {
 	ret := _m.Called(id)
@@ -236,43 +199,6 @@ func (_m *TaskRepository) GetByID(id uint) (*models.Task, error) {
 	return r0, r1
 }
 
-// GetByIDWithPreloads provides a mock function with given fields: id, preloads
-func (_m *TaskRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Task, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, id)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByIDWithPreloads")
-	}
-
-	var r0 *models.Task
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, ...string) (*models.Task, error)); ok {
-		return rf(id, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, ...string) *models.Task); ok {
-		r0 = rf(id, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*models.Task)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, ...string) error); ok {
-		r1 = rf(id, preloads...)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // List provides a mock function with given fields: offset, limit
 func (_m *TaskRepository) List(offset int, limit int) ([]models.Task, error) {
 	ret := _m.Called(offset, limit)
@@ -296,43 +222,6 @@ func (_m *TaskRepository) List(offset int, limit int) ([]models.Task, error) {
 
 	if rf, ok := ret.Get(1).(func(int, int) error); ok {
 		r1 = rf(offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// ListWithPreloads provides a mock function with given fields: offset, limit, preloads
-func (_m *TaskRepository) ListWithPreloads(offset int, limit int, preloads ...string) ([]models.Task, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ListWithPreloads")
-	}
-
-	var r0 []models.Task
-	var r1 error
-	if rf, ok := ret.Get(0).(func(int, int, ...string) ([]models.Task, error)); ok {
-		return rf(offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(int, int, ...string) []models.Task); ok {
-		r0 = rf(offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Task)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int, ...string) error); ok {
-		r1 = rf(offset, limit, preloads...)
 	} else {
 		r1 = ret.Error(1)
 	}

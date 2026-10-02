@@ -78,39 +78,6 @@ func (r *taskRepository) CountPending() (int64, error) {
 	return count, err
 }
 
-func (r *taskRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Task, error) {
-	var task models.Task
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.First(&task, id).Error
-	if err != nil {
-		return nil, err
-	}
-	return &task, nil
-}
-
-func (r *taskRepository) GetByAssignedToIDWithPreloads(assignedToID uint, offset, limit int, preloads ...string) ([]models.Task, error) {
-	var tasks []models.Task
-	query := r.db.Where("assigned_to_id = ?", assignedToID)
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-func (r *taskRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Task, error) {
-	var tasks []models.Task
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
 func (r *taskRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
 	var tasks []models.Task
 	query := r.db

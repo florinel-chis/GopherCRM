@@ -33,22 +33,9 @@ func (r *refreshTokenRepository) GetByTokenHash(tokenHash string) (*models.Refre
 	return &token, nil
 }
 
-func (r *refreshTokenRepository) GetByUserID(userID uint) ([]models.RefreshToken, error) {
-	var tokens []models.RefreshToken
-	err := r.db.Where("user_id = ? AND is_revoked = ? AND expires_at > ?", 
-		userID, false, time.Now()).Find(&tokens).Error
-	return tokens, err
-}
-
 func (r *refreshTokenRepository) RevokeByTokenHash(tokenHash string) error {
 	return r.db.Model(&models.RefreshToken{}).
 		Where("token_hash = ?", tokenHash).
-		Update("is_revoked", true).Error
-}
-
-func (r *refreshTokenRepository) RevokeAllByUserID(userID uint) error {
-	return r.db.Model(&models.RefreshToken{}).
-		Where("user_id = ? AND is_revoked = ?", userID, false).
 		Update("is_revoked", true).Error
 }
 
@@ -57,13 +44,10 @@ func (r *refreshTokenRepository) DeleteExpired() error {
 		Delete(&models.RefreshToken{}).Error
 }
 
-func (r *refreshTokenRepository) DeleteByTokenHash(tokenHash string) error {
-	return r.db.Where("token_hash = ?", tokenHash).Delete(&models.RefreshToken{}).Error
-}
-
-// Update method names to match interface
 func (r *refreshTokenRepository) RevokeAllForUser(userID uint) error {
-	return r.RevokeAllByUserID(userID)
+	return r.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND is_revoked = ?", userID, false).
+		Update("is_revoked", true).Error
 }
 
 func (r *refreshTokenRepository) WithTx(tx *gorm.DB) RefreshTokenRepository {
