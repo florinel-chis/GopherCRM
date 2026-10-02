@@ -426,7 +426,6 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	
 	payload := UpdateMeRequest{
 		FirstName: "Updated",
-		Password:  "NewStr0ng!Pass",
 	}
 
 	expectedUser := &models.User{
@@ -437,7 +436,8 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	}
 
 	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		return updates["first_name"] == "Updated" && updates["password"] == "NewStr0ng!Pass"
+		_, hasPassword := updates["password"]
+		return updates["first_name"] == "Updated" && !hasPassword
 	})).Return(expectedUser, nil)
 	
 	body, _ := json.Marshal(payload)
@@ -453,6 +453,33 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
+}
+
+// The password is not a profile field: PUT /users/me asks for no current
+// password and revokes nothing, so the key is refused before the service is
+// reached and the message names POST /auth/change-password instead.
+func (suite *UserHandlerTestSuite) TestUpdateMe_RefusesPassword() {
+	suite.router.PUT("/users/me", suite.handler.UpdateMe)
+
+	suite.mockService.On("Update", mock.Anything, mock.Anything).
+		Return(&models.User{BaseModel: models.BaseModel{ID: 1}}, nil).Maybe()
+
+	body := []byte(`{"first_name":"Updated","password":"NewStr0ng!Pass"}`)
+	req := httptest.NewRequest(http.MethodPut, "/users/me", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	if assert.NotNil(suite.T(), response.Error) {
+		assert.Contains(suite.T(), response.Error.Message, "/auth/change-password")
+	}
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything)
 }
 
 // The id here comes from the token, so a not-found means the account was

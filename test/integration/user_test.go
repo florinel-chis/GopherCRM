@@ -413,10 +413,10 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 	userData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "metest@example.com", userData["email"])
 
-	// Test PUT /users/me
+	// Test PUT /users/me: the profile fields change, the password does not.
 	updatePayload := map[string]interface{}{
 		"first_name": "UpdatedMe",
-		"password":   "NewPassword123!",
+		"last_name":  "Renamed",
 	}
 	body, _ := json.Marshal(updatePayload)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewBuffer(body))
@@ -434,20 +434,84 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 
 	updatedData := updateResponse.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "UpdatedMe", updatedData["first_name"])
+	assert.Equal(suite.T(), "Renamed", updatedData["last_name"])
 
-	// Verify password was changed by attempting login with new password
-	loginPayload := map[string]string{
-		"email":    "metest@example.com",
-		"password": "NewPassword123!",
+	// A profile update is not a credential change: the old password still logs in.
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus("metest@example.com", "Password123!"))
+}
+
+// PUT /users/me never asks for the current password and never revokes
+// sessions, so it must not change the password at all: a stolen access token
+// would otherwise be enough to lock the owner out. The key is refused with a
+// message that names the one password-change route, and nothing in the
+// request is applied.
+func (suite *UserIntegrationTestSuite) TestUpdateMe_RefusesPassword() {
+	user, token := suite.createCustomer("mepassword@example.com", "Password123!")
+
+	rec := suite.putJSON("/api/v1/users/me", token, map[string]interface{}{
+		"first_name": "Hijacked",
+		"password":   "NewPassword123!",
+	})
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	apiErr := suite.decodeError(rec)
+	assert.Contains(suite.T(), apiErr.Message, "/auth/change-password")
+
+	var stored models.User
+	suite.Require().NoError(suite.db.First(&stored, user.ID).Error)
+	assert.Equal(suite.T(), "Me", stored.FirstName, "a refused request applies nothing")
+
+	assert.Equal(suite.T(), http.StatusOK, suite.loginStatus(user.Email, "Password123!"), "the old password still logs in")
+	assert.Equal(suite.T(), http.StatusUnauthorized, suite.loginStatus(user.Email, "NewPassword123!"), "the submitted password was not set")
+}
+
+// createCustomer inserts an active customer with the given credentials and
+// returns the row together with a JWT for it.
+func (suite *UserIntegrationTestSuite) createCustomer(email, password string) (*models.User, string) {
+	user := &models.User{
+		Email:     email,
+		FirstName: "Me",
+		LastName:  "Test",
+		Role:      models.RoleCustomer,
+		IsActive:  true,
 	}
-	body, _ = json.Marshal(loginPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
+	suite.Require().NoError(user.SetPassword(password))
+	suite.Require().NoError(suite.db.Create(user).Error)
+	token, err := suite.authService.GenerateJWT(user)
+	suite.Require().NoError(err)
+	return user, token
+}
+
+// putJSON sends a JSON body with the given bearer token and returns the recorder.
+func (suite *UserIntegrationTestSuite) putJSON(path, token string, payload map[string]interface{}) *httptest.ResponseRecorder {
+	body, err := json.Marshal(payload)
+	suite.Require().NoError(err)
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
 	suite.router.ServeHTTP(rec, req)
+	return rec
+}
 
-	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+// loginStatus returns the status code POST /auth/login answers for the credentials.
+func (suite *UserIntegrationTestSuite) loginStatus(email, password string) int {
+	body, err := json.Marshal(map[string]string{"email": email, "password": password})
+	suite.Require().NoError(err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// decodeError returns the error envelope of a response that must be a failure.
+func (suite *UserIntegrationTestSuite) decodeError(rec *httptest.ResponseRecorder) *utils.APIError {
+	var response utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+	suite.Require().False(response.Success, "expected an error envelope, got a success response")
+	suite.Require().NotNil(response.Error)
+	return response.Error
 }
 
 func (suite *UserIntegrationTestSuite) TestEmailUniqueness() {
