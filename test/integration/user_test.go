@@ -80,7 +80,7 @@ func (suite *UserIntegrationTestSuite) setupRouter() {
 	userRepo := repository.NewUserRepository(suite.db)
 	apiKeyRepo := repository.NewAPIKeyRepository(suite.db)
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, suite.cfg.JWT)
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserServiceWithSessions(userRepo, repository.NewRefreshTokenRepository(suite.db))
 	authHandler := handler.NewAuthHandler(suite.authService, userService)
 	userHandler := handler.NewUserHandler(userService)
 
