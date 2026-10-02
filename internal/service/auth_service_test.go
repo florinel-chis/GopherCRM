@@ -130,11 +130,6 @@ func (m *MockAPIKeyRepository) Update(apiKey *models.APIKey) error {
 	return args.Error(0)
 }
 
-func (m *MockAPIKeyRepository) Delete(id uint) error {
-	args := m.Called(id)
-	return args.Error(0)
-}
-
 func (m *MockAPIKeyRepository) UpdateLastUsed(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)

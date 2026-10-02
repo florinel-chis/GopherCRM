@@ -97,16 +97,6 @@ func (r *leadRepository) GetByOwnerID(ownerID uint, offset, limit int) ([]models
 	return leads, err
 }
 
-func (r *leadRepository) GetByOwnerIDWithPreloads(ownerID uint, offset, limit int, preloads ...string) ([]models.Lead, error) {
-	var leads []models.Lead
-	query := r.db.Where("owner_id = ?", ownerID)
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
 func (r *leadRepository) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error) {
 	var leads []models.Lead
 	err := r.db.Where("classification = ?", classification).Offset(offset).Limit(limit).Find(&leads).Error
@@ -138,12 +128,6 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 // WithTx, and a fresh one otherwise.
 func (r *leadRepository) Delete(id uint) error {
 	return eraseLeadWithConversionLink(r.db, id)
-}
-
-func (r *leadRepository) List(offset, limit int) ([]models.Lead, error) {
-	var leads []models.Lead
-	err := r.db.Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
 }
 
 func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error) {

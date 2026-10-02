@@ -137,28 +137,6 @@ func (_m *RefreshTokenRepository) WithTx(tx *gorm.DB) repository.RefreshTokenRep
 	return r0
 }
 
-// GetByUserID provides a mock function with given fields: userID
-func (_m *RefreshTokenRepository) GetByUserID(userID uint) ([]models.RefreshToken, error) {
-	ret := _m.Called(userID)
-	var r0 []models.RefreshToken
-	if ret.Get(0) != nil {
-		r0 = ret.Get(0).([]models.RefreshToken)
-	}
-	return r0, ret.Error(1)
-}
-
-// RevokeAllByUserID provides a mock function with given fields: userID
-func (_m *RefreshTokenRepository) RevokeAllByUserID(userID uint) error {
-	ret := _m.Called(userID)
-	return ret.Error(0)
-}
-
-// DeleteByTokenHash provides a mock function with given fields: tokenHash
-func (_m *RefreshTokenRepository) DeleteByTokenHash(tokenHash string) error {
-	ret := _m.Called(tokenHash)
-	return ret.Error(0)
-}
-
 // NewRefreshTokenRepository creates a new instance of RefreshTokenRepository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewRefreshTokenRepository(t interface {

@@ -201,43 +201,6 @@ func (_m *CustomerRepository) GetByID(id uint) (*models.Customer, error) {
 	return r0, r1
 }
 
-// GetByIDWithPreloads provides a mock function with given fields: id, preloads
-func (_m *CustomerRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Customer, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, id)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByIDWithPreloads")
-	}
-
-	var r0 *models.Customer
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, ...string) (*models.Customer, error)); ok {
-		return rf(id, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, ...string) *models.Customer); ok {
-		r0 = rf(id, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*models.Customer)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, ...string) error); ok {
-		r1 = rf(id, preloads...)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // List provides a mock function with given fields: offset, limit
 func (_m *CustomerRepository) List(offset int, limit int) ([]models.Customer, error) {
 	ret := _m.Called(offset, limit)
@@ -261,43 +224,6 @@ func (_m *CustomerRepository) List(offset int, limit int) ([]models.Customer, er
 
 	if rf, ok := ret.Get(1).(func(int, int) error); ok {
 		r1 = rf(offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// ListWithPreloads provides a mock function with given fields: offset, limit, preloads
-func (_m *CustomerRepository) ListWithPreloads(offset int, limit int, preloads ...string) ([]models.Customer, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ListWithPreloads")
-	}
-
-	var r0 []models.Customer
-	var r1 error
-	if rf, ok := ret.Get(0).(func(int, int, ...string) ([]models.Customer, error)); ok {
-		return rf(offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(int, int, ...string) []models.Customer); ok {
-		r0 = rf(offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Customer)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int, ...string) error); ok {
-		r1 = rf(offset, limit, preloads...)
 	} else {
 		r1 = ret.Error(1)
 	}

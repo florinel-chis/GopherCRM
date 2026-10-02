@@ -77,49 +77,6 @@ func (r *ticketRepository) CountOpen() (int64, error) {
 	return count, err
 }
 
-func (r *ticketRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Ticket, error) {
-	var ticket models.Ticket
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.First(&ticket, id).Error
-	if err != nil {
-		return nil, err
-	}
-	return &ticket, nil
-}
-
-func (r *ticketRepository) GetByCustomerIDWithPreloads(customerID uint, offset, limit int, preloads ...string) ([]models.Ticket, error) {
-	var tickets []models.Ticket
-	query := r.db.Where("customer_id = ?", customerID)
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&tickets).Error
-	return tickets, err
-}
-
-func (r *ticketRepository) GetByAssignedToIDWithPreloads(assignedToID uint, offset, limit int, preloads ...string) ([]models.Ticket, error) {
-	var tickets []models.Ticket
-	query := r.db.Where("assigned_to_id = ?", assignedToID)
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&tickets).Error
-	return tickets, err
-}
-
-func (r *ticketRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Ticket, error) {
-	var tickets []models.Ticket
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := query.Offset(offset).Limit(limit).Find(&tickets).Error
-	return tickets, err
-}
-
 func (r *ticketRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error) {
 	var tickets []models.Ticket
 	query := r.db
