@@ -1,8 +1,56 @@
 # GopherCRM
 
-A comprehensive Customer Relationship Management (CRM) system built with Go (backend) and React TypeScript (frontend).
+A self-hosted CRM for small teams: sales and support in one app, with lead-capture forms built in.
+Go backend, React UI, SQLite or MySQL.
+
+[![CI](https://github.com/florinel-chis/GopherCRM/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/florinel-chis/GopherCRM/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/florinel-chis/GopherCRM)](https://github.com/florinel-chis/GopherCRM/releases/latest)
+
+**Who it's for:** small sales and support teams that want leads, deals and tickets in one place, on
+a server they control, without per-seat licence fees.
+
+- **A complete CRM.** Leads that convert into customers, companies, deals on a five-stage pipeline
+  with a full stage history, support tickets, tasks with labels, and four roles (admin, sales,
+  support, customer).
+- **Lead capture built in.** Build forms in the CRM and embed them on any website with one script
+  tag. Submissions become leads, behind layered spam protection (time trap, origin allowlist,
+  honeypot, rate limits, optional reCAPTCHA v3) and an optional double opt-in.
+- **Easy to run.** A single Go API binary and a static React UI. SQLite needs no database server;
+  MySQL 8 and MariaDB 10.11 are tested in CI. Docker Compose files ship for both.
+- **AI-visibility reports (AEO).** See whether Anthropic, OpenAI, Gemini, Kimi, Perplexity or any
+  OpenAI-compatible endpoint mentions your brand when buyers ask.
+
+![GopherCRM dashboard](docs/img/gophercrm-dashboard.png)
+
+## Quick start (SQLite, no database server)
+
+Needs Docker with Compose and free ports 3000 and 8080.
+
+```bash
+git clone https://github.com/florinel-chis/GopherCRM.git
+cd GopherCRM
+export JWT_SECRET="$(openssl rand -base64 32)"
+docker compose -f docker-compose.sqlite.yml up -d --build
+docker compose -f docker-compose.sqlite.yml exec backend create-admin -non-interactive \
+  -email admin@example.com -name "Admin" -password 'ChangeMe!2345'
+```
+
+Open http://localhost:3000 and sign in as `admin@example.com` / `ChangeMe!2345`, then change the
+password under **Settings > Profile**. Port 3000 taken? Put `UI_PORT=3001` in front of the `up`
+command and open http://localhost:3001 instead.
+
+**Docs:** [Docker](docs/DOCKER.md) · [Setup](docs/SETUP.md) · [Features](docs/FEATURES.md) ·
+[Developer guide](docs/DEVELOPMENT.md) · [Data model](docs/datamodel.md) ·
+[Screenshots](docs/SCREENSHOTS.md) · [API spec](api/swagger.yaml) · [Roadmap](docs/ROADMAP.md) ·
+[Changelog](CHANGELOG.md) · [Releases](https://github.com/florinel-chis/GopherCRM/releases)
+
+If it's useful, a star helps others find it.
 
 ## Features
+
+<details>
+<summary>The full feature list</summary>
 
 - 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control
 - 🛡️ **Security**: Account lockout, password complexity, sort-column allowlists against SQL injection, rate limiting with trusted-proxy handling
@@ -21,69 +69,9 @@ A comprehensive Customer Relationship Management (CRM) system built with Go (bac
 - 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
 - 🔌 **RESTful API**: Clean architecture with comprehensive endpoints
 
-![GopherCRM Dashboard](docs/img/gophercrm-dashboard.png)
+</details>
 
-## ⚠️ Deletion is irreversible
-
-`DELETE` on a **user, customer or lead** is an erasure, not a recoverable soft delete. Every
-personal field on the row is overwritten in place — the email address is replaced with a random,
-non-routable placeholder in the reserved `.invalid` domain — and the row is only then soft-deleted,
-all in a single transaction. API keys and refresh tokens belonging to the account are purged with
-it. The row itself is deliberately kept so foreign keys from tickets and tasks still resolve:
-business records survive, the person does not.
-
-Two consequences:
-
-- **Nothing can be restored afterwards.** To suspend access reversibly, set `is_active = false`
-  instead; deactivation never touches personal data.
-- **The email address becomes reusable**, because the original no longer exists in the table.
-
-Tickets and tasks are unaffected — deleting one is still an ordinary soft delete.
-
-Rows soft-deleted *before* this behaviour existed still hold personal data;
-`scripts/anonymize_legacy_deleted_pii.sql` remediates them. It is manual, irreversible, and
-deliberately not wired into auto-migration.
-
-Full rationale, the cascade rules for converted leads, and the operational caveats are in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#deleting-personal-data).
-
-## Tech Stack
-
-### Backend
-- **Go 1.25+** - Main backend language
-- **Gin 1.10** - HTTP web framework
-- **GORM 1.30** - ORM for database operations
-- **MySQL 8.0+** - Default database; **SQLite** is a supported alternative via
-  `DB_DRIVER` (pure-Go driver, no cgo) and is what the test suite runs on
-- **JWT** (`golang-jwt/jwt/v5`) - Authentication tokens
-- **Logrus** - Structured logging
-- **Testify** - Unit and integration test suites
-
-### Frontend
-- **React 19** - UI framework
-- **TypeScript 5.8** - Type safety
-- **Material-UI (MUI) v7** - Component library
-- **React Router 7** - Client-side routing
-- **TanStack Query 5** - Data fetching and caching
-- **React Hook Form + Zod** - Forms and validation
-- **Axios** - HTTP client
-- **Recharts** - Dashboard charts
-- **Vite 6** - Build tool and dev server
-- **Vitest 3 + Playwright** - Unit and end-to-end tests
-
-## Prerequisites
-
-### Backend
-- Go 1.25 or higher
-- MySQL 8.0 or higher — or nothing at all, if you run on SQLite
-  (`DB_DRIVER=sqlite`, see [Choosing a database](#choosing-a-database))
-- Make (optional, for using Makefile commands)
-
-### Frontend
-- Node.js 20 or newer (React Router 7 requires Node >= 20) and npm
-- Modern web browser
-
-## Quick Start with Docker
+## Running with Docker (MySQL)
 
 The whole stack (MySQL, API, UI) can run in containers, with database data
 persisted in a named volume across restarts:
@@ -100,6 +88,18 @@ UI at http://localhost:3000, API at http://localhost:8080/api/v1. See
 To run the same stack without a database server, use the SQLite flavor instead —
 `docker compose -f docker-compose.sqlite.yml up -d --build` starts two containers
 with the database in a file on a named volume ([docs/DOCKER.md](docs/DOCKER.md#sqlite-flavor-no-database-server)).
+
+## Prerequisites
+
+### Backend
+- Go 1.25 or higher
+- MySQL 8.0 or higher — or nothing at all, if you run on SQLite
+  (`DB_DRIVER=sqlite`, see [Choosing a database](#choosing-a-database))
+- Make (optional, for using Makefile commands)
+
+### Frontend
+- Node.js 20 or newer (React Router 7 requires Node >= 20) and npm
+- Modern web browser
 
 ## Setup Instructions
 
@@ -334,6 +334,11 @@ variables below when no key is stored, so a key entered in the UI takes effect f
 without restarting the process. An engine with no key from either source is simply skipped. Models,
 the custom engine and the schedule are environment-only.
 
+**Where your data goes.** CRM data and your prompt sets stay on your server. Each AEO run sends the
+tracked prompts to the hosted engines you configured, so those queries leave it. Pointing AEO at a
+local model keeps the queries on your network, but then it only measures what that local model
+says.
+
 | Engine | Key | Model override |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY` | `AEO_ANTHROPIC_MODEL` |
@@ -359,6 +364,31 @@ time; a second request is refused with 409.
 
 `scripts/aeo_live_smoke.sh` walks the whole module against real providers for manual verification.
 It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-aeo.md`.
+
+## Privacy: deleting a person erases their data
+
+Deleting a **user, customer or lead** is an erasure under GDPR Art. 17, not a recoverable soft
+delete. Every personal field on the row is overwritten in place — the email address is replaced
+with a random, non-routable placeholder in the reserved `.invalid` domain — and the row is only then
+soft-deleted, all in a single transaction. API keys and refresh tokens belonging to the account are
+purged with it. The row itself is deliberately kept so foreign keys from tickets and tasks still
+resolve: business records survive, the person does not.
+
+Two consequences:
+
+- **Erasure cannot be undone.** The only way to get the data back is to restore a database backup.
+  To suspend access reversibly, deactivate the account instead (`is_active = false`); deactivation
+  never touches personal data.
+- **The email address becomes reusable**, because the original no longer exists in the table.
+
+Tickets and tasks are unaffected — deleting one is still an ordinary soft delete.
+
+Rows soft-deleted *before* this behaviour existed still hold personal data;
+`scripts/anonymize_legacy_deleted_pii.sql` remediates them. It is manual, irreversible, and
+deliberately not wired into auto-migration.
+
+Full rationale, the cascade rules for converted leads, and the operational caveats are in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#deleting-personal-data).
 
 ## Development
 
@@ -640,6 +670,30 @@ gophercrm/
 ├── go.sum                       # Go module checksums
 └── README.md                    # This file
 ```
+
+## Tech Stack
+
+### Backend
+- **Go 1.25+** - Main backend language
+- **Gin 1.10** - HTTP web framework
+- **GORM 1.30** - ORM for database operations
+- **MySQL 8.0+** - Default database; **SQLite** is a supported alternative via
+  `DB_DRIVER` (pure-Go driver, no cgo) and is what the test suite runs on
+- **JWT** (`golang-jwt/jwt/v5`) - Authentication tokens
+- **Logrus** - Structured logging
+- **Testify** - Unit and integration test suites
+
+### Frontend
+- **React 19** - UI framework
+- **TypeScript 5.8** - Type safety
+- **Material-UI (MUI) v7** - Component library
+- **React Router 7** - Client-side routing
+- **TanStack Query 5** - Data fetching and caching
+- **React Hook Form + Zod** - Forms and validation
+- **Axios** - HTTP client
+- **Recharts** - Dashboard charts
+- **Vite 6** - Build tool and dev server
+- **Vitest 3 + Playwright** - Unit and end-to-end tests
 
 ## Documentation
 
