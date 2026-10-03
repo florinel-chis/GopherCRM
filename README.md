@@ -248,9 +248,13 @@ The frontend will start on `http://localhost:5173`
 ## Usage
 
 ### Default Access
-1. **Open your browser** to `http://localhost:5173`
-2. **Register a new account** — self-service registration always creates a `customer` account
-3. **Login** with your credentials
+1. **Open your browser** to `http://localhost:5173` (the dev server), or `http://localhost:3000` on
+   the Docker stacks
+2. **Sign in** with the admin account you created with `create-admin`
+
+Public sign-up ships **disabled**: the login page offers no registration link until an admin turns
+on `security.allow_public_registration` under **Settings > Configuration** (Security tab). When it
+is on, self-service registration always creates a `customer` account.
 
 Elevated roles (admin, sales, support) are assignable only by an admin through `POST /users`, or by
 the `create-admin` CLI. The registration endpoint ignores any role supplied by the client.
@@ -730,8 +734,9 @@ gophercrm/
 - **Erasure does not reach logs or issued tokens.** Application logs record the email address on
   login and on customer create/update, and issued JWTs embed it until they expire. Log retention
   needs its own policy alongside database erasure.
-- **ESLint reports 40 errors and 137 warnings** in the frontend, mostly unused Playwright fixture
-  arguments and `any` types. `tsc` is clean.
+- **The frontend still carries ESLint warnings.** Errors are at zero and `npm run lint` is a
+  blocking CI step, but about 230 warnings remain, mostly `no-explicit-any` and
+  `no-non-null-assertion`. `tsc` is clean.
 
 ## Contributing
 
