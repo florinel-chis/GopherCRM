@@ -281,9 +281,16 @@ Rows that were soft-deleted *before* this behaviour existed still hold personal 
 migrated automatically — run `scripts/anonymize_legacy_deleted_pii.sql` by hand once you have taken a
 backup. It is irreversible.
 
-Not covered by the code, and worth an operational decision: application logs record the email address
-on login and on customer create/update, and issued JWTs embed it until they expire. Erasing the
-database does not reach either, so log retention needs its own policy.
+The sample configuration defaults to `LOG_LEVEL=info`. Service logs keep operation names, entity
+IDs, validated statuses and counts, and omit email, name, title, search and raw sort fields. Shared
+logging helpers omit arbitrary arguments and response payloads, and HTTP access logs omit query
+strings. Logged errors omit quoted value suffixes; form field errors use a count summary, and SMTP
+errors retain the protocol code. These changes affect log output only, preserving returned errors
+and API response bodies.
+
+Log retention still needs its own policy: other raw diagnostic text, request IDs, client IPs,
+Origin/User-Agent headers and mailer recipient metadata remain, as do older logs. Database erasure
+does not clear these logs or the email embedded in already-issued JWTs.
 
 ## API Reference
 

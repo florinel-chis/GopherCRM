@@ -93,7 +93,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Create")
 
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin and sales users can create customers
 	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
 		utils.RespondForbidden(c, "Insufficient permissions to create customers")
@@ -125,7 +125,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.customerService.Create(customer); err != nil {
-		logger.WithError(err).Error("Failed to create customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to create customer")
 		switch {
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
@@ -210,7 +210,7 @@ func (h *CustomerHandler) List(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to list customers")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -246,13 +246,13 @@ func (h *CustomerHandler) List(c *gin.Context) {
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Get")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin, sales, and support users can get customers
-	if currentUserRole != string(models.RoleAdmin) && 
-	   currentUserRole != string(models.RoleSales) && 
-	   currentUserRole != string(models.RoleSupport) {
+	if currentUserRole != string(models.RoleAdmin) &&
+		currentUserRole != string(models.RoleSales) &&
+		currentUserRole != string(models.RoleSupport) {
 		utils.RespondForbidden(c, "Insufficient permissions to view customers")
 		return
 	}
@@ -269,11 +269,11 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 		// the client the customer does not exist, and it stops retrying data
 		// that is still there.
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			utils.RespondNotFound(c, "Customer not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to retrieve customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to retrieve customer")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -303,9 +303,9 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 // @Router /customers/{id} [put]
 func (h *CustomerHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Update")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin and sales users can update customers
 	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
 		utils.RespondForbidden(c, "Insufficient permissions to update customers")
@@ -329,11 +329,11 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	customer, err := h.customerService.GetByID(uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			utils.RespondNotFound(c, "Customer not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to look up customer for update")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up customer for update")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -386,7 +386,7 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.customerService.Update(customer); err != nil {
-		logger.WithError(err).Error("Failed to update customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
 		switch {
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
@@ -420,9 +420,9 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 // @Router /customers/{id} [delete]
 func (h *CustomerHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Delete")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin users can delete customers
 	if currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can delete customers")
@@ -440,11 +440,11 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 		// other error is a failed erasure and must surface as a 500, so an
 		// operator never records a completed erasure that did not happen.
 		if errors.Is(err, apperrors.ErrNotFound) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			utils.RespondNotFound(c, "Customer not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to delete customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to delete customer")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -452,6 +452,7 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 	utils.LogHandlerResponse(logger, http.StatusNoContent, nil)
 	c.Status(http.StatusNoContent)
 }
+
 // customerSortColumns is the sort allowlist shared by the list and export
 // endpoints. It is the SQL-injection guard: anything outside it is dropped
 // before it reaches the repository, never interpolated.
@@ -516,7 +517,7 @@ func (h *CustomerHandler) Export(c *gin.Context) {
 	// export.
 	customers, err := h.customerService.ExportAll(search, sortBy, sortOrder)
 	if err != nil {
-		logger.WithError(err).Error("Failed to export customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to export customers")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -528,20 +529,20 @@ func (h *CustomerHandler) Export(c *gin.Context) {
 	writer := csv.NewWriter(c.Writer)
 	if err := writer.Write(customerExportColumns); err != nil {
 		// The status line is already out; all that is left is to record it.
-		logger.WithError(err).Error("Failed to write CSV header")
+		logger.WithError(utils.LogError(err)).Error("Failed to write CSV header")
 		return
 	}
 
 	for i := range customers {
 		if err := writer.Write(customerExportRecord(&customers[i])); err != nil {
-			logger.WithError(err).WithField("customer_id", customers[i].ID).Error("Failed to write CSV row")
+			logger.WithError(utils.LogError(err)).WithField("customer_id", customers[i].ID).Error("Failed to write CSV row")
 			return
 		}
 	}
 
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		logger.WithError(err).Error("Failed to flush CSV export")
+		logger.WithError(utils.LogError(err)).Error("Failed to flush CSV export")
 		return
 	}
 
@@ -663,19 +664,19 @@ func (h *CustomerHandler) Assign(c *gin.Context) {
 		// The assignee sentinel is checked first: it is a distinct miss from the
 		// customer's, and the two answer with different messages.
 		case errors.Is(err, apperrors.ErrAssigneeNotFound):
-			logger.WithError(err).Warn("Assignee not found")
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 			utils.RespondNotFound(c, "User not found")
 		case apperrors.IsNotFound(err):
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			utils.RespondNotFound(c, "Customer not found")
 		case errors.Is(err, apperrors.ErrInactiveUser):
-			logger.WithError(err).Warn("Assignee is inactive")
+			logger.WithError(utils.LogError(err)).Warn("Assignee is inactive")
 			utils.RespondBadRequest(c, "Cannot assign a customer to a deactivated user")
 		case errors.Is(err, apperrors.ErrInvalidCustomerAssignee):
-			logger.WithError(err).Warn("Assignee holds a role that cannot own customers")
+			logger.WithError(utils.LogError(err)).Warn("Assignee holds a role that cannot own customers")
 			utils.RespondBadRequest(c, "Customers can only be assigned to sales or admin users")
 		default:
-			logger.WithError(err).Error("Failed to assign customer")
+			logger.WithError(utils.LogError(err)).Error("Failed to assign customer")
 			utils.RespondInternalError(c)
 		}
 		return

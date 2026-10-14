@@ -13,7 +13,6 @@ func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		raw := c.Request.URL.RawQuery
 
 		c.Next()
 
@@ -21,23 +20,19 @@ func Logger() gin.HandlerFunc {
 		clientIP := c.ClientIP()
 		method := c.Request.Method
 		statusCode := c.Writer.Status()
-		errorMessage := c.Errors.ByType(gin.ErrorTypePrivate).String()
-		bindErrors := c.Errors.ByType(gin.ErrorTypeBind).String()
-
-		if raw != "" {
-			path = path + "?" + raw
-		}
+		privateErrors := c.Errors.ByType(gin.ErrorTypePrivate)
+		bindErrors := c.Errors.ByType(gin.ErrorTypeBind)
 
 		fields := logrus.Fields{
-			"request_id":   c.GetString("request_id"),
-			"client_ip":    clientIP,
-			"method":       method,
-			"path":         path,
-			"status":       statusCode,
-			"latency_ms":   latency.Milliseconds(),
-			"body_size":    c.Writer.Size(),
-			"origin":       c.GetHeader("Origin"),
-			"user_agent":   c.GetHeader("User-Agent"),
+			"request_id": c.GetString("request_id"),
+			"client_ip":  clientIP,
+			"method":     method,
+			"path":       path,
+			"status":     statusCode,
+			"latency_ms": latency.Milliseconds(),
+			"body_size":  c.Writer.Size(),
+			"origin":     c.GetHeader("Origin"),
+			"user_agent": c.GetHeader("User-Agent"),
 		}
 
 		// Add user context if authenticated
@@ -62,14 +57,16 @@ func Logger() gin.HandlerFunc {
 		}
 
 		// Add binding/validation errors for debugging
-		if bindErrors != "" {
-			fields["bind_error"] = bindErrors
+		if len(bindErrors) > 0 {
+			fields["bind_error_count"] = len(bindErrors)
+			fields["bind_error"] = utils.LogError(bindErrors.Last().Err)
 		}
 
 		logger := utils.Logger.WithFields(fields)
 
-		if errorMessage != "" {
-			logger.WithField("error", errorMessage).Error("Request failed")
+		if len(privateErrors) > 0 {
+			logger.WithField("error_count", len(privateErrors)).
+				WithError(utils.LogError(privateErrors.Last().Err)).Error("Request failed")
 		} else if statusCode >= 500 {
 			logger.Error("Server error")
 		} else if statusCode == 429 {

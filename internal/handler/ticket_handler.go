@@ -26,20 +26,20 @@ func NewTicketHandler(ticketService service.TicketService, customerService ...se
 }
 
 type CreateTicketRequest struct {
-	Title        string                  `json:"title" binding:"required"`
-	Description  string                  `json:"description" binding:"required"`
-	Priority     models.TicketPriority   `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
-	CustomerID   uint                    `json:"customer_id" binding:"required"`
-	AssignedToID *uint                   `json:"assigned_to_id,omitempty"`
+	Title        string                `json:"title" binding:"required"`
+	Description  string                `json:"description" binding:"required"`
+	Priority     models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
+	CustomerID   uint                  `json:"customer_id" binding:"required"`
+	AssignedToID *uint                 `json:"assigned_to_id,omitempty"`
 }
 
 type UpdateTicketRequest struct {
-	Title        string                  `json:"title,omitempty"`
-	Description  string                  `json:"description,omitempty"`
-	Status       models.TicketStatus     `json:"status,omitempty" binding:"omitempty,oneof=open in_progress resolved closed"`
-	Priority     models.TicketPriority   `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
-	AssignedToID *uint                   `json:"assigned_to_id,omitempty"`
-	Resolution   string                  `json:"resolution,omitempty"`
+	Title        string                `json:"title,omitempty"`
+	Description  string                `json:"description,omitempty"`
+	Status       models.TicketStatus   `json:"status,omitempty" binding:"omitempty,oneof=open in_progress resolved closed"`
+	Priority     models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
+	AssignedToID *uint                 `json:"assigned_to_id,omitempty"`
+	Resolution   string                `json:"resolution,omitempty"`
 }
 
 // Create godoc
@@ -64,7 +64,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only support and admin users can create tickets
 	if currentUserRole != string(models.RoleSupport) && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only support and admin users can create tickets")
@@ -92,7 +92,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.ticketService.Create(ticket); err != nil {
-		logger.WithError(err).Error("Failed to create ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
 		if errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, "customer not found")
 		} else if errors.Is(err, apperrors.ErrAssigneeNotFound) || errors.Is(err, apperrors.ErrInvalidAssigneeRole) {
@@ -180,7 +180,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tickets")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -217,7 +217,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 // @Router /customers/{id}/tickets [get]
 func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListByCustomer")
-	
+
 	customerID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid customer ID")
@@ -242,7 +242,7 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 
 	tickets, total, err := h.ticketService.GetByCustomer(uint(customerID), offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tickets by customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tickets by customer")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -277,21 +277,21 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 // @Router /tickets/my [get]
 func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListMyTickets")
-	
+
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only support and admin users can have tickets assigned
 	if currentUserRole == string(models.RoleCustomer) {
 		utils.RespondForbidden(c, "Customers cannot have tickets assigned to them")
 		return
 	}
-	
+
 	offset, limit := utils.ParseOffsetLimit(c)
 
 	tickets, total, err := h.ticketService.GetByAssignee(currentUserID, offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list my tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to list my tickets")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -327,7 +327,7 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 // @Router /tickets/{id} [get]
 func (h *TicketHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Get")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid ticket ID")
@@ -337,10 +337,10 @@ func (h *TicketHandler) Get(c *gin.Context) {
 	ticket, err := h.ticketService.GetByID(uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Ticket not found")
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 			utils.RespondNotFound(c, "Ticket not found")
 		} else {
-			logger.WithError(err).Error("Failed to get ticket")
+			logger.WithError(utils.LogError(err)).Error("Failed to get ticket")
 			utils.RespondInternalError(c)
 		}
 		return
@@ -349,7 +349,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 	// Check permissions
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Customer users can only view tickets for their associated customer record
 	if currentUserRole == string(models.RoleCustomer) {
 		if h.customerService == nil {
@@ -370,9 +370,9 @@ func (h *TicketHandler) Get(c *gin.Context) {
 		utils.RespondSuccess(c, http.StatusOK, ticket)
 		return
 	}
-	
+
 	// Support users can only view assigned tickets
-	if currentUserRole == string(models.RoleSupport) && 
+	if currentUserRole == string(models.RoleSupport) &&
 		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
 		utils.RespondForbidden(c, "You can only view tickets assigned to you")
 		return
@@ -402,10 +402,10 @@ func (h *TicketHandler) Get(c *gin.Context) {
 // @Router /tickets/{id} [put]
 func (h *TicketHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Update")
-	
+
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Customers cannot update tickets
 	if currentUserRole == string(models.RoleCustomer) {
 		utils.RespondForbidden(c, "Customers cannot update tickets")
@@ -434,17 +434,17 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	ticket, err := h.ticketService.GetByID(uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Ticket not found")
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 			utils.RespondNotFound(c, "Ticket not found")
 		} else {
-			logger.WithError(err).Error("Failed to get ticket for update")
+			logger.WithError(utils.LogError(err)).Error("Failed to get ticket for update")
 			utils.RespondInternalError(c)
 		}
 		return
 	}
 
 	// Check permissions
-	if currentUserRole == string(models.RoleSupport) && 
+	if currentUserRole == string(models.RoleSupport) &&
 		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
 		utils.RespondForbidden(c, "You can only update tickets assigned to you")
 		return
@@ -471,7 +471,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.ticketService.Update(ticket); err != nil {
-		logger.WithError(err).Error("Failed to update ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
 		if errors.Is(err, apperrors.ErrClosedTicketReopen) ||
 			errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrInvalidAssigneeRole) {
@@ -504,9 +504,9 @@ func (h *TicketHandler) Update(c *gin.Context) {
 // @Router /tickets/{id} [delete]
 func (h *TicketHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Delete")
-	
+
 	currentUserRole := c.GetString("user_role")
-	
+
 	// Only admin users can delete tickets
 	if currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can delete tickets")
@@ -521,10 +521,10 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 
 	if err := h.ticketService.Delete(uint(id)); err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Ticket not found")
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 			utils.RespondNotFound(c, "Ticket not found")
 		} else {
-			logger.WithError(err).Error("Failed to delete ticket")
+			logger.WithError(utils.LogError(err)).Error("Failed to delete ticket")
 			utils.RespondInternalError(c)
 		}
 		return

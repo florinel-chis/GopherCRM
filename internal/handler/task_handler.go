@@ -22,13 +22,13 @@ func NewTaskHandler(taskService service.TaskService) *TaskHandler {
 }
 
 type CreateTaskRequest struct {
-	Title        string                `json:"title" binding:"required"`
-	Description  string                `json:"description,omitempty"`
-	Priority     models.TaskPriority   `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
-	DueDate      *time.Time            `json:"due_date,omitempty"`
-	AssignedToID uint                  `json:"assigned_to_id" binding:"required"`
-	LeadID       *uint                 `json:"lead_id,omitempty"`
-	CustomerID   *uint                 `json:"customer_id,omitempty"`
+	Title        string              `json:"title" binding:"required"`
+	Description  string              `json:"description,omitempty"`
+	Priority     models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
+	DueDate      *time.Time          `json:"due_date,omitempty"`
+	AssignedToID uint                `json:"assigned_to_id" binding:"required"`
+	LeadID       *uint               `json:"lead_id,omitempty"`
+	CustomerID   *uint               `json:"customer_id,omitempty"`
 	// LabelIDs attaches existing labels to the new task. Absent or empty means
 	// no labels; an id that matches no label rejects the whole request. The
 	// list is capped at 100 ids, the same bound the bulk endpoints use, so a
@@ -38,14 +38,14 @@ type CreateTaskRequest struct {
 }
 
 type UpdateTaskRequest struct {
-	Title        string                `json:"title,omitempty"`
-	Description  string                `json:"description,omitempty"`
-	Status       models.TaskStatus     `json:"status,omitempty" binding:"omitempty,oneof=pending in_progress completed cancelled"`
-	Priority     models.TaskPriority   `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
-	DueDate      *time.Time            `json:"due_date,omitempty"`
-	AssignedToID uint                  `json:"assigned_to_id,omitempty"`
-	LeadID       *uint                 `json:"lead_id,omitempty"`
-	CustomerID   *uint                 `json:"customer_id,omitempty"`
+	Title        string              `json:"title,omitempty"`
+	Description  string              `json:"description,omitempty"`
+	Status       models.TaskStatus   `json:"status,omitempty" binding:"omitempty,oneof=pending in_progress completed cancelled"`
+	Priority     models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
+	DueDate      *time.Time          `json:"due_date,omitempty"`
+	AssignedToID uint                `json:"assigned_to_id,omitempty"`
+	LeadID       *uint               `json:"lead_id,omitempty"`
+	CustomerID   *uint               `json:"customer_id,omitempty"`
 	// LabelIDs is a POINTER so the two cases stay distinguishable: an absent
 	// field (nil) leaves the label set alone, while a present one — including an
 	// empty array — replaces it wholesale. When present it is capped at 100 ids,
@@ -108,7 +108,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.taskService.CreateWithLabels(task, req.LabelIDs); err != nil {
-		logger.WithError(err).Error("Failed to create task")
+		logger.WithError(utils.LogError(err)).Error("Failed to create task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
@@ -159,11 +159,11 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	task, err := h.taskService.GetByID(uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Task not found")
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
 			utils.RespondNotFound(c, "Task not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to retrieve task")
+		logger.WithError(utils.LogError(err)).Error("Failed to retrieve task")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -270,7 +270,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tasks")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -319,7 +319,7 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 
 	tasks, total, err := h.taskService.GetByAssignee(currentUserID, offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list my tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to list my tasks")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -385,7 +385,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 		tasks, err = h.taskService.GetDueWithinByAssignee(c.GetUint("user_id"), from, to, upcomingTasksMaxResults)
 	}
 	if err != nil {
-		logger.WithError(err).Error("Failed to list upcoming tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to list upcoming tasks")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -437,11 +437,11 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	task, err := h.taskService.GetByID(uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Task not found")
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
 			utils.RespondNotFound(c, "Task not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to load task")
+		logger.WithError(utils.LogError(err)).Error("Failed to load task")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -487,7 +487,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs); err != nil {
-		logger.WithError(err).Error("Failed to update task")
+		logger.WithError(utils.LogError(err)).Error("Failed to update task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
@@ -543,11 +543,11 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 
 	if err := h.taskService.Delete(uint(id)); err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Task not found")
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
 			utils.RespondNotFound(c, "Task not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to delete task")
+		logger.WithError(utils.LogError(err)).Error("Failed to delete task")
 		utils.RespondInternalError(c)
 		return
 	}

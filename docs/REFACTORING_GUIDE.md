@@ -100,7 +100,13 @@ func (s *userService) GetByID(ctx context.Context, id uint) (*models.User, error
 }
 ```
 
-Note that `WithContext` only attaches `ctx` to the log entry; it does not add `request_id`, `user_id` or `user_role` as fields. Add them explicitly with `WithField`, or in handlers start from `utils.GetLogger(c)` (takes the `*gin.Context` and sets all three from it) and pass that `*logrus.Entry` to `utils.LogServiceCall(logger, service, method, args...)`, which only adds `service`, `method` and `args`.
+Note that `WithContext` only attaches `ctx` to the log entry; it does not add `request_id`,
+`user_id` or `user_role` as fields. Add them explicitly with `WithField`, or in handlers start from
+`utils.GetLogger(c)` (takes the `*gin.Context` and sets all three from it) and pass that
+`*logrus.Entry` to `utils.LogServiceCall(logger, service, method)`, which only adds `service` and
+`method`. Attach safe entity IDs or counts explicitly; arbitrary arguments, results and handler
+response payloads are never serialized by the shared logging helpers. Use `utils.LogError(err)`
+for logged errors and return the original error to preserve its identity and client-facing details.
 
 ## Domains to Refactor
 

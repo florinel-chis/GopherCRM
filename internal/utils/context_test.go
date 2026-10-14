@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -121,4 +123,37 @@ func TestGetLogger_ReturnsLogrusEntry(t *testing.T) {
 	// Verify it's a *logrus.Entry we can chain further
 	chained := entry.WithField("extra", "value")
 	assert.IsType(t, &logrus.Entry{}, chained)
+}
+
+func TestContextLoggingPrivacy_OmitsArgumentsAndPayloads(t *testing.T) {
+	old := Logger
+	defer func() { Logger = old }()
+	var output bytes.Buffer
+	Logger = logrus.New()
+	Logger.SetLevel(logrus.DebugLevel)
+	Logger.SetFormatter(&logrus.JSONFormatter{})
+	Logger.SetOutput(&output)
+
+	const email = "context-email-canary@example.test"
+	const token = "context-token-canary"
+	const content = "context-private-body-canary"
+	c := newTestGinContext()
+	c.Set("request_id", "request-privacy")
+	c.Set("user_id", uint(12))
+	payload := gin.H{"email": email, "token": token, "body": content}
+	entry := LogServiceCall(GetLogger(c).WithField("customer_id", uint(43)), "CustomerService", "Create", payload)
+	LogServiceResponse(entry, nil, payload)
+	LogServiceResponse(entry, fmt.Errorf("duplicate email %q", email))
+	logger := LogHandlerStart(c, "AuthHandler.Register")
+	LogHandlerResponse(logger, http.StatusCreated, payload)
+
+	for _, sensitive := range []string{email, token, content} {
+		assert.NotContains(t, output.String(), sensitive)
+	}
+	for _, diagnostic := range []string{"CustomerService", "Create", "customer_id", "43", "AuthHandler.Register", "status_code", "201", "request-privacy", "user_id"} {
+		assert.Contains(t, output.String(), diagnostic)
+	}
+	for _, field := range []string{`"args":`, `"result":`, `"response":`} {
+		assert.NotContains(t, output.String(), field)
+	}
 }

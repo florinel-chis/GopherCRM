@@ -68,7 +68,7 @@ func (s *dealService) stamp() time.Time {
 }
 
 func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("deal_title", deal.Title), "DealService", "Create")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "deal"), "DealService", "Create")
 
 	if deal.Stage == "" {
 		deal.Stage = models.DealStageQualification
@@ -77,11 +77,11 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 		deal.Currency = s.defaultCurrency()
 	}
 	if err := s.validate(deal, probability); err != nil {
-		logger.WithError(err).Warn("Deal rejected")
+		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
 	if err := s.checkLinks(deal, nil); err != nil {
-		logger.WithError(err).Warn("Deal rejected")
+		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
 
@@ -122,7 +122,7 @@ func (s *dealService) GetByID(id uint) (*models.Deal, error) {
 	deal, err := s.dealRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Deal not found")
+			logger.WithError(utils.LogError(err)).Warn("Deal not found")
 			return nil, fmt.Errorf("deal %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -149,11 +149,11 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 		deal.Currency = stored.Currency
 	}
 	if err := s.validate(deal, probability); err != nil {
-		logger.WithError(err).Warn("Deal rejected")
+		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
 	if err := s.checkLinks(deal, stored); err != nil {
-		logger.WithError(err).Warn("Deal rejected")
+		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
 
@@ -209,12 +209,12 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *int, lostReason *string, actorID uint) (*models.Deal, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"deal_id": id,
-		"stage":   stage,
 	}), "DealService", "ChangeStage")
 
 	if !stage.IsValid() {
 		return nil, fmt.Errorf("unknown deal stage %q: %w", stage, apperrors.ErrValidation)
 	}
+	logger = logger.WithField("stage", stage)
 	if probability != nil && (*probability < 0 || *probability > 100) {
 		return nil, fmt.Errorf("probability must be between 0 and 100: %w", apperrors.ErrValidation)
 	}
@@ -270,7 +270,7 @@ func (s *dealService) Delete(id uint) error {
 
 	if err := s.dealRepo.Delete(id); err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Deal not found")
+			logger.WithError(utils.LogError(err)).Warn("Deal not found")
 			return fmt.Errorf("deal %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -285,9 +285,11 @@ func (s *dealService) List(offset, limit int, filter repository.DealListFilter) 
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"offset": offset,
 		"limit":  limit,
-		"stage":  filter.Stage,
 		"open":   filter.Open,
 	}), "DealService", "List")
+	if filter.Stage.IsValid() {
+		logger = logger.WithField("stage", filter.Stage)
+	}
 
 	deals, total, err := s.dealRepo.List(offset, limit, filter)
 	if err != nil {
@@ -344,7 +346,7 @@ func (s *dealService) Pipeline(filter repository.DealPipelineFilter, actorID uin
 
 	ownerID, err := dealOwnerScope(role, actorID, filter.OwnerID)
 	if err != nil {
-		logger.WithError(err).Warn("Pipeline refused")
+		logger.WithError(utils.LogError(err)).Warn("Pipeline refused")
 		return nil, err
 	}
 	filter.OwnerID = ownerID
@@ -369,7 +371,7 @@ func (s *dealService) DashboardPipeline(actorID uint, role models.UserRole) (*mo
 
 	ownerID, err := dealOwnerScope(role, actorID, nil)
 	if err != nil {
-		logger.WithError(err).Warn("Dashboard pipeline refused")
+		logger.WithError(utils.LogError(err)).Warn("Dashboard pipeline refused")
 		return nil, err
 	}
 
@@ -491,13 +493,13 @@ func (s *dealService) defaultCurrency() string {
 	}
 	value, err := s.currency.GetString(ConfigDealsDefaultCurrency)
 	if err != nil {
-		utils.Logger.WithError(err).WithField("config_key", ConfigDealsDefaultCurrency).
+		utils.Logger.WithError(utils.LogError(err)).WithField("config_key", ConfigDealsDefaultCurrency).
 			Warn("Default deal currency could not be read; using the shipped default")
 		return models.DealDefaultCurrency
 	}
 	value = strings.ToUpper(strings.TrimSpace(value))
 	if !dealCurrencyPattern.MatchString(value) {
-		utils.Logger.WithField("config_key", ConfigDealsDefaultCurrency).WithField("value", value).
+		utils.Logger.WithField("config_key", ConfigDealsDefaultCurrency).
 			Warn("Configured default deal currency is not a three-letter code; using the shipped default")
 		return models.DealDefaultCurrency
 	}

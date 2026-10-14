@@ -21,7 +21,7 @@ func ErrorHandler() gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			err := c.Errors.Last()
 
-			logger := utils.GetLogger(c).WithField("error", err.Error())
+			logger := utils.GetLogger(c).WithError(utils.LogError(err.Err))
 
 			switch err.Type {
 			case gin.ErrorTypePublic:

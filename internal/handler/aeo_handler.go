@@ -113,7 +113,7 @@ func (h *AEOHandler) GetProfile(c *gin.Context) {
 		// absence rather than a precondition failure, so it answers 404 here
 		// instead of the 409 the shared mapper returns everywhere else.
 		if errors.Is(err, apperrors.ErrProfileNotConfigured) {
-			logger.WithError(err).Warn("AEO profile not configured")
+			logger.WithError(utils.LogError(err)).Warn("AEO profile not configured")
 			utils.RespondNotFound(c, "AEO profile not found")
 			return
 		}
@@ -383,7 +383,7 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 		// gets its own code and an error that names the engine, rather than
 		// the module-wide "no providers" answer.
 		if errors.Is(err, apperrors.ErrGenerationProviderNotConfigured) {
-			logger.WithError(err).Warn("Prompt generation provider not configured")
+			logger.WithError(utils.LogError(err)).Warn("Prompt generation provider not configured")
 			utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
 			return
 		}
@@ -394,7 +394,7 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 		// origin 502 body with their own error page, which would swallow
 		// this message.
 		if status := aeo.ProviderHTTPStatus(err); status != 0 {
-			logger.WithError(err).WithField("provider_status", status).
+			logger.WithError(utils.LogError(err)).WithField("provider_status", status).
 				Warn("Prompt generation rejected by the engine")
 			message := fmt.Sprintf("the generation engine is unavailable (HTTP %d); try again later", status)
 			if status >= 400 && status < 500 {
@@ -715,22 +715,22 @@ func (h *AEOHandler) GetProviders(c *gin.Context) {
 func (h *AEOHandler) respondError(c *gin.Context, logger *logrus.Entry, err error, notFoundMessage string) {
 	switch {
 	case errors.Is(err, apperrors.ErrDuplicatePrompt):
-		logger.WithError(err).Warn("Duplicate AEO prompt")
+		logger.WithError(utils.LogError(err)).Warn("Duplicate AEO prompt")
 		utils.RespondConflict(c, err.Error())
 	case errors.Is(err, apperrors.ErrRunInProgress):
-		logger.WithError(err).Warn("AEO run already in progress")
+		logger.WithError(utils.LogError(err)).Warn("AEO run already in progress")
 		utils.RespondConflict(c, err.Error())
 	case errors.Is(err, apperrors.ErrProfileNotConfigured):
-		logger.WithError(err).Warn("AEO profile not configured")
+		logger.WithError(utils.LogError(err)).Warn("AEO profile not configured")
 		utils.RespondConflict(c, err.Error())
 	case errors.Is(err, apperrors.ErrNoProvidersConfigured):
-		logger.WithError(err).Warn("No AEO providers configured")
+		logger.WithError(utils.LogError(err)).Warn("No AEO providers configured")
 		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDERS_UNAVAILABLE", err.Error(), nil)
 	case errors.Is(err, apperrors.ErrGenerationProviderNotConfigured):
-		logger.WithError(err).Warn("Prompt generation provider not configured")
+		logger.WithError(utils.LogError(err)).Warn("Prompt generation provider not configured")
 		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
 	case errors.Is(err, service.ErrAEOPromptLimit):
-		logger.WithError(err).Warn("AEO active prompt limit reached")
+		logger.WithError(utils.LogError(err)).Warn("AEO active prompt limit reached")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, err.Error(), nil)
 	case errors.Is(err, service.ErrAEOInvalidPrompt),
 		errors.Is(err, service.ErrAEOInvalidProfile),
@@ -738,13 +738,13 @@ func (h *AEOHandler) respondError(c *gin.Context, logger *logrus.Entry, err erro
 		// The service validates beyond what the binding tags can express —
 		// whitespace-only text passes gin's `required` but is empty once
 		// trimmed. Those are client mistakes, not server faults.
-		logger.WithError(err).Warn("AEO request failed validation")
+		logger.WithError(utils.LogError(err)).Warn("AEO request failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, err.Error(), nil)
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("AEO resource not found")
+		logger.WithError(utils.LogError(err)).Warn("AEO resource not found")
 		utils.RespondNotFound(c, notFoundMessage)
 	default:
-		logger.WithError(err).Error("AEO operation failed")
+		logger.WithError(utils.LogError(err)).Error("AEO operation failed")
 		utils.RespondInternalError(c)
 	}
 }

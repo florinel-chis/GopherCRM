@@ -24,8 +24,8 @@ func NewTicketService(ticketRepo repository.TicketRepository, customerRepo repos
 }
 
 func (s *ticketService) Create(ticket *models.Ticket) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_title", ticket.Title), "TicketService", "Create")
-	
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "ticket"), "TicketService", "Create")
+
 	// Set default values
 	if ticket.Status == "" {
 		ticket.Status = models.TicketStatusOpen
@@ -33,11 +33,11 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 	if ticket.Priority == "" {
 		ticket.Priority = models.TicketPriorityMedium
 	}
-	
+
 	// Verify customer exists
 	_, err := s.customerRepo.GetByID(ticket.CustomerID)
 	if err != nil {
-		logger.WithError(err).Warn("Customer not found")
+		logger.WithError(utils.LogError(err)).Warn("Customer not found")
 		return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 	}
 
@@ -45,7 +45,7 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 	if ticket.AssignedToID != nil {
 		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
 		if err != nil {
-			logger.WithError(err).Warn("Assignee not found")
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 		// Only support and admin users can be assigned tickets
@@ -54,26 +54,26 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
 	}
-	
+
 	if err := s.ticketRepo.Create(ticket); err != nil {
-		logger.WithError(err).Error("Failed to create ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
 		return err
 	}
-	
+
 	logger.WithField("ticket_id", ticket.ID).Info("Ticket created successfully")
 	return nil
 }
 
 func (s *ticketService) GetByID(id uint) (*models.Ticket, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", id), "TicketService", "GetByID")
-	
+
 	ticket, err := s.ticketRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Ticket not found")
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 			return nil, fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to get ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to get ticket")
 		return nil, err
 	}
 
@@ -87,19 +87,19 @@ func (s *ticketService) GetByCustomer(customerID uint, offset, limit int) ([]mod
 		"offset":      offset,
 		"limit":       limit,
 	}), "TicketService", "GetByCustomer")
-	
+
 	tickets, err := s.ticketRepo.GetByCustomerID(customerID, offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get tickets by customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to get tickets by customer")
 		return nil, 0, err
 	}
-	
+
 	total, err := s.ticketRepo.CountByCustomerID(customerID)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tickets by customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tickets by customer")
 		return nil, 0, err
 	}
-	
+
 	logger.WithField("count", len(tickets)).Info("Tickets retrieved by customer")
 	return tickets, total, nil
 }
@@ -110,33 +110,33 @@ func (s *ticketService) GetByAssignee(assigneeID uint, offset, limit int) ([]mod
 		"offset":      offset,
 		"limit":       limit,
 	}), "TicketService", "GetByAssignee")
-	
+
 	tickets, err := s.ticketRepo.GetByAssignedToID(assigneeID, offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get tickets by assignee")
+		logger.WithError(utils.LogError(err)).Error("Failed to get tickets by assignee")
 		return nil, 0, err
 	}
-	
+
 	total, err := s.ticketRepo.CountByAssignedToID(assigneeID)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tickets by assignee")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tickets by assignee")
 		return nil, 0, err
 	}
-	
+
 	logger.WithField("count", len(tickets)).Info("Tickets retrieved by assignee")
 	return tickets, total, nil
 }
 
 func (s *ticketService) Update(ticket *models.Ticket) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", ticket.ID), "TicketService", "Update")
-	
+
 	// Get existing ticket to validate state transitions
 	existing, err := s.ticketRepo.GetByID(ticket.ID)
 	if err != nil {
-		logger.WithError(err).Warn("Ticket not found")
+		logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 		return err
 	}
-	
+
 	// Validate status transitions
 	if existing.Status == models.TicketStatusClosed && ticket.Status != models.TicketStatusClosed {
 		logger.Warn("Cannot reopen closed ticket")
@@ -147,7 +147,7 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 	if ticket.AssignedToID != nil && (existing.AssignedToID == nil || *ticket.AssignedToID != *existing.AssignedToID) {
 		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
 		if err != nil {
-			logger.WithError(err).Warn("Assignee not found")
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
@@ -155,35 +155,35 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
 	}
-	
+
 	if err := s.ticketRepo.Update(ticket); err != nil {
-		logger.WithError(err).Error("Failed to update ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
 		return err
 	}
-	
+
 	logger.Info("Ticket updated successfully")
 	return nil
 }
 
 func (s *ticketService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", id), "TicketService", "Delete")
-	
+
 	// Check if ticket exists
 	_, err := s.ticketRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Ticket not found")
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
 			return fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to look up ticket for deletion")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up ticket for deletion")
 		return err
 	}
-	
+
 	if err := s.ticketRepo.Delete(id); err != nil {
-		logger.WithError(err).Error("Failed to delete ticket")
+		logger.WithError(utils.LogError(err)).Error("Failed to delete ticket")
 		return err
 	}
-	
+
 	logger.Info("Ticket deleted successfully")
 	return nil
 }
@@ -193,40 +193,38 @@ func (s *ticketService) List(offset, limit int) ([]models.Ticket, int64, error) 
 		"offset": offset,
 		"limit":  limit,
 	}), "TicketService", "List")
-	
+
 	tickets, err := s.ticketRepo.List(offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tickets")
 		return nil, 0, err
 	}
-	
+
 	total, err := s.ticketRepo.Count()
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tickets")
 		return nil, 0, err
 	}
-	
+
 	logger.WithField("total", total).Info("Tickets listed successfully")
 	return tickets, total, nil
 }
 
 func (s *ticketService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset":     offset,
-		"limit":      limit,
-		"sort_by":    sortBy,
-		"sort_order": sortOrder,
+		"offset": offset,
+		"limit":  limit,
 	}), "TicketService", "ListSorted")
 
 	tickets, err := s.ticketRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tickets sorted")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tickets sorted")
 		return nil, 0, err
 	}
 
 	total, err := s.ticketRepo.Count()
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tickets")
 		return nil, 0, err
 	}
 
@@ -236,20 +234,19 @@ func (s *ticketService) ListSorted(offset, limit int, sortBy, sortOrder string) 
 
 func (s *ticketService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"query":  query,
 		"offset": offset,
 		"limit":  limit,
 	}), "TicketService", "Search")
 
 	tickets, err := s.ticketRepo.Search(query, offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
 	if err != nil {
-		logger.WithError(err).Error("Failed to search tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to search tickets")
 		return nil, 0, err
 	}
 
 	total, err := s.ticketRepo.CountSearch(query)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count search results")
+		logger.WithError(utils.LogError(err)).Error("Failed to count search results")
 		return nil, 0, err
 	}
 

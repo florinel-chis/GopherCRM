@@ -40,8 +40,8 @@ func (s *customerService) checkCompanyLink(companyID *uint) error {
 }
 
 func (s *customerService) Create(customer *models.Customer) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("customer_email", customer.Email), "CustomerService", "Create")
-	
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "customer"), "CustomerService", "Create")
+
 	// Check for duplicate email. The lookup must be unscoped: the unique index on
 	// customers.email is not scoped to deleted_at, so a soft-deleted row still
 	// reserves the address and the insert below would be rejected by the database
@@ -53,22 +53,22 @@ func (s *customerService) Create(customer *models.Customer) error {
 	}
 
 	if err := s.checkCompanyLink(customer.CompanyID); err != nil {
-		logger.WithError(err).Warn("Customer rejected")
+		logger.WithError(utils.LogError(err)).Warn("Customer rejected")
 		return err
 	}
-	
+
 	if err := s.customerRepo.Create(customer); err != nil {
-		logger.WithError(err).Error("Failed to create customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to create customer")
 		return err
 	}
-	
+
 	logger.WithField("customer_id", customer.ID).Info("Customer created successfully")
 	return nil
 }
 
 func (s *customerService) GetByID(id uint) (*models.Customer, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", id), "CustomerService", "GetByID")
-	
+
 	customer, err := s.customerRepo.GetByID(id)
 	if err != nil {
 		// "No such customer" and "the lookup failed" are different answers and
@@ -77,10 +77,10 @@ func (s *customerService) GetByID(id uint) (*models.Customer, error) {
 		// sentinel, so the miss is re-wrapped here; anything else is returned
 		// untouched so it cannot be mistaken for a missing row.
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			return nil, fmt.Errorf("customer %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to look up customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up customer")
 		return nil, err
 	}
 
@@ -93,7 +93,7 @@ func (s *customerService) GetByUserID(userID uint) (*models.Customer, error) {
 
 	customer, err := s.customerRepo.GetByUserID(userID)
 	if err != nil {
-		logger.WithError(err).Warn("Customer not found for user")
+		logger.WithError(utils.LogError(err)).Warn("Customer not found for user")
 		return nil, err
 	}
 
@@ -103,7 +103,7 @@ func (s *customerService) GetByUserID(userID uint) (*models.Customer, error) {
 
 func (s *customerService) Update(customer *models.Customer) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", customer.ID), "CustomerService", "Update")
-	
+
 	// Check for duplicate email if email is being updated
 	if customer.Email != "" {
 		// Unscoped for the same reason as in Create: a soft-deleted row still
@@ -116,15 +116,15 @@ func (s *customerService) Update(customer *models.Customer) error {
 	}
 
 	if err := s.checkCompanyLink(customer.CompanyID); err != nil {
-		logger.WithError(err).Warn("Customer update rejected")
+		logger.WithError(utils.LogError(err)).Warn("Customer update rejected")
 		return err
 	}
-	
+
 	if err := s.customerRepo.Update(customer); err != nil {
-		logger.WithError(err).Error("Failed to update customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
 		return err
 	}
-	
+
 	logger.Info("Customer updated successfully")
 	return nil
 }
@@ -149,15 +149,15 @@ func (s *customerService) Delete(id uint) error {
 	// "there was nobody to erase" from "the erasure failed".
 	if _, err := s.customerRepo.GetByID(id); err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			return fmt.Errorf("customer %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to look up customer for erasure")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up customer for erasure")
 		return err
 	}
 
 	if err := s.customerRepo.Delete(id); err != nil {
-		logger.WithError(err).Error("Failed to erase customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to erase customer")
 		return err
 	}
 
@@ -170,40 +170,38 @@ func (s *customerService) List(offset, limit int) ([]models.Customer, int64, err
 		"offset": offset,
 		"limit":  limit,
 	}), "CustomerService", "List")
-	
+
 	customers, err := s.customerRepo.List(offset, limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to list customers")
 		return nil, 0, err
 	}
-	
+
 	total, err := s.customerRepo.Count()
 	if err != nil {
-		logger.WithError(err).Error("Failed to count customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to count customers")
 		return nil, 0, err
 	}
-	
+
 	logger.WithField("total", total).Info("Customers listed successfully")
 	return customers, total, nil
 }
 
 func (s *customerService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset":     offset,
-		"limit":      limit,
-		"sort_by":    sortBy,
-		"sort_order": sortOrder,
+		"offset": offset,
+		"limit":  limit,
 	}), "CustomerService", "ListSorted")
 
 	customers, err := s.customerRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list customers sorted")
+		logger.WithError(utils.LogError(err)).Error("Failed to list customers sorted")
 		return nil, 0, err
 	}
 
 	total, err := s.customerRepo.Count()
 	if err != nil {
-		logger.WithError(err).Error("Failed to count customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to count customers")
 		return nil, 0, err
 	}
 
@@ -213,20 +211,19 @@ func (s *customerService) ListSorted(offset, limit int, sortBy, sortOrder string
 
 func (s *customerService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"query":  query,
 		"offset": offset,
 		"limit":  limit,
 	}), "CustomerService", "Search")
 
 	customers, err := s.customerRepo.Search(query, offset, limit, sortBy, sortOrder)
 	if err != nil {
-		logger.WithError(err).Error("Failed to search customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to search customers")
 		return nil, 0, err
 	}
 
 	total, err := s.customerRepo.CountSearch(query)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count search results")
+		logger.WithError(utils.LogError(err)).Error("Failed to count search results")
 		return nil, 0, err
 	}
 
@@ -245,15 +242,11 @@ func (s *customerService) GetCount() (int64, error) {
 // a very large limit", and the audit log below records that a full export was
 // taken.
 func (s *customerService) ExportAll(search, sortBy, sortOrder string) ([]models.Customer, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"search":     search,
-		"sort_by":    sortBy,
-		"sort_order": sortOrder,
-	}), "CustomerService", "ExportAll")
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{}), "CustomerService", "ExportAll")
 
 	customers, err := s.customerRepo.ListAllForExport(search, sortBy, sortOrder)
 	if err != nil {
-		logger.WithError(err).Error("Failed to export customers")
+		logger.WithError(utils.LogError(err)).Error("Failed to export customers")
 		return nil, err
 	}
 
@@ -280,16 +273,16 @@ func (s *customerService) Assign(customerID, userID uint) (*models.Customer, err
 	customer, err := s.customerRepo.GetByID(customerID)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			return nil, fmt.Errorf("customer %d not found: %w", customerID, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to look up customer for assignment")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up customer for assignment")
 		return nil, err
 	}
 
 	assignee, err := s.userRepo.GetByID(userID)
 	if err != nil {
-		logger.WithError(err).Warn("Assignee not found")
+		logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 		return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 	}
 
@@ -306,7 +299,7 @@ func (s *customerService) Assign(customerID, userID uint) (*models.Customer, err
 	customer.AssignedToID = &userID
 	customer.AssignedTo = nil // let the caller re-read the association rather than persist a stale copy
 	if err := s.customerRepo.Update(customer); err != nil {
-		logger.WithError(err).Error("Failed to assign customer")
+		logger.WithError(utils.LogError(err)).Error("Failed to assign customer")
 		return nil, err
 	}
 

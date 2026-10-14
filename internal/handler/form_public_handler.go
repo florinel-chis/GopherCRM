@@ -133,12 +133,12 @@ func (h *FormPublicHandler) Submit(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			logger.WithError(err).Warn("Form submission body exceeds the size limit")
+			logger.WithError(utils.LogError(err)).Warn("Form submission body exceeds the size limit")
 			utils.RespondError(c, http.StatusRequestEntityTooLarge, utils.ErrCodeValidation,
 				"Submission is too large", nil)
 			return
 		}
-		logger.WithError(err).Warn("Malformed form submission body")
+		logger.WithError(utils.LogError(err)).Warn("Malformed form submission body")
 		utils.RespondBadRequest(c, "Invalid request body")
 		return
 	}
@@ -210,9 +210,9 @@ func (h *FormPublicHandler) Confirm(c *gin.Context) {
 
 	if err := h.formService.ConfirmSubmission(token); err != nil {
 		if errors.Is(err, service.ErrInvalidConfirmationToken) {
-			logger.WithError(err).Warn("Form confirmation token rejected")
+			logger.WithError(utils.LogError(err)).Warn("Form confirmation token rejected")
 		} else {
-			logger.WithError(err).Error("Form confirmation failed")
+			logger.WithError(utils.LogError(err)).Error("Form confirmation failed")
 		}
 		c.Data(http.StatusOK, formPageContentType, formInvalidLinkPage())
 		return
@@ -231,18 +231,18 @@ func (h *FormPublicHandler) respondError(c *gin.Context, logger *logrus.Entry, e
 
 	switch {
 	case errors.As(err, &fieldErrors):
-		logger.WithError(err).Warn("Form submission failed validation")
+		logger.WithError(utils.LogError(err)).Warn("Form submission failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation,
 			"The submission could not be accepted", fieldErrors)
 	case errors.Is(err, apperrors.ErrValidation):
-		logger.WithError(err).Warn("Form request failed validation")
+		logger.WithError(utils.LogError(err)).Warn("Form request failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation,
 			"The submission could not be accepted", nil)
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("Public form not available")
+		logger.WithError(utils.LogError(err)).Warn("Public form not available")
 		utils.RespondNotFound(c, "Form not found")
 	default:
-		logger.WithError(err).Error("Public form request failed")
+		logger.WithError(utils.LogError(err)).Error("Public form request failed")
 		utils.RespondInternalError(c)
 	}
 }

@@ -88,7 +88,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 
 	key, apiKey, err := h.apiKeyService.Generate(userID, req.Name, expiresAt)
 	if err != nil {
-		logger.WithError(err).Error("Failed to generate API key")
+		logger.WithError(utils.LogError(err)).Error("Failed to generate API key")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -120,7 +120,7 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 
 	apiKeys, err := h.apiKeyService.List(userID)
 	if err != nil {
-		logger.WithError(err).Error("Failed to list API keys")
+		logger.WithError(utils.LogError(err)).Error("Failed to list API keys")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -165,12 +165,12 @@ func (h *APIKeyHandler) Get(c *gin.Context) {
 			return
 		}
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("API key not found")
+			logger.WithError(utils.LogError(err)).Warn("API key not found")
 			utils.RespondNotFound(c, "API key not found")
 			return
 		}
 
-		logger.WithError(err).Error("Failed to fetch API key")
+		logger.WithError(utils.LogError(err)).Error("Failed to fetch API key")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -230,12 +230,12 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 			return
 		}
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("API key not found")
+			logger.WithError(utils.LogError(err)).Warn("API key not found")
 			utils.RespondNotFound(c, "API key not found")
 			return
 		}
 
-		logger.WithError(err).Error("Failed to update API key")
+		logger.WithError(utils.LogError(err)).Error("Failed to update API key")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -279,12 +279,12 @@ func (h *APIKeyHandler) Revoke(c *gin.Context) {
 			return
 		}
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("API key not found")
+			logger.WithError(utils.LogError(err)).Warn("API key not found")
 			utils.RespondNotFound(c, "API key not found")
 			return
 		}
 
-		logger.WithError(err).Error("Failed to revoke API key")
+		logger.WithError(utils.LogError(err)).Error("Failed to revoke API key")
 		utils.RespondInternalError(c)
 		return
 	}

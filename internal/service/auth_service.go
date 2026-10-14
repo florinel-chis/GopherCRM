@@ -115,7 +115,7 @@ func (s *authService) Login(email, password string) (string, error) {
 // constant-time and anti-enumeration behaviour: unknown email, wrong password,
 // locked account and deactivated account are indistinguishable to the caller.
 func (s *authService) authenticate(email, password string) (*models.User, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithField("email", email), "AuthService", "Login")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "auth"), "AuthService", "Login")
 
 	// Pre-computed dummy hash for timing attack prevention
 	// This is a bcrypt hash of "dummy-password-for-timing-attack-prevention"
@@ -138,7 +138,7 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 
 	// Now check if user lookup failed
 	if err != nil {
-		logger.WithError(err).Warn("Login failed - user not found")
+		logger.WithError(utils.LogError(err)).Warn("Login failed - user not found")
 		return nil, errors.New("invalid credentials")
 	}
 
@@ -159,7 +159,7 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 			logger.WithField("user_id", user.ID).Warn("Account locked due to too many failed login attempts")
 		}
 		if updateErr := s.userRepo.Update(user); updateErr != nil {
-			logger.WithError(updateErr).Warn("Failed to update failed login attempts")
+			logger.WithError(utils.LogError(updateErr)).Warn("Failed to update failed login attempts")
 		}
 		return nil, errors.New("invalid credentials")
 	}
@@ -175,13 +175,13 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 		user.FailedLoginAttempts = 0
 		user.LockedUntil = nil
 		if updateErr := s.userRepo.Update(user); updateErr != nil {
-			logger.WithError(updateErr).Warn("Failed to reset failed login attempts")
+			logger.WithError(utils.LogError(updateErr)).Warn("Failed to reset failed login attempts")
 		}
 	}
 
 	// Update last login timestamp
 	if err := s.userRepo.UpdateLastLogin(user.ID); err != nil {
-		logger.WithError(err).Warn("Failed to update last login time")
+		logger.WithError(utils.LogError(err)).Warn("Failed to update last login time")
 	}
 
 	logger.WithFields(map[string]interface{}{
@@ -267,7 +267,7 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 	// Update last used timestamp (best effort - don't fail validation if this fails)
 	if err := s.apiKeyRepo.UpdateLastUsed(apiKey.ID); err != nil {
 		// Log error but don't fail validation
-		utils.Logger.WithError(err).WithField("api_key_id", apiKey.ID).Warn("Failed to update API key last used timestamp")
+		utils.Logger.WithError(utils.LogError(err)).WithField("api_key_id", apiKey.ID).Warn("Failed to update API key last used timestamp")
 	}
 
 	return user, nil
@@ -305,7 +305,7 @@ func (s *authService) LoginWithTokens(email, password string) (*AuthTokens, erro
 	if s.refreshTokenRepo != nil {
 		refreshToken, err := s.issueRefreshToken(user.ID)
 		if err != nil {
-			utils.Logger.WithError(err).WithField("user_id", user.ID).
+			utils.Logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).
 				Warn("Failed to issue refresh token at login; continuing with access token only")
 		} else {
 			tokens.RefreshToken = refreshToken
@@ -406,7 +406,7 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 	user, err := s.userRepo.GetByID(stored.UserID)
 	if err != nil || !user.IsActive {
 		if revokeErr := s.refreshTokenRepo.RevokeByTokenHash(hash); revokeErr != nil {
-			utils.Logger.WithError(revokeErr).WithField("user_id", stored.UserID).
+			utils.Logger.WithError(utils.LogError(revokeErr)).WithField("user_id", stored.UserID).
 				Warn("Failed to revoke refresh token of inactive or missing user")
 		}
 		utils.Logger.WithField("user_id", stored.UserID).
@@ -525,7 +525,7 @@ func (s *authService) revokeAllSessionsBestEffort(userID uint, reason string) {
 		return
 	}
 	if err := s.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
-		utils.Logger.WithError(err).WithField("user_id", userID).WithField("reason", reason).
+		utils.Logger.WithError(utils.LogError(err)).WithField("user_id", userID).WithField("reason", reason).
 			Error("Failed to revoke refresh tokens after credential change")
 	}
 }
@@ -547,7 +547,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 		if apperrors.IsNotFound(err) {
 			logger.Info("Password reset requested for unknown email")
 		} else {
-			logger.WithError(err).Error("Password reset user lookup failed")
+			logger.WithError(utils.LogError(err)).Error("Password reset user lookup failed")
 		}
 		return nil
 	}
@@ -558,13 +558,13 @@ func (s *authService) RequestPasswordReset(email string) error {
 
 	// Only the newest link should work; stale outstanding tokens are spent.
 	if err := s.resetTokenRepo.InvalidateAllForUser(user.ID); err != nil {
-		logger.WithError(err).WithField("user_id", user.ID).
+		logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).
 			Warn("Failed to invalidate previous reset tokens")
 	}
 
 	raw, err := generateOpaqueToken()
 	if err != nil {
-		logger.WithError(err).Error("Failed to generate reset token")
+		logger.WithError(utils.LogError(err)).Error("Failed to generate reset token")
 		return nil
 	}
 
@@ -574,7 +574,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 		ExpiresAt: time.Now().Add(resetTokenTTL),
 	}
 	if err := s.resetTokenRepo.Create(token); err != nil {
-		logger.WithError(err).WithField("user_id", user.ID).Error("Failed to store reset token")
+		logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).Error("Failed to store reset token")
 		return nil
 	}
 

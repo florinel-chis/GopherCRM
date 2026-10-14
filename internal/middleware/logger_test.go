@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -74,7 +75,7 @@ func TestLogger(t *testing.T) {
 			expectedStatus: http.StatusOK,
 			expectedLevel:  logrus.InfoLevel,
 			checkLog: func(t *testing.T, entry *logrus.Entry) {
-				assert.Equal(t, "/search?q=test&page=1", entry.Data["path"])
+				assert.Equal(t, "/search", entry.Data["path"])
 			},
 		},
 		{
@@ -203,7 +204,7 @@ func TestRequestID(t *testing.T) {
 	t.Run("uses provided request ID", func(t *testing.T) {
 		providedID := "test-request-id-123"
 		var capturedID string
-		
+
 		router.GET("/test2", func(c *gin.Context) {
 			capturedID = c.GetString("request_id")
 			c.JSON(http.StatusOK, gin.H{"request_id": capturedID})
@@ -265,4 +266,55 @@ func TestLoggerDoesNotLogSensitiveData(t *testing.T) {
 	assert.NotContains(t, logOutput, "sensitive-token")
 	assert.NotContains(t, logOutput, "password")
 	assert.Contains(t, logOutput, "/login") // Should log the path
+}
+func TestLoggerLoggingPrivacy_QueryAndErrors(t *testing.T) {
+	const email = "middleware-email-canary@example.test"
+	const token = "middleware-token-canary"
+	const payload = "middleware-payload-canary"
+	for _, errorType := range []gin.ErrorType{0, gin.ErrorTypePrivate, gin.ErrorTypeBind} {
+		t.Run(fmt.Sprintf("error_type=%d", errorType), func(t *testing.T) {
+			old := utils.Logger
+			defer func() { utils.Logger = old }()
+			var output bytes.Buffer
+			utils.Logger = logrus.New()
+			utils.Logger.SetLevel(logrus.DebugLevel)
+			utils.Logger.SetFormatter(&logrus.JSONFormatter{})
+			utils.Logger.SetOutput(&output)
+			hook := test.NewLocal(utils.Logger)
+
+			router := gin.New()
+			router.Use(RequestID(), Logger(), ErrorHandler())
+			router.GET("/search", func(c *gin.Context) {
+				if errorType != 0 {
+					c.Error(fmt.Errorf("invalid submitted value %q", payload)).SetType(errorType)
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"email": email, "token": token})
+			})
+			req := httptest.NewRequest(http.MethodGet, "/search?q="+email+"&token="+token, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			for _, sensitive := range []string{email, token, payload} {
+				assert.NotContains(t, output.String(), sensitive)
+			}
+			entry := hook.LastEntry()
+			assert.Equal(t, "/search", entry.Data["path"])
+			assert.Equal(t, http.MethodGet, entry.Data["method"])
+			assert.Equal(t, "bearer", entry.Data["auth_method"])
+			assert.NotNil(t, entry.Data["latency_ms"])
+			assert.NotEmpty(t, entry.Data["request_id"])
+			if errorType == gin.ErrorTypePrivate {
+				assert.Equal(t, http.StatusInternalServerError, rec.Code)
+				assert.Equal(t, "Request failed", entry.Message)
+				assert.Contains(t, output.String(), "invalid submitted value")
+			} else if errorType == gin.ErrorTypeBind {
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Equal(t, 1, entry.Data["bind_error_count"])
+			} else {
+				assert.Equal(t, http.StatusOK, rec.Code)
+			}
+		})
+	}
 }

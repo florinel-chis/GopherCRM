@@ -235,7 +235,7 @@ func (s *aeoService) SaveProfile(profile *models.AEOProfile) (*models.AEOProfile
 		return nil, ErrAEOInvalidProfile
 	}
 	if err := normalizeAEOProfile(profile); err != nil {
-		logger.WithError(err).Warn("Invalid AEO profile")
+		logger.WithError(utils.LogError(err)).Warn("Invalid AEO profile")
 		return nil, err
 	}
 
@@ -244,7 +244,7 @@ func (s *aeoService) SaveProfile(profile *models.AEOProfile) (*models.AEOProfile
 		return nil, err
 	}
 
-	logger.WithField("brand_name", profile.BrandName).Info("AEO profile saved")
+	logger.Info("AEO profile saved")
 	return profile, nil
 }
 
@@ -307,7 +307,7 @@ func (s *aeoService) CreatePrompts(texts []string, createdByID uint) ([]models.A
 	for _, raw := range texts {
 		text, err := normalizeAEOPromptText(raw)
 		if err != nil {
-			logger.WithError(err).Warn("Invalid AEO prompt text")
+			logger.WithError(utils.LogError(err)).Warn("Invalid AEO prompt text")
 			return nil, err
 		}
 		key := strings.ToLower(text)
@@ -385,7 +385,7 @@ func (s *aeoService) UpdatePrompt(id uint, text *string, isActive *bool) (*model
 	if text != nil {
 		newText, err := normalizeAEOPromptText(*text)
 		if err != nil {
-			logger.WithError(err).Warn("Invalid AEO prompt text")
+			logger.WithError(utils.LogError(err)).Warn("Invalid AEO prompt text")
 			return nil, err
 		}
 		// The prompt being edited is allowed to collide with itself: toggling
@@ -493,7 +493,7 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 
 	answer, err := provider.Query(callCtx, buildAEOGenerationPrompt(profile, count))
 	if err != nil {
-		utils.LogServiceResponse(logger, err)
+		utils.LogServiceResponse(logger.WithField("http_status", aeo.ProviderHTTPStatus(err)), err)
 		return nil, err
 	}
 
@@ -661,7 +661,7 @@ func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggere
 }
 
 func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID *uint, selectPrompts func() ([]models.AEOPrompt, error)) (*models.AEORun, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithField("trigger", trigger), "AEOService", "StartRun")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "aeo_run"), "AEOService", "StartRun")
 
 	trigger = strings.ToLower(strings.TrimSpace(trigger))
 	if trigger == "" {
@@ -670,6 +670,7 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 	if trigger != aeoTriggerManual && trigger != aeoTriggerScheduled {
 		return nil, ErrAEOInvalidTrigger
 	}
+	logger = logger.WithField("trigger", trigger)
 
 	// Order matters: the caller gets the most actionable reason first. A missing
 	// profile means mention detection has nothing to look for, so it outranks
@@ -705,7 +706,7 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 	if swept, err := s.repo.MarkStaleRunsFailed(time.Now().UTC().Add(-aeoRunStaleAfter)); err != nil {
 		// A failed sweep is not a reason to refuse the run: fall through to the
 		// guard, which is still correct, just less forgiving.
-		logger.WithError(err).Warn("Could not sweep stale AEO runs")
+		logger.WithError(utils.LogError(err)).Warn("Could not sweep stale AEO runs")
 	} else if swept > 0 {
 		logger.WithField("stale_runs", swept).Warn("Failed AEO runs left running by an earlier process")
 	}

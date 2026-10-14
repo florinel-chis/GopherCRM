@@ -66,7 +66,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	// Get total leads
 	totalLeads, err := h.leadService.GetCount()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get leads count")
+		logger.WithError(utils.LogError(err)).Error("Failed to get leads count")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -74,7 +74,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	// Get total customers
 	totalCustomers, err := h.customerService.GetCount()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get customers count")
+		logger.WithError(utils.LogError(err)).Error("Failed to get customers count")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -82,7 +82,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	// Get open tickets count
 	openTickets, err := h.ticketService.GetOpenCount()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get open tickets count")
+		logger.WithError(utils.LogError(err)).Error("Failed to get open tickets count")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -90,7 +90,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	// Get pending tasks count
 	pendingTasks, err := h.taskService.GetPendingCount()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get pending tasks count")
+		logger.WithError(utils.LogError(err)).Error("Failed to get pending tasks count")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -340,7 +340,7 @@ func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 
 	counts, err := h.leadService.GetStatusCounts()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get lead status counts")
+		logger.WithError(utils.LogError(err)).Error("Failed to get lead status counts")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -368,7 +368,7 @@ func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 
 	counts, err := h.ticketService.GetPriorityCounts()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get ticket priority counts")
+		logger.WithError(utils.LogError(err)).Error("Failed to get ticket priority counts")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -396,7 +396,7 @@ func (h *DashboardHandler) GetTasksByStatus(c *gin.Context) {
 
 	counts, err := h.taskService.GetStatusCounts()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get task status counts")
+		logger.WithError(utils.LogError(err)).Error("Failed to get task status counts")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -428,7 +428,7 @@ func (h *DashboardHandler) GetSalesPerformance(c *gin.Context) {
 
 	timestamps, err := h.leadService.GetConversionTimestamps(buckets[0].start)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get lead conversion timestamps")
+		logger.WithError(utils.LogError(err)).Error("Failed to get lead conversion timestamps")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -471,7 +471,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	// whole page, and none of them can supply more than it.
 	createdLeads, err := h.leadService.GetRecent(limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recent leads")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recent leads")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -488,7 +488,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	convertedLeads, err := h.leadService.GetRecentlyConverted(limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recently converted leads")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recently converted leads")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -505,7 +505,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	createdTickets, err := h.ticketService.GetRecent(limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recent tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recent tickets")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -522,7 +522,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	resolvedTickets, err := h.ticketService.GetRecentlyResolved(limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recently resolved tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recently resolved tickets")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -539,7 +539,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	completedTasks, err := h.taskService.GetRecentlyCompleted(limit)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recently completed tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recently completed tasks")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -632,7 +632,7 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 		tasks, err = h.taskService.GetUpcomingByAssignee(c.GetUint("user_id"), limit)
 	}
 	if err != nil {
-		logger.WithError(err).Error("Failed to get upcoming tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to get upcoming tasks")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -663,7 +663,7 @@ func (h *DashboardHandler) GetRecentTickets(c *gin.Context) {
 
 	tickets, err := h.ticketService.GetRecent(parseDashboardLimit(c, defaultWidgetLimit))
 	if err != nil {
-		logger.WithError(err).Error("Failed to get recent tickets")
+		logger.WithError(utils.LogError(err)).Error("Failed to get recent tickets")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -711,7 +711,7 @@ func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 		leads = []models.Lead{}
 	}
 	if err != nil {
-		logger.WithError(err).Error("Failed to get new leads")
+		logger.WithError(utils.LogError(err)).Error("Failed to get new leads")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -722,6 +722,7 @@ func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 	utils.LogHandlerResponse(logger, http.StatusOK, leads)
 	utils.RespondSuccess(c, http.StatusOK, leads)
 }
+
 // dashboardDealRoles are the roles that see the deal widgets: deals are admin
 // and sales only, so support, which passes the dashboard guard, does not.
 var dashboardDealRoles = map[models.UserRole]bool{models.RoleAdmin: true, models.RoleSales: true}
@@ -752,11 +753,11 @@ func (h *DashboardHandler) GetPipeline(c *gin.Context) {
 	pipeline, err := h.dealService.DashboardPipeline(c.GetUint("user_id"), role)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
-			logger.WithError(err).Warn("Deal widgets refused")
+			logger.WithError(utils.LogError(err)).Warn("Deal widgets refused")
 			utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 			return
 		}
-		logger.WithError(err).Error("Failed to get the deal pipeline")
+		logger.WithError(utils.LogError(err)).Error("Failed to get the deal pipeline")
 		utils.RespondInternalError(c)
 		return
 	}

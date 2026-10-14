@@ -25,10 +25,10 @@ func NewBulkHandler(bulkService service.BulkOperationService) *BulkHandler {
 // BulkCreate handles POST /{resource}/bulk/create
 func (h *BulkHandler) BulkCreate(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkCreate")
-	
+
 	resourceType := c.Param("resource")
 	userID := c.GetUint("user_id")
-	
+
 	var req models.BulkCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -49,7 +49,7 @@ func (h *BulkHandler) BulkCreate(c *gin.Context) {
 
 	response, err := h.bulkService.ProcessBulkCreate(userID, resourceType, &req)
 	if err != nil {
-		logger.WithError(err).Error("Bulk create failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk create failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -61,10 +61,10 @@ func (h *BulkHandler) BulkCreate(c *gin.Context) {
 // BulkUpdate handles PUT /{resource}/bulk/update
 func (h *BulkHandler) BulkUpdate(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkUpdate")
-	
+
 	resourceType := c.Param("resource")
 	userID := c.GetUint("user_id")
-	
+
 	var req models.BulkUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -85,7 +85,7 @@ func (h *BulkHandler) BulkUpdate(c *gin.Context) {
 
 	response, err := h.bulkService.ProcessBulkUpdate(userID, resourceType, &req)
 	if err != nil {
-		logger.WithError(err).Error("Bulk update failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk update failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -97,10 +97,10 @@ func (h *BulkHandler) BulkUpdate(c *gin.Context) {
 // BulkDelete handles DELETE /{resource}/bulk/delete
 func (h *BulkHandler) BulkDelete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkDelete")
-	
+
 	resourceType := c.Param("resource")
 	userID := c.GetUint("user_id")
-	
+
 	var req models.BulkDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -121,7 +121,7 @@ func (h *BulkHandler) BulkDelete(c *gin.Context) {
 
 	response, err := h.bulkService.ProcessBulkDelete(userID, resourceType, &req)
 	if err != nil {
-		logger.WithError(err).Error("Bulk delete failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk delete failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -133,10 +133,10 @@ func (h *BulkHandler) BulkDelete(c *gin.Context) {
 // BulkAction handles POST /{resource}/bulk/action
 func (h *BulkHandler) BulkAction(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkAction")
-	
+
 	resourceType := c.Param("resource")
 	userID := c.GetUint("user_id")
-	
+
 	var req models.BulkActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -157,7 +157,7 @@ func (h *BulkHandler) BulkAction(c *gin.Context) {
 
 	response, err := h.bulkService.ProcessBulkAction(userID, resourceType, &req)
 	if err != nil {
-		logger.WithError(err).Error("Bulk action failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk action failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -171,7 +171,7 @@ func (h *BulkHandler) BulkAction(c *gin.Context) {
 // GetBulkOperation handles GET /bulk/operations/{id}
 func (h *BulkHandler) GetBulkOperation(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.GetBulkOperation")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid operation ID")
@@ -180,7 +180,7 @@ func (h *BulkHandler) GetBulkOperation(c *gin.Context) {
 
 	operation, err := h.bulkService.GetBulkOperationWithItems(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Bulk operation not found")
+		logger.WithError(utils.LogError(err)).Warn("Bulk operation not found")
 		utils.RespondNotFound(c, "Bulk operation not found")
 		return
 	}
@@ -188,7 +188,7 @@ func (h *BulkHandler) GetBulkOperation(c *gin.Context) {
 	// Check permissions - users can only view their own operations unless admin
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if operation.UserID != currentUserID && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "You can only view your own bulk operations")
 		return
@@ -201,9 +201,9 @@ func (h *BulkHandler) GetBulkOperation(c *gin.Context) {
 // ListBulkOperations handles GET /bulk/operations
 func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.ListBulkOperations")
-	
+
 	offset, limit := utils.ParseOffsetLimit(c)
-	
+
 	if limit > 100 {
 		limit = 100
 	}
@@ -223,7 +223,7 @@ func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list bulk operations")
+		logger.WithError(utils.LogError(err)).Error("Failed to list bulk operations")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -244,16 +244,16 @@ func (h *BulkHandler) ListBulkOperations(c *gin.Context) {
 // User bulk operations
 func (h *BulkHandler) BulkCreateUsers(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkCreateUsers")
-	
+
 	userID := c.GetUint("user_id")
 	userRole := c.GetString("user_role")
-	
+
 	// Only admins can bulk create users
 	if userRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can bulk create users")
 		return
 	}
-	
+
 	var req models.BulkCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -262,7 +262,7 @@ func (h *BulkHandler) BulkCreateUsers(c *gin.Context) {
 
 	response, err := h.bulkService.BulkCreateUsers(&req, userID)
 	if err != nil {
-		logger.WithError(err).Error("Bulk create users failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk create users failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -273,16 +273,16 @@ func (h *BulkHandler) BulkCreateUsers(c *gin.Context) {
 
 func (h *BulkHandler) BulkUpdateUsers(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkUpdateUsers")
-	
+
 	userID := c.GetUint("user_id")
 	userRole := c.GetString("user_role")
-	
+
 	// Only admins can bulk update users
 	if userRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can bulk update users")
 		return
 	}
-	
+
 	var req models.BulkUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -291,7 +291,7 @@ func (h *BulkHandler) BulkUpdateUsers(c *gin.Context) {
 
 	response, err := h.bulkService.BulkUpdateUsers(&req, userID)
 	if err != nil {
-		logger.WithError(err).Error("Bulk update users failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk update users failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -302,16 +302,16 @@ func (h *BulkHandler) BulkUpdateUsers(c *gin.Context) {
 
 func (h *BulkHandler) BulkDeleteUsers(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkDeleteUsers")
-	
+
 	userID := c.GetUint("user_id")
 	userRole := c.GetString("user_role")
-	
+
 	// Only admins can bulk delete users
 	if userRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can bulk delete users")
 		return
 	}
-	
+
 	var req models.BulkDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -320,7 +320,7 @@ func (h *BulkHandler) BulkDeleteUsers(c *gin.Context) {
 
 	response, err := h.bulkService.BulkDeleteUsers(&req, userID)
 	if err != nil {
-		logger.WithError(err).Error("Bulk delete users failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk delete users failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -331,16 +331,16 @@ func (h *BulkHandler) BulkDeleteUsers(c *gin.Context) {
 
 func (h *BulkHandler) BulkActionUsers(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "BulkHandler.BulkActionUsers")
-	
+
 	userID := c.GetUint("user_id")
 	userRole := c.GetString("user_role")
-	
+
 	// Only admins can perform bulk actions on users
 	if userRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "Only administrators can perform bulk actions on users")
 		return
 	}
-	
+
 	var req models.BulkActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -349,7 +349,7 @@ func (h *BulkHandler) BulkActionUsers(c *gin.Context) {
 
 	response, err := h.bulkService.BulkActionUsers(&req, userID)
 	if err != nil {
-		logger.WithError(err).Error("Bulk action users failed")
+		logger.WithError(utils.LogError(err)).Error("Bulk action users failed")
 		apperrors.HandleError(c, err)
 		return
 	}
@@ -413,7 +413,7 @@ func (h *BulkHandler) BulkUpdateLeadStatus(c *gin.Context) {
 	result, err := h.bulkService.BulkSetLeadStatus(
 		c.GetUint("user_id"), models.UserRole(c.GetString("user_role")), req.LeadIDs, req.Status)
 	if err != nil {
-		logger.WithError(err).Warn("Bulk lead status update rejected")
+		logger.WithError(utils.LogError(err)).Warn("Bulk lead status update rejected")
 		respondBulkStatusError(c, err)
 		return
 	}
@@ -465,7 +465,7 @@ func (h *BulkHandler) BulkUpdateTicketStatus(c *gin.Context) {
 	result, err := h.bulkService.BulkSetTicketStatus(
 		c.GetUint("user_id"), currentUserRole, req.TicketIDs, req.Status)
 	if err != nil {
-		logger.WithError(err).Warn("Bulk ticket status update rejected")
+		logger.WithError(utils.LogError(err)).Warn("Bulk ticket status update rejected")
 		respondBulkStatusError(c, err)
 		return
 	}
@@ -503,7 +503,7 @@ func (h *BulkHandler) BulkUpdateTaskStatus(c *gin.Context) {
 	result, err := h.bulkService.BulkSetTaskStatus(
 		c.GetUint("user_id"), models.UserRole(c.GetString("user_role")), req.TaskIDs, req.Status)
 	if err != nil {
-		logger.WithError(err).Warn("Bulk task status update rejected")
+		logger.WithError(utils.LogError(err)).Warn("Bulk task status update rejected")
 		respondBulkStatusError(c, err)
 		return
 	}
@@ -556,7 +556,7 @@ func (h *BulkHandler) isValidResourceType(resourceType string) bool {
 
 func (h *BulkHandler) hasCreatePermission(c *gin.Context, resourceType string) bool {
 	userRole := c.GetString("user_role")
-	
+
 	switch resourceType {
 	case "users":
 		return userRole == string(models.RoleAdmin)
@@ -573,7 +573,7 @@ func (h *BulkHandler) hasCreatePermission(c *gin.Context, resourceType string) b
 
 func (h *BulkHandler) hasUpdatePermission(c *gin.Context, resourceType string) bool {
 	userRole := c.GetString("user_role")
-	
+
 	switch resourceType {
 	case "users":
 		return userRole == string(models.RoleAdmin)
@@ -590,7 +590,7 @@ func (h *BulkHandler) hasUpdatePermission(c *gin.Context, resourceType string) b
 
 func (h *BulkHandler) hasDeletePermission(c *gin.Context, resourceType string) bool {
 	userRole := c.GetString("user_role")
-	
+
 	switch resourceType {
 	case "users":
 		return userRole == string(models.RoleAdmin)
@@ -607,7 +607,7 @@ func (h *BulkHandler) hasDeletePermission(c *gin.Context, resourceType string) b
 
 func (h *BulkHandler) hasActionPermission(c *gin.Context, resourceType, action string) bool {
 	userRole := c.GetString("user_role")
-	
+
 	switch resourceType {
 	case "users":
 		return userRole == string(models.RoleAdmin)
