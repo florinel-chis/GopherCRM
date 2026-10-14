@@ -116,7 +116,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if err := h.userService.Register(user, req.Password); err != nil {
-		logger.WithError(err).Warn("Registration failed")
+		logger.WithError(utils.LogError(err)).Warn("Registration failed")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
 			utils.RespondConflict(c, "user with this email already exists")
 		} else {
@@ -127,7 +127,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	token, err := h.authService.GenerateJWT(user)
 	if err != nil {
-		logger.WithError(err).Error("Failed to generate token")
+		logger.WithError(utils.LogError(err)).Error("Failed to generate token")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -165,7 +165,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	tokens, err := h.authService.LoginWithTokens(req.Email, req.Password)
 	if err != nil {
-		logger.WithError(err).Warn("Login failed")
+		logger.WithError(utils.LogError(err)).Warn("Login failed")
 		utils.RespondUnauthorized(c, "Invalid email or password")
 		return
 	}
@@ -208,7 +208,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		// Deliberately generic: every rejection reads the same. Internal
 		// failures are logged server-side but still answered with 401 rather
 		// than 500, so the error channel cannot be used to probe token state.
-		logger.WithError(err).Warn("Refresh token rejected")
+		logger.WithError(utils.LogError(err)).Warn("Refresh token rejected")
 		utils.RespondUnauthorized(c, "Invalid or expired refresh token")
 		return
 	}
@@ -257,7 +257,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	if err := h.authService.Logout(userID, req.RefreshToken); err != nil {
-		logger.WithError(err).Error("Logout failed")
+		logger.WithError(utils.LogError(err)).Error("Logout failed")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -307,7 +307,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 			utils.RespondBadRequest(c, "The current password is incorrect")
 			return
 		}
-		logger.WithError(err).Error("Password change failed")
+		logger.WithError(utils.LogError(err)).Error("Password change failed")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -341,7 +341,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	// The service swallows every account-dependent failure by design, so this
 	// response is identical for existing and unknown accounts.
 	if err := h.authService.RequestPasswordReset(req.Email); err != nil {
-		logger.WithError(err).Error("Unexpected password reset failure")
+		logger.WithError(utils.LogError(err)).Error("Unexpected password reset failure")
 	}
 
 	response := MessageResponse{Message: "If an account exists for that email, a password reset link has been sent"}
@@ -380,7 +380,7 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 			utils.RespondBadRequest(c, "Invalid or expired reset token")
 			return
 		}
-		logger.WithError(err).Error("Password reset confirmation failed")
+		logger.WithError(utils.LogError(err)).Error("Password reset confirmation failed")
 		utils.RespondInternalError(c)
 		return
 	}

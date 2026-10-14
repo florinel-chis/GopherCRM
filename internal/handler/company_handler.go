@@ -460,21 +460,21 @@ func pageMeta(c *gin.Context, offset, limit int, total int64) *utils.APIMeta {
 func (h *CompanyHandler) respondError(c *gin.Context, logger *logrus.Entry, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrDuplicateCompanyDomain):
-		logger.WithError(err).Warn("Duplicate company domain")
+		logger.WithError(utils.LogError(err)).Warn("Duplicate company domain")
 		utils.RespondConflict(c, err.Error())
 	case errors.Is(err, apperrors.ErrAssigneeNotFound):
 		// A bad owner id is a bad reference in the body, not a missing resource
 		// at the requested path, so it is a 400 like an unknown label_id.
-		logger.WithError(err).Warn("Unknown company owner")
+		logger.WithError(utils.LogError(err)).Warn("Unknown company owner")
 		utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
 	case errors.Is(err, apperrors.ErrValidation):
-		logger.WithError(err).Warn("Invalid company")
+		logger.WithError(utils.LogError(err)).Warn("Invalid company")
 		utils.RespondBadRequest(c, err.Error())
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("Company not found")
+		logger.WithError(utils.LogError(err)).Warn("Company not found")
 		utils.RespondNotFound(c, "Company not found")
 	default:
-		logger.WithError(err).Error("Company operation failed")
+		logger.WithError(utils.LogError(err)).Error("Company operation failed")
 		utils.RespondInternalError(c)
 	}
 }

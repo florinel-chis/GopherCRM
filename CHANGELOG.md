@@ -88,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Service and HTTP logging privacy.** The sample `LOG_LEVEL` is now `info`. Service logs omit
+  emails, names, titles, search terms and raw sort values, while shared helpers omit argument,
+  result and handler response payloads (including issued credentials). Access logs omit query
+  strings. Logged errors redact quoted value suffixes, form validation logs summarize the field
+  count, and SMTP failures retain the protocol code without relay response text. Operation names,
+  IDs, validated statuses, counts and request timings remain. API responses and returned errors
+  are unchanged; other raw diagnostics, request/header/IP metadata, mailer recipients and older
+  logs still require a retention policy.
 - **The SQL log follows `LOG_LEVEL` and never carries parameter values.** The GORM logger was
   fixed at its most verbose level, so every statement went to stdout with its bound values
   (email addresses, names, token hashes) whatever `LOG_LEVEL` said. Statements are now logged

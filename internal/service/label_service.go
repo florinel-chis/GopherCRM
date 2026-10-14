@@ -31,10 +31,10 @@ func NewLabelService(labelRepo repository.LabelRepository) LabelService {
 }
 
 func (s *labelService) Create(label *models.Label) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("label_name", label.Name), "LabelService", "Create")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "label"), "LabelService", "Create")
 
 	if err := normalizeLabel(label); err != nil {
-		logger.WithError(err).Warn("Invalid label")
+		logger.WithError(utils.LogError(err)).Warn("Invalid label")
 		return err
 	}
 
@@ -67,7 +67,7 @@ func (s *labelService) GetByID(id uint) (*models.Label, error) {
 	label, err := s.labelRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Label not found")
+			logger.WithError(utils.LogError(err)).Warn("Label not found")
 			return nil, fmt.Errorf("label %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -80,7 +80,7 @@ func (s *labelService) Update(label *models.Label) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("label_id", label.ID), "LabelService", "Update")
 
 	if err := normalizeLabel(label); err != nil {
-		logger.WithError(err).Warn("Invalid label")
+		logger.WithError(utils.LogError(err)).Warn("Invalid label")
 		return err
 	}
 
@@ -110,7 +110,7 @@ func (s *labelService) Delete(id uint) error {
 
 	if _, err := s.labelRepo.GetByID(id); err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Label not found")
+			logger.WithError(utils.LogError(err)).Warn("Label not found")
 			return fmt.Errorf("label %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)

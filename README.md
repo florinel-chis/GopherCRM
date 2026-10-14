@@ -741,9 +741,12 @@ gophercrm/
   tier alone — the check lives inside `RateLimitStrict` — so the moderate tier still applies to
   test traffic.
 - **Bulk endpoints are unrouted** (see *Not currently exposed* above).
-- **Erasure does not reach logs or issued tokens.** Application logs record the email address on
-  login and on customer create/update, and issued JWTs embed it until they expire. Log retention
-  needs its own policy alongside database erasure.
+- **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and
+  search fields; shared helpers omit argument/result/response payloads, and HTTP logs omit query
+  strings. Quoted values in logged errors are redacted, and SMTP errors retain only the protocol
+  code. Other raw diagnostics, request IDs, client IPs, Origin/User-Agent headers and mailer
+  recipient metadata can still carry personal data. Older logs and issued JWTs that embed email
+  also remain outside database erasure, so log and token retention need their own policy.
 - **The frontend still carries ESLint warnings.** Errors are at zero and `npm run lint` is a
   blocking CI step, but about 230 warnings remain, mostly `no-explicit-any` and
   `no-non-null-assertion`. `tsc` is clean.

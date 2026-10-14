@@ -385,16 +385,16 @@ func (h *FormHandler) respondError(c *gin.Context, logger *logrus.Entry, err err
 
 	switch {
 	case errors.As(err, &fieldErrors):
-		logger.WithError(err).Warn("Form request failed validation")
+		logger.WithError(utils.LogError(err)).Warn("Form request failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, "Validation failed", fieldErrors)
 	case errors.Is(err, apperrors.ErrValidation):
-		logger.WithError(err).Warn("Form request failed validation")
+		logger.WithError(utils.LogError(err)).Warn("Form request failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, err.Error(), nil)
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("Form resource not found")
+		logger.WithError(utils.LogError(err)).Warn("Form resource not found")
 		utils.RespondNotFound(c, notFoundMessage)
 	default:
-		logger.WithError(err).Error("Form operation failed")
+		logger.WithError(utils.LogError(err)).Error("Form operation failed")
 		utils.RespondInternalError(c)
 	}
 }

@@ -94,7 +94,7 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 
 	configs, err := h.configService.GetAll()
 	if err != nil {
-		logger.WithError(err).Error("Failed to get configurations")
+		logger.WithError(utils.LogError(err)).Error("Failed to get configurations")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -138,7 +138,7 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 
 	configs, err := h.configService.GetByCategory(models.ConfigurationCategory(category))
 	if err != nil {
-		logger.WithError(err).Error("Failed to get configurations by category")
+		logger.WithError(utils.LogError(err)).Error("Failed to get configurations by category")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -184,11 +184,11 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 	config, err := h.configService.GetByKey(key)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Configuration not found")
+			logger.WithError(utils.LogError(err)).Warn("Configuration not found")
 			utils.RespondNotFound(c, "Configuration not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to get configuration")
+		logger.WithError(utils.LogError(err)).Error("Failed to get configuration")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -245,7 +245,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 	// is not a value any configuration type can hold.
 	var value interface{}
 	if err := json.Unmarshal(req.Value, &value); err != nil {
-		logger.WithError(err).Warn("Malformed configuration value")
+		logger.WithError(utils.LogError(err)).Warn("Malformed configuration value")
 		utils.RespondBadRequest(c, "Invalid configuration value")
 		return
 	}
@@ -255,7 +255,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 	}
 
 	if err := h.configService.Set(key, value); err != nil {
-		logger.WithError(err).Error("Failed to set configuration")
+		logger.WithError(utils.LogError(err)).Error("Failed to set configuration")
 		switch {
 		case apperrors.IsNotFound(err):
 			utils.RespondNotFound(c, "Configuration not found")
@@ -272,7 +272,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 	// Get updated configuration to return
 	config, err := h.configService.GetByKey(key)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get updated configuration")
+		logger.WithError(utils.LogError(err)).Error("Failed to get updated configuration")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -317,7 +317,7 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	}
 
 	if err := h.configService.Reset(key); err != nil {
-		logger.WithError(err).Error("Failed to reset configuration")
+		logger.WithError(utils.LogError(err)).Error("Failed to reset configuration")
 		switch {
 		case apperrors.IsNotFound(err):
 			utils.RespondNotFound(c, "Configuration not found")
@@ -332,7 +332,7 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	// Get reset configuration to return
 	config, err := h.configService.GetByKey(key)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get reset configuration")
+		logger.WithError(utils.LogError(err)).Error("Failed to get reset configuration")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -361,7 +361,7 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 	// This endpoint is accessible to all authenticated users
 	configs, err := h.configService.GetByCategory(models.CategoryUI)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get UI configurations")
+		logger.WithError(utils.LogError(err)).Error("Failed to get UI configurations")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -369,7 +369,7 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 	// Also get some general configurations that are safe for UI
 	generalConfigs, err := h.configService.GetByCategory(models.CategoryGeneral)
 	if err != nil {
-		logger.WithError(err).Warn("Failed to get general configurations")
+		logger.WithError(utils.LogError(err)).Warn("Failed to get general configurations")
 	} else {
 		// Filter to only safe general configurations
 		for _, config := range generalConfigs {
@@ -383,7 +383,7 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 	// and read by key because it is the only entry of its category the UI
 	// needs.
 	if currency, err := h.configService.GetByKey(service.ConfigDealsDefaultCurrency); err != nil {
-		logger.WithError(err).Warn("Failed to get the default deal currency configuration")
+		logger.WithError(utils.LogError(err)).Warn("Failed to get the default deal currency configuration")
 	} else {
 		configs = append(configs, *currency)
 	}

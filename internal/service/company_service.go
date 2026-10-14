@@ -28,10 +28,10 @@ func NewCompanyService(companyRepo repository.CompanyRepository, userRepo reposi
 }
 
 func (s *companyService) Create(company *models.Company) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("company_name", company.Name), "CompanyService", "Create")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "company"), "CompanyService", "Create")
 
 	if err := s.prepare(company); err != nil {
-		logger.WithError(err).Warn("Company rejected")
+		logger.WithError(utils.LogError(err)).Warn("Company rejected")
 		return err
 	}
 
@@ -50,7 +50,7 @@ func (s *companyService) GetByID(id uint) (*models.Company, error) {
 	company, err := s.companyRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Company not found")
+			logger.WithError(utils.LogError(err)).Warn("Company not found")
 			return nil, fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -63,7 +63,7 @@ func (s *companyService) Update(company *models.Company) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("company_id", company.ID), "CompanyService", "Update")
 
 	if err := s.prepare(company); err != nil {
-		logger.WithError(err).Warn("Company rejected")
+		logger.WithError(utils.LogError(err)).Warn("Company rejected")
 		return err
 	}
 
@@ -85,7 +85,7 @@ func (s *companyService) Delete(id uint) error {
 
 	if _, err := s.companyRepo.GetByID(id); err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Company not found")
+			logger.WithError(utils.LogError(err)).Warn("Company not found")
 			return fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -126,11 +126,8 @@ func (s *companyService) Delete(id uint) error {
 
 func (s *companyService) List(offset, limit int, search, sortBy, sortOrder string) ([]models.Company, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset":     offset,
-		"limit":      limit,
-		"search":     search,
-		"sort_by":    sortBy,
-		"sort_order": sortOrder,
+		"offset": offset,
+		"limit":  limit,
 	}), "CompanyService", "List")
 
 	companies, total, err := s.companyRepo.List(offset, limit, search, sortBy, sortOrder)

@@ -54,7 +54,7 @@ func (h *LabelHandler) List(c *gin.Context) {
 
 	labels, err := h.labelService.List()
 	if err != nil {
-		logger.WithError(err).Error("Failed to list labels")
+		logger.WithError(utils.LogError(err)).Error("Failed to list labels")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -200,16 +200,16 @@ func (h *LabelHandler) Delete(c *gin.Context) {
 func (h *LabelHandler) respondError(c *gin.Context, logger *logrus.Entry, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrDuplicateLabelName):
-		logger.WithError(err).Warn("Duplicate label name")
+		logger.WithError(utils.LogError(err)).Warn("Duplicate label name")
 		utils.RespondConflict(c, err.Error())
 	case errors.Is(err, apperrors.ErrInvalidLabelName), errors.Is(err, apperrors.ErrInvalidLabelColor):
-		logger.WithError(err).Warn("Invalid label")
+		logger.WithError(utils.LogError(err)).Warn("Invalid label")
 		utils.RespondBadRequest(c, err.Error())
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("Label not found")
+		logger.WithError(utils.LogError(err)).Warn("Label not found")
 		utils.RespondNotFound(c, "Label not found")
 	default:
-		logger.WithError(err).Error("Label operation failed")
+		logger.WithError(utils.LogError(err)).Error("Label operation failed")
 		utils.RespondInternalError(c)
 	}
 }

@@ -549,7 +549,7 @@ func (h *DealHandler) ListByCompany(c *gin.Context) {
 	deals, total, err := h.dealService.ListByCompany(id, h.ownerScope(c), offset, limit)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Company not found")
+			logger.WithError(utils.LogError(err)).Warn("Company not found")
 			utils.RespondNotFound(c, "Company not found")
 			return
 		}
@@ -595,7 +595,7 @@ func (h *DealHandler) ListByCustomer(c *gin.Context) {
 	deals, total, err := h.dealService.ListByCustomer(id, h.ownerScope(c), offset, limit)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			utils.RespondNotFound(c, "Customer not found")
 			return
 		}
@@ -677,19 +677,19 @@ func (h *DealHandler) respondError(c *gin.Context, logger *logrus.Entry, err err
 		errors.Is(err, apperrors.ErrLeadNotFound):
 		// A bad id in the body is a bad reference, not a missing resource at
 		// the requested path, so it is a 400 like an unknown label_id.
-		logger.WithError(err).Warn("Unknown deal reference")
+		logger.WithError(utils.LogError(err)).Warn("Unknown deal reference")
 		utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
 	case errors.Is(err, apperrors.ErrForbidden):
-		logger.WithError(err).Warn("Deal access refused")
+		logger.WithError(utils.LogError(err)).Warn("Deal access refused")
 		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 	case errors.Is(err, apperrors.ErrValidation):
-		logger.WithError(err).Warn("Invalid deal")
+		logger.WithError(utils.LogError(err)).Warn("Invalid deal")
 		utils.RespondBadRequest(c, err.Error())
 	case apperrors.IsNotFound(err):
-		logger.WithError(err).Warn("Deal not found")
+		logger.WithError(utils.LogError(err)).Warn("Deal not found")
 		utils.RespondNotFound(c, "Deal not found")
 	default:
-		logger.WithError(err).Error("Deal operation failed")
+		logger.WithError(utils.LogError(err)).Error("Deal operation failed")
 		utils.RespondInternalError(c)
 	}
 }

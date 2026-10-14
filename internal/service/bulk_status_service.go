@@ -147,7 +147,7 @@ func (s *bulkOperationService) runBulkStatusUpdate(actorID uint, resourceType st
 // already committed (or already rolled back), so it is logged and swallowed.
 func (s *bulkOperationService) recordBulkStatusOutcome(operationID uint, status models.BulkOperationStatus) {
 	if err := s.UpdateBulkOperationStatus(operationID, status); err != nil {
-		s.logger.WithError(err).WithField("operation_id", operationID).
+		s.logger.WithError(utils.LogError(err)).WithField("operation_id", operationID).
 			Warn("Failed to record bulk status operation outcome")
 	}
 }

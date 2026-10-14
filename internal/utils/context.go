@@ -23,31 +23,24 @@ func GetLogger(c *gin.Context) *logrus.Entry {
 	return Logger.WithFields(fields)
 }
 
-// LogServiceCall logs service method calls
-func LogServiceCall(logger *logrus.Entry, service, method string, args ...interface{}) *logrus.Entry {
+// LogServiceCall logs service method calls without arbitrary argument values.
+// Attach safe identifiers or counts explicitly to logger instead.
+func LogServiceCall(logger *logrus.Entry, service, method string, _ ...interface{}) *logrus.Entry {
 	entry := logger.WithFields(logrus.Fields{
 		"service": service,
 		"method":  method,
 	})
 
-	if len(args) > 0 {
-		entry = entry.WithField("args", args)
-	}
-
 	entry.Debug("Service call started")
 	return entry
 }
 
-// LogServiceResponse logs service method responses
-func LogServiceResponse(logger *logrus.Entry, err error, result ...interface{}) {
+// LogServiceResponse logs completion without response payloads.
+func LogServiceResponse(logger *logrus.Entry, err error, _ ...interface{}) {
 	if err != nil {
-		logger.WithError(err).Error("Service call failed")
+		logger.WithError(LogError(err)).Error("Service call failed")
 	} else {
-		fields := logrus.Fields{}
-		if len(result) > 0 {
-			fields["result"] = result[0]
-		}
-		logger.WithFields(fields).Debug("Service call completed")
+		logger.Debug("Service call completed")
 	}
 }
 
@@ -58,10 +51,9 @@ func LogHandlerStart(c *gin.Context, handler string) *logrus.Entry {
 	return logger
 }
 
-// LogHandlerResponse logs handler responses
-func LogHandlerResponse(logger *logrus.Entry, statusCode int, response interface{}) {
+// LogHandlerResponse logs the HTTP status without serializing response payloads.
+func LogHandlerResponse(logger *logrus.Entry, statusCode int, _ interface{}) {
 	logger.WithFields(logrus.Fields{
 		"status_code": statusCode,
-		"response":    response,
 	}).Debug("Handler completed")
 }

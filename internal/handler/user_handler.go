@@ -21,19 +21,19 @@ func NewUserHandler(userService service.UserService) *UserHandler {
 }
 
 type CreateUserRequest struct {
-	Email     string           `json:"email" binding:"required,email"`
-	Password  string           `json:"password" binding:"required,min=10"`
-	FirstName string           `json:"first_name" binding:"required"`
-	LastName  string           `json:"last_name" binding:"required"`
-	Role      models.UserRole  `json:"role" binding:"required,oneof=admin sales support customer"`
+	Email     string          `json:"email" binding:"required,email"`
+	Password  string          `json:"password" binding:"required,min=10"`
+	FirstName string          `json:"first_name" binding:"required"`
+	LastName  string          `json:"last_name" binding:"required"`
+	Role      models.UserRole `json:"role" binding:"required,oneof=admin sales support customer"`
 }
 
 type UpdateUserRequest struct {
-	Email     string           `json:"email,omitempty" binding:"omitempty,email"`
-	FirstName string           `json:"first_name,omitempty"`
-	LastName  string           `json:"last_name,omitempty"`
-	Role      models.UserRole  `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
-	IsActive  *bool            `json:"is_active,omitempty"`
+	Email     string          `json:"email,omitempty" binding:"omitempty,email"`
+	FirstName string          `json:"first_name,omitempty"`
+	LastName  string          `json:"last_name,omitempty"`
+	Role      models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
+	IsActive  *bool           `json:"is_active,omitempty"`
 }
 
 type UpdateMeRequest struct {
@@ -61,7 +61,7 @@ type UpdateMeRequest struct {
 // @Router /users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Create")
-	
+
 	var req CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -82,7 +82,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.userService.Register(user, req.Password); err != nil {
-		logger.WithError(err).Warn("Failed to create user")
+		logger.WithError(utils.LogError(err)).Warn("Failed to create user")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
 			utils.RespondConflict(c, "user with this email already exists")
 		} else {
@@ -161,7 +161,7 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list users")
+		logger.WithError(utils.LogError(err)).Error("Failed to list users")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -195,7 +195,7 @@ func (h *UserHandler) List(c *gin.Context) {
 // @Router /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Get")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -205,7 +205,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 	// Check permissions - users can only view themselves unless admin
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "You can only view your own profile")
 		return
@@ -213,7 +213,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 	user, err := h.userService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("User not found")
+		logger.WithError(utils.LogError(err)).Warn("User not found")
 		utils.RespondNotFound(c, "User not found")
 		return
 	}
@@ -243,7 +243,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Router /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Update")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -253,7 +253,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	// Check permissions - users can only update themselves unless admin
 	currentUserID := c.GetUint("user_id")
 	currentUserRole := c.GetString("user_role")
-	
+
 	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
 		utils.RespondForbidden(c, "You can only update your own profile")
 		return
@@ -276,7 +276,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.LastName != "" {
 		updates["last_name"] = req.LastName
 	}
-	
+
 	// Only admins can update role and active status
 	if currentUserRole == string(models.RoleAdmin) {
 		if req.Role != "" {
@@ -290,18 +290,18 @@ func (h *UserHandler) Update(c *gin.Context) {
 	user, err := h.userService.Update(uint(id), updates)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
-			logger.WithError(err).Warn("Failed to update user")
+			logger.WithError(utils.LogError(err)).Warn("Failed to update user")
 			utils.RespondConflict(c, "user with this email already exists")
 			return
 		}
 		// An update that matched nobody is a client error, not a server fault:
 		// only a genuine failure stays a 500.
 		if errors.Is(err, apperrors.ErrNotFound) {
-			logger.WithError(err).Warn("User not found")
+			logger.WithError(utils.LogError(err)).Warn("User not found")
 			utils.RespondNotFound(c, "User not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to update user")
+		logger.WithError(utils.LogError(err)).Error("Failed to update user")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -328,7 +328,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 // @Router /users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Delete")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid user ID")
@@ -354,11 +354,11 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		// look the same to the operator: only the not-found sentinel is a 404,
 		// everything else is a genuine failure and stays a 500.
 		if errors.Is(err, apperrors.ErrNotFound) {
-			logger.WithError(err).Warn("User not found")
+			logger.WithError(utils.LogError(err)).Warn("User not found")
 			utils.RespondNotFound(c, "User not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to delete user")
+		logger.WithError(utils.LogError(err)).Error("Failed to delete user")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -381,12 +381,12 @@ func (h *UserHandler) Delete(c *gin.Context) {
 // @Router /users/me [get]
 func (h *UserHandler) GetMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.GetMe")
-	
+
 	userID := c.GetUint("user_id")
-	
+
 	user, err := h.userService.GetByID(userID)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get current user")
+		logger.WithError(utils.LogError(err)).Error("Failed to get current user")
 		utils.RespondNotFound(c, "User not found")
 		return
 	}
@@ -414,9 +414,9 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Router /users/me [put]
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.UpdateMe")
-	
+
 	userID := c.GetUint("user_id")
-	
+
 	var req UpdateMeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
@@ -448,18 +448,18 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	user, err := h.userService.Update(userID, updates)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
-			logger.WithError(err).Warn("Failed to update user")
+			logger.WithError(utils.LogError(err)).Warn("Failed to update user")
 			utils.RespondConflict(c, "user with this email already exists")
 			return
 		}
 		// The id comes from the token, so this means the account was deleted
 		// while the session was still live. 404 remains the honest answer.
 		if errors.Is(err, apperrors.ErrNotFound) {
-			logger.WithError(err).Warn("User not found")
+			logger.WithError(utils.LogError(err)).Warn("User not found")
 			utils.RespondNotFound(c, "User not found")
 			return
 		}
-		logger.WithError(err).Error("Failed to update user")
+		logger.WithError(utils.LogError(err)).Error("Failed to update user")
 		utils.RespondInternalError(c)
 		return
 	}

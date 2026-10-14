@@ -193,6 +193,11 @@ func (e FieldErrors) Error() string {
 	return "validation failed - " + strings.Join(parts, "; ")
 }
 
+// LogMessage summarizes validation without custom field names or submitted values.
+func (e FieldErrors) LogMessage() string {
+	return fmt.Sprintf("validation failed (%d fields)", len(e))
+}
+
 func (e FieldErrors) Unwrap() error { return apperrors.ErrValidation }
 
 type formService struct {
@@ -261,11 +266,11 @@ func formTokenSecret() string {
 // ---------------------------------------------------------------------------
 
 func (s *formService) Create(form *models.Form, actorID uint) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("form_name", form.Name), "FormService", "Create")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "form"), "FormService", "Create")
 
 	form.CreatedByID = actorID
 	if err := s.prepare(form); err != nil {
-		logger.WithError(err).Warn("Rejected form definition")
+		logger.WithError(utils.LogError(err)).Warn("Rejected form definition")
 		return err
 	}
 
@@ -299,7 +304,10 @@ func (s *formService) GetByID(id uint) (*models.Form, error) {
 // sort column is a bad request rather than a silent fallback, so a typo in a
 // query string is visible instead of quietly reordering the list.
 func (s *formService) List(offset, limit int, status, sortBy, sortOrder string) ([]models.Form, map[uint]int64, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithField("status", status), "FormService", "List")
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"offset": offset,
+		"limit":  limit,
+	}), "FormService", "List")
 
 	if sortBy != "" && !formSortColumns[sortBy] {
 		return nil, nil, 0, FieldErrors{"sort_by": fmt.Sprintf("cannot sort forms by %q", sortBy)}
@@ -312,6 +320,7 @@ func (s *formService) List(offset, limit int, status, sortBy, sortOrder string) 
 		}
 	}
 
+	logger = logger.WithField("status", status)
 	formList, total, err := s.repo.List(offset, limit, status, sortBy, sortOrder)
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -341,7 +350,7 @@ func (s *formService) Update(id uint, form *models.Form) error {
 	existing, err := s.repo.GetByID(id)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Form not found")
+			logger.WithError(utils.LogError(err)).Warn("Form not found")
 			return fmt.Errorf("form %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -355,7 +364,7 @@ func (s *formService) Update(id uint, form *models.Form) error {
 	form.CreatedByID = existing.CreatedByID
 
 	if err := s.prepare(form); err != nil {
-		logger.WithError(err).Warn("Rejected form definition")
+		logger.WithError(utils.LogError(err)).Warn("Rejected form definition")
 		return err
 	}
 
@@ -373,7 +382,7 @@ func (s *formService) Delete(id uint) error {
 
 	if err := s.repo.Delete(id); err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.WithError(err).Warn("Form not found")
+			logger.WithError(utils.LogError(err)).Warn("Form not found")
 			return fmt.Errorf("form %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		utils.LogServiceResponse(logger, err)
@@ -502,7 +511,7 @@ func (s *formService) PublicDefinition(publicID, origin string) (*PublicFormDefi
 	}
 
 	if !originAllowed(form.AllowedDomains, origin) {
-		utils.Logger.WithField("public_id", publicID).WithField("origin", origin).
+		utils.Logger.WithField("form_id", form.ID).
 			Info("Form definition requested from a disallowed origin")
 		return nil, fmt.Errorf("form %q not found: %w", publicID, apperrors.ErrNotFound)
 	}
@@ -607,13 +616,14 @@ func originHost(origin string) string {
 // success-shaped outcome a genuine submission gets, with the submission stored
 // as spam so an admin can see what the filters caught.
 func (s *formService) SubmitPublic(publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithField("public_id", publicID), "FormService", "SubmitPublic")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "form"), "FormService", "SubmitPublic")
 
 	form, err := s.publishedForm(publicID)
 	if err != nil {
 		return nil, err
 	}
 
+	logger = logger.WithField("form_id", form.ID)
 	values, err := s.validateValues(form, req)
 	if err != nil {
 		return nil, err
@@ -762,7 +772,7 @@ func (s *formService) checkCaptcha(form *models.Form, req *PublicSubmissionReque
 
 	ok, err := s.verifier.Verify(context.Background(), req.CaptchaToken, meta.IP)
 	if err != nil {
-		utils.Logger.WithError(err).WithField("form_id", form.ID).
+		utils.Logger.WithError(utils.LogError(err)).WithField("form_id", form.ID).
 			Warn("Captcha verification failed to complete; treating the submission as spam")
 		return false
 	}
@@ -1176,7 +1186,7 @@ func (s *formService) send(form *models.Form, to, subject, body, kind string) {
 		return
 	}
 	if err := s.mailer.Send(to, subject, body); err != nil {
-		utils.Logger.WithError(err).
+		utils.Logger.WithError(utils.LogError(err)).
 			WithField("form_id", form.ID).
 			WithField("mail", kind).
 			Warn("Form mail delivery failed")

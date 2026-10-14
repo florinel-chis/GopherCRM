@@ -164,7 +164,7 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.leadService.Create(lead); err != nil {
-		logger.WithError(err).Error("Failed to create lead")
+		logger.WithError(utils.LogError(err)).Error("Failed to create lead")
 		if errors.Is(err, apperrors.ErrCompanyNotFound) {
 			// A bad company id is a bad reference in the body, not a missing
 			// resource at the requested path, so it is a 400 like label_ids.
@@ -270,7 +270,7 @@ func (h *LeadHandler) List(c *gin.Context) {
 	}
 
 	if err != nil {
-		logger.WithError(err).Error("Failed to list leads")
+		logger.WithError(utils.LogError(err)).Error("Failed to list leads")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -315,7 +315,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 
 	lead, err := h.leadService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Lead not found")
+		logger.WithError(utils.LogError(err)).Warn("Lead not found")
 		utils.RespondNotFound(c, "Lead not found")
 		return
 	}
@@ -373,7 +373,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	// Check if lead exists and user has permission
 	lead, err := h.leadService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Lead not found")
+		logger.WithError(utils.LogError(err)).Warn("Lead not found")
 		utils.RespondNotFound(c, "Lead not found")
 		return
 	}
@@ -443,7 +443,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 	updatedLead, err := h.leadService.Update(uint(id), updates)
 	if err != nil {
-		logger.WithError(err).Error("Failed to update lead")
+		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
 		if errors.Is(err, apperrors.ErrCompanyNotFound) {
 			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
 			return
@@ -485,7 +485,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 	// Check if lead exists and user has permission
 	lead, err := h.leadService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Lead not found")
+		logger.WithError(utils.LogError(err)).Warn("Lead not found")
 		utils.RespondNotFound(c, "Lead not found")
 		return
 	}
@@ -500,7 +500,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.leadService.Delete(uint(id)); err != nil {
-		logger.WithError(err).Error("Failed to delete lead")
+		logger.WithError(utils.LogError(err)).Error("Failed to delete lead")
 		utils.RespondInternalError(c)
 		return
 	}
@@ -546,7 +546,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	// Check if lead exists and user has permission
 	lead, err := h.leadService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(err).Warn("Lead not found")
+		logger.WithError(utils.LogError(err)).Warn("Lead not found")
 		utils.RespondNotFound(c, "Lead not found")
 		return
 	}
@@ -573,7 +573,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 
 	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
 	if err != nil {
-		logger.WithError(err).Error("Failed to convert lead")
+		logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
 		switch {
 		case errors.Is(err, apperrors.ErrLeadConverted):
 			utils.RespondBadRequest(c, "lead already converted")

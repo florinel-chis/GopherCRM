@@ -36,7 +36,7 @@ func (s *taskService) Create(task *models.Task) error {
 // CreateWithLabels persists a task and attaches the referenced labels. With no
 // label ids it is exactly Create, down to the repository call it makes.
 func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error {
-	logger := utils.LogServiceCall(utils.Logger.WithField("task_title", task.Title), "TaskService", "Create")
+	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "task"), "TaskService", "Create")
 
 	// Set default values
 	if task.Status == "" {
@@ -49,7 +49,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 	// Validate assignee exists and is active
 	assignee, err := s.userRepo.GetByID(task.AssignedToID)
 	if err != nil {
-		logger.WithError(err).Warn("Assignee not found")
+		logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 		return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 	}
 
@@ -62,7 +62,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 	if task.LeadID != nil {
 		_, err := s.leadRepo.GetByID(*task.LeadID)
 		if err != nil {
-			logger.WithError(err).Warn("Lead not found")
+			logger.WithError(utils.LogError(err)).Warn("Lead not found")
 			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
 		}
 	}
@@ -71,7 +71,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 	if task.CustomerID != nil {
 		_, err := s.customerRepo.GetByID(*task.CustomerID)
 		if err != nil {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 		}
 	}
@@ -84,7 +84,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 
 	labels, err := s.resolveLabels(labelIDs)
 	if err != nil {
-		logger.WithError(err).Warn("Unknown label referenced")
+		logger.WithError(utils.LogError(err)).Warn("Unknown label referenced")
 		return err
 	}
 
@@ -99,8 +99,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 	}
 
 	logger.WithFields(map[string]interface{}{
-		"task_id":    task.ID,
-		"task_title": task.Title,
+		"task_id": task.ID,
 	}).Info("Task created successfully")
 
 	return nil
@@ -115,10 +114,10 @@ func (s *taskService) GetByID(id uint) (*models.Task, error) {
 		// former is wrapped in the not-found sentinel, so the handler can answer
 		// 404 for one and 500 for the other instead of hiding both as 404.
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Task not found")
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
 			return nil, fmt.Errorf("task %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to retrieve task")
+		logger.WithError(utils.LogError(err)).Error("Failed to retrieve task")
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
@@ -170,7 +169,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 	// Get existing task to validate the update
 	existingTask, err := s.taskRepo.GetByID(task.ID)
 	if err != nil {
-		logger.WithError(err).Warn("Task not found")
+		logger.WithError(utils.LogError(err)).Warn("Task not found")
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
@@ -179,7 +178,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 	if task.AssignedToID != existingTask.AssignedToID {
 		assignee, err := s.userRepo.GetByID(task.AssignedToID)
 		if err != nil {
-			logger.WithError(err).Warn("Assignee not found")
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 
@@ -193,7 +192,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 	if task.LeadID != existingTask.LeadID && task.LeadID != nil {
 		_, err := s.leadRepo.GetByID(*task.LeadID)
 		if err != nil {
-			logger.WithError(err).Warn("Lead not found")
+			logger.WithError(utils.LogError(err)).Warn("Lead not found")
 			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
 		}
 	}
@@ -202,7 +201,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 	if task.CustomerID != existingTask.CustomerID && task.CustomerID != nil {
 		_, err := s.customerRepo.GetByID(*task.CustomerID)
 		if err != nil {
-			logger.WithError(err).Warn("Customer not found")
+			logger.WithError(utils.LogError(err)).Warn("Customer not found")
 			return fmt.Errorf("customer not found: %w", apperrors.ErrCustomerNotFound)
 		}
 	}
@@ -230,7 +229,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 
 	labels, err := s.resolveLabels(*labelIDs)
 	if err != nil {
-		logger.WithError(err).Warn("Unknown label referenced")
+		logger.WithError(utils.LogError(err)).Warn("Unknown label referenced")
 		return err
 	}
 
@@ -304,13 +303,13 @@ func (s *taskService) listByLabel(labelID uint, assigneeID *uint, offset, limit 
 
 	tasks, err := s.taskRepo.ListByLabel(labelID, assigneeID, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tasks by label")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tasks by label")
 		return nil, 0, err
 	}
 
 	total, err := s.taskRepo.CountByLabel(labelID, assigneeID)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tasks by label")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tasks by label")
 		return nil, 0, err
 	}
 
@@ -326,10 +325,10 @@ func (s *taskService) Delete(id uint) error {
 	_, err := s.taskRepo.GetByID(id)
 	if err != nil {
 		if isNotFound(err) {
-			logger.WithError(err).Warn("Task not found")
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
 			return fmt.Errorf("task %d not found: %w", id, apperrors.ErrNotFound)
 		}
-		logger.WithError(err).Error("Failed to look up task for deletion")
+		logger.WithError(utils.LogError(err)).Error("Failed to look up task for deletion")
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
@@ -372,21 +371,19 @@ func (s *taskService) List(offset, limit int) ([]models.Task, int64, error) {
 
 func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset":     offset,
-		"limit":      limit,
-		"sort_by":    sortBy,
-		"sort_order": sortOrder,
+		"offset": offset,
+		"limit":  limit,
 	}), "TaskService", "ListSorted")
 
 	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
 	if err != nil {
-		logger.WithError(err).Error("Failed to list tasks sorted")
+		logger.WithError(utils.LogError(err)).Error("Failed to list tasks sorted")
 		return nil, 0, err
 	}
 
 	total, err := s.taskRepo.Count()
 	if err != nil {
-		logger.WithError(err).Error("Failed to count tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to count tasks")
 		return nil, 0, err
 	}
 
@@ -396,20 +393,19 @@ func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([
 
 func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"query":  query,
 		"offset": offset,
 		"limit":  limit,
 	}), "TaskService", "Search")
 
 	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
 	if err != nil {
-		logger.WithError(err).Error("Failed to search tasks")
+		logger.WithError(utils.LogError(err)).Error("Failed to search tasks")
 		return nil, 0, err
 	}
 
 	total, err := s.taskRepo.CountSearch(query)
 	if err != nil {
-		logger.WithError(err).Error("Failed to count search results")
+		logger.WithError(utils.LogError(err)).Error("Failed to count search results")
 		return nil, 0, err
 	}
 
