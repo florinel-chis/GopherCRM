@@ -590,10 +590,6 @@ func TestAEORepository_ListAnswersByPromptAndRun(t *testing.T) {
 	scopedTotal, err := repo.CountAnswersByPrompt(prompt.ID, &runA.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), scopedTotal)
-
-	byRun, err := repo.ListAnswersByRun(runB.ID)
-	require.NoError(t, err)
-	assert.Len(t, byRun, 2, "the run carries answers for every prompt")
 }
 
 // --- metrics ------------------------------------------------------------------

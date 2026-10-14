@@ -162,9 +162,6 @@ func (r *fakeAEORepo) ListAnswersByPrompt(uint, *uint, int, int) ([]models.AEOAn
 func (r *fakeAEORepo) CountAnswersByPrompt(uint, *uint) (int64, error) {
 	return 0, r.unexpected("CountAnswersByPrompt")
 }
-func (r *fakeAEORepo) ListAnswersByRun(uint) ([]models.AEOAnswer, error) {
-	return nil, r.unexpected("ListAnswersByRun")
-}
 func (r *fakeAEORepo) ListAnswerFacts(time.Time, time.Time) ([]models.AEOAnswerFact, error) {
 	return nil, r.unexpected("ListAnswerFacts")
 }

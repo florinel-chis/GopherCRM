@@ -214,17 +214,6 @@ func (_m *AEORepository) CountAnswersByPrompt(promptID uint, runID *uint) (int64
 	return r0, ret.Error(1)
 }
 
-// ListAnswersByRun provides a mock function with given fields: runID
-func (_m *AEORepository) ListAnswersByRun(runID uint) ([]models.AEOAnswer, error) {
-	ret := _m.Called(runID)
-
-	var r0 []models.AEOAnswer
-	if ret.Get(0) != nil {
-		r0 = ret.Get(0).([]models.AEOAnswer)
-	}
-	return r0, ret.Error(1)
-}
-
 // ListAnswerFacts provides a mock function with given fields: from, to
 func (_m *AEORepository) ListAnswerFacts(from time.Time, to time.Time) ([]models.AEOAnswerFact, error) {
 	ret := _m.Called(from, to)

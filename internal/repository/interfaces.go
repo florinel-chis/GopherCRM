@@ -38,11 +38,9 @@ type LeadRepository interface {
 	GetByIDWithPreloads(id uint, preloads ...string) (*models.Lead, error)
 	GetByExternalID(externalID string) (*models.Lead, error)
 	GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error)
-	GetByOwnerIDWithPreloads(ownerID uint, offset, limit int, preloads ...string) ([]models.Lead, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error)
 	Update(lead *models.Lead) error
 	Delete(id uint) error
-	List(offset, limit int) ([]models.Lead, error)
 	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
@@ -70,7 +68,6 @@ type LeadRepository interface {
 type CustomerRepository interface {
 	Create(customer *models.Customer) error
 	GetByID(id uint) (*models.Customer, error)
-	GetByIDWithPreloads(id uint, preloads ...string) (*models.Customer, error)
 	GetByEmail(email string) (*models.Customer, error)
 	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
 	// pre-checks, since the unique index on customers.email is not scoped to deleted_at.
@@ -79,7 +76,6 @@ type CustomerRepository interface {
 	Update(customer *models.Customer) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Customer, error)
-	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Customer, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)
 	// ListAllForExport returns every matching customer with no pagination, read
@@ -94,15 +90,11 @@ type CustomerRepository interface {
 type TicketRepository interface {
 	Create(ticket *models.Ticket) error
 	GetByID(id uint) (*models.Ticket, error)
-	GetByIDWithPreloads(id uint, preloads ...string) (*models.Ticket, error)
 	GetByCustomerID(customerID uint, offset, limit int) ([]models.Ticket, error)
-	GetByCustomerIDWithPreloads(customerID uint, offset, limit int, preloads ...string) ([]models.Ticket, error)
 	GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Ticket, error)
-	GetByAssignedToIDWithPreloads(assignedToID uint, offset, limit int, preloads ...string) ([]models.Ticket, error)
 	Update(ticket *models.Ticket) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Ticket, error)
-	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Ticket, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error)
 	CountSearch(query string) (int64, error)
@@ -120,13 +112,10 @@ type TicketRepository interface {
 type TaskRepository interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)
-	GetByIDWithPreloads(id uint, preloads ...string) (*models.Task, error)
 	GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error)
-	GetByAssignedToIDWithPreloads(assignedToID uint, offset, limit int, preloads ...string) ([]models.Task, error)
 	Update(task *models.Task) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.Task, error)
-	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Task, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	CountSearch(query string) (int64, error)
@@ -266,7 +255,6 @@ type APIKeyRepository interface {
 	GetByKeyHash(keyHash string) (*models.APIKey, error)
 	GetByUserID(userID uint) ([]models.APIKey, error)
 	Update(apiKey *models.APIKey) error
-	Delete(id uint) error
 	UpdateLastUsed(id uint) error
 	WithTx(tx *gorm.DB) APIKeyRepository
 }
@@ -276,12 +264,9 @@ type APIKeyRepository interface {
 type RefreshTokenRepository interface {
 	Create(token *models.RefreshToken) error
 	GetByTokenHash(tokenHash string) (*models.RefreshToken, error)
-	GetByUserID(userID uint) ([]models.RefreshToken, error)
 	RevokeByTokenHash(tokenHash string) error
-	RevokeAllByUserID(userID uint) error
 	RevokeAllForUser(userID uint) error
 	DeleteExpired() error
-	DeleteByTokenHash(tokenHash string) error
 	WithTx(tx *gorm.DB) RefreshTokenRepository
 }
 
@@ -410,9 +395,6 @@ type AEORepository interface {
 	// citations preloaded; a nil runID means every run.
 	ListAnswersByPrompt(promptID uint, runID *uint, offset, limit int) ([]models.AEOAnswer, error)
 	CountAnswersByPrompt(promptID uint, runID *uint) (int64, error)
-	// ListAnswersByRun returns one run's answers oldest first, citations
-	// preloaded.
-	ListAnswersByRun(runID uint) ([]models.AEOAnswer, error)
 
 	// ListAnswerFacts returns one projected fact per answer in the range,
 	// oldest first, INCLUDING failed answers (Errored marks them). Per-day

@@ -347,15 +347,6 @@ func (r *aeoRepository) CountAnswersByPrompt(promptID uint, runID *uint) (int64,
 	return count, err
 }
 
-// ListAnswersByRun returns every answer of one run, oldest first, with the
-// citations preloaded.
-func (r *aeoRepository) ListAnswersByRun(runID uint) ([]models.AEOAnswer, error) {
-	answers := []models.AEOAnswer{}
-	err := r.db.Preload("Citations").Where("run_id = ?", runID).
-		Order("id ASC").Find(&answers).Error
-	return answers, err
-}
-
 // ---------------------------------------------------------------------------
 // Metrics
 //

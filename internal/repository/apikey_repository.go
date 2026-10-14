@@ -47,10 +47,6 @@ func (r *apiKeyRepository) Update(apiKey *models.APIKey) error {
 	return r.db.Save(apiKey).Error
 }
 
-func (r *apiKeyRepository) Delete(id uint) error {
-	return r.db.Delete(&models.APIKey{}, id).Error
-}
-
 func (r *apiKeyRepository) UpdateLastUsed(id uint) error {
 	now := time.Now()
 	return r.db.Model(&models.APIKey{}).Where("id = ?", id).Update("last_used_at", &now).Error

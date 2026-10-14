@@ -195,43 +195,6 @@ func (_m *TicketRepository) GetByAssignedToID(assignedToID uint, offset int, lim
 	return r0, r1
 }
 
-// GetByAssignedToIDWithPreloads provides a mock function with given fields: assignedToID, offset, limit, preloads
-func (_m *TicketRepository) GetByAssignedToIDWithPreloads(assignedToID uint, offset int, limit int, preloads ...string) ([]models.Ticket, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, assignedToID, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByAssignedToIDWithPreloads")
-	}
-
-	var r0 []models.Ticket
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) ([]models.Ticket, error)); ok {
-		return rf(assignedToID, offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) []models.Ticket); ok {
-		r0 = rf(assignedToID, offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Ticket)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, int, int, ...string) error); ok {
-		r1 = rf(assignedToID, offset, limit, preloads...)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // GetByCustomerID provides a mock function with given fields: customerID, offset, limit
 func (_m *TicketRepository) GetByCustomerID(customerID uint, offset int, limit int) ([]models.Ticket, error) {
 	ret := _m.Called(customerID, offset, limit)
@@ -255,43 +218,6 @@ func (_m *TicketRepository) GetByCustomerID(customerID uint, offset int, limit i
 
 	if rf, ok := ret.Get(1).(func(uint, int, int) error); ok {
 		r1 = rf(customerID, offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// GetByCustomerIDWithPreloads provides a mock function with given fields: customerID, offset, limit, preloads
-func (_m *TicketRepository) GetByCustomerIDWithPreloads(customerID uint, offset int, limit int, preloads ...string) ([]models.Ticket, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, customerID, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByCustomerIDWithPreloads")
-	}
-
-	var r0 []models.Ticket
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) ([]models.Ticket, error)); ok {
-		return rf(customerID, offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, int, int, ...string) []models.Ticket); ok {
-		r0 = rf(customerID, offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Ticket)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, int, int, ...string) error); ok {
-		r1 = rf(customerID, offset, limit, preloads...)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -329,43 +255,6 @@ func (_m *TicketRepository) GetByID(id uint) (*models.Ticket, error) {
 	return r0, r1
 }
 
-// GetByIDWithPreloads provides a mock function with given fields: id, preloads
-func (_m *TicketRepository) GetByIDWithPreloads(id uint, preloads ...string) (*models.Ticket, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, id)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByIDWithPreloads")
-	}
-
-	var r0 *models.Ticket
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, ...string) (*models.Ticket, error)); ok {
-		return rf(id, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(uint, ...string) *models.Ticket); ok {
-		r0 = rf(id, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*models.Ticket)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, ...string) error); ok {
-		r1 = rf(id, preloads...)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // List provides a mock function with given fields: offset, limit
 func (_m *TicketRepository) List(offset int, limit int) ([]models.Ticket, error) {
 	ret := _m.Called(offset, limit)
@@ -389,43 +278,6 @@ func (_m *TicketRepository) List(offset int, limit int) ([]models.Ticket, error)
 
 	if rf, ok := ret.Get(1).(func(int, int) error); ok {
 		r1 = rf(offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// ListWithPreloads provides a mock function with given fields: offset, limit, preloads
-func (_m *TicketRepository) ListWithPreloads(offset int, limit int, preloads ...string) ([]models.Ticket, error) {
-	_va := make([]interface{}, len(preloads))
-	for _i := range preloads {
-		_va[_i] = preloads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, offset, limit)
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ListWithPreloads")
-	}
-
-	var r0 []models.Ticket
-	var r1 error
-	if rf, ok := ret.Get(0).(func(int, int, ...string) ([]models.Ticket, error)); ok {
-		return rf(offset, limit, preloads...)
-	}
-	if rf, ok := ret.Get(0).(func(int, int, ...string) []models.Ticket); ok {
-		r0 = rf(offset, limit, preloads...)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Ticket)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int, ...string) error); ok {
-		r1 = rf(offset, limit, preloads...)
 	} else {
 		r1 = ret.Error(1)
 	}
