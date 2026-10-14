@@ -374,3 +374,18 @@ func TestOpenAICompatProviderHonoursContextCancellation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ProviderOpenAI)
 }
+
+func TestOpenAICompatProviderPreservesGeminiErrorDetails(t *testing.T) {
+	fake := newFakeEngine(t, engineResponse{
+		status: http.StatusServiceUnavailable,
+		body:   `[{"error":{"code":503,"message":"High demand; retry later. Credential: test-key","status":"UNAVAILABLE"}}]`,
+		header: rateLimitedNow,
+	})
+	provider := NewOpenAICompatProvider(OpenAICompatConfig{Name: ProviderGemini, Model: "test-model", APIKey: "test-key", BaseURL: fake.server.URL})
+	_, err := provider.Query(context.Background(), "What is GopherCRM?")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "High demand; retry later.")
+	assert.NotContains(t, err.Error(), "test-key")
+	assert.Equal(t, 503, ProviderHTTPStatus(err))
+	assert.Len(t, fake.calls(), 2, "keep the existing single SDK retry")
+}

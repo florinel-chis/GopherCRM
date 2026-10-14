@@ -3,7 +3,7 @@ import { AxiosError } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as AEOSettings } from './AEOSettings';
 import { aeoApi } from '@/api/endpoints/aeo';
-import { configurationsApi } from '@/api/endpoints/configurations';
+import { configurationsApi, type Configuration } from '@/api/endpoints/configurations';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 
@@ -61,7 +61,7 @@ const providers = [
   { name: 'openai', model: 'gpt-4o-mini', configured: false },
 ];
 
-const sensitiveConfig = (key: string, isSet: boolean) => ({
+const sensitiveConfig = (key: string, isSet: boolean): Configuration => ({
   id: 1,
   key,
   value: '',
@@ -93,7 +93,7 @@ const integrationConfigs = [
   },
 ];
 
-const axiosErrorWithStatus =(status: number, message?: string): AxiosError => {
+const axiosErrorWithStatus = (status: number, message?: string): AxiosError => {
   const error = new AxiosError('request failed');
   error.response = {
     status,
@@ -113,7 +113,7 @@ describe('AEOSettings', () => {
     (aeoApi.getProviders as any).mockResolvedValue(providers);
     (configurationsApi.getByCategory as any).mockResolvedValue(integrationConfigs);
     (configurationsApi.set as any).mockResolvedValue(
-      sensitiveConfig('integration.aeo.anthropic_api_key', true)
+      sensitiveConfig('integration.aeo.anthropic_api_key', true),
     );
   });
 
@@ -134,9 +134,7 @@ describe('AEOSettings', () => {
 
     render(<AEOSettings />);
 
-    expect(
-      await screen.findByText(/Failed to load the AEO brand profile/)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Failed to load the AEO brand profile/)).toBeInTheDocument();
   });
 
   it('populates the form from the saved profile', async () => {
@@ -162,7 +160,7 @@ describe('AEOSettings', () => {
     });
 
     expect(screen.getByTestId('provider-chip-anthropic')).toHaveTextContent(
-      'anthropic: claude-opus-5'
+      'anthropic: claude-opus-5',
     );
     expect(screen.getByTestId('provider-chip-openai')).toHaveTextContent('openai: gpt-4o-mini');
     expect(screen.getByText(/1 of 2 engines configured/)).toBeInTheDocument();
@@ -173,9 +171,7 @@ describe('AEOSettings', () => {
 
     render(<AEOSettings />);
 
-    expect(
-      await screen.findByText(/No brand profile configured yet/)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No brand profile configured yet/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Brand name/)).toHaveValue('');
   });
 
@@ -184,9 +180,7 @@ describe('AEOSettings', () => {
 
     render(<AEOSettings />);
 
-    expect(
-      await screen.findByText(/No AEO data yet — no answer engines/)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No AEO data yet — no answer engines/)).toBeInTheDocument();
   });
 
   it('saves an added alias and a new competitor', async () => {
@@ -247,9 +241,7 @@ describe('AEOSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
 
     await waitFor(() => {
-      expect(aeoApi.saveProfile).toHaveBeenCalledWith(
-        expect.objectContaining({ competitors: [] })
-      );
+      expect(aeoApi.saveProfile).toHaveBeenCalledWith(expect.objectContaining({ competitors: [] }));
     });
   });
 
@@ -276,7 +268,7 @@ describe('AEOSettings', () => {
   // most useful thing to show.
   it('surfaces the 409 conflict when a run is already in progress', async () => {
     (aeoApi.createRun as any).mockRejectedValue(
-      axiosErrorWithStatus(409, 'an AEO run is already in progress')
+      axiosErrorWithStatus(409, 'an AEO run is already in progress'),
     );
 
     render(<AEOSettings />);
@@ -354,6 +346,78 @@ describe('AEOSettings', () => {
     expect(within(aliasChip).queryByTestId('CancelIcon')).not.toBeInTheDocument();
   });
 
+  describe('provider connections', () => {
+    it('saves model and base URL overrides and refreshes provider status', async () => {
+      render(<AEOSettings />);
+      const input = await screen.findByLabelText('Gemini model');
+      const callsBefore = vi.mocked(aeoApi.getProviders).mock.calls.length;
+      fireEvent.change(input, { target: { value: ' gemini-test ' } });
+      fireEvent.change(screen.getByLabelText('Gemini base URL'), {
+        target: { value: ' https://gateway.example.test/v1/ ' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini connection' }));
+      await waitFor(() => {
+        expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.gemini_model', {
+          value: 'gemini-test',
+        });
+        expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.gemini_base_url', {
+          value: 'https://gateway.example.test/v1/',
+        });
+        expect(vi.mocked(aeoApi.getProviders).mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+      expect(showSuccess).toHaveBeenCalledWith('Gemini connection saved');
+    });
+
+    it('clears an override to restore the environment or default', async () => {
+      vi.mocked(configurationsApi.getByCategory).mockResolvedValue([
+        ...integrationConfigs,
+        {
+          ...sensitiveConfig('integration.aeo.gemini_model', true),
+          is_sensitive: false,
+          value: 'stored-model',
+        },
+      ]);
+      render(<AEOSettings />);
+      const input = await screen.findByLabelText('Gemini model');
+      expect(input).toHaveValue('stored-model');
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini connection' }));
+      await waitFor(() =>
+        expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.gemini_model', {
+          value: '',
+        }),
+      );
+      expect(configurationsApi.set).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      'https://user:secret@example.test/v1',
+      'https://example.test/v1?key=secret',
+      'file:///tmp/api',
+    ])('rejects invalid or credential-bearing endpoint %s before saving', async (endpoint) => {
+      render(<AEOSettings />);
+      fireEvent.change(await screen.findByLabelText('Gemini base URL'), {
+        target: { value: endpoint },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini connection' }));
+      expect(await screen.findByText(/Use an HTTP\(S\) base URL/)).toBeInTheDocument();
+      expect(configurationsApi.set).not.toHaveBeenCalled();
+    });
+
+    it('reports a failed save without reporting success', async () => {
+      vi.mocked(configurationsApi.set).mockRejectedValue(new Error('offline'));
+      render(<AEOSettings />);
+      fireEvent.change(await screen.findByLabelText('Gemini model'), {
+        target: { value: 'gemini-test' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Gemini connection' }));
+      await waitFor(() =>
+        expect(showError).toHaveBeenCalledWith('Failed to save Gemini connection'),
+      );
+      expect(showSuccess).not.toHaveBeenCalled();
+    });
+  });
+
   describe('API keys card', () => {
     it.each(['sales', 'support'] as const)('stays hidden for the %s role', async (role) => {
       mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role })));
@@ -365,6 +429,9 @@ describe('AEOSettings', () => {
       });
 
       expect(screen.queryByRole('heading', { name: 'API keys' })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', { name: 'Models and endpoints' }),
+      ).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/^Anthropic API key/)).not.toBeInTheDocument();
       expect(configurationsApi.getByCategory).not.toHaveBeenCalled();
     });
@@ -450,10 +517,9 @@ describe('AEOSettings', () => {
       fireEvent.click(clear);
 
       await waitFor(() => {
-        expect(configurationsApi.set).toHaveBeenCalledWith(
-          'integration.aeo.anthropic_api_key',
-          { value: '' }
-        );
+        expect(configurationsApi.set).toHaveBeenCalledWith('integration.aeo.anthropic_api_key', {
+          value: '',
+        });
       });
       await waitFor(() => {
         expect(showSuccess).toHaveBeenCalledWith('API key cleared');

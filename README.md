@@ -335,8 +335,10 @@ mentions highlighted and a selector to walk earlier runs. The full screen-by-scr
 
 Provider keys come from **Settings** (`/aeo/settings`) first and fall back to the environment
 variables below when no key is stored, so a key entered in the UI takes effect from the next run
-without restarting the process. An engine with no key from either source is simply skipped. Models,
-the custom engine and the schedule are environment-only.
+without restarting the process. An engine with no key from either source is simply skipped.
+Admins can also override each hosted engine's **model and base URL** in **Models and endpoints**;
+blank values restore environment/default behavior. These settings apply to both tracking runs and
+prompt generation. The custom engine and schedule remain environment-only.
 
 **Where your data goes.** CRM records and stored prompt sets are kept on your server. Each tracking
 run sends every active prompt to every configured engine. Queries stay on your network only when
@@ -353,6 +355,12 @@ your network if the provider's endpoint is hosted.
 | Kimi (Moonshot) | `MOONSHOT_API_KEY` | `AEO_KIMI_MODEL` |
 | Perplexity | `PERPLEXITY_API_KEY` | `AEO_PERPLEXITY_MODEL` |
 | Any OpenAI-compatible server (e.g. LM Studio) | `AEO_CUSTOM_BASE_URL` (+ optional `AEO_CUSTOM_API_KEY`) | `AEO_CUSTOM_MODEL`, `AEO_CUSTOM_NAME` |
+
+Each hosted engine also accepts `AEO_<PROVIDER>_BASE_URL` (for example,
+`AEO_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`). Use the
+OpenAI-compatible base for Gemini/OpenAI/Kimi/Perplexity, and the Messages API root for Anthropic.
+Do not include credentials, query parameters, or the final `/chat/completions` or `/v1/messages`
+path. A provider's 503 may mean temporary overload; the prompt transcript retains its explanation.
 
 `AEO_SCHEDULE_ENABLED` (default `true`) and `AEO_SCHEDULE_HOUR` (default `6`, server local time)
 control the daily run. With no key set at all the module still boots; starting a run then returns

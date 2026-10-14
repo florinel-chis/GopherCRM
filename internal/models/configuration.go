@@ -87,8 +87,8 @@ func (c *Configuration) GetValueAs() interface{} {
 // answered with a success and a corrupted value. On any error the stored value
 // is left untouched.
 //
-// This is a type check only; the valid_values allowlist stays in IsValidValue,
-// which the service applies first.
+// AEO models and endpoints also validate their storage and URL constraints.
+// The valid_values allowlist stays in IsValidValue, which the service applies first.
 //
 // Float, JSON and array entries keep their permissive JSON round trip: their
 // stored form is whatever the value marshals to.
@@ -99,7 +99,11 @@ func (c *Configuration) SetValue(value interface{}) error {
 		if !ok {
 			return fmt.Errorf("expected string value, got %T", value)
 		}
-		c.Value = str
+		validated, err := validateAEOProviderSetting(c.Key, str)
+		if err != nil {
+			return err
+		}
+		c.Value = validated
 	case ConfigTypeBoolean:
 		val, ok := value.(bool)
 		if !ok {
@@ -258,7 +262,7 @@ func isValueInList(value interface{}, validValues []interface{}) bool {
 
 // DefaultConfigurations returns the default system configurations
 func DefaultConfigurations() []Configuration {
-	return []Configuration{
+	defaults := []Configuration{
 		{
 			Key:          "leads.conversion.allowed_statuses",
 			Value:        `["qualified", "contacted"]`,
@@ -405,4 +409,5 @@ func DefaultConfigurations() []Configuration {
 			ValidValues:  `["anthropic", "openai", "gemini", "kimi", "perplexity"]`,
 		},
 	}
+	return append(defaults, defaultAEOProviderConfigurations()...)
 }
