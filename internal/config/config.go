@@ -42,6 +42,10 @@ type DatabaseConfig struct {
 	// DriverSQLite. It is a bare filesystem path: the connector appends the
 	// pragma query string itself, so a "?" here would be ambiguous.
 	Path string
+	// LogLevel is a copy of LOG_LEVEL. database.Open maps it to the SQL
+	// logger's level: debug and trace log every statement, anything else
+	// (including empty) only errors and slow queries.
+	LogLevel string
 }
 
 type ServerConfig struct {
@@ -204,6 +208,7 @@ func Load() (*Config, error) {
 			Name:     getEnv("DB_NAME", "gocrm"),
 			User:     getEnv("DB_USER", "root"),
 			Password: getEnv("DB_PASSWORD", ""),
+			LogLevel: getEnv("LOG_LEVEL", "info"),
 		},
 		Server: ServerConfig{
 			Host:             getEnv("SERVER_HOST", ""),
