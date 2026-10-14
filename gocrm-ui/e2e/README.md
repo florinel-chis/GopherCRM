@@ -1,7 +1,7 @@
 # E2E Test Suite — GopherCRM
 
-123 end-to-end tests across 12 spec files, run with Playwright against the Vite frontend and a
-real backend on MySQL (or MariaDB) or SQLite.
+End-to-end tests run with Playwright against the Vite frontend and a real backend on MySQL
+(or MariaDB) or SQLite.
 
 Only the `chromium` project is configured. Tests run serially (`fullyParallel: false`, `workers: 1`)
 because they share one database.
@@ -15,6 +15,7 @@ From the repository root:
 make e2e                                                    # whole suite
 make e2e SPECS="e2e/tests/admin-leads.spec.ts"      # selected specs (paths relative to gocrm-ui/)
 make e2e E2E_DB_DRIVER=sqlite                               # whole suite on SQLite, no MySQL needed
+make e2e E2E_DB_DRIVER=sqlite SPECS="e2e/tests/aeo-providers.spec.ts" # AEO provider regression suite
 ```
 
 `scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, every
@@ -31,9 +32,9 @@ MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on SQLite)")
 4. Always stops the backend and exits with Playwright's result.
 
 The run pins the backend's environment: the chosen driver, the default API prefix, no SMTP (the
-log-only mailer), no reCAPTCHA, no answer-engine keys and no AEO schedule, whatever the root `.env`
-says. On macOS it keeps the machine awake (`caffeinate -i`), since an idle sleep mid-run shows up as
-a cascade of page-load timeouts.
+log-only mailer), no reCAPTCHA, no answer-engine keys, provider model/endpoint overrides or AEO
+schedule, whatever the root `.env` says. On macOS it keeps the machine awake (`caffeinate -i`),
+since an idle sleep mid-run shows up as a cascade of page-load timeouts.
 
 Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The
 MySQL user needs privileges on `gocrm_e2e.*` (for example
@@ -58,6 +59,23 @@ SQLite run never calls `mysql` while a MySQL run resets `gocrm_e2e` first.
 
 New or changed user-visible behaviour brings its e2e spec in the same pull request. Destructive
 steps act only on records the test created.
+
+### AEO provider regression coverage
+
+`aeo-providers.spec.ts` runs in the standard suite on every database engine. It saves and clears
+all five provider connections through the UI and checks persistence after reload. Anthropic and
+Gemini generation and single-prompt tracking use the real Go SDKs against a per-test HTTP server
+bound to an ephemeral `127.0.0.1` port, with dummy stored keys. Changing a model and endpoint
+between generation and tracking must take effect immediately. Gemini's array-shaped 503 response
+also exercises SDK retries, the generation message, and the stored error displayed in prompt
+details. Staff/customer checks cover the UI restrictions and server-side configuration permissions.
+
+The runner enables these global-setting mutations with `E2E_AEO_STUBS=1` only after creating its
+fresh database and disabling live keys and scheduling. Direct Playwright runs skip this spec.
+The fixture also refuses an initially configured provider or stored sensitive key; it restores
+changed configurations and any existing brand profile, deletes its prompts/users, and closes its
+stub after cleanup. A new profile and completed runs remain in the disposable test database as
+evidence because the API has no profile/run deletion endpoint. No live provider traffic is used.
 
 ## Running by hand (debugging)
 
@@ -131,6 +149,7 @@ an admin through the app.
 
 | Spec | Tests | Area |
 |------|-------|------|
+| `aeo-providers.spec.ts` | 5 | AEO — five-provider connection persistence/clearing, real Anthropic/Gemini SDK generation and tracking, hot model/endpoint edits, Gemini 503 retries/errors, admin/staff/customer permissions |
 | `login.spec.ts` | 11 | Auth — render, success, wrong password, unknown user, empty and invalid input, password visibility, register link, Enter key, protected routes, unauthenticated redirect |
 | `registration.spec.ts` | 18 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error, disabled switch (no sign-up link, notice instead of form, API 403) |
 | `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, status and priority filters |

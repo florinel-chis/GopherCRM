@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AEO profile updates on MySQL.** Saving an existing brand profile preserves its
+  creation timestamp instead of writing a zero date, which strict MySQL rejected with a 500.
+  Saves return the stored timestamps and continue to allow clearing optional fields.
 - **SQLite auto-migration on a populated file.** Adding a foreign key to an existing table makes
   the SQLite driver drop and recopy the table, which foreign-key enforcement rejected as soon as
   another table referenced its rows: a 1.2.0 file upgraded only if no row in `tickets` or

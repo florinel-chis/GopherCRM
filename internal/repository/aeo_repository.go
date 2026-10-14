@@ -8,6 +8,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Sort allowlists for the AEO entities.
@@ -102,12 +103,29 @@ func (r *aeoRepository) GetProfile() (*models.AEOProfile, error) {
 	return &profile, nil
 }
 
-// UpsertProfile writes the profile row whole. Save updates every column when the
-// primary key is set and falls back to an insert when the update matches no row,
-// which is exactly the upsert this single-row table needs — and it keeps the
-// model's BeforeSave hook (which serializes the JSON columns) on the path.
+// UpsertProfile writes editable fields atomically while preserving created_at.
+// Each HTTP request supplies a fresh model, so Save would overwrite the existing
+// creation time with zero, which strict MySQL rejects. Create keeps the JSON
+// serialization hook on the path; the conflict clause also writes empty values.
 func (r *aeoRepository) UpsertProfile(profile *models.AEOProfile) error {
-	return r.db.Save(profile).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		now := tx.NowFunc()
+		if profile.CreatedAt.IsZero() {
+			profile.CreatedAt = now
+		}
+		profile.UpdatedAt = now
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"updated_at", "brand_name", "description", "brand_aliases", "owned_domains", "competitors",
+			}),
+		}).Create(profile).Error; err != nil {
+			return err
+		}
+		// The insert candidate has new timestamps even on a conflict. Reload
+		// under the same transaction so the returned model matches the row.
+		return tx.First(profile, profile.ID).Error
+	})
 }
 
 // ---------------------------------------------------------------------------

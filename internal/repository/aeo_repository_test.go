@@ -88,6 +88,9 @@ func TestAEORepository_GetProfile_NotConfigured(t *testing.T) {
 
 func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) {
 	db := setupAEOTestDB(t)
+	createdAt := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	now := createdAt
+	db.NowFunc = func() time.Time { return now }
 	repo := NewAEORepository(db)
 
 	first := &models.AEOProfile{
@@ -99,7 +102,10 @@ func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) 
 		Competitors:  []models.AEOCompetitor{{Name: "Globex", Aliases: []string{"Globex Corp"}, Domain: "globex.com"}},
 	}
 	require.NoError(t, repo.UpsertProfile(first))
+	assert.Equal(t, createdAt, first.CreatedAt)
+	assert.Equal(t, createdAt, first.UpdatedAt)
 
+	now = createdAt.Add(time.Hour)
 	second := &models.AEOProfile{
 		BaseModel:    models.BaseModel{ID: 1},
 		BrandName:    "Acme Corporation",
@@ -109,6 +115,8 @@ func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) 
 		Competitors:  []models.AEOCompetitor{{Name: "Initech", Domain: "initech.com"}},
 	}
 	require.NoError(t, repo.UpsertProfile(second))
+	assert.Equal(t, createdAt, second.CreatedAt, "a fresh request model must retain the row's creation time")
+	assert.Equal(t, now, second.UpdatedAt)
 
 	var count int64
 	require.NoError(t, db.Model(&models.AEOProfile{}).Count(&count).Error)
@@ -118,10 +126,34 @@ func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), loaded.ID)
 	assert.Equal(t, "Acme Corporation", loaded.BrandName)
+	assert.Equal(t, "Widgets and gadgets", loaded.Description)
+	assert.Equal(t, first.CreatedAt, loaded.CreatedAt, "updates must not write a zero created_at, which MySQL rejects")
+	assert.Equal(t, second.CreatedAt, loaded.CreatedAt, "the returned creation time must match the stored row")
+	assert.Equal(t, second.UpdatedAt, loaded.UpdatedAt, "the returned update time must match the stored row")
 	assert.Equal(t, []string{"Acme Inc", "ACME"}, loaded.BrandAliases)
 	assert.Equal(t, []string{"acme.com", "acme.io"}, loaded.OwnedDomains)
 	require.Len(t, loaded.Competitors, 1)
 	assert.Equal(t, "Initech", loaded.Competitors[0].Name)
+
+	// Saving a previously loaded model still advances updated_at and permits
+	// clearing every optional field, including the hook-serialized JSON lists.
+	now = now.Add(time.Hour)
+	loaded.Description = ""
+	loaded.BrandAliases = nil
+	loaded.OwnedDomains = nil
+	loaded.Competitors = nil
+	require.NoError(t, repo.UpsertProfile(loaded))
+	assert.Equal(t, createdAt, loaded.CreatedAt)
+	assert.Equal(t, now, loaded.UpdatedAt)
+
+	cleared, err := repo.GetProfile()
+	require.NoError(t, err)
+	assert.Empty(t, cleared.Description)
+	assert.Empty(t, cleared.BrandAliases)
+	assert.Empty(t, cleared.OwnedDomains)
+	assert.Empty(t, cleared.Competitors)
+	assert.Equal(t, loaded.CreatedAt, cleared.CreatedAt)
+	assert.Equal(t, loaded.UpdatedAt, cleared.UpdatedAt)
 }
 
 // --- prompts -----------------------------------------------------------------

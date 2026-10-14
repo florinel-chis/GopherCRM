@@ -135,6 +135,8 @@ export API_PREFIX=/api/v1 SERVER_MODE=development \
   RECAPTCHA_SITE_KEY= RECAPTCHA_SECRET_KEY= \
   AEO_SCHEDULE_ENABLED=false \
   ANTHROPIC_API_KEY= OPENAI_API_KEY= GEMINI_API_KEY= MOONSHOT_API_KEY= PERPLEXITY_API_KEY= \
+  AEO_ANTHROPIC_MODEL= AEO_OPENAI_MODEL= AEO_GEMINI_MODEL= AEO_KIMI_MODEL= AEO_PERPLEXITY_MODEL= \
+  AEO_ANTHROPIC_BASE_URL= AEO_OPENAI_BASE_URL= AEO_GEMINI_BASE_URL= AEO_KIMI_BASE_URL= AEO_PERPLEXITY_BASE_URL= \
   AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
   APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
@@ -203,7 +205,9 @@ status=0
   # The admin account is seeded by global setup through `go run ./cmd/create-admin`,
   # which inherits the variables pinned above (DB_DRIVER, and DB_NAME or DB_PATH)
   # and so writes into the e2e database or file the backend uses.
-  export E2E_UI_PORT=$ui_port PLAYWRIGHT_HTML_OPEN=never \
+  # Global AEO settings may be changed only after this runner created a fresh
+  # database and disabled live credentials and scheduling above.
+  export E2E_UI_PORT=$ui_port E2E_AEO_STUBS=1 PLAYWRIGHT_HTML_OPEN=never \
     VITE_API_BASE_URL="http://localhost:$api_port/api/v1"
   # No retries: a test that only passes on a second attempt is reported as a
   # failure, not hidden. With no retries, "on-first-retry" traces would never
