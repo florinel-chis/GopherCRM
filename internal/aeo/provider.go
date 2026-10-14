@@ -130,14 +130,14 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 	providers := make([]Provider, 0, 6)
 
 	if a.AnthropicAPIKey != "" {
-		providers = append(providers, NewAnthropicProvider(a.AnthropicAPIKey, a.AnthropicModel, ""))
+		providers = append(providers, NewAnthropicProvider(a.AnthropicAPIKey, a.AnthropicModel, a.AnthropicBaseURL))
 	}
 	if a.OpenAIAPIKey != "" {
 		providers = append(providers, NewOpenAICompatProvider(OpenAICompatConfig{
 			Name:    ProviderOpenAI,
 			Model:   a.OpenAIModel,
 			APIKey:  a.OpenAIAPIKey,
-			BaseURL: OpenAIBaseURL,
+			BaseURL: providerBaseURL(a.OpenAIBaseURL, OpenAIBaseURL),
 		}))
 	}
 	if a.GeminiAPIKey != "" {
@@ -145,7 +145,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Name:    ProviderGemini,
 			Model:   a.GeminiModel,
 			APIKey:  a.GeminiAPIKey,
-			BaseURL: GeminiBaseURL,
+			BaseURL: providerBaseURL(a.GeminiBaseURL, GeminiBaseURL),
 		}))
 	}
 	if a.MoonshotAPIKey != "" {
@@ -153,7 +153,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Name:    ProviderKimi,
 			Model:   a.KimiModel,
 			APIKey:  a.MoonshotAPIKey,
-			BaseURL: KimiBaseURL,
+			BaseURL: providerBaseURL(a.KimiBaseURL, KimiBaseURL),
 		}))
 	}
 	if a.PerplexityAPIKey != "" {
@@ -161,7 +161,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Name:            ProviderPerplexity,
 			Model:           a.PerplexityModel,
 			APIKey:          a.PerplexityAPIKey,
-			BaseURL:         PerplexityBaseURL,
+			BaseURL:         providerBaseURL(a.PerplexityBaseURL, PerplexityBaseURL),
 			NativeCitations: true,
 		}))
 	}
@@ -246,4 +246,12 @@ func logProvider() *logrus.Entry {
 		base = logrus.StandardLogger()
 	}
 	return base.WithField("component", "aeo")
+}
+
+// A blank override preserves the provider's existing official endpoint.
+func providerBaseURL(override, fallback string) string {
+	if value := strings.TrimSpace(override); value != "" {
+		return value
+	}
+	return fallback
 }

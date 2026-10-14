@@ -52,6 +52,7 @@ gocrm-ui/dist-ssr/
 # Environment and secrets
 # ---------------------------------------------------------------------------
 .env
+.env.aeo
 .env.local
 .env.development
 .env.test

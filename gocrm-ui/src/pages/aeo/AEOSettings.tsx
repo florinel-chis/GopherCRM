@@ -31,6 +31,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { aeoApi, type AEOProfile, type SaveAEOProfileData } from '@/api/endpoints/aeo';
 import { configurationsApi } from '@/api/endpoints/configurations';
+import { AEOProviderConnections } from './AEOProviderConnections';
 
 // The provider keys live in the configurations system as sensitive values: the
 // API never echoes them back, it only reports whether one is stored.
@@ -531,6 +532,7 @@ export const Component: React.FC = () => {
       </Paper>
 
       {isAdmin && <ProviderKeysCard />}
+      {isAdmin && <AEOProviderConnections providers={providerList} />}
 
       {!profile && (
         <Alert severity="info" sx={{ mb: 3 }}>

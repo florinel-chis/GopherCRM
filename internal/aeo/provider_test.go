@@ -1,6 +1,8 @@
 package aeo
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -253,5 +255,38 @@ func TestProviderHTTPStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, ProviderHTTPStatus(tc.err))
 		})
+	}
+}
+
+func TestLoadProvidersUsesConfiguredEndpointsAndModels(t *testing.T) {
+	fake := newFakeEngine(t,
+		engineResponse{status: http.StatusOK, body: messageBody(`{"type":"text","text":"OK"}`)},
+		engineResponse{status: http.StatusOK, body: chatCompletionBody("OK")},
+	)
+	cfg := fullyConfiguredAEO()
+	cfg.CustomBaseURL = ""
+	cfg.AnthropicBaseURL = fake.server.URL + "/anthropic/"
+	cfg.OpenAIBaseURL = fake.server.URL + "/openai/v1/"
+	cfg.GeminiBaseURL = fake.server.URL + "/gemini/v1beta/openai/"
+	cfg.KimiBaseURL = fake.server.URL + "/kimi/v1/"
+	cfg.PerplexityBaseURL = fake.server.URL + "/perplexity/"
+	cfg.GeminiModel = "configured-gemini-model"
+	providers := LoadProvidersFor(cfg)
+	require.Len(t, providers, 5)
+	for _, provider := range providers {
+		answer, err := provider.Query(context.Background(), "What is GopherCRM?")
+		require.NoError(t, err)
+		assert.Equal(t, "OK", answer.Text)
+	}
+	requests := fake.calls()
+	require.Len(t, requests, 5)
+	paths := []string{"/anthropic/v1/messages", "/openai/v1/chat/completions", "/gemini/v1beta/openai/chat/completions", "/kimi/v1/chat/completions", "/perplexity/chat/completions"}
+	for i, request := range requests {
+		assert.Equal(t, paths[i], request.Path)
+		var payload struct {
+			Model string `json:"model"`
+		}
+		require.NoError(t, json.Unmarshal(request.Body, &payload))
+		assert.Equal(t, providers[i].Model(), payload.Model)
 	}
 }

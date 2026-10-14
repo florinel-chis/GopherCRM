@@ -11,11 +11,11 @@ import (
 )
 
 // stubConfigurationService answers GetSecret from a map and records how often it
-// was asked. Every other method panics: EffectiveAEOConfig must read secrets
-// only through GetSecret, never through a typed getter.
+// was asked. Plain connection settings use GetString; credentials use GetSecret.
 type stubConfigurationService struct {
 	ConfigurationService
 	secrets map[string]string
+	values  map[string]string
 	errs    map[string]error
 	calls   map[string]int
 }
@@ -23,6 +23,7 @@ type stubConfigurationService struct {
 func newStubConfigurationService(secrets map[string]string) *stubConfigurationService {
 	return &stubConfigurationService{
 		secrets: secrets,
+		values:  map[string]string{},
 		errs:    map[string]error{},
 		calls:   map[string]int{},
 	}
@@ -92,7 +93,7 @@ func TestEffectiveAEOConfig_StoredKeysWinOverTheEnvironment(t *testing.T) {
 	assert.Equal(t, "stored-moonshot-key", effective.MoonshotAPIKey)
 	assert.Equal(t, "stored-perplexity-key", effective.PerplexityAPIKey)
 
-	// Everything else is environment-only and must survive untouched.
+	// Unset connection overrides preserve environment values.
 	assert.Equal(t, "env-anthropic-model", effective.AnthropicModel)
 	assert.Equal(t, "http://localhost:1234/v1", effective.CustomBaseURL)
 	assert.Equal(t, "env-custom-key", effective.CustomAPIKey)
@@ -165,4 +166,24 @@ func TestEffectiveAEOConfig_ReadsEveryKeyOnEveryCall(t *testing.T) {
 	} {
 		assert.Equal(t, 2, configs.calls[key], "configuration %q was not re-read", key)
 	}
+}
+
+func (s *stubConfigurationService) GetString(key string) (string, error) {
+	s.calls[key]++
+	return s.values[key], s.errs[key]
+}
+
+func TestEffectiveAEOConfig_ConnectionSettingsRefreshAndFallBack(t *testing.T) {
+	configs := newStubConfigurationService(nil)
+	configs.values["integration.aeo.gemini_model"] = " stored-model "
+	configs.values["integration.aeo.gemini_base_url"] = " https://proxy.example.test/v1/ "
+	base := config.AEOConfig{GeminiModel: "env-model", GeminiBaseURL: "https://env.example.test/v1/"}
+	effective := EffectiveAEOConfig(base, configs)
+	assert.Equal(t, "stored-model", effective.GeminiModel)
+	assert.Equal(t, "https://proxy.example.test/v1/", effective.GeminiBaseURL)
+	configs.values["integration.aeo.gemini_model"] = "new-model"
+	assert.Equal(t, "new-model", EffectiveAEOConfig(base, configs).GeminiModel)
+	configs.values["integration.aeo.gemini_model"] = "   "
+	configs.errs["integration.aeo.gemini_base_url"] = errors.New("database unavailable")
+	assert.Equal(t, base, EffectiveAEOConfig(base, configs))
 }

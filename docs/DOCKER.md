@@ -86,6 +86,18 @@ Notes on the wiring:
   `/api/v1`, i.e. same-origin through the nginx proxy). To point the UI at a
   different API origin, rebuild:
   `docker compose build ui --build-arg VITE_API_BASE_URL=https://api.example.com/api/v1`.
+- AEO: configure API keys, models, and base URLs as an admin under **AEO >
+  Settings**. Changes take effect on the next run and on prompt generation
+  without rebuilding. Keys are encrypted; model and endpoint overrides are
+  ordinary configuration values. Blank overrides use the backend environment,
+  then the provider default. The Compose files do not automatically forward
+  arbitrary host environment variables: to use `AEO_*_MODEL` or
+  `AEO_*_BASE_URL` instead of the UI, add them to the backend `environment`.
+  Gemini uses an OpenAI-compatible API base (including `/v1beta/openai/`);
+  Anthropic uses the Messages API root (without `/v1/messages`). An HTTP 503
+  can indicate provider capacity: inspect the saved answer error before
+  changing endpoints. A model appearing in a provider's catalog does not
+  guarantee access for your account.
 - Password-reset emails: `SMTP_HOST` is unset, so the mailer logs deliveries
   instead of sending. Add the `SMTP_*` variables to the backend environment
   to enable real mail.

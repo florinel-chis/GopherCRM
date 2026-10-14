@@ -495,3 +495,18 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 Automation status: 3 automated at the Go level (the route smoke test and the two column-length
 cases), 36 planned, 3 blocked (two on the missing sales/support login helper, one on a live
 Anthropic call).
+
+
+### TC-AEO-043 — Models and endpoints can be changed without a restart
+- **Priority:** P1
+- **Type:** configuration / regression
+- **Steps:** As an admin, open AEO Settings and save a provider model and base URL. Run one prompt, then generate suggestions with that provider selected. Clear the overrides and repeat.
+- **Expected:** Both operations use the saved model and endpoint immediately; clearing restores environment/default behavior. Sales and support cannot edit these settings. Reject non-HTTP URLs, credentials or query parameters in URLs, and model identifiers longer than 120 characters.
+- **Automation:** `AEOSettings.test.tsx`, `aeo_credentials_test.go`, `aeo_configuration_test.go`, and `provider_test.go` exercise validation, permissions, fallback and actual SDK request paths.
+
+### TC-AEO-044 — Gemini error details survive an array response
+- **Priority:** P1
+- **Type:** regression
+- **Steps:** Return HTTP 503 with `[{"error":{"message":"High demand; retry later."}}]` from a stub OpenAI-compatible provider. Run a prompt and inspect its failed answer.
+- **Expected:** The error includes both HTTP 503 and the provider message. API keys are redacted. The existing one-retry behavior and run failure accounting are preserved.
+- **Automation:** `TestOpenAICompatProviderPreservesGeminiErrorDetails`.

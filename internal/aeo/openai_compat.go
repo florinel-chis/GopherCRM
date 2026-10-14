@@ -1,9 +1,13 @@
 package aeo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	openai "github.com/openai/openai-go/v3"
 	openaiopt "github.com/openai/openai-go/v3/option"
@@ -74,7 +78,7 @@ func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (Provid
 		},
 	})
 	if err != nil {
-		return ProviderAnswer{}, fmt.Errorf("%s: %w", p.Name(), err)
+		return ProviderAnswer{}, fmt.Errorf("%s: %w", p.Name(), p.withProviderMessage(err))
 	}
 	if resp == nil {
 		return ProviderAnswer{}, fmt.Errorf("%s: empty response", p.Name())
@@ -91,6 +95,40 @@ func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (Provid
 	}
 
 	return answer, nil
+}
+
+// Gemini sometimes returns [{"error": {...}}] instead of the OpenAI error
+// object. The SDK retains the response body but loses the nested message.
+// Recover only that message, preserving the typed error for status handling.
+func (p *OpenAICompatProvider) withProviderMessage(err error) error {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) || apiErr.Message != "" || apiErr.Response == nil || apiErr.Response.Body == nil {
+		return err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(apiErr.Response.Body, 64*1024))
+	apiErr.Response.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr != nil {
+		return err
+	}
+	var envelopes []struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelopes) != nil || len(envelopes) == 0 {
+		return err
+	}
+	message := strings.TrimSpace(envelopes[0].Error.Message)
+	if message == "" {
+		return err
+	}
+	if p.cfg.APIKey != "" {
+		message = strings.ReplaceAll(message, p.cfg.APIKey, "[REDACTED]")
+	}
+	if runes := []rune(message); len(runes) > 2000 {
+		message = string(runes[:2000]) + "…"
+	}
+	return fmt.Errorf("%w: %s", err, message)
 }
 
 // nativeCitationsPayload mirrors the two non-standard shapes Perplexity has

@@ -19,11 +19,11 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"JWT_SECRET", "JWT_COOKIE_SECURE", "SERVER_MODE",
 		// AEO keys are cleaned too: a developer shell that exports a real
 		// provider key would otherwise make the default-value assertions fail.
-		"ANTHROPIC_API_KEY", "AEO_ANTHROPIC_MODEL",
-		"OPENAI_API_KEY", "AEO_OPENAI_MODEL",
-		"GEMINI_API_KEY", "AEO_GEMINI_MODEL",
-		"MOONSHOT_API_KEY", "AEO_KIMI_MODEL",
-		"PERPLEXITY_API_KEY", "AEO_PERPLEXITY_MODEL",
+		"ANTHROPIC_API_KEY", "AEO_ANTHROPIC_MODEL", "AEO_ANTHROPIC_BASE_URL",
+		"OPENAI_API_KEY", "AEO_OPENAI_MODEL", "AEO_OPENAI_BASE_URL",
+		"GEMINI_API_KEY", "AEO_GEMINI_MODEL", "AEO_GEMINI_BASE_URL",
+		"MOONSHOT_API_KEY", "AEO_KIMI_MODEL", "AEO_KIMI_BASE_URL",
+		"PERPLEXITY_API_KEY", "AEO_PERPLEXITY_MODEL", "AEO_PERPLEXITY_BASE_URL",
 		"AEO_CUSTOM_NAME", "AEO_CUSTOM_BASE_URL", "AEO_CUSTOM_MODEL", "AEO_CUSTOM_API_KEY",
 		"AEO_SCHEDULE_ENABLED", "AEO_SCHEDULE_HOUR",
 		// Forms keys, for the same reason as the AEO ones.
@@ -552,4 +552,23 @@ func TestParseTrustedProxies(t *testing.T) {
 	assert.Equal(t, []string{"10.0.0.0/8"}, parseTrustedProxies("10.0.0.0/8"))
 	assert.Equal(t, []string{"10.0.0.0/8", "172.16.0.0/12"}, parseTrustedProxies("10.0.0.0/8, 172.16.0.0/12"))
 	assert.Equal(t, []string{"192.168.1.1"}, parseTrustedProxies(" 192.168.1.1 "))
+}
+
+func TestLoad_AEOBaseURLs(t *testing.T) {
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":              validSecret(),
+		"AEO_ANTHROPIC_BASE_URL":  "https://anthropic.example.test",
+		"AEO_OPENAI_BASE_URL":     "https://openai.example.test/v1",
+		"AEO_GEMINI_BASE_URL":     "https://gemini.example.test/v1beta/openai/",
+		"AEO_KIMI_BASE_URL":       "https://kimi.example.test/v1",
+		"AEO_PERPLEXITY_BASE_URL": "https://perplexity.example.test",
+	}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Equal(t, "https://anthropic.example.test", cfg.AEO.AnthropicBaseURL)
+		assert.Equal(t, "https://openai.example.test/v1", cfg.AEO.OpenAIBaseURL)
+		assert.Equal(t, "https://gemini.example.test/v1beta/openai/", cfg.AEO.GeminiBaseURL)
+		assert.Equal(t, "https://kimi.example.test/v1", cfg.AEO.KimiBaseURL)
+		assert.Equal(t, "https://perplexity.example.test", cfg.AEO.PerplexityBaseURL)
+	})
 }

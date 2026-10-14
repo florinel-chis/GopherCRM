@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"strings"
 )
 
 // Configuration keys holding the answer-engine credentials. They are seeded by
@@ -21,12 +22,12 @@ const (
 )
 
 // EffectiveAEOConfig overlays the administrator-stored provider keys on the
-// boot-time environment configuration and returns the result.
+// boot-time keys, models and endpoint configuration and returns the result.
 //
 // A stored key wins over the environment; an entry that was never set, has been
 // cleared, or cannot be read falls back to whatever the environment provided.
-// Nothing else in the configuration is touched — models, the custom engine and
-// the schedule stay environment-only.
+// Models and base URLs follow the same precedence using non-sensitive settings.
+// The custom engine and the schedule stay environment-only.
 //
 // It is called on every run creation and every provider-status read, so a key
 // entered in the UI takes effect without a restart. A configuration lookup that
@@ -50,6 +51,24 @@ func EffectiveAEOConfig(base config.AEOConfig, configs ConfigurationService) con
 	overlay(ConfigAEOGeminiKey, &base.GeminiAPIKey)
 	overlay(ConfigAEOMoonshotKey, &base.MoonshotAPIKey)
 	overlay(ConfigAEOPerplexityKey, &base.PerplexityAPIKey)
+
+	for _, provider := range []struct {
+		name           string
+		model, baseURL *string
+	}{
+		{"anthropic", &base.AnthropicModel, &base.AnthropicBaseURL},
+		{"openai", &base.OpenAIModel, &base.OpenAIBaseURL},
+		{"gemini", &base.GeminiModel, &base.GeminiBaseURL},
+		{"kimi", &base.KimiModel, &base.KimiBaseURL},
+		{"perplexity", &base.PerplexityModel, &base.PerplexityBaseURL},
+	} {
+		for suffix, target := range map[string]*string{"model": provider.model, "base_url": provider.baseURL} {
+			value, err := configs.GetString("integration.aeo." + provider.name + "_" + suffix)
+			if err == nil && strings.TrimSpace(value) != "" {
+				*target = strings.TrimSpace(value)
+			}
+		}
+	}
 
 	return base
 }
