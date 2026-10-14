@@ -61,18 +61,21 @@ steps act only on records the test created.
 
 ## Running by hand (debugging)
 
-The manual setup below uses the development database and the dev server on 5173. The frontend
-reads its API base URL from `VITE_API_BASE_URL` in `gocrm-ui/.env`, so start the backend on the
-port that file names (`.env.example` ships 8080). Playwright does not read that file: the specs
-that call the API directly take `VITE_API_BASE_URL` from the shell and fall back to
-`http://localhost:8090/api/v1` (`helpers/env.ts`), so export it too when the backend is anywhere
-else.
+The manual setup below uses the development database, the backend on 8080 and the dev server on
+5173. Export `VITE_API_BASE_URL` in Terminal 2 so both Vite and Playwright's direct API calls use
+that backend. Vite also reads `gocrm-ui/.env` (`.env.example` ships 8080), but a shell export takes
+precedence. Playwright does not read that file: without the export, its API helpers fall back to
+`http://localhost:8090/api/v1` (`helpers/env.ts`). If you choose another backend port, change both
+`SERVER_PORT` and the exported URL.
 
 ```bash
 # Terminal 1 — backend (port must match VITE_API_BASE_URL)
-cd /path/to/gophercrm && DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run cmd/main.go
+cd /path/to/gophercrm
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
 
 # Terminal 2 — from gocrm-ui/
+cd /path/to/gophercrm/gocrm-ui
+export VITE_API_BASE_URL=http://localhost:8080/api/v1
 npm run test:e2e                    # all specs
 npm run test:e2e:headed             # visible browser
 npm run test:e2e:debug              # Playwright inspector
@@ -86,8 +89,8 @@ npx playwright test e2e/tests/login.spec.ts
 ```
 
 The Vite dev server is started automatically by the config's `webServer` block
-(`reuseExistingServer: true`), so Terminal 2 is enough if one is already running. The backend is
-**not** started for you.
+(`reuseExistingServer: true`). If a dev server is already running, it must use the same API URL;
+restart it with the exported value if necessary. The backend is **not** started for you.
 
 `DISABLE_RATE_LIMIT=true` is worth setting: it bypasses the strict 10 req/min limiter on
 `/auth/register` and `/auth/login`, which the login and registration specs would otherwise trip. It

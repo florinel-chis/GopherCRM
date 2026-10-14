@@ -100,8 +100,10 @@ The entity suite includes realistic CRM workflows:
 
 The standard way is `make e2e` from the repository root (details in `gocrm-ui/e2e/README.md`): it
 resets the `gocrm_e2e` database, builds and starts the backend and a Vite server on free ports,
-runs Playwright and stops the backend again, so nothing has to be running first and nothing has
-to be cleaned up afterwards. `SPECS` selects specs by path relative to `gocrm-ui/`:
+runs Playwright and stops the backend again, so the API and frontend need not already be running.
+The default run needs a running MySQL or MariaDB server and credentials with privileges on
+`gocrm_e2e.*`; add `E2E_DB_DRIVER=sqlite` to run without a database server. `SPECS` selects specs by
+path relative to `gocrm-ui/`:
 
 ```bash
 make e2e SPECS="e2e/tests/admin-leads.spec.ts"          # one entity suite
@@ -110,11 +112,18 @@ make e2e SPECS="e2e/tests/admin-entity-suite.spec.ts"   # the workflow suite
 
 ### By hand
 
-Against a backend you started yourself on the port `VITE_API_BASE_URL` names, with
-`DISABLE_RATE_LIMIT=true`, from `gocrm-ui/` (the Vite dev server is started by the Playwright
-config):
+The manual commands use the development database. Start the backend yourself, then export the
+matching API URL in the Playwright terminal; Playwright does not read `gocrm-ui/.env`. The config
+starts the Vite dev server on 5173, or reuses an existing server that must use the same API URL:
 
 ```bash
+# Terminal 1 — backend
+cd /path/to/gophercrm
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
+
+# Terminal 2 — browser tests
+cd /path/to/gophercrm/gocrm-ui
+export VITE_API_BASE_URL=http://localhost:8080/api/v1
 npm run test:e2e:admin                                   # all admin specs, headless
 npm run test:e2e:admin:headed                            # same, visible browser
 npm run test:e2e:admin:suite                             # the workflow suite, visible browser
