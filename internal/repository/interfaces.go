@@ -352,8 +352,8 @@ type AEORepository interface {
 	// GetProfile returns the single brand-profile row, or gorm.ErrRecordNotFound
 	// when the profile has not been configured yet.
 	GetProfile() (*models.AEOProfile, error)
-	// UpsertProfile inserts or replaces the profile row whole. The service pins
-	// its ID to 1.
+	// UpsertProfile inserts or updates the profile's editable fields, preserves
+	// created_at, and reloads the stored row into profile. The service pins ID to 1.
 	UpsertProfile(profile *models.AEOProfile) error
 
 	CreatePrompt(prompt *models.AEOPrompt) error
