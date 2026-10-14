@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -97,12 +96,8 @@ func newGormLoggerTo(w io.Writer, level string) logger.Interface {
 	})}
 }
 
-// quotedValue matches the single-quoted spans the MySQL and MariaDB drivers
-// put into their error messages (the duplicate value, the key name).
-var quotedValue = regexp.MustCompile(`'[^']*'`)
-
 // redactingLogger passes every call through to the wrapped GORM logger but
-// strips quoted values from the error that Trace prints.
+// strips the quoted suffix from the error that Trace prints.
 type redactingLogger struct {
 	logger.Interface
 }
@@ -125,18 +120,22 @@ func (r redactingLogger) ParamsFilter(ctx context.Context, sql string, params ..
 	return sql, params
 }
 
-// redactError replaces quoted spans in err's text with '?'. Errors without
-// quotes, including gorm.ErrRecordNotFound, are returned unchanged so the
-// wrapped logger's own classification of them still applies.
+// redactError replaces everything from the first quote onward with '?'. A
+// driver's value can contain embedded, escaped or unmatched quotes, so trying
+// to find each closing delimiter can leak the rest of the value. The leading
+// error number, SQL state and category remain useful without that suffix.
+// Record-not-found errors retain their identity so the wrapped logger can
+// suppress them, including when another error wraps them with quoted context.
 func redactError(err error) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "'") {
+	if err == nil || errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	return errors.New(quotedValue.ReplaceAllString(msg, "'?'"))
+	msg := err.Error()
+	quote := strings.IndexByte(msg, '\'')
+	if quote == -1 {
+		return err
+	}
+	return errors.New(msg[:quote] + "'?'")
 }
 
 // Open connects to the configured database and returns the GORM handle.
