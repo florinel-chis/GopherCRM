@@ -338,10 +338,12 @@ variables below when no key is stored, so a key entered in the UI takes effect f
 without restarting the process. An engine with no key from either source is simply skipped. Models,
 the custom engine and the schedule are environment-only.
 
-**Where your data goes.** CRM data and your prompt sets stay on your server. Each AEO run sends the
-tracked prompts to the hosted engines you configured, so those queries leave it. Pointing AEO at a
-local model keeps the queries on your network, but then it only measures what that local model
-says.
+**Where your data goes.** CRM records and stored prompt sets are kept on your server. Each tracking
+run sends every active prompt to every configured engine. Queries stay on your network only when
+all configured endpoints are local; in that setup, tracking measures those local models. Queries
+to hosted endpoints leave your network. Prompt generation is separate: it sends your brand name,
+description and competitor names to the selected generation provider. That request also leaves
+your network if the provider's endpoint is hosted.
 
 | Engine | Key | Model override |
 |---|---|---|
