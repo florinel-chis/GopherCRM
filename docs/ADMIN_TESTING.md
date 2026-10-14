@@ -98,32 +98,37 @@ The entity suite includes realistic CRM workflows:
 
 ## Running the Tests
 
-### Prerequisites
-1. GoCRM backend server running on http://localhost:8080
-2. MySQL database accessible
-3. Frontend development server (optional, tests can run against built version)
-
-### Available Commands
+The standard way is `make e2e` from the repository root (details in `gocrm-ui/e2e/README.md`): it
+resets the `gocrm_e2e` database, builds and starts the backend and a Vite server on free ports,
+runs Playwright and stops the backend again, so the API and frontend need not already be running.
+The default run needs a running MySQL or MariaDB server and credentials with privileges on
+`gocrm_e2e.*`; add `E2E_DB_DRIVER=sqlite` to run without a database server. `SPECS` selects specs by
+path relative to `gocrm-ui/`:
 
 ```bash
-# Run all admin tests (headless)
-npm run test:e2e:admin
+make e2e SPECS="e2e/tests/admin-leads.spec.ts"          # one entity suite
+make e2e SPECS="e2e/tests/admin-entity-suite.spec.ts"   # the workflow suite
+```
 
-# Run all admin tests (with browser UI)
-npm run test:e2e:admin:headed
+### By hand
 
-# Run comprehensive workflow suite only
-npm run test:e2e:admin:suite
+The manual commands use the development database. Start the backend yourself, then export the
+matching API URL in the Playwright terminal; Playwright does not read `gocrm-ui/.env`. The config
+starts the Vite dev server on 5173, or reuses an existing server that must use the same API URL:
 
-# Run specific entity tests
-npx playwright test e2e/tests/admin-leads.spec.ts --headed
-npx playwright test e2e/tests/admin-customers.spec.ts --headed
-npx playwright test e2e/tests/admin-tickets.spec.ts --headed
-npx playwright test e2e/tests/admin-tasks.spec.ts --headed
-npx playwright test e2e/tests/admin-users.spec.ts --headed
+```bash
+# Terminal 1 — backend
+cd /path/to/gophercrm
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
 
-# Clean up test data
-npm run test:e2e:admin:cleanup
+# Terminal 2 — browser tests
+cd /path/to/gophercrm/gocrm-ui
+export VITE_API_BASE_URL=http://localhost:8080/api/v1
+npm run test:e2e:admin                                   # all admin specs, headless
+npm run test:e2e:admin:headed                            # same, visible browser
+npm run test:e2e:admin:suite                             # the workflow suite, visible browser
+npx playwright test e2e/tests/admin-leads.spec.ts --headed   # one spec
+npm run test:e2e:admin:cleanup   # pattern-based delete on the development database; see e2e/README.md
 ```
 
 ### Test Configuration

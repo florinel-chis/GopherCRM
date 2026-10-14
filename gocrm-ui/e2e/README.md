@@ -61,35 +61,49 @@ steps act only on records the test created.
 
 ## Running by hand (debugging)
 
-The manual setup below uses the development database and the dev server on 5173. The frontend
-reads its API base URL from `VITE_API_BASE_URL` in `gocrm-ui/.env`, so start the backend on the
-port that file names.
+The manual setup below uses the development database, the backend on 8080 and the dev server on
+5173. Export `VITE_API_BASE_URL` in Terminal 2 so both Vite and Playwright's direct API calls use
+that backend. Vite also reads `gocrm-ui/.env` (`.env.example` ships 8080), but a shell export takes
+precedence. Playwright does not read that file: without the export, its API helpers fall back to
+`http://localhost:8090/api/v1` (`helpers/env.ts`). If you choose another backend port, change both
+`SERVER_PORT` and the exported URL.
 
 ```bash
 # Terminal 1 — backend (port must match VITE_API_BASE_URL)
-cd /path/to/gophercrm && DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run cmd/main.go
+cd /path/to/gophercrm
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
 
 # Terminal 2 — from gocrm-ui/
+cd /path/to/gophercrm/gocrm-ui
+export VITE_API_BASE_URL=http://localhost:8080/api/v1
 npm run test:e2e                    # all specs
 npm run test:e2e:headed             # visible browser
 npm run test:e2e:debug              # Playwright inspector
 npm run test:e2e:ui                 # interactive UI mode
 npm run test:e2e:report             # open the last HTML report
 npm run test:e2e:admin              # admin CRUD specs, playwright.config.slow.ts
-npm run test:e2e:admin:cleanup      # e2e/scripts/cleanup-admin-test-data.sh
+npm run test:e2e:admin:cleanup      # pattern-based delete on the development database, see below
 
 # A single spec
 npx playwright test e2e/tests/login.spec.ts
 ```
 
 The Vite dev server is started automatically by the config's `webServer` block
-(`reuseExistingServer: true`), so Terminal 2 is enough if one is already running. The backend is
-**not** started for you.
+(`reuseExistingServer: true`). If a dev server is already running, it must use the same API URL;
+restart it with the exported value if necessary. The backend is **not** started for you.
 
 `DISABLE_RATE_LIMIT=true` is worth setting: it bypasses the strict 10 req/min limiter on
 `/auth/register` and `/auth/login`, which the login and registration specs would otherwise trip. It
 does not disable rate limiting elsewhere — authenticated routes keep their moderate tier — so it is
 not a way to run the suite faster, only a way to stop the login limiter from producing false failures.
+
+`npm run test:e2e:admin:cleanup` runs `e2e/scripts/cleanup-admin-test-data.sh`, kept from the time
+the specs ran against the development database only. It connects with `mysql` as `DB_USER`
+(default `root`) to `DB_NAME` (default `gocrm`) and deletes rows by name and title patterns, among
+them every lead and customer with an `@example.com` address, users whose address matches
+`%admin_%@example.com` or `%test_%@example.com`, and every ticket or task whose title contains
+`Test`, then resets the auto-increment counters. `make e2e` never needs it, because
+it drops `gocrm_e2e` first. Run it only against a database you are willing to clean that way.
 
 ## Admin Account
 
