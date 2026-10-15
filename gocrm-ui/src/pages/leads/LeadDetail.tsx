@@ -1,3 +1,4 @@
+import { getAPIError } from '@/utils/apiError';
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -35,7 +36,7 @@ import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLeadDialog';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { useConfiguration } from '@/contexts/ConfigurationContext';
+import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi } from '@/api/endpoints';
 import type { Lead } from '@/types';
 import { formatDate } from '@/utils/date';
@@ -114,9 +115,9 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       navigate(`/customers/${data.customer_id}`);
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       // The server explains refusals such as a lead without an email address.
-      showError(error.response?.data?.message || 'Failed to convert lead');
+      showError(getAPIError(error)?.message || 'Failed to convert lead');
     },
   });
 

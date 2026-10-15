@@ -28,8 +28,8 @@ vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({ showSuccess, showError }),
 }));
 
-vi.mock('@/contexts/ConfigurationContext', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>('@/contexts/ConfigurationContext');
+vi.mock('@/hooks/useConfiguration', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/hooks/useConfiguration');
   return {
     ...actual,
     useConfiguration: () => ({ getLeadConversionStatuses: () => ['qualified'] }),

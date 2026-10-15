@@ -23,25 +23,37 @@ export interface ConfigurationFilters {
   category?: string;
 }
 
+export type ConfigurationValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ConfigurationValue[]
+  | { [key: string]: ConfigurationValue };
+
 export interface SetConfigurationData {
-  value: any;
+  value: Exclude<ConfigurationValue, null>;
+}
+
+interface ConfigurationsResponse {
+  configurations: Configuration[];
 }
 
 export const configurationsApi = {
   // Get UI-safe configurations (available to all authenticated users)
   getUIConfigurations: async (): Promise<Configuration[]> => {
-    const response = await api.get<any>('/configurations/ui');
+    const response = await api.get<ConfigurationsResponse>('/configurations/ui');
     return response.data.configurations || [];
   },
 
   // Admin-only endpoints
   getAll: async (): Promise<Configuration[]> => {
-    const response = await api.get<any>('/configurations');
+    const response = await api.get<ConfigurationsResponse>('/configurations');
     return response.data.configurations || [];
   },
 
   getByCategory: async (category: string): Promise<Configuration[]> => {
-    const response = await api.get<any>(`/configurations/category/${category}`);
+    const response = await api.get<ConfigurationsResponse>(`/configurations/category/${category}`);
     return response.data.configurations || [];
   },
 
@@ -61,7 +73,7 @@ export const configurationsApi = {
   },
 
   // Helper methods to get parsed values
-  getValue: (config: Configuration) => {
+  getValue: (config: Configuration): unknown => {
     switch (config.type) {
       case 'boolean':
         return config.value === 'true';

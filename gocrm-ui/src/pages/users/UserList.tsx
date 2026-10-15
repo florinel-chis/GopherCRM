@@ -32,7 +32,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, type UserFilters } from '@/api/endpoints';
 import type { User } from '@/types';
 import { formatDate } from '@/utils/date';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
 
 const roleOptions = [
   { value: '', label: 'All Roles' },
@@ -142,7 +142,7 @@ export const Component: React.FC = () => {
       minWidth: 200,
       // Sorts by `first_name`, the leading component of what is rendered, the
       // same mapping the lead and customer contact columns use.
-      format: (_value: any, row: User) => `${row.first_name} ${row.last_name}`,
+      format: (_value: unknown, row: User) => `${row.first_name} ${row.last_name}`,
     },
     {
       id: 'email',

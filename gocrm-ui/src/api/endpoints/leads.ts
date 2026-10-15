@@ -1,5 +1,5 @@
 import { api } from '../client';
-import type { Lead, PaginationParams, PaginatedResponse } from '@/types';
+import type { BackendLead, Lead, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface LeadFilters extends PaginationParams {
   status?: string;
@@ -14,7 +14,7 @@ export interface CreateLeadData {
   contact_name: string;
   email: string;
   phone: string;
-  status: 'new' | 'contacted' | 'qualified' | 'converted' | 'lost';
+  status: Lead['status'];
   source: string;
   notes?: string;
   owner_id?: number;
@@ -25,9 +25,20 @@ export interface CreateLeadData {
 
 export type UpdateLeadData = Partial<CreateLeadData>;
 
+type LeadWriteData = Omit<CreateLeadData, 'company_name' | 'contact_name'> & {
+  first_name: string;
+  last_name: string;
+  company: string;
+};
+
+interface LeadsResponse {
+  leads: BackendLead[];
+  total: number;
+}
+
 // Helper function to transform backend lead to frontend format. Exported for
 // the company sub-resource endpoint, which returns the same raw rows.
-export const transformLeadFromBackend = (backendLead: any): Lead => {
+export const transformLeadFromBackend = (backendLead: BackendLead): Lead => {
   return {
     ...backendLead,
     company_name: backendLead.company || '',
@@ -37,7 +48,7 @@ export const transformLeadFromBackend = (backendLead: any): Lead => {
 
 export const leadsApi = {
   getLeads: async (filters?: LeadFilters): Promise<PaginatedResponse<Lead>> => {
-    const response = await api.get<any>('/leads', { params: filters });
+    const response = await api.get<LeadsResponse>('/leads', { params: filters });
     // Backend returns { leads: [...], total: number }
     const leads = response.data.leads || [];
     return {
@@ -50,14 +61,14 @@ export const leadsApi = {
   },
 
   getLead: async (id: number): Promise<Lead> => {
-    const response = await api.get<any>(`/leads/${id}`);
+    const response = await api.get<BackendLead>(`/leads/${id}`);
     return transformLeadFromBackend(response.data);
   },
 
   createLead: async (data: CreateLeadData): Promise<Lead> => {
     // Transform frontend data to match backend expectations
     const [firstName, ...lastNameParts] = data.contact_name.split(' ');
-    const transformedData: any = {
+    const transformedData: LeadWriteData = {
       first_name: firstName || '',
       last_name: lastNameParts.join(' ') || '',
       email: data.email,
@@ -76,13 +87,13 @@ export const leadsApi = {
       transformedData.company_id = data.company_id;
     }
     
-    const response = await api.post<any>('/leads', transformedData);
+    const response = await api.post<BackendLead>('/leads', transformedData);
     return transformLeadFromBackend(response.data);
   },
 
   updateLead: async (id: number, data: UpdateLeadData): Promise<Lead> => {
     // Transform frontend data to match backend expectations
-    const transformedData: any = {};
+    const transformedData: Partial<LeadWriteData> = {};
     
     if (data.contact_name !== undefined) {
       const [firstName, ...lastNameParts] = data.contact_name.split(' ');
@@ -98,7 +109,7 @@ export const leadsApi = {
     if (data.notes !== undefined) transformedData.notes = data.notes;
     if (data.company_id !== undefined) transformedData.company_id = data.company_id;
     
-    const response = await api.put<any>(`/leads/${id}`, transformedData);
+    const response = await api.put<BackendLead>(`/leads/${id}`, transformedData);
     return transformLeadFromBackend(response.data);
   },
 
@@ -112,7 +123,7 @@ export const leadsApi = {
   },
 
   assignLead: async (id: number, userId: number): Promise<Lead> => {
-    const response = await api.post<any>(`/leads/${id}/assign`, { user_id: userId });
+    const response = await api.post<BackendLead>(`/leads/${id}/assign`, { user_id: userId });
     return transformLeadFromBackend(response.data);
   },
 

@@ -122,7 +122,9 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  const isOverdue = new Date(task.due_date) < new Date() && task.status !== 'completed';
+  const isOverdue = task.due_date
+    ? new Date(task.due_date) < new Date() && task.status !== 'completed'
+    : false;
 
   return (
     <Box>

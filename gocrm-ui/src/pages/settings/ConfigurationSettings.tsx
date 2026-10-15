@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -33,10 +33,16 @@ import {
   Save as SaveIcon,
   Cancel as CancelIcon,
 } from '@mui/icons-material';
-import type { Configuration } from '@/api/endpoints/configurations';
+import type { Configuration, ConfigurationValue } from '@/api/endpoints/configurations';
 import { configurationsApi } from '@/api/endpoints/configurations';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { Loading } from '@/components/Loading';
+
+function isConfigurationValue(value: unknown): value is ConfigurationValue {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return true;
+  if (Array.isArray(value)) return value.every(isConfigurationValue);
+  return typeof value === 'object' && Object.values(value).every(isConfigurationValue);
+}
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -77,15 +83,11 @@ const ConfigurationSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [editingConfig, setEditingConfig] = useState<Configuration | null>(null);
-  const [editValue, setEditValue] = useState<any>('');
+  const [editValue, setEditValue] = useState<ConfigurationValue>('');
   const [showEditDialog, setShowEditDialog] = useState(false);
   const { showSuccess, showError } = useSnackbar();
 
-  useEffect(() => {
-    loadConfigurations();
-  }, []);
-
-  const loadConfigurations = async () => {
+  const loadConfigurations = useCallback(async () => {
     try {
       setLoading(true);
       const configs = await configurationsApi.getAll();
@@ -95,7 +97,11 @@ const ConfigurationSettings: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showError]);
+
+  useEffect(() => {
+    loadConfigurations();
+  }, [loadConfigurations]);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
@@ -106,7 +112,12 @@ const ConfigurationSettings: React.FC = () => {
     // A sensitive value is never sent back by the API, so the editor starts
     // empty: the operator either types a new value or saves an empty one to
     // clear it.
-    setEditValue(config.is_sensitive ? '' : configurationsApi.getValue(config));
+    const value = config.is_sensitive ? '' : configurationsApi.getValue(config);
+    if (!isConfigurationValue(value)) {
+      showError('Invalid configuration value');
+      return;
+    }
+    setEditValue(value);
     setShowEditDialog(true);
   };
 
@@ -114,6 +125,7 @@ const ConfigurationSettings: React.FC = () => {
     if (!editingConfig) return;
 
     try {
+      if (editValue === null) throw new Error('A configuration value is required');
       await configurationsApi.set(editingConfig.key, { value: editValue });
       showSuccess('Configuration updated successfully');
       await loadConfigurations();

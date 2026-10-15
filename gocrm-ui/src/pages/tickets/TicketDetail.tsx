@@ -128,6 +128,9 @@ export const Component: React.FC = () => {
       ticket.assigned_to_id !== undefined &&
       ticket.assigned_to_id === user.id);
   const canDelete = user?.role === 'admin';
+  const customer = ticket.customer;
+  const customerName =
+    customer && ('company_name' in customer ? customer.company_name : customer.company);
 
   return (
     <Box>
@@ -180,7 +183,7 @@ export const Component: React.FC = () => {
                     Customer
                   </Typography>
                   <Typography>
-                    {ticket.customer?.company_name || 'N/A'}
+                    {customerName || 'N/A'}
                   </Typography>
                 </Box>
               </Box>

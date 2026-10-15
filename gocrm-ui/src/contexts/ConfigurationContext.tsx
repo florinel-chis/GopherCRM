@@ -1,25 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { configurationsApi, type Configuration } from '@/api/endpoints/configurations';
-
-interface ConfigurationContextType {
-  configurations: Configuration[];
-  isLoading: boolean;
-  error: string | null;
-  getLeadConversionStatuses: () => string[];
-  getCompanyName: () => string;
-  getPrimaryColor: () => string;
-  refreshConfigurations: () => Promise<void>;
-}
-
-const ConfigurationContext = createContext<ConfigurationContextType | undefined>(undefined);
-
-export const useConfiguration = () => {
-  const context = useContext(ConfigurationContext);
-  if (context === undefined) {
-    throw new Error('useConfiguration must be used within a ConfigurationProvider');
-  }
-  return context;
-};
+import { ConfigurationContext, type ConfigurationContextType } from './configuration-context';
+import { getErrorMessage } from '@/utils/apiError';
 
 interface ConfigurationProviderProps {
   children: React.ReactNode;
@@ -36,9 +18,9 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
       setError(null);
       const configs = await configurationsApi.getUIConfigurations();
       setConfigurations(configs);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to load configurations:', err);
-      setError(err.message || 'Failed to load configurations');
+      setError(getErrorMessage(err, 'Failed to load configurations'));
       // Set empty array as fallback
       setConfigurations([]);
     } finally {

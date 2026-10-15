@@ -16,7 +16,7 @@ export interface Lead {
   contact_name: string;
   email: string;
   phone: string;
-  status: 'new' | 'contacted' | 'qualified' | 'converted' | 'lost';
+  status: 'new' | 'contacted' | 'qualified' | 'unqualified' | 'converted' | 'lost';
   source: string;
   notes: string;
   owner_id: number;
@@ -47,7 +47,7 @@ export interface Customer {
   total_revenue: number;
   notes?: string;
   is_active: boolean;
-  owner_id: number;
+  owner_id?: number;
   owner?: User;
   assigned_to_id?: number;
   assigned_to?: User;
@@ -198,10 +198,10 @@ export interface Ticket {
   status: 'open' | 'in_progress' | 'resolved' | 'closed';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   customer_id: number;
-  customer?: Customer;
+  customer?: BackendCustomer | Customer;
   assigned_to?: User;
   assigned_to_id?: number;
-  created_by?: User;
+  created_by?: Pick<User, 'id' | 'first_name' | 'last_name'>;
   created_by_id: number;
   comments?: Comment[];
   created_at: string;
@@ -233,7 +233,7 @@ export interface Task {
   description: string;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   priority: 'low' | 'medium' | 'high';
-  due_date: string;
+  due_date?: string;
   assigned_to: number;
   assignee?: User;
   created_by: number;
@@ -242,6 +242,67 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+}
+
+// Wire records retain the Go field names; endpoint transforms supply the
+// derived names and display defaults exposed by the frontend models above.
+export interface BackendCustomer {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  company: string;
+  position: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postal_code: string;
+  notes: string;
+  user_id?: number;
+  user?: User;
+  assigned_to_id?: number;
+  assigned_to?: User;
+  company_id?: number;
+  company_record?: Company;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackendLead extends Omit<Lead, 'company_name' | 'contact_name' | 'status'> {
+  first_name: string;
+  last_name: string;
+  company: string;
+  status: Exclude<Lead['status'], 'lost'>;
+}
+
+export interface BackendTask {
+  id: number;
+  title: string;
+  description: string;
+  status: Task['status'];
+  priority: Task['priority'];
+  due_date?: string;
+  assigned_to_id: number;
+  assigned_to?: User;
+  labels?: Label[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackendTicket {
+  id: number;
+  title: string;
+  description: string;
+  status: Ticket['status'];
+  priority: Ticket['priority'];
+  customer_id: number;
+  customer?: BackendCustomer;
+  assigned_to_id?: number;
+  assigned_to?: User;
+  created_at: string;
+  updated_at: string;
 }
 
 // The stored hash is deliberately absent: models.APIKey tags it `json:"-"`, so
@@ -283,7 +344,7 @@ export interface RegisterRequest {
 export interface APIError {
   message: string;
   code?: string;
-  details?: Record<string, any>;
+  details?: unknown;
 }
 
 export interface PaginationParams {

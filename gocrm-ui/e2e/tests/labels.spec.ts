@@ -34,8 +34,13 @@ const colors = {
 };
 
 /** The task the `attached` label is put on, and the one the inline label lands on. */
-let attachedTask: { id: number; title: string } | null = null;
-let inlineTask: { id: number; title: string } | null = null;
+type CreatedTask = { id: number; title: string };
+let attachedTask: CreatedTask | null = null;
+let inlineTask: CreatedTask | null = null;
+
+function assertTaskCreated(task: CreatedTask | null, name: string): asserts task is CreatedTask {
+  expect(task, `${name} task must be created by an earlier test in this serial suite`).not.toBeNull();
+}
 
 test.describe('Task Labels', () => {
   let adminAuth: AdminAuthHelper;
@@ -125,8 +130,8 @@ test.describe('Task Labels', () => {
   });
 
   test('label chips appear in the task list and on the task detail page', async ({ page }) => {
-    expect(attachedTask).not.toBeNull();
-    const task = attachedTask!;
+    assertTaskCreated(attachedTask, 'Attached');
+    const task = attachedTask;
 
     // The list is not sorted newest-first, so search for the task rather than
     // assuming it landed on page one.
@@ -142,8 +147,8 @@ test.describe('Task Labels', () => {
   });
 
   test('clicking a label chip in the list filters the tasks by that label', async () => {
-    expect(attachedTask).not.toBeNull();
-    const task = attachedTask!;
+    assertTaskCreated(attachedTask, 'Attached');
+    const task = attachedTask;
 
     await tasksPage.goto();
     await tasksPage.searchTasks(task.title);
@@ -174,8 +179,8 @@ test.describe('Task Labels', () => {
   });
 
   test('the label filter dropdown narrows the list and can be cleared', async () => {
-    expect(attachedTask).not.toBeNull();
-    const task = attachedTask!;
+    assertTaskCreated(attachedTask, 'Attached');
+    const task = attachedTask;
 
     await tasksPage.goto();
     const filtered = await tasksPage.filterByLabel(labelNames.attached);
@@ -224,8 +229,8 @@ test.describe('Task Labels', () => {
   });
 
   test('admin can rename and recolour a label', async ({ page }) => {
-    expect(attachedTask).not.toBeNull();
-    const task = attachedTask!;
+    assertTaskCreated(attachedTask, 'Attached');
+    const task = attachedTask;
 
     await labelsPage.goto();
     await labelsPage.openEditDialog(labelNames.attached);
@@ -251,8 +256,8 @@ test.describe('Task Labels', () => {
   });
 
   test('deleting a label detaches it from the tasks that carry it', async ({ page }) => {
-    expect(attachedTask).not.toBeNull();
-    const task = attachedTask!;
+    assertTaskCreated(attachedTask, 'Attached');
+    const task = attachedTask;
 
     await labelsPage.goto();
     await labelsPage.openDeleteDialog(labelNames.renamed);
@@ -272,8 +277,8 @@ test.describe('Task Labels', () => {
   });
 
   test('editing a task replaces its label set', async ({ page }) => {
-    expect(inlineTask).not.toBeNull();
-    const task = inlineTask!;
+    assertTaskCreated(inlineTask, 'Inline');
+    const task = inlineTask;
 
     await page.goto(`/tasks/${task.id}/edit`);
     await page.waitForLoadState('networkidle');

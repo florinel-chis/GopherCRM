@@ -66,8 +66,8 @@ const openIntegrationTab = async () => {
 describe('ConfigurationSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (configurationsApi.getAll as any).mockResolvedValue([baseConfig({}), sensitive]);
-    (configurationsApi.set as any).mockResolvedValue(sensitive);
+    vi.mocked(configurationsApi.getAll).mockResolvedValue([baseConfig({}), sensitive]);
+    vi.mocked(configurationsApi.set).mockResolvedValue(sensitive);
   });
 
   it('shows a configured chip instead of a value for a sensitive row', async () => {
@@ -80,7 +80,7 @@ describe('ConfigurationSettings', () => {
   });
 
   it('marks an unset sensitive row as not configured', async () => {
-    (configurationsApi.getAll as any).mockResolvedValue([
+    vi.mocked(configurationsApi.getAll).mockResolvedValue([
       { ...sensitive, is_set: false },
     ]);
 
@@ -115,8 +115,8 @@ describe('ConfigurationSettings', () => {
   });
 
   it('lists a deals configuration under the Deals tab, after Tasks, and edits it', async () => {
-    (configurationsApi.getAll as any).mockResolvedValue([baseConfig({}), dealCurrency]);
-    (configurationsApi.set as any).mockResolvedValue({ ...dealCurrency, value: 'USD' });
+    vi.mocked(configurationsApi.getAll).mockResolvedValue([baseConfig({}), dealCurrency]);
+    vi.mocked(configurationsApi.set).mockResolvedValue({ ...dealCurrency, value: 'USD' });
 
     render(<ConfigurationSettings />);
 

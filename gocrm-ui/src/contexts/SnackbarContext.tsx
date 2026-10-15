@@ -1,16 +1,8 @@
-import React, { createContext, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { Snackbar, Alert, Slide } from '@mui/material';
 import type { AlertColor, SlideProps } from '@mui/material';
-
-interface SnackbarContextType {
-  showSuccess: (message: string) => void;
-  showError: (message: string) => void;
-  showWarning: (message: string) => void;
-  showInfo: (message: string) => void;
-}
-
-export const SnackbarContext = createContext<SnackbarContextType | undefined>(undefined);
+import { SnackbarContext, type SnackbarContextType } from './snackbar-context';
 
 interface SnackbarProviderProps {
   children: ReactNode;

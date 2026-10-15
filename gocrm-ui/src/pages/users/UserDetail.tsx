@@ -37,7 +37,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, tasksApi, ticketsApi } from '@/api/endpoints';
 import type { User } from '@/types';
 import { formatDate } from '@/utils/date';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
 
 interface TabPanelProps {
   children?: React.ReactNode;

@@ -1,3 +1,4 @@
+import { getAPIError } from '@/utils/apiError';
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useForm, FormProvider } from 'react-hook-form';
@@ -27,7 +28,7 @@ const leadSchema = z
     contact_name: z.string().min(1, 'Contact name is required'),
     email: z.string().email('Invalid email address').or(z.literal('')),
     phone: z.string(),
-    status: z.enum(['new', 'contacted', 'qualified', 'converted', 'lost']),
+    status: z.enum(['new', 'contacted', 'qualified', 'unqualified', 'converted', 'lost']),
     source: z.string().min(1, 'Lead source is required'),
     notes: z.string().optional(),
   })
@@ -42,10 +43,16 @@ const leadSchema = z
 
 type LeadFormData = z.infer<typeof leadSchema>;
 
+const leadFields = new Set<string>(['company_name', 'contact_name', 'email', 'phone', 'status', 'source', 'notes']);
+function isLeadField(field: string): field is keyof LeadFormData {
+  return leadFields.has(field);
+}
+
 const statusOptions = [
   { value: 'new', label: 'New' },
   { value: 'contacted', label: 'Contacted' },
   { value: 'qualified', label: 'Qualified' },
+  { value: 'unqualified', label: 'Unqualified' },
   { value: 'converted', label: 'Converted' },
   { value: 'lost', label: 'Lost' },
 ];
@@ -103,8 +110,7 @@ export const Component: React.FC = () => {
   // client leaves the envelope's `error` object ({code, message}) in
   // `response.data`. Returns true when the error was reported here.
   const reportCompanyReference = (error: unknown): boolean => {
-    const payload = (error as { response?: { data?: { code?: string; message?: string } } })
-      ?.response?.data;
+    const payload = getAPIError(error);
     const message = typeof payload?.message === 'string' ? payload.message : undefined;
     if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
       setCompanyError(message);
@@ -121,15 +127,16 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       navigate('/leads');
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
+      const payload = getAPIError(error);
       if (reportCompanyReference(error)) {
         return;
       }
       // Handle validation errors
-      if (error.response?.data?.details) {
-        const validationErrors = error.response.data.details;
+      if (payload?.details) {
+        const validationErrors = payload.details;
         // Map backend field names to frontend field names
-        const fieldMapping: Record<string, string> = {
+        const fieldMapping: Record<string, keyof LeadFormData> = {
           'FirstName': 'contact_name',
           'LastName': 'contact_name',
           'Email': 'email',
@@ -139,7 +146,8 @@ export const Component: React.FC = () => {
         
         Object.entries(validationErrors).forEach(([field, message]) => {
           const frontendField = fieldMapping[field] || field.toLowerCase();
-          methods.setError(frontendField as any, {
+          if (!isLeadField(frontendField)) return;
+          methods.setError(frontendField, {
             type: 'server',
             message: String(message),
           });
@@ -147,7 +155,7 @@ export const Component: React.FC = () => {
         
         showError('Please fix the validation errors');
       } else {
-        showError(error.response?.data?.message || 'Failed to create lead');
+        showError(payload?.message || 'Failed to create lead');
       }
     },
   });
@@ -161,15 +169,16 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['lead', id] });
       navigate('/leads');
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
+      const payload = getAPIError(error);
       if (reportCompanyReference(error)) {
         return;
       }
       // Handle validation errors
-      if (error.response?.data?.details) {
-        const validationErrors = error.response.data.details;
+      if (payload?.details) {
+        const validationErrors = payload.details;
         // Map backend field names to frontend field names
-        const fieldMapping: Record<string, string> = {
+        const fieldMapping: Record<string, keyof LeadFormData> = {
           'FirstName': 'contact_name',
           'LastName': 'contact_name',
           'Email': 'email',
@@ -179,7 +188,8 @@ export const Component: React.FC = () => {
         
         Object.entries(validationErrors).forEach(([field, message]) => {
           const frontendField = fieldMapping[field] || field.toLowerCase();
-          methods.setError(frontendField as any, {
+          if (!isLeadField(frontendField)) return;
+          methods.setError(frontendField, {
             type: 'server',
             message: String(message),
           });
@@ -187,7 +197,7 @@ export const Component: React.FC = () => {
         
         showError('Please fix the validation errors');
       } else {
-        showError(error.response?.data?.message || 'Failed to update lead');
+        showError(payload?.message || 'Failed to update lead');
       }
     },
   });

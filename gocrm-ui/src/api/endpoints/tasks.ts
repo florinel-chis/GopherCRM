@@ -1,5 +1,5 @@
 import { api } from '../client';
-import type { Task, PaginationParams, PaginatedResponse } from '@/types';
+import type { BackendTask, Task, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface TaskFilters extends PaginationParams {
   status?: string;
@@ -33,8 +33,15 @@ export interface UpdateTaskData {
   label_ids?: number[];
 }
 
+interface TasksResponse {
+  tasks: BackendTask[];
+  total: number;
+}
+
+type UpdateTaskRequest = UpdateTaskData & { assigned_to_id?: number };
+
 // Helper function to transform backend task to frontend format
-const transformTaskFromBackend = (backendTask: any): Task => {
+const transformTaskFromBackend = (backendTask: BackendTask): Task => {
   return {
     ...backendTask,
     // Frontend uses 'assigned_to' as number, backend uses 'assigned_to_id'
@@ -50,7 +57,7 @@ const transformTaskFromBackend = (backendTask: any): Task => {
 
 export const tasksApi = {
   getTasks: async (filters?: TaskFilters): Promise<PaginatedResponse<Task>> => {
-    const response = await api.get<any>('/tasks', { params: filters });
+    const response = await api.get<TasksResponse>('/tasks', { params: filters });
     // Backend returns { tasks: [...], total: number }
     const tasks = response.data.tasks || [];
     return {
@@ -63,7 +70,7 @@ export const tasksApi = {
   },
 
   getTask: async (id: number): Promise<Task> => {
-    const response = await api.get<any>(`/tasks/${id}`);
+    const response = await api.get<BackendTask>(`/tasks/${id}`);
     return transformTaskFromBackend(response.data);
   },
 
@@ -73,21 +80,21 @@ export const tasksApi = {
       ...data,
       assigned_to_id: data.assigned_to,
     };
-    delete (transformedData as any).assigned_to;
+    delete transformedData.assigned_to;
     
-    const response = await api.post<any>('/tasks', transformedData);
+    const response = await api.post<BackendTask>('/tasks', transformedData);
     return transformTaskFromBackend(response.data);
   },
 
   updateTask: async (id: number, data: UpdateTaskData): Promise<Task> => {
     // Transform frontend data to backend format
-    const transformedData: any = { ...data };
+    const transformedData: UpdateTaskRequest = { ...data };
     if (data.assigned_to !== undefined) {
       transformedData.assigned_to_id = data.assigned_to;
       delete transformedData.assigned_to;
     }
     
-    const response = await api.put<any>(`/tasks/${id}`, transformedData);
+    const response = await api.put<BackendTask>(`/tasks/${id}`, transformedData);
     return transformTaskFromBackend(response.data);
   },
 
@@ -96,12 +103,12 @@ export const tasksApi = {
   },
 
   assignTask: async (id: number, userId: number): Promise<Task> => {
-    const response = await api.post<any>(`/tasks/${id}/assign`, { user_id: userId });
+    const response = await api.post<BackendTask>(`/tasks/${id}/assign`, { user_id: userId });
     return transformTaskFromBackend(response.data);
   },
 
   completeTask: async (id: number): Promise<Task> => {
-    const response = await api.post<any>(`/tasks/${id}/complete`);
+    const response = await api.post<BackendTask>(`/tasks/${id}/complete`);
     return transformTaskFromBackend(response.data);
   },
 
@@ -110,7 +117,9 @@ export const tasksApi = {
   },
 
   getUpcomingTasks: async (days: number = 7): Promise<Task[]> => {
-    const response = await api.get<any>('/tasks/upcoming', { params: { days } });
+    const response = await api.get<BackendTask[] | Pick<TasksResponse, 'tasks'>>('/tasks/upcoming', {
+      params: { days },
+    });
     // This endpoint might return an array directly or wrapped
     const tasks = Array.isArray(response.data) ? response.data : (response.data.tasks || []);
     return tasks.map(transformTaskFromBackend);

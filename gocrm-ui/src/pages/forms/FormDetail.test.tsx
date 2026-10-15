@@ -17,7 +17,7 @@ describe('FormDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue({ user: createMockUser({ id: 1, role: 'admin' }), isLoading: false, isAuthenticated: true, login: vi.fn(), register: vi.fn(), logout: vi.fn(), refreshUser: vi.fn() });
-    (formsApi.get as any).mockResolvedValue({
+    vi.mocked(formsApi.get).mockResolvedValue({
       id: 1, name: 'Contact us', description: 'desc', public_id: 'pub123', status: 'published',
       fields: [{ name: 'email', label: 'Email', type: 'email', required: true }],
       submit_action: 'message', thank_you_message: '', redirect_url: '', consent_text: '',
@@ -25,7 +25,7 @@ describe('FormDetail', () => {
       follow_up_subject: '', follow_up_body: '', content_url: '', captcha_enabled: false, create_lead: true,
       default_owner_id: 1, allowed_domains: [], created_at: '2026-08-01T10:00:00Z', updated_at: '2026-08-01T10:00:00Z',
     });
-    (formsApi.listSubmissions as any).mockResolvedValue({
+    vi.mocked(formsApi.listSubmissions).mockResolvedValue({
       submissions: [{ id: 5, form_id: 1, data: { email: 'a@b.com', message: 'hi' }, email: 'a@b.com', status: 'confirmed', spam_reason: '', lead_id: 9, ip_address: '1.2.3.4', user_agent: 'ua', referrer: 'https://site', confirmed_at: '2026-08-02T10:00:00Z', created_at: '2026-08-02T09:00:00Z' }],
       total: 1,
     });

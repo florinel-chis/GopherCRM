@@ -56,8 +56,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { aeoApi, type AEOAnswer, type AEOPrompt } from '@/api/endpoints/aeo';
 import AnswerMarkdown from './AnswerMarkdown';
-export { segmentMentions } from './mentions';
-
 
 const DAY_WINDOWS = [7, 30, 90] as const;
 const MAX_PROMPTS_PER_BATCH = 25;
@@ -66,8 +64,7 @@ const MAX_PROMPT_LENGTH = 500;
 // Word boundary as the backend defines it: the neighbouring rune must not be a
 // letter, a digit or an underscore. Deliberately not \b, so "café" and "Ştefan"
 // behave and "Acme" does not match inside "Acmerica".
-const formatDateTime = (value?: string): string =>
-  value ? new Date(value).toLocaleString() : '—';
+const formatDateTime = (value?: string): string => (value ? new Date(value).toLocaleString() : '—');
 
 const addPromptsSchema = z.object({
   prompts: z
@@ -151,7 +148,7 @@ export const Component: React.FC = () => {
 
   const brandTerms = useMemo(
     () => (profile ? [profile.brand_name, ...(profile.brand_aliases || [])] : []),
-    [profile]
+    [profile],
   );
 
   const { data: runs } = useQuery({
@@ -166,11 +163,13 @@ export const Component: React.FC = () => {
     isError: answersError,
   } = useQuery({
     queryKey: ['aeo', 'answers', selected?.id, runFilter],
-    queryFn: () =>
-      aeoApi.getPromptAnswers(selected!.id, {
+    queryFn: () => {
+      if (!selected) throw new Error('A prompt must be selected to load its answers');
+      return aeoApi.getPromptAnswers(selected.id, {
         run_id: runFilter === 'all' ? undefined : runFilter,
         limit: 50,
-      }),
+      });
+    },
     enabled: selected !== null,
   });
 
@@ -256,8 +255,7 @@ export const Component: React.FC = () => {
     },
     onError: (mutationError) => {
       if (mutationError instanceof AxiosError) {
-        const message = (mutationError.response?.data as { message?: string } | undefined)
-          ?.message;
+        const message = (mutationError.response?.data as { message?: string } | undefined)?.message;
         if (mutationError.response?.status === 409) {
           showError(message || 'A run is already in progress');
           return;
@@ -281,13 +279,10 @@ export const Component: React.FC = () => {
       }
     },
     onError: (mutationError) => {
-      if (
-        mutationError instanceof AxiosError &&
-        mutationError.response?.status === 503
-      ) {
+      if (mutationError instanceof AxiosError && mutationError.response?.status === 503) {
         showError(
           (mutationError.response?.data as { message?: string } | undefined)?.message ||
-            'Prompt generation is not configured on the server'
+            'Prompt generation is not configured on the server',
         );
         return;
       }
@@ -514,9 +509,7 @@ export const Component: React.FC = () => {
                 label="Run"
                 value={runFilter}
                 onChange={(event) =>
-                  setRunFilter(
-                    event.target.value === 'all' ? 'all' : Number(event.target.value)
-                  )
+                  setRunFilter(event.target.value === 'all' ? 'all' : Number(event.target.value))
                 }
               >
                 <MenuItem value="all">All runs</MenuItem>
@@ -554,7 +547,8 @@ export const Component: React.FC = () => {
                         />
                       </Box>
                       <Typography variant="caption" color="text.secondary">
-                        {answer.model} · {answer.latency_ms} ms · {formatDateTime(answer.created_at)}
+                        {answer.model} · {answer.latency_ms} ms ·{' '}
+                        {formatDateTime(answer.created_at)}
                       </Typography>
 
                       {answer.error ? (
@@ -609,13 +603,7 @@ export const Component: React.FC = () => {
                 One prompt per line, up to {MAX_PROMPTS_PER_BATCH} at a time. The batch is saved
                 all-or-nothing.
               </DialogContentText>
-              <FormTextField
-                name="prompts"
-                label="Prompts"
-                multiline
-                minRows={5}
-                autoFocus
-              />
+              <FormTextField name="prompts" label="Prompts" multiline minRows={5} autoFocus />
             </DialogContent>
             <DialogActions>
               <Button color="inherit" onClick={() => setAddOpen(false)}>
@@ -633,8 +621,8 @@ export const Component: React.FC = () => {
         <DialogTitle>Generate prompts</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            Suggestions are drafted from the brand profile. Nothing is saved until you add the
-            ones you want.
+            Suggestions are drafted from the brand profile. Nothing is saved until you add the ones
+            you want.
           </DialogContentText>
           <Button
             variant="outlined"

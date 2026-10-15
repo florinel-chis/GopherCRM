@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, requireElement } from '@/test/test-utils';
 import { Component as LeadList } from './LeadList';
 import { leadsApi } from '@/api/endpoints';
 import { createMockLead } from '@/test/factories';
@@ -31,8 +31,8 @@ describe('LeadList', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (leadsApi.getLeads as any).mockResolvedValue({
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(leadsApi.getLeads).mockResolvedValue({
       data: mockLeads,
       total: 3,
       page: 1,
@@ -53,7 +53,7 @@ describe('LeadList', () => {
   });
 
   it('shows loading state initially', () => {
-    (leadsApi.getLeads as any).mockImplementation(() => new Promise(() => {})); // Never resolves
+    vi.mocked(leadsApi.getLeads).mockImplementation(() => new Promise(() => {})); // Never resolves
     render(<LeadList />);
     expect(screen.getByTestId('loading')).toBeInTheDocument();
   });
@@ -128,14 +128,14 @@ describe('LeadList', () => {
     await waitFor(() => {
       const row = screen.getByText('Company A').closest('tr');
       expect(row).toBeInTheDocument();
-      fireEvent.click(row!);
+      fireEvent.click(requireElement(row));
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/leads/1');
   });
 
   it('handles lead deletion', async () => {
-    (leadsApi.deleteLead as any).mockResolvedValue({});
+    vi.mocked(leadsApi.deleteLead).mockResolvedValue(undefined);
     
     render(<LeadList />);
 
@@ -146,7 +146,7 @@ describe('LeadList', () => {
     // Find the delete button by its test id within the first data row
     const deleteButtons = screen.getAllByTestId('DeleteIcon');
     // Click the first delete button (for Company A)
-    fireEvent.click(deleteButtons[0].closest('button')!);
+    fireEvent.click(requireElement(deleteButtons[0].closest('button')));
 
     // Confirm deletion in the dialog
     await waitFor(() => {
@@ -169,7 +169,7 @@ describe('LeadList', () => {
 
   it('handles pagination', async () => {
     // Update the mock to return more data to enable pagination
-    (leadsApi.getLeads as any).mockResolvedValue({
+    vi.mocked(leadsApi.getLeads).mockResolvedValue({
       data: mockLeads,
       total: 25, // More than one page worth
       page: 1,

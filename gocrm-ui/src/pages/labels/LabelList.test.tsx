@@ -41,7 +41,7 @@ describe('LabelList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (labelsApi.getLabels as any).mockResolvedValue(mockLabels);
+    vi.mocked(labelsApi.getLabels).mockResolvedValue(mockLabels);
   });
 
   afterEach(() => {
@@ -62,12 +62,12 @@ describe('LabelList', () => {
     expect(screen.getByText('#1F77B4')).toBeInTheDocument();
     expect(screen.getByTestId('label-swatch-1')).toBeInTheDocument();
 
-    const onboardingRow = screen.getByText('Onboarding').closest('tr');
+    const onboardingRow = screen.getByRole('row', { name: /Onboarding/ });
     expect(onboardingRow).toHaveTextContent('3');
   });
 
   it('shows the loading state while the labels are fetched', () => {
-    (labelsApi.getLabels as any).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(labelsApi.getLabels).mockImplementation(() => new Promise(() => {}));
 
     render(<LabelList />);
 
@@ -75,7 +75,7 @@ describe('LabelList', () => {
   });
 
   it('renders an empty state when there are no labels', async () => {
-    (labelsApi.getLabels as any).mockResolvedValue([]);
+    vi.mocked(labelsApi.getLabels).mockResolvedValue([]);
 
     render(<LabelList />);
 
@@ -85,8 +85,8 @@ describe('LabelList', () => {
   });
 
   it('creates a label through the dialog', async () => {
-    (labelsApi.createLabel as any).mockResolvedValue(
-      createMockLabel({ id: 9, name: 'Renewals', color: '#2CA02C', task_count: 0 })
+    vi.mocked(labelsApi.createLabel).mockResolvedValue(
+      createMockLabel({ id: 9, name: 'Renewals', color: '#2CA02C', task_count: 0 }),
     );
 
     render(<LabelList />);
@@ -120,8 +120,8 @@ describe('LabelList', () => {
       expect(screen.getByText('Escalation')).toBeInTheDocument();
     });
 
-    const editButtons = screen.getAllByTestId('EditIcon');
-    fireEvent.click(editButtons[1].closest('button')!);
+    const row = screen.getByRole('row', { name: /Escalation/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit label' }));
 
     await waitFor(() => {
       expect(screen.getByText('Edit Label')).toBeInTheDocument();
@@ -138,13 +138,11 @@ describe('LabelList', () => {
       expect(screen.getByText('Onboarding')).toBeInTheDocument();
     });
 
-    const deleteButtons = screen.getAllByTestId('DeleteIcon');
-    fireEvent.click(deleteButtons[0].closest('button')!);
+    const row = screen.getByRole('row', { name: /Onboarding/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Delete label' }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/It will be removed from 3 tasks\./)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/It will be removed from 3 tasks\./)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
@@ -161,8 +159,8 @@ describe('LabelList', () => {
       expect(screen.getByText('Escalation')).toBeInTheDocument();
     });
 
-    const deleteButtons = screen.getAllByTestId('DeleteIcon');
-    fireEvent.click(deleteButtons[1].closest('button')!);
+    const row = screen.getByRole('row', { name: /Escalation/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Delete label' }));
 
     await waitFor(() => {
       expect(screen.getByText(/It will be removed from 1 task\./)).toBeInTheDocument();
@@ -175,8 +173,8 @@ describe('LabelList', () => {
   // for as long as the query stays fresh.
   it('invalidates both task caches after a label is renamed', async () => {
     const invalidateQueries = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
-    (labelsApi.updateLabel as any).mockResolvedValue(
-      createMockLabel({ id: 2, name: 'Escalated', color: '#D62728', task_count: 1 })
+    vi.mocked(labelsApi.updateLabel).mockResolvedValue(
+      createMockLabel({ id: 2, name: 'Escalated', color: '#D62728', task_count: 1 }),
     );
 
     render(<LabelList />);
@@ -185,7 +183,8 @@ describe('LabelList', () => {
       expect(screen.getByText('Escalation')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getAllByTestId('EditIcon')[1].closest('button')!);
+    const row = screen.getByRole('row', { name: /Escalation/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit label' }));
 
     await waitFor(() => {
       expect(screen.getByText('Edit Label')).toBeInTheDocument();
@@ -207,7 +206,7 @@ describe('LabelList', () => {
 
   it('invalidates both task caches after a label is deleted', async () => {
     const invalidateQueries = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
-    (labelsApi.deleteLabel as any).mockResolvedValue(undefined);
+    vi.mocked(labelsApi.deleteLabel).mockResolvedValue(undefined);
 
     render(<LabelList />);
 
@@ -215,7 +214,8 @@ describe('LabelList', () => {
       expect(screen.getByText('Onboarding')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getAllByTestId('DeleteIcon')[0].closest('button')!);
+    const row = screen.getByRole('row', { name: /Onboarding/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Delete label' }));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
@@ -245,7 +245,7 @@ describe('LabelList', () => {
 
       expect(screen.getByRole('button', { name: /create label/i })).toBeInTheDocument();
       expect(screen.getAllByTestId('EditIcon').length).toBe(3);
-    }
+    },
   );
 
   it('hides create, edit and delete from the customer role', async () => {

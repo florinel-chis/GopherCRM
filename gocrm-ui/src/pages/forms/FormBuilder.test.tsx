@@ -71,7 +71,7 @@ describe('FormBuilder', () => {
     // A sales user owns the leads its own forms create, so the owner select
     // needs no user list.
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 7, role: 'sales' })));
-    (usersApi.getUsers as any).mockResolvedValue({
+    vi.mocked(usersApi.getUsers).mockResolvedValue({
       data: [createMockUser({ id: 1, role: 'admin', email: 'admin@example.com' })],
       total: 1,
       page: 1,
@@ -169,7 +169,13 @@ describe('FormBuilder', () => {
   });
 
   it('sends a snake_case payload with the field definitions', async () => {
-    (formsApi.create as any).mockResolvedValue({ id: 42 });
+    vi.mocked(formsApi.create).mockImplementation(async (data) => ({
+      ...data,
+      id: 42,
+      public_id: 'form-42',
+      created_at: '2026-08-01T10:00:00Z',
+      updated_at: '2026-08-01T10:00:00Z',
+    }));
 
     render(<FormBuilder />);
 
@@ -226,7 +232,13 @@ describe('FormBuilder', () => {
   });
 
   it('keeps the dropdown options and drops them from the other fields', async () => {
-    (formsApi.create as any).mockResolvedValue({ id: 43 });
+    vi.mocked(formsApi.create).mockImplementation(async (data) => ({
+      ...data,
+      id: 43,
+      public_id: 'form-43',
+      created_at: '2026-08-01T10:00:00Z',
+      updated_at: '2026-08-01T10:00:00Z',
+    }));
 
     render(<FormBuilder />);
 

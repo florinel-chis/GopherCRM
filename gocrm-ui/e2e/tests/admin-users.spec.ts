@@ -167,13 +167,14 @@ test.describe('Admin - Users Management', () => {
     expect(page.url()).not.toContain('/new');
   });
 
-  test('admin can create users with different roles', async () => {
-    const roles = ['sales', 'support', 'customer'];
-
-    for (const role of roles) {
+  // Each role gets its own test budget, including the admin login. Combining
+  // three full browser flows exhausted the default timeout on slower CI runs.
+  for (const role of ['sales', 'support', 'customer'] as const) {
+    test(`admin can create a ${role} user`, async ({ page }) => {
+      const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
       const userData = {
         ...generateUserData(),
-        firstName: `${role.charAt(0).toUpperCase() + role.slice(1)}User`,
+        firstName: `${roleLabel}User`,
         role
       };
 
@@ -183,13 +184,18 @@ test.describe('Admin - Users Management', () => {
         ...userData,
         confirmPassword: userData.password
       });
-      await usersPage.saveUser();
-    }
+      const response = await usersPage.saveAndWaitForResponse();
+      expect(response.status()).toBe(201);
+      expect((await response.json()).data).toMatchObject({ email: userData.email, role });
+      await expect(page).toHaveURL(/\/users$/);
 
-    await usersPage.goto();
-    const userCount = await usersPage.getUserCount();
-    expect(userCount).toBeGreaterThanOrEqual(roles.length);
-  });
+      await usersPage.searchUsers(userData.email);
+      const ownRow = usersPage.tableRows.filter({ hasText: userData.email });
+      await expect(ownRow).toHaveCount(1);
+      await expect(ownRow.getByRole('cell', { name: userData.email, exact: true })).toBeVisible();
+      await expect(ownRow.getByRole('cell', { name: roleLabel, exact: true })).toBeVisible();
+    });
+  }
 
   test('admin can handle duplicate email validation', async ({ page }) => {
     const userData = generateUserData();

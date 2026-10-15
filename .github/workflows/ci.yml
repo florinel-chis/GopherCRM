@@ -22,7 +22,7 @@ concurrency:
 jobs:
   hygiene:
     name: Repository hygiene
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Size guard and e2e runner self-test
@@ -30,7 +30,7 @@ jobs:
 
   backend:
     name: Backend (build, vet, test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -43,7 +43,7 @@ jobs:
 
   frontend:
     name: Frontend (build, lint, test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -61,7 +61,7 @@ jobs:
     # The MySQL and MariaDB legs are required checks, so nothing reaches main
     # (and the automated deploy) without passing on production's own engine.
     name: E2E (Playwright on ${{ matrix.db.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false

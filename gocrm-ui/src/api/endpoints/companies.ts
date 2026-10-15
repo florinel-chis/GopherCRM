@@ -1,6 +1,13 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
-import type { Company, CompanyEmployeeRange, Customer, Lead } from '@/types';
+import type {
+  BackendCustomer,
+  BackendLead,
+  Company,
+  CompanyEmployeeRange,
+  Customer,
+  Lead,
+} from '@/types';
 import { transformCustomerFromBackend } from './customers';
 import { transformLeadFromBackend } from './leads';
 
@@ -94,9 +101,9 @@ export const companiesApi = {
     id: number,
     params?: SubResourceParams
   ): Promise<CompanyCustomersResult> => {
-    const response = (await api.get<unknown[]>(`/companies/${id}/customers`, {
+    const response = (await api.get<BackendCustomer[]>(`/companies/${id}/customers`, {
       params,
-    })) as ApiResponseWithMeta<unknown[]>;
+    })) as ApiResponseWithMeta<BackendCustomer[]>;
     const rows = Array.isArray(response.data) ? response.data : [];
     const customers = rows.map(transformCustomerFromBackend);
     return { customers, total: response.meta?.total ?? customers.length };
@@ -104,9 +111,9 @@ export const companiesApi = {
 
   // Admin and sales only (support gets 403); sales sees the leads it owns.
   getCompanyLeads: async (id: number, params?: SubResourceParams): Promise<CompanyLeadsResult> => {
-    const response = (await api.get<unknown[]>(`/companies/${id}/leads`, {
+    const response = (await api.get<BackendLead[]>(`/companies/${id}/leads`, {
       params,
-    })) as ApiResponseWithMeta<unknown[]>;
+    })) as ApiResponseWithMeta<BackendLead[]>;
     const rows = Array.isArray(response.data) ? response.data : [];
     const leads = rows.map(transformLeadFromBackend);
     return { leads, total: response.meta?.total ?? leads.length };

@@ -33,7 +33,8 @@ export interface Column<T> {
   label: string;
   minWidth?: number;
   align?: 'left' | 'right' | 'center';
-  format?: (value: any, row: T) => React.ReactNode;
+  // Method syntax keeps callbacks for a specific cell type assignable.
+  format?(value: T[keyof T], row: T): React.ReactNode;
   sortable?: boolean;
   filterable?: boolean;
 }
@@ -76,7 +77,7 @@ export interface DataTableProps<T> {
 type Order = 'asc' | 'desc';
 
 
-const DataTableHead = React.memo(function DataTableHead<T>({
+function DataTableHeadComponent<T>({
   columns,
   order,
   orderBy,
@@ -141,7 +142,9 @@ const DataTableHead = React.memo(function DataTableHead<T>({
       </TableRow>
     </TableHead>
   );
-}) as (props: any) => React.ReactElement;
+}
+
+const DataTableHead = React.memo(DataTableHeadComponent) as typeof DataTableHeadComponent;
 
 const DataTableToolbar = React.memo(function DataTableToolbar({
   numSelected,

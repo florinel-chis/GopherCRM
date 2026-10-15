@@ -1,3 +1,4 @@
+import { getAPIError } from '@/utils/apiError';
 import React, { useState } from 'react';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
@@ -63,8 +64,8 @@ export const Login: React.FC = () => {
       setError(null);
       await login(data);
       navigate(from, { replace: true });
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Invalid email or password');
+    } catch (err) {
+      setError(getAPIError(err)?.message || 'Invalid email or password');
     }
   };
 
