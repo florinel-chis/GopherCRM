@@ -77,7 +77,7 @@ describe('FormList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (formsApi.list as any).mockResolvedValue({ forms, total: 2 });
+    vi.mocked(formsApi.list).mockResolvedValue({ forms, total: 2 });
   });
 
   afterEach(() => {
@@ -85,7 +85,7 @@ describe('FormList', () => {
   });
 
   it('shows the loading state while the first page is fetched', () => {
-    (formsApi.list as any).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(formsApi.list).mockImplementation(() => new Promise(() => {}));
 
     render(<FormList />);
 
@@ -145,7 +145,7 @@ describe('FormList', () => {
   });
 
   it('deletes a form after the confirmation dialog', async () => {
-    (formsApi.delete as any).mockResolvedValue(undefined);
+    vi.mocked(formsApi.delete).mockResolvedValue(undefined);
 
     render(<FormList />);
 

@@ -1,32 +1,14 @@
-import React, { createContext, useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User, LoginRequest, RegisterRequest } from '@/types';
 import { authApi } from '@/api/endpoints';
 import { apiClient } from '@/api/client';
-
-interface AuthContextType {
-  user: User | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  login: (data: LoginRequest) => Promise<void>;
-  register: (data: RegisterRequest) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshUser: () => Promise<void>;
-}
-
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+import { AuthContext, type AuthContextType } from './auth-context';
+import { getHTTPStatus } from '@/utils/apiError';
 
 interface AuthProviderProps {
   children: ReactNode;
 }
-
-export const useAuth = () => {
-  const context = React.useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -42,10 +24,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const userData = await authApi.getCurrentUser();
       setUser(userData);
-    } catch (error: any) {
+    } catch (error) {
       // Only clear tokens on auth errors (401). Other errors (429 rate limit,
       // network issues) should not log the user out.
-      const status = error?.response?.status;
+      const status = getHTTPStatus(error);
       if (status === 401 || status === 403) {
         apiClient.clearTokens();
       }

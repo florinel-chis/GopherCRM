@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@/test/test-utils';
+import { render, screen, waitFor, requireElement } from '@/test/test-utils';
 import { Component as TicketForm } from './TicketForm';
 import { ticketsApi, customersApi, usersApi } from '@/api/endpoints';
 import { createMockTicket, createMockCustomer, createMockUser } from '@/test/factories';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
+import type { Ticket } from '@/types';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -51,11 +52,11 @@ describe('TicketForm', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (useParams as any).mockReturnValue({});
-    (useSearchParams as any).mockReturnValue([new URLSearchParams(), vi.fn()]);
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({});
+    vi.mocked(useSearchParams).mockReturnValue([new URLSearchParams(), vi.fn()]);
     
-    (customersApi.getCustomers as any).mockResolvedValue({
+    vi.mocked(customersApi.getCustomers).mockResolvedValue({
       data: mockCustomers,
       total: 3,
       page: 1,
@@ -63,7 +64,7 @@ describe('TicketForm', () => {
       total_pages: 1,
     });
     
-    (usersApi.getUsers as any).mockResolvedValue({
+    vi.mocked(usersApi.getUsers).mockResolvedValue({
       data: mockSupportAgents,
       total: 2,
       page: 1,
@@ -109,7 +110,7 @@ describe('TicketForm', () => {
 
     it('creates ticket with valid data', async () => {
       const user = userEvent.setup();
-      (ticketsApi.createTicket as any).mockResolvedValue(
+      vi.mocked(ticketsApi.createTicket).mockResolvedValue(
         createMockTicket({ id: 1, subject: 'New ticket' })
       );
 
@@ -152,7 +153,7 @@ describe('TicketForm', () => {
 
     it('assigns ticket to support agent', async () => {
       const user = userEvent.setup();
-      (ticketsApi.createTicket as any).mockResolvedValue(
+      vi.mocked(ticketsApi.createTicket).mockResolvedValue(
         createMockTicket({ id: 1, subject: 'New ticket' })
       );
 
@@ -190,7 +191,7 @@ describe('TicketForm', () => {
     });
 
     it('pre-selects customer when provided in URL', async () => {
-      (useSearchParams as any).mockReturnValue([
+      vi.mocked(useSearchParams).mockReturnValue([
         new URLSearchParams('customer_id=2'),
         vi.fn(),
       ]);
@@ -233,8 +234,8 @@ describe('TicketForm', () => {
     });
 
     beforeEach(() => {
-      (useParams as any).mockReturnValue({ id: '1' });
-      (ticketsApi.getTicket as any).mockResolvedValue(mockTicket);
+      vi.mocked(useParams).mockReturnValue({ id: '1' });
+      vi.mocked(ticketsApi.getTicket).mockResolvedValue(mockTicket);
     });
 
     it('renders edit form with existing data', async () => {
@@ -253,7 +254,7 @@ describe('TicketForm', () => {
 
     it('updates ticket with changed data', async () => {
       const user = userEvent.setup();
-      (ticketsApi.updateTicket as any).mockResolvedValue(mockTicket);
+      vi.mocked(ticketsApi.updateTicket).mockResolvedValue(mockTicket);
 
       render(<TicketForm />);
 
@@ -289,7 +290,7 @@ describe('TicketForm', () => {
     });
 
     it('shows loading state while fetching ticket', () => {
-      (ticketsApi.getTicket as any).mockImplementation(() => new Promise(() => {}));
+      vi.mocked(ticketsApi.getTicket).mockImplementation(() => new Promise(() => {}));
       
       render(<TicketForm />);
 
@@ -298,7 +299,7 @@ describe('TicketForm', () => {
 
     it('changes assigned agent', async () => {
       const user = userEvent.setup();
-      (ticketsApi.updateTicket as any).mockResolvedValue(mockTicket);
+      vi.mocked(ticketsApi.updateTicket).mockResolvedValue(mockTicket);
 
       render(<TicketForm />);
 
@@ -331,7 +332,7 @@ describe('TicketForm', () => {
 
     it('unassigns ticket by clearing agent', async () => {
       const user = userEvent.setup();
-      (ticketsApi.updateTicket as any).mockResolvedValue(mockTicket);
+      vi.mocked(ticketsApi.updateTicket).mockResolvedValue(mockTicket);
 
       render(<TicketForm />);
 
@@ -343,7 +344,7 @@ describe('TicketForm', () => {
       const agentAutocomplete = screen.getByLabelText(/assign to support agent/i);
       const clearButton = agentAutocomplete.parentElement?.querySelector('[title="Clear"]');
       expect(clearButton).toBeInTheDocument();
-      await user.click(clearButton!);
+      await user.click(requireElement(clearButton));
       
       // Submit form
       const submitButton = screen.getByRole('button', { name: /update ticket/i });
@@ -422,7 +423,7 @@ describe('TicketForm', () => {
   describe('API Error Handling', () => {
     it('handles create ticket API error', async () => {
       const user = userEvent.setup();
-      (ticketsApi.createTicket as any).mockRejectedValue(new Error('API Error'));
+      vi.mocked(ticketsApi.createTicket).mockRejectedValue(new Error('API Error'));
 
       render(<TicketForm />);
 
@@ -453,11 +454,11 @@ describe('TicketForm', () => {
 
     it('handles update ticket API error', async () => {
       const user = userEvent.setup();
-      (useParams as any).mockReturnValue({ id: '1' });
-      (ticketsApi.getTicket as any).mockResolvedValue(
+      vi.mocked(useParams).mockReturnValue({ id: '1' });
+      vi.mocked(ticketsApi.getTicket).mockResolvedValue(
         createMockTicket({ id: 1, subject: 'Test ticket' })
       );
-      (ticketsApi.updateTicket as any).mockRejectedValue(new Error('API Error'));
+      vi.mocked(ticketsApi.updateTicket).mockRejectedValue(new Error('API Error'));
 
       render(<TicketForm />);
 
@@ -485,9 +486,14 @@ describe('TicketForm', () => {
   describe('Form Interactions', () => {
     it('disables submit button while processing', async () => {
       const user = userEvent.setup();
-      let resolveCreate: any;
-      (ticketsApi.createTicket as any).mockImplementation(
-        () => new Promise((resolve) => { resolveCreate = resolve; })
+      let resolveCreate: (ticket: Ticket) => void = () => {
+        throw new Error('The create request did not start');
+      };
+      vi.mocked(ticketsApi.createTicket).mockImplementation(
+        () =>
+          new Promise<Ticket>((resolve) => {
+            resolveCreate = resolve;
+          })
       );
 
       render(<TicketForm />);
@@ -551,8 +557,8 @@ describe('TicketForm', () => {
 
     it('allows selecting all status values in edit mode', async () => {
       const user = userEvent.setup();
-      (useParams as any).mockReturnValue({ id: '1' });
-      (ticketsApi.getTicket as any).mockResolvedValue(
+      vi.mocked(useParams).mockReturnValue({ id: '1' });
+      vi.mocked(ticketsApi.getTicket).mockResolvedValue(
         createMockTicket({ id: 1, status: 'open' })
       );
 

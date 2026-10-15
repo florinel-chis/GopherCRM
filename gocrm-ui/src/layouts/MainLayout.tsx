@@ -49,13 +49,14 @@ import { useAuth } from '@/hooks/useAuth';
 
 const drawerWidth = 280;
 
-interface NavItem {
+interface NavEntry {
   title: string;
-  path?: string;
   icon: React.ReactNode;
-  children?: NavItem[];
   roles?: string[];
 }
+
+type NavLink = NavEntry & { path: string; children?: undefined };
+type NavItem = NavLink | (NavEntry & { children: NavLink[]; path?: undefined });
 
 const navItems: NavItem[] = [
   {
@@ -243,7 +244,7 @@ export const MainLayout: React.FC = () => {
                           key={child.title}
                           sx={{ pl: 4 }}
                           onClick={() => {
-                            navigate(child.path!);
+                            navigate(child.path);
                             setMobileOpen(false);
                           }}
                         >
@@ -262,7 +263,7 @@ export const MainLayout: React.FC = () => {
             <ListItem key={item.title} disablePadding>
               <ListItemButton
                 onClick={() => {
-                  navigate(item.path!);
+                  navigate(item.path);
                   setMobileOpen(false);
                 }}
               >

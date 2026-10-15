@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, requireElement } from '@/test/test-utils';
 import { useNavigate } from 'react-router-dom';
 import { Component as TaskList } from './TaskList';
 import { labelsApi, tasksApi } from '@/api/endpoints';
@@ -37,9 +37,9 @@ describe('TaskList label filter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (labelsApi.getLabels as any).mockResolvedValue([onboarding]);
-    (tasksApi.getTasks as any).mockResolvedValue({
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(labelsApi.getLabels).mockResolvedValue([onboarding]);
+    vi.mocked(tasksApi.getTasks).mockResolvedValue({
       data: mockTasks,
       total: mockTasks.length,
       page: 1,
@@ -49,7 +49,7 @@ describe('TaskList label filter', () => {
   });
 
   const lastFilters = () => {
-    const calls = (tasksApi.getTasks as any).mock.calls;
+    const calls = vi.mocked(tasksApi.getTasks).mock.calls;
     return calls[calls.length - 1][0];
   };
 
@@ -100,7 +100,7 @@ describe('TaskList label filter', () => {
 
     // Clearing the filter through the "Filtered by" chip hands search back.
     const activeFilter = screen.getByTestId('active-label-filter');
-    fireEvent.click(activeFilter.querySelector('.MuiChip-deleteIcon')!);
+    fireEvent.click(requireElement(activeFilter.querySelector('.MuiChip-deleteIcon')));
 
     await waitFor(() => {
       expect(searchBox()).not.toBeDisabled();

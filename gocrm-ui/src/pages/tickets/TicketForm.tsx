@@ -19,7 +19,7 @@ import { FormTextField, FormSelect } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi, customersApi, usersApi, type CreateTicketData, type UpdateTicketData } from '@/api/endpoints';
-import type { Customer, User } from '@/types';
+import type { BackendCustomer, Customer, User } from '@/types';
 
 const ticketSchema = z.object({
   subject: z.string().min(1, 'Subject is required'),
@@ -55,7 +55,7 @@ export const Component: React.FC = () => {
   const isEditMode = !!id;
   
   const preselectedCustomerId = searchParams.get('customer_id');
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | BackendCustomer | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<User | null>(null);
 
   const methods = useForm<TicketFormData>({
@@ -204,14 +204,16 @@ export const Component: React.FC = () => {
 
               <Typography variant="h6">Assignment</Typography>
 
-              <Autocomplete
+              <Autocomplete<Customer | BackendCustomer>
                 value={selectedCustomer}
                 onChange={(_, newValue) => {
                   setSelectedCustomer(newValue);
                   methods.setValue('customer_id', newValue?.id || 0);
                 }}
                 options={customers}
-                getOptionLabel={(option) => option.company_name}
+                getOptionLabel={(option) =>
+                  'company_name' in option ? option.company_name : option.company
+                }
                 renderInput={(params) => (
                   <MuiTextField
                     {...params}

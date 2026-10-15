@@ -1,3 +1,4 @@
+import { getAPIError } from '@/utils/apiError';
 import React, { useState } from 'react';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
@@ -76,8 +77,8 @@ export const Register: React.FC = () => {
       };
       await registerUser(registerData);
       navigate('/');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+    } catch (err) {
+      setError(getAPIError(err)?.message || 'Registration failed. Please try again.');
     }
   };
 

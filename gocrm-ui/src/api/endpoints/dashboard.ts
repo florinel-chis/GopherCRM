@@ -14,7 +14,7 @@ export interface Activity {
     last_name: string;
   };
   created_at: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChartData {

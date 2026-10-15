@@ -1,7 +1,16 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
 import { DEAL_STAGES } from '@/types';
-import type { Deal, DealPipeline, DealStage, DealStageChange, PipelineStage, PipelineTotals } from '@/types';
+import type {
+  BackendCustomer,
+  BackendLead,
+  Deal,
+  DealPipeline,
+  DealStage,
+  DealStageChange,
+  PipelineStage,
+  PipelineTotals,
+} from '@/types';
 import { transformCustomerFromBackend } from './customers';
 import { transformLeadFromBackend } from './leads';
 
@@ -83,8 +92,8 @@ type RawDeal = Omit<
   Deal,
   'customer' | 'lead' | 'expected_close_date' | 'closed_at' | 'lost_reason' | 'source' | 'notes'
 > & {
-  customer?: unknown;
-  lead?: unknown;
+  customer?: BackendCustomer;
+  lead?: BackendLead;
   expected_close_date?: string | null;
   closed_at?: string | null;
   lost_reason?: string;

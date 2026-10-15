@@ -23,8 +23,13 @@ export interface UpdateUserData {
   is_active?: boolean;
 }
 
+interface UsersResponse {
+  users: User[];
+  total: number;
+}
+
 // Helper function to transform backend user to frontend format
-const transformUserFromBackend = (backendUser: any): User => {
+const transformUserFromBackend = (backendUser: User): User => {
   return {
     ...backendUser,
     // Ensure last_login_at is included if available
@@ -34,12 +39,13 @@ const transformUserFromBackend = (backendUser: any): User => {
 
 export const usersApi = {
   getUsers: async (filters?: UserFilters): Promise<PaginatedResponse<User>> => {
-    const response = await api.get<any>('/users', { params: filters });
+    const response = await api.get<User[] | UsersResponse | null>('/users', { params: filters });
     // User handler incorrectly returns just the array at data level
     // We need to check if it's wrapped or not
-    const isWrapped = response.data && !Array.isArray(response.data);
-    const users = isWrapped ? (response.data.users || []) : (response.data || []);
-    const total = isWrapped ? response.data.total : users.length;
+    const data = response.data;
+    const isWrapped = data && !Array.isArray(data);
+    const users = isWrapped ? (data.users || []) : (data || []);
+    const total = isWrapped ? data.total : users.length;
     
     return {
       data: users.map(transformUserFromBackend),
@@ -51,17 +57,17 @@ export const usersApi = {
   },
 
   getUser: async (id: number): Promise<User> => {
-    const response = await api.get<any>(`/users/${id}`);
+    const response = await api.get<User>(`/users/${id}`);
     return transformUserFromBackend(response.data);
   },
 
   createUser: async (data: CreateUserData): Promise<User> => {
-    const response = await api.post<any>('/users', data);
+    const response = await api.post<User>('/users', data);
     return transformUserFromBackend(response.data);
   },
 
   updateUser: async (id: number, data: UpdateUserData): Promise<User> => {
-    const response = await api.put<any>(`/users/${id}`, data);
+    const response = await api.put<User>(`/users/${id}`, data);
     return transformUserFromBackend(response.data);
   },
 

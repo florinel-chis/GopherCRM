@@ -46,15 +46,6 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => authValue(),
 }));
 
-// UserList imports useAuth from the context module directly.
-vi.mock('@/contexts/AuthContext', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/contexts/AuthContext')>();
-  return {
-    ...actual,
-    useAuth: () => authValue(),
-  };
-});
-
 vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({
     showSuccess: vi.fn(),

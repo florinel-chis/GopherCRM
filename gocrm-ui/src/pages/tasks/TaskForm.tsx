@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useForm, FormProvider } from 'react-hook-form';
+import { useForm, FormProvider, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -204,7 +204,7 @@ export const Component: React.FC = () => {
         description: task.description || '',
         status: task.status,
         priority: task.priority,
-        due_date: new Date(task.due_date),
+        due_date: task.due_date ? new Date(task.due_date) : undefined,
         assigned_to: task.assigned_to,
         label_ids: (task.labels || []).map((label) => label.id),
       });
@@ -249,11 +249,11 @@ export const Component: React.FC = () => {
     if (isEditMode) {
       updateMutation.mutate({ id: Number(id), data: submitData });
     } else {
-      createMutation.mutate(submitData as CreateTaskData);
+      createMutation.mutate(submitData);
     }
   };
 
-  const onError = (errors: any) => {
+  const onError = (errors: FieldErrors<TaskFormData>) => {
     console.error('Form validation errors:', errors);
   };
 

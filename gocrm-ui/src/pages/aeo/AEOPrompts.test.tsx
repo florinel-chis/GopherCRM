@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
-import { Component as AEOPrompts, segmentMentions } from './AEOPrompts';
-import { aeoApi } from '@/api/endpoints/aeo';
+import { Component as AEOPrompts } from './AEOPrompts';
+import { segmentMentions } from './mentions';
+import {
+  aeoApi,
+  type AEOAnswer,
+  type AEOProfile,
+  type AEOPrompt,
+  type AEORun,
+} from '@/api/endpoints/aeo';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 
@@ -42,7 +49,7 @@ const authState = (user: User) => ({
   refreshUser: vi.fn(),
 });
 
-const prompts = [
+const prompts: AEOPrompt[] = [
   {
     id: 1,
     text: 'Which CRM would you recommend?',
@@ -64,7 +71,7 @@ const prompts = [
   },
 ];
 
-const profile = {
+const profile: AEOProfile = {
   id: 1,
   brand_name: 'Acme',
   description: '',
@@ -73,7 +80,7 @@ const profile = {
   competitors: [],
 };
 
-const answers = [
+const answers: AEOAnswer[] = [
   {
     id: 11,
     run_id: 5,
@@ -109,7 +116,7 @@ const answers = [
   },
 ];
 
-const runs = [
+const runs: AEORun[] = [
   {
     id: 5,
     trigger: 'scheduled' as const,
@@ -128,8 +135,8 @@ const axiosErrorWithStatus = (status: number, message?: string): AxiosError => {
     statusText: '',
     data: message ? { message } : {},
     headers: {},
-    config: { headers: {} as never },
-  } as never;
+    config: { headers: new AxiosHeaders() },
+  };
   return error;
 };
 
@@ -165,10 +172,10 @@ describe('AEOPrompts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (aeoApi.getPrompts as any).mockResolvedValue(prompts);
-    (aeoApi.getProfile as any).mockResolvedValue(profile);
-    (aeoApi.getRuns as any).mockResolvedValue(runs);
-    (aeoApi.getPromptAnswers as any).mockResolvedValue(answers);
+    vi.mocked(aeoApi.getPrompts).mockResolvedValue(prompts);
+    vi.mocked(aeoApi.getProfile).mockResolvedValue(profile);
+    vi.mocked(aeoApi.getRuns).mockResolvedValue(runs);
+    vi.mocked(aeoApi.getPromptAnswers).mockResolvedValue(answers);
   });
 
   afterEach(() => {
@@ -176,7 +183,7 @@ describe('AEOPrompts', () => {
   });
 
   it('shows the loading state while prompts are fetched', () => {
-    (aeoApi.getPrompts as any).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(aeoApi.getPrompts).mockImplementation(() => new Promise(() => {}));
 
     render(<AEOPrompts />);
 
@@ -184,7 +191,7 @@ describe('AEOPrompts', () => {
   });
 
   it('renders an error alert when the prompt list fails', async () => {
-    (aeoApi.getPrompts as any).mockRejectedValue(new Error('boom'));
+    vi.mocked(aeoApi.getPrompts).mockRejectedValue(new Error('boom'));
 
     render(<AEOPrompts />);
 
@@ -192,7 +199,7 @@ describe('AEOPrompts', () => {
   });
 
   it('renders an empty state when nothing is tracked yet', async () => {
-    (aeoApi.getPrompts as any).mockResolvedValue([]);
+    vi.mocked(aeoApi.getPrompts).mockResolvedValue([]);
 
     render(<AEOPrompts />);
 
@@ -206,7 +213,7 @@ describe('AEOPrompts', () => {
       expect(aeoApi.getPrompts).toHaveBeenCalledWith({ days: 30 });
     });
 
-    const row = (await screen.findByText('Which CRM would you recommend?')).closest('tr')!;
+    const row = await screen.findByRole('row', { name: /Which CRM would you recommend/ });
     expect(within(row).getByText('42.5%')).toBeInTheDocument();
     expect(within(row).getByText('8')).toBeInTheDocument();
     expect(within(row).getByText('3')).toBeInTheDocument();
@@ -255,12 +262,18 @@ describe('AEOPrompts', () => {
     expect(marks).toHaveLength(1);
     expect(marks[0]).toHaveTextContent('Acme');
     expect(screen.getByTestId('answer-transcript')).toHaveTextContent(
-      'Acme is a solid CRM, while Acmerica is unrelated.'
+      'Acme is a solid CRM, while Acmerica is unrelated.',
     );
   });
 
   it('runs a single prompt from the drawer', async () => {
-    (aeoApi.runPrompt as any).mockResolvedValue({ id: 42, status: 'running' });
+    vi.mocked(aeoApi.runPrompt).mockResolvedValue({
+      ...runs[0],
+      id: 42,
+      trigger: 'manual',
+      status: 'running',
+      completed_at: undefined,
+    });
     render(<AEOPrompts />);
 
     await openDrawer();
@@ -293,7 +306,7 @@ describe('AEOPrompts', () => {
   });
 
   it('adds a batch of prompts, one per line', async () => {
-    (aeoApi.createPrompts as any).mockResolvedValue([prompts[0]]);
+    vi.mocked(aeoApi.createPrompts).mockResolvedValue([prompts[0]]);
 
     render(<AEOPrompts />);
 
@@ -306,16 +319,13 @@ describe('AEOPrompts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => {
-      expect(aeoApi.createPrompts).toHaveBeenCalledWith([
-        'First question?',
-        'Second question?',
-      ]);
+      expect(aeoApi.createPrompts).toHaveBeenCalledWith(['First question?', 'Second question?']);
     });
   });
 
   it('surfaces the 409 when a prompt text already exists', async () => {
-    (aeoApi.createPrompts as any).mockRejectedValue(
-      axiosErrorWithStatus(409, 'a prompt with this text already exists')
+    vi.mocked(aeoApi.createPrompts).mockRejectedValue(
+      axiosErrorWithStatus(409, 'a prompt with this text already exists'),
     );
 
     render(<AEOPrompts />);
@@ -335,8 +345,8 @@ describe('AEOPrompts', () => {
 
   // The active-prompt cap comes back as a 400 with the server's own wording.
   it('shows the server message when the active-prompt cap is hit', async () => {
-    (aeoApi.createPrompts as any).mockRejectedValue(
-      axiosErrorWithStatus(400, 'active prompt limit of 100 reached')
+    vi.mocked(aeoApi.createPrompts).mockRejectedValue(
+      axiosErrorWithStatus(400, 'active prompt limit of 100 reached'),
     );
 
     render(<AEOPrompts />);
@@ -367,8 +377,8 @@ describe('AEOPrompts', () => {
   });
 
   it('saves the suggestions selected in the generate dialog', async () => {
-    (aeoApi.generatePrompts as any).mockResolvedValue(['Generated one?', 'Generated two?']);
-    (aeoApi.createPrompts as any).mockResolvedValue([prompts[0]]);
+    vi.mocked(aeoApi.generatePrompts).mockResolvedValue(['Generated one?', 'Generated two?']);
+    vi.mocked(aeoApi.createPrompts).mockResolvedValue([prompts[0]]);
 
     render(<AEOPrompts />);
 
@@ -388,7 +398,7 @@ describe('AEOPrompts', () => {
   });
 
   it('reports a 503 from the generator as an unconfigured server', async () => {
-    (aeoApi.generatePrompts as any).mockRejectedValue(axiosErrorWithStatus(503));
+    vi.mocked(aeoApi.generatePrompts).mockRejectedValue(axiosErrorWithStatus(503));
 
     render(<AEOPrompts />);
 
@@ -397,14 +407,12 @@ describe('AEOPrompts', () => {
     fireEvent.click(await screen.findByRole('button', { name: /generate suggestions/i }));
 
     await waitFor(() => {
-      expect(showError).toHaveBeenCalledWith(
-        'Prompt generation is not configured on the server'
-      );
+      expect(showError).toHaveBeenCalledWith('Prompt generation is not configured on the server');
     });
   });
 
   it('toggles a prompt active flag from the table', async () => {
-    (aeoApi.updatePrompt as any).mockResolvedValue({ ...prompts[1], is_active: true });
+    vi.mocked(aeoApi.updatePrompt).mockResolvedValue({ ...prompts[1], is_active: true });
 
     render(<AEOPrompts />);
 
@@ -417,17 +425,16 @@ describe('AEOPrompts', () => {
   });
 
   it('edits the prompt text through the dialog', async () => {
-    (aeoApi.updatePrompt as any).mockResolvedValue({ ...prompts[0], text: 'Reworded?' });
+    vi.mocked(aeoApi.updatePrompt).mockResolvedValue({ ...prompts[0], text: 'Reworded?' });
 
     render(<AEOPrompts />);
 
     await screen.findByText('Which CRM would you recommend?');
-    fireEvent.click(screen.getAllByTestId('EditIcon')[0].closest('button')!);
+    const row = screen.getByRole('row', { name: /Which CRM would you recommend/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit prompt' }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/^Prompt text/)).toHaveValue(
-        'Which CRM would you recommend?'
-      );
+      expect(screen.getByLabelText(/^Prompt text/)).toHaveValue('Which CRM would you recommend?');
     });
 
     fireEvent.change(screen.getByLabelText(/^Prompt text/), { target: { value: 'Reworded?' } });
@@ -439,15 +446,16 @@ describe('AEOPrompts', () => {
   });
 
   it('deletes a prompt after confirmation', async () => {
-    (aeoApi.deletePrompt as any).mockResolvedValue(undefined);
+    vi.mocked(aeoApi.deletePrompt).mockResolvedValue(undefined);
 
     render(<AEOPrompts />);
 
     await screen.findByText('Which CRM would you recommend?');
-    fireEvent.click(screen.getAllByTestId('DeleteIcon')[0].closest('button')!);
+    const row = screen.getByRole('row', { name: /Which CRM would you recommend/ });
+    fireEvent.click(within(row).getByRole('button', { name: 'Delete prompt' }));
 
     expect(
-      await screen.findByText(/Answers already collected for it stay in the run history/)
+      await screen.findByText(/Answers already collected for it stay in the run history/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
@@ -481,8 +489,8 @@ describe('AEOPrompts', () => {
     expect(screen.queryByTestId('DeleteIcon')).not.toBeInTheDocument();
     // The active flag becomes a plain chip rather than a switch.
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    const activeRow = screen.getByText('Which CRM would you recommend?').closest('tr')!;
-    const pausedRow = screen.getByText('Best CRM for small teams?').closest('tr')!;
+    const activeRow = screen.getByRole('row', { name: /Which CRM would you recommend/ });
+    const pausedRow = screen.getByRole('row', { name: /Best CRM for small teams/ });
     expect(within(activeRow).getByText('Active')).toBeInTheDocument();
     expect(within(pausedRow).getByText('Paused')).toBeInTheDocument();
   });

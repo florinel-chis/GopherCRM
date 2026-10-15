@@ -244,7 +244,7 @@ export const Component: React.FC = () => {
       // `assigned_to_id`, which orders by a foreign key rather than by the
       // assignee name this column renders; the raw id is rejected outright.
       sortable: false,
-      format: (value: any) => {
+      format: (value: Task['assignee']) => {
         if (value) {
           return `${value.first_name} ${value.last_name}`;
         }

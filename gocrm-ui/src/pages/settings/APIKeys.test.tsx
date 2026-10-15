@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import userEvent from '@testing-library/user-event';
-import { render, screen, waitFor, within } from '@/test/test-utils';
+import { render, screen, waitFor, within, requireElement } from '@/test/test-utils';
 import { Component as APIKeys } from './APIKeys';
 import { apiKeysApi } from '@/api/endpoints/apikeys';
 import type { APIKey } from '@/types';
@@ -54,7 +54,7 @@ const listing = (keys: APIKey[]) => ({
 describe('APIKeys', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (apiKeysApi.getAPIKeys as any).mockResolvedValue(listing([activeKey, revokedKey]));
+    vi.mocked(apiKeysApi.getAPIKeys).mockResolvedValue(listing([activeKey, revokedKey]));
   });
 
   it('lists the caller own keys with status and dates', async () => {
@@ -66,12 +66,12 @@ describe('APIKeys', () => {
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('Inactive')).toBeInTheDocument();
     // A key that has never been used renders the em-dash fallback.
-    const revokedRow = screen.getByText('Old laptop').closest('tr')!;
+    const revokedRow = requireElement(screen.getByText('Old laptop').closest('tr'));
     expect(within(revokedRow).getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('reports a failed list request instead of claiming the account has no keys', async () => {
-    (apiKeysApi.getAPIKeys as any).mockRejectedValue({
+    vi.mocked(apiKeysApi.getAPIKeys).mockRejectedValue({
       response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
     });
 
@@ -82,7 +82,7 @@ describe('APIKeys', () => {
   });
 
   it('falls back to a generic message when a failed list carries no server message', async () => {
-    (apiKeysApi.getAPIKeys as any).mockRejectedValue(new Error('Network Error'));
+    vi.mocked(apiKeysApi.getAPIKeys).mockRejectedValue(new Error('Network Error'));
 
     render(<APIKeys />);
 
@@ -92,7 +92,7 @@ describe('APIKeys', () => {
 
   it('shows the plaintext key exactly once after creation and refreshes the list', async () => {
     const user = userEvent.setup();
-    (apiKeysApi.createAPIKey as any).mockResolvedValue({
+    vi.mocked(apiKeysApi.createAPIKey).mockResolvedValue({
       ...activeKey,
       id: 3,
       name: 'Zapier sync',
@@ -117,7 +117,7 @@ describe('APIKeys', () => {
     expect(revealed).toHaveValue('gcrm_plaintext_key_value');
     expect(screen.getByText(/never be shown again/i)).toBeInTheDocument();
 
-    (apiKeysApi.getAPIKeys as any).mockResolvedValue(
+    vi.mocked(apiKeysApi.getAPIKeys).mockResolvedValue(
       listing([activeKey, revokedKey, { ...activeKey, id: 3, name: 'Zapier sync' }])
     );
     await user.click(screen.getByRole('button', { name: /done/i }));
@@ -130,7 +130,7 @@ describe('APIKeys', () => {
 
   it('sends the chosen expiry as an end-of-day RFC3339 timestamp', async () => {
     const user = userEvent.setup();
-    (apiKeysApi.createAPIKey as any).mockResolvedValue({ ...activeKey, id: 4, key: 'k' });
+    vi.mocked(apiKeysApi.createAPIKey).mockResolvedValue({ ...activeKey, id: 4, key: 'k' });
 
     render(<APIKeys />);
     await screen.findByText('CI pipeline');
@@ -150,7 +150,7 @@ describe('APIKeys', () => {
 
   it('revokes a key after confirmation', async () => {
     const user = userEvent.setup();
-    (apiKeysApi.revokeAPIKey as any).mockResolvedValue(undefined);
+    vi.mocked(apiKeysApi.revokeAPIKey).mockResolvedValue(undefined);
 
     render(<APIKeys />);
     await screen.findByText('CI pipeline');

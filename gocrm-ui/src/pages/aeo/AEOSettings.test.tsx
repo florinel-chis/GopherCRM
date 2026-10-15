@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as AEOSettings } from './AEOSettings';
-import { aeoApi } from '@/api/endpoints/aeo';
+import { aeoApi, type AEOProfile, type AEOProviderStatus } from '@/api/endpoints/aeo';
 import { configurationsApi, type Configuration } from '@/api/endpoints/configurations';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
@@ -47,7 +47,7 @@ const authState = (user: User) => ({
   refreshUser: vi.fn(),
 });
 
-const profile = {
+const profile: AEOProfile = {
   id: 1,
   brand_name: 'Acme',
   description: 'CRM for gophers',
@@ -56,7 +56,7 @@ const profile = {
   competitors: [{ name: 'Globex', aliases: ['Globex Corp'], domain: 'globex.com' }],
 };
 
-const providers = [
+const providers: AEOProviderStatus[] = [
   { name: 'anthropic', model: 'claude-opus-5', configured: true },
   { name: 'openai', model: 'gpt-4o-mini', configured: false },
 ];
@@ -78,7 +78,7 @@ const sensitiveConfig = (key: string, isSet: boolean): Configuration => ({
   updated_at: '2026-08-12T00:00:00Z',
 });
 
-const integrationConfigs = [
+const integrationConfigs: Configuration[] = [
   sensitiveConfig('integration.aeo.anthropic_api_key', true),
   sensitiveConfig('integration.aeo.openai_api_key', false),
   sensitiveConfig('integration.aeo.gemini_api_key', false),
@@ -100,8 +100,8 @@ const axiosErrorWithStatus = (status: number, message?: string): AxiosError => {
     statusText: '',
     data: message ? { message } : {},
     headers: {},
-    config: { headers: {} as never },
-  } as never;
+    config: { headers: new AxiosHeaders() },
+  };
   return error;
 };
 
@@ -109,10 +109,10 @@ describe('AEOSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (aeoApi.getProfile as any).mockResolvedValue(profile);
-    (aeoApi.getProviders as any).mockResolvedValue(providers);
-    (configurationsApi.getByCategory as any).mockResolvedValue(integrationConfigs);
-    (configurationsApi.set as any).mockResolvedValue(
+    vi.mocked(aeoApi.getProfile).mockResolvedValue(profile);
+    vi.mocked(aeoApi.getProviders).mockResolvedValue(providers);
+    vi.mocked(configurationsApi.getByCategory).mockResolvedValue(integrationConfigs);
+    vi.mocked(configurationsApi.set).mockResolvedValue(
       sensitiveConfig('integration.aeo.anthropic_api_key', true),
     );
   });
@@ -122,7 +122,7 @@ describe('AEOSettings', () => {
   });
 
   it('shows the loading state while the profile is fetched', () => {
-    (aeoApi.getProfile as any).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(aeoApi.getProfile).mockImplementation(() => new Promise(() => {}));
 
     render(<AEOSettings />);
 
@@ -130,7 +130,7 @@ describe('AEOSettings', () => {
   });
 
   it('renders an error alert when the profile request fails', async () => {
-    (aeoApi.getProfile as any).mockRejectedValue(new Error('boom'));
+    vi.mocked(aeoApi.getProfile).mockRejectedValue(new Error('boom'));
 
     render(<AEOSettings />);
 
@@ -167,7 +167,7 @@ describe('AEOSettings', () => {
   });
 
   it('tells the operator when the profile has not been configured yet', async () => {
-    (aeoApi.getProfile as any).mockResolvedValue(null);
+    vi.mocked(aeoApi.getProfile).mockResolvedValue(null);
 
     render(<AEOSettings />);
 
@@ -176,7 +176,7 @@ describe('AEOSettings', () => {
   });
 
   it('reports an empty engine list as the no-data state', async () => {
-    (aeoApi.getProviders as any).mockResolvedValue([]);
+    vi.mocked(aeoApi.getProviders).mockResolvedValue([]);
 
     render(<AEOSettings />);
 
@@ -184,7 +184,7 @@ describe('AEOSettings', () => {
   });
 
   it('saves an added alias and a new competitor', async () => {
-    (aeoApi.saveProfile as any).mockResolvedValue(profile);
+    vi.mocked(aeoApi.saveProfile).mockResolvedValue(profile);
 
     render(<AEOSettings />);
 
@@ -229,7 +229,7 @@ describe('AEOSettings', () => {
   });
 
   it('drops a removed competitor from the payload', async () => {
-    (aeoApi.saveProfile as any).mockResolvedValue(profile);
+    vi.mocked(aeoApi.saveProfile).mockResolvedValue(profile);
 
     render(<AEOSettings />);
 
@@ -246,7 +246,14 @@ describe('AEOSettings', () => {
   });
 
   it('starts a run from the Run now button', async () => {
-    (aeoApi.createRun as any).mockResolvedValue({ id: 3, status: 'running' });
+    vi.mocked(aeoApi.createRun).mockResolvedValue({
+      id: 3,
+      trigger: 'manual',
+      status: 'running',
+      started_at: '2026-08-12T00:00:00Z',
+      total_queries: 0,
+      failed_queries: 0,
+    });
 
     render(<AEOSettings />);
 
@@ -267,7 +274,7 @@ describe('AEOSettings', () => {
   // 409 is the overlap guard (or a missing profile); the server wording is the
   // most useful thing to show.
   it('surfaces the 409 conflict when a run is already in progress', async () => {
-    (aeoApi.createRun as any).mockRejectedValue(
+    vi.mocked(aeoApi.createRun).mockRejectedValue(
       axiosErrorWithStatus(409, 'an AEO run is already in progress'),
     );
 
@@ -285,7 +292,7 @@ describe('AEOSettings', () => {
   });
 
   it('falls back to a generic conflict message when the server sends none', async () => {
-    (aeoApi.createRun as any).mockRejectedValue(axiosErrorWithStatus(409));
+    vi.mocked(aeoApi.createRun).mockRejectedValue(axiosErrorWithStatus(409));
 
     render(<AEOSettings />);
 
@@ -301,7 +308,7 @@ describe('AEOSettings', () => {
   });
 
   it('reports a 503 when no provider key is configured', async () => {
-    (aeoApi.createRun as any).mockRejectedValue(axiosErrorWithStatus(503));
+    vi.mocked(aeoApi.createRun).mockRejectedValue(axiosErrorWithStatus(503));
 
     render(<AEOSettings />);
 
@@ -499,11 +506,11 @@ describe('AEOSettings', () => {
       const input = await screen.findByLabelText(/^Gemini API key/);
       fireEvent.change(input, { target: { value: 'another-secret' } });
 
-      const callsBefore = (aeoApi.getProviders as any).mock.calls.length;
+      const callsBefore = vi.mocked(aeoApi.getProviders).mock.calls.length;
       fireEvent.click(screen.getByRole('button', { name: 'Save Gemini API key' }));
 
       await waitFor(() => {
-        expect((aeoApi.getProviders as any).mock.calls.length).toBeGreaterThan(callsBefore);
+        expect(vi.mocked(aeoApi.getProviders).mock.calls.length).toBeGreaterThan(callsBefore);
       });
       await waitFor(() => {
         expect(configurationsApi.getByCategory).toHaveBeenCalledTimes(2);
@@ -527,7 +534,7 @@ describe('AEOSettings', () => {
     });
 
     it('reports a failed save', async () => {
-      (configurationsApi.set as any).mockRejectedValue(new Error('nope'));
+      vi.mocked(configurationsApi.set).mockRejectedValue(new Error('nope'));
 
       render(<AEOSettings />);
 
@@ -541,7 +548,7 @@ describe('AEOSettings', () => {
     });
 
     it('surfaces a failed configuration load', async () => {
-      (configurationsApi.getByCategory as any).mockRejectedValue(new Error('boom'));
+      vi.mocked(configurationsApi.getByCategory).mockRejectedValue(new Error('boom'));
 
       render(<AEOSettings />);
 

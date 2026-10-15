@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, requireElement } from '@/test/test-utils';
 import { Component as TicketList } from './TicketList';
 import { ticketsApi } from '@/api/endpoints';
 import { createMockTicket, createMockCustomer, createMockUser } from '@/test/factories';
@@ -85,9 +85,9 @@ describe('TicketList', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (ticketsApi.getTickets as any).mockResolvedValue({
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({
       data: mockTickets,
       total: 4,
       page: 1,
@@ -109,7 +109,7 @@ describe('TicketList', () => {
   });
 
   it('shows loading state initially', () => {
-    (ticketsApi.getTickets as any).mockImplementation(() => new Promise(() => {})); // Never resolves
+    vi.mocked(ticketsApi.getTickets).mockImplementation(() => new Promise(() => {})); // Never resolves
     render(<TicketList />);
     expect(screen.getByTestId('loading')).toBeInTheDocument();
   });
@@ -201,7 +201,7 @@ describe('TicketList', () => {
     const statusFormControl = statusLabel?.closest('.MuiFormControl-root');
     const statusSelect = statusFormControl?.querySelector('[role="combobox"]');
     expect(statusSelect).toBeInTheDocument();
-    fireEvent.mouseDown(statusSelect!);
+    fireEvent.mouseDown(requireElement(statusSelect));
     
     // Wait for the dropdown menu to appear
     await waitFor(() => {
@@ -236,7 +236,7 @@ describe('TicketList', () => {
     const priorityFormControl = priorityLabel?.closest('.MuiFormControl-root');
     const prioritySelect = priorityFormControl?.querySelector('[role="combobox"]');
     expect(prioritySelect).toBeInTheDocument();
-    fireEvent.mouseDown(prioritySelect!);
+    fireEvent.mouseDown(requireElement(prioritySelect));
     
     // Wait for the dropdown menu to appear
     await waitFor(() => {
@@ -270,7 +270,7 @@ describe('TicketList', () => {
     );
     const statusFormControl = statusLabel?.closest('.MuiFormControl-root');
     const statusSelect = statusFormControl?.querySelector('[role="combobox"]');
-    fireEvent.mouseDown(statusSelect!);
+    fireEvent.mouseDown(requireElement(statusSelect));
     
     await waitFor(() => {
       const openOption = screen.getByRole('option', { name: 'Open' });
@@ -292,7 +292,7 @@ describe('TicketList', () => {
     );
     const statusFormControl2 = statusLabel2?.closest('.MuiFormControl-root');
     const statusSelect2 = statusFormControl2?.querySelector('[role="combobox"]');
-    fireEvent.mouseDown(statusSelect2!);
+    fireEvent.mouseDown(requireElement(statusSelect2));
     
     // Wait for dropdown to open with new options
     await waitFor(() => {
@@ -330,7 +330,7 @@ describe('TicketList', () => {
     await waitFor(() => {
       const row = screen.getByText('Login issue').closest('tr');
       expect(row).toBeInTheDocument();
-      fireEvent.click(row!);
+      fireEvent.click(requireElement(row));
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/tickets/1');
@@ -346,13 +346,13 @@ describe('TicketList', () => {
     // Find the edit button by its test id within the first data row
     const editButtons = screen.getAllByTestId('EditIcon');
     // Click the first edit button (for Login issue)
-    fireEvent.click(editButtons[0].closest('button')!);
+    fireEvent.click(requireElement(editButtons[0].closest('button')));
 
     expect(mockNavigate).toHaveBeenCalledWith('/tickets/1/edit');
   });
 
   it('handles ticket deletion', async () => {
-    (ticketsApi.deleteTicket as any).mockResolvedValue({});
+    vi.mocked(ticketsApi.deleteTicket).mockResolvedValue(undefined);
     
     render(<TicketList />);
 
@@ -363,7 +363,7 @@ describe('TicketList', () => {
     // Find the delete button by its test id within the first data row
     const deleteButtons = screen.getAllByTestId('DeleteIcon');
     // Click the first delete button (for Login issue)
-    fireEvent.click(deleteButtons[0].closest('button')!);
+    fireEvent.click(requireElement(deleteButtons[0].closest('button')));
 
     // Confirm deletion in the dialog
     await waitFor(() => {
@@ -385,7 +385,7 @@ describe('TicketList', () => {
     });
 
     const deleteButtons = screen.getAllByTestId('DeleteIcon');
-    fireEvent.click(deleteButtons[0].closest('button')!);
+    fireEvent.click(requireElement(deleteButtons[0].closest('button')));
 
     await waitFor(() => {
       const cancelButton = screen.getByRole('button', { name: 'Cancel' });
@@ -397,7 +397,7 @@ describe('TicketList', () => {
 
   it('handles pagination', async () => {
     // Update the mock to return more data to enable pagination
-    (ticketsApi.getTickets as any).mockResolvedValue({
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({
       data: mockTickets,
       total: 25, // More than one page worth
       page: 1,
@@ -487,7 +487,7 @@ describe('TicketList', () => {
     );
     const statusFormControl = statusLabel?.closest('.MuiFormControl-root');
     const statusSelect = statusFormControl?.querySelector('[role="combobox"]');
-    fireEvent.mouseDown(statusSelect!);
+    fireEvent.mouseDown(requireElement(statusSelect));
     await waitFor(() => {
       const openOption = screen.getByRole('option', { name: 'Open' });
       fireEvent.click(openOption);
@@ -514,7 +514,7 @@ describe('TicketList', () => {
     );
     const priorityFormControl = priorityLabel?.closest('.MuiFormControl-root');
     const prioritySelect = priorityFormControl?.querySelector('[role="combobox"]');
-    fireEvent.mouseDown(prioritySelect!);
+    fireEvent.mouseDown(requireElement(prioritySelect));
     await waitFor(() => {
       const highOption = screen.getByRole('option', { name: 'High' });
       fireEvent.click(highOption);
@@ -533,7 +533,7 @@ describe('TicketList', () => {
   });
 
   it('shows empty table when no tickets found', async () => {
-    (ticketsApi.getTickets as any).mockResolvedValue({
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({
       data: [],
       total: 0,
       page: 1,
@@ -621,7 +621,7 @@ describe('TicketList', () => {
 
   it('handles API errors gracefully', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    (ticketsApi.getTickets as any).mockRejectedValue(new Error('API Error'));
+    vi.mocked(ticketsApi.getTickets).mockRejectedValue(new Error('API Error'));
 
     render(<TicketList />);
 

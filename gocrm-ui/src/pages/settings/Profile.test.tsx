@@ -70,7 +70,7 @@ describe('Profile', () => {
   });
 
   it('changes the password and reports that other sessions were signed out', async () => {
-    (authApi.changePassword as any).mockResolvedValue(undefined);
+    vi.mocked(authApi.changePassword).mockResolvedValue(undefined);
 
     render(<Profile />);
     await fillPasswordForm('OldStrongPass1!');
@@ -86,7 +86,7 @@ describe('Profile', () => {
   it('surfaces the server message when the current password is wrong', async () => {
     // Shape after the client's error interceptor has peeled the envelope:
     // response.data IS the inner `error` object.
-    (authApi.changePassword as any).mockRejectedValue({
+    vi.mocked(authApi.changePassword).mockRejectedValue({
       response: {
         status: 400,
         data: { code: 'BAD_REQUEST', message: 'The current password is incorrect' },

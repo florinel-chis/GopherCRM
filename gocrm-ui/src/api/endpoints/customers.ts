@@ -1,5 +1,5 @@
 import { api } from '../client';
-import type { Customer, PaginationParams, PaginatedResponse } from '@/types';
+import type { BackendCustomer, Customer, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface CustomerFilters extends PaginationParams {
   owner_id?: number;
@@ -27,9 +27,20 @@ export interface CreateCustomerData {
 
 export type UpdateCustomerData = Partial<CreateCustomerData>;
 
+type CustomerWriteData = Omit<CreateCustomerData, 'company_name' | 'contact_name'> & {
+  first_name: string;
+  last_name: string;
+  company: string;
+};
+
+interface CustomersResponse {
+  customers: BackendCustomer[];
+  total: number;
+}
+
 // Helper function to transform backend customer to frontend format. Exported
 // for the company sub-resource endpoint, which returns the same raw rows.
-export const transformCustomerFromBackend = (backendCustomer: any): Customer => {
+export const transformCustomerFromBackend = (backendCustomer: BackendCustomer): Customer => {
   return {
     ...backendCustomer,
     company_name: backendCustomer.company || '',
@@ -46,7 +57,7 @@ export const transformCustomerFromBackend = (backendCustomer: any): Customer => 
 
 export const customersApi = {
   getCustomers: async (filters?: CustomerFilters): Promise<PaginatedResponse<Customer>> => {
-    const response = await api.get<any>('/customers', { params: filters });
+    const response = await api.get<CustomersResponse>('/customers', { params: filters });
     // Backend returns { customers: [...], total: number }
     const customers = response.data.customers || [];
     return {
@@ -59,7 +70,7 @@ export const customersApi = {
   },
 
   getCustomer: async (id: number): Promise<Customer> => {
-    const response = await api.get<any>(`/customers/${id}`);
+    const response = await api.get<BackendCustomer>(`/customers/${id}`);
     return transformCustomerFromBackend(response.data);
   },
 
@@ -80,13 +91,13 @@ export const customersApi = {
       notes: data.notes || '',
       ...(data.company_id !== undefined && { company_id: data.company_id }),
     };
-    const response = await api.post<any>('/customers', transformedData);
+    const response = await api.post<BackendCustomer>('/customers', transformedData);
     return transformCustomerFromBackend(response.data);
   },
 
   updateCustomer: async (id: number, data: UpdateCustomerData): Promise<Customer> => {
     // Transform frontend data to backend format
-    const transformedData: any = {};
+    const transformedData: Partial<CustomerWriteData> = {};
     
     if (data.contact_name !== undefined) {
       const [firstName, ...lastNameParts] = data.contact_name.split(' ');
@@ -105,7 +116,7 @@ export const customersApi = {
     if (data.notes !== undefined) transformedData.notes = data.notes;
     if (data.company_id !== undefined) transformedData.company_id = data.company_id;
     
-    const response = await api.put<any>(`/customers/${id}`, transformedData);
+    const response = await api.put<BackendCustomer>(`/customers/${id}`, transformedData);
     return transformCustomerFromBackend(response.data);
   },
 
@@ -114,7 +125,7 @@ export const customersApi = {
   },
 
   assignCustomer: async (id: number, userId: number): Promise<Customer> => {
-    const response = await api.post<Customer>(`/customers/${id}/assign`, { user_id: userId });
+    const response = await api.post<BackendCustomer>(`/customers/${id}/assign`, { user_id: userId });
     return transformCustomerFromBackend(response.data);
   },
 

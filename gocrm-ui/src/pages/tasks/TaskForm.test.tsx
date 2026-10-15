@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { useNavigate } from 'react-router-dom';
 import { Component as TaskForm } from './TaskForm';
 import { labelsApi, tasksApi, usersApi } from '@/api/endpoints';
-import { createMockLabel, createMockUser } from '@/test/factories';
+import { createMockLabel, createMockTask, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosHeaders } from 'axios';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -53,11 +53,17 @@ describe('TaskForm inline label creation', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(vi.fn());
+    vi.mocked(useNavigate).mockReturnValue(vi.fn());
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
-    (usersApi.getUsers as any).mockResolvedValue({ data: [], total: 0 });
-    (labelsApi.getLabels as any).mockResolvedValue([existing]);
-    (tasksApi.getTask as any).mockResolvedValue(undefined);
+    vi.mocked(usersApi.getUsers).mockResolvedValue({
+      data: [],
+      total: 0,
+      page: 1,
+      limit: 100,
+      total_pages: 0,
+    });
+    vi.mocked(labelsApi.getLabels).mockResolvedValue([existing]);
+    vi.mocked(tasksApi.getTask).mockResolvedValue(createMockTask());
   });
 
   const typeIntoLabels = async (value: string) => {
@@ -71,7 +77,7 @@ describe('TaskForm inline label creation', () => {
     'offers the inline create option to the %s role',
     async (role) => {
       mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role })));
-      (labelsApi.createLabel as any).mockResolvedValue(
+      vi.mocked(labelsApi.createLabel).mockResolvedValue(
         createMockLabel({ id: 9, name: 'Renewals', color: '#2CA02C' })
       );
 
@@ -118,13 +124,17 @@ describe('TaskForm inline label creation', () => {
   // form should select the real label rather than dead-end on an error.
   it('recovers from a duplicate-name 409 by selecting the existing label', async () => {
     const serverLabel = createMockLabel({ id: 12, name: 'renewals', color: '#D62728' });
-    (labelsApi.getLabels as any)
+    vi.mocked(labelsApi.getLabels)
       .mockResolvedValueOnce([existing])
       .mockResolvedValue([existing, serverLabel]);
-    (labelsApi.createLabel as any).mockRejectedValue(
+    vi.mocked(labelsApi.createLabel).mockRejectedValue(
       new AxiosError('Conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
         status: 409,
-      } as any)
+        statusText: 'Conflict',
+        data: { code: 'CONFLICT', message: 'A label with this name already exists' },
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+      })
     );
 
     render(<TaskForm />);

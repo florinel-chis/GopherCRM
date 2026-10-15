@@ -4,33 +4,28 @@ import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  Box,
-  Paper,
-  Typography,
-  Button,
-  Stack,
-  Divider,
-  Alert,
-} from '@mui/material';
+import { Box, Paper, Typography, Button, Stack, Divider, Alert } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { FormTextField, FormSelect, FormSwitch } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, type CreateUserData, type UpdateUserData } from '@/api/endpoints';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
+import { getAPIError } from '@/utils/apiError';
 
-const createUserSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  confirmPassword: z.string(),
-  first_name: z.string().min(1, 'First name is required'),
-  last_name: z.string().min(1, 'Last name is required'),
-  role: z.enum(['admin', 'sales', 'support', 'customer']),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword'],
-});
+const createUserSchema = z
+  .object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(8, 'Password must be at least 8 characters'),
+    confirmPassword: z.string(),
+    first_name: z.string().min(1, 'First name is required'),
+    last_name: z.string().min(1, 'Last name is required'),
+    role: z.enum(['admin', 'sales', 'support', 'customer']),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
 
 const updateUserSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -81,8 +76,6 @@ export const Component: React.FC = () => {
     },
   });
 
-  const methods = isEditMode ? updateMethods : createMethods as any;
-
   const { data: user, isLoading } = useQuery({
     queryKey: ['user', id],
     queryFn: () => usersApi.getUser(Number(id)),
@@ -96,8 +89,8 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       navigate('/users');
     },
-    onError: (error: any) => {
-      showError(error.response?.data?.message || 'Failed to create user');
+    onError: (error: unknown) => {
+      showError(getAPIError(error)?.message || 'Failed to create user');
     },
   });
 
@@ -110,8 +103,8 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['user', id] });
       navigate('/users');
     },
-    onError: (error: any) => {
-      showError(error.response?.data?.message || 'Failed to update user');
+    onError: (error: unknown) => {
+      showError(getAPIError(error)?.message || 'Failed to update user');
     },
   });
 
@@ -127,26 +120,26 @@ export const Component: React.FC = () => {
     }
   }, [user, updateMethods, isEditMode]);
 
-  const onSubmit = (data: any) => {
-    if (isEditMode) {
-      const updateData: UpdateUserData = {
-        email: data.email,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        role: data.role,
-        is_active: data.is_active,
-      };
-      updateMutation.mutate({ id: Number(id), data: updateData });
-    } else {
-      const createData: CreateUserData = {
-        email: data.email,
-        password: data.password,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        role: data.role,
-      };
-      createMutation.mutate(createData);
-    }
+  const onCreateSubmit = (data: CreateUserFormData) => {
+    const createData: CreateUserData = {
+      email: data.email,
+      password: data.password,
+      first_name: data.first_name,
+      last_name: data.last_name,
+      role: data.role,
+    };
+    createMutation.mutate(createData);
+  };
+
+  const onUpdateSubmit = (data: UpdateUserFormData) => {
+    const updateData: UpdateUserData = {
+      email: data.email,
+      first_name: data.first_name,
+      last_name: data.last_name,
+      role: data.role,
+      is_active: data.is_active,
+    };
+    updateMutation.mutate({ id: Number(id), data: updateData });
   };
 
   if (isLoading) {
@@ -157,12 +150,70 @@ export const Component: React.FC = () => {
   const canEditRole = isAdmin;
   const canEditActiveStatus = isAdmin && user?.id !== currentUser?.id;
 
+  const fields = (
+    <Stack spacing={3}>
+      <Typography variant="h6">Account Information</Typography>
+
+      <FormTextField name="email" label="Email" type="email" required disabled={!isAdmin} />
+
+      {!isEditMode && (
+        <>
+          <FormTextField
+            name="password"
+            label="Password"
+            type="password"
+            required
+            disabled={!isAdmin}
+          />
+          <FormTextField
+            name="confirmPassword"
+            label="Confirm Password"
+            type="password"
+            required
+            disabled={!isAdmin}
+          />
+        </>
+      )}
+
+      <Divider />
+
+      <Typography variant="h6">Personal Information</Typography>
+
+      <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
+        <FormTextField name="first_name" label="First Name" required disabled={!isAdmin} />
+        <FormTextField name="last_name" label="Last Name" required disabled={!isAdmin} />
+      </Box>
+
+      <Divider />
+
+      <Typography variant="h6">Role & Permissions</Typography>
+
+      <FormSelect name="role" label="Role" options={roleOptions} required disabled={!canEditRole} />
+
+      {isEditMode && (
+        <FormSwitch name="is_active" label="Active Account" disabled={!canEditActiveStatus} />
+      )}
+
+      <Box display="flex" gap={2} justifyContent="flex-end">
+        <Button variant="outlined" startIcon={<CancelIcon />} onClick={() => navigate('/users')}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="contained"
+          startIcon={<SaveIcon />}
+          disabled={!isAdmin || createMutation.isPending || updateMutation.isPending}
+        >
+          {isEditMode ? 'Update' : 'Create'} User
+        </Button>
+      </Box>
+    </Stack>
+  );
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">
-          {isEditMode ? 'Edit User' : 'Create New User'}
-        </Typography>
+        <Typography variant="h4">{isEditMode ? 'Edit User' : 'Create New User'}</Typography>
       </Box>
 
       {!isAdmin && (
@@ -172,98 +223,15 @@ export const Component: React.FC = () => {
       )}
 
       <Paper sx={{ p: 3 }}>
-        <FormProvider {...methods}>
-          <form onSubmit={methods.handleSubmit(onSubmit)}>
-            <Stack spacing={3}>
-              <Typography variant="h6">Account Information</Typography>
-              
-
-              <FormTextField
-                name="email"
-                label="Email"
-                type="email"
-                required
-                disabled={!isAdmin}
-              />
-
-              {!isEditMode && (
-                <>
-                  <FormTextField
-                    name="password"
-                    label="Password"
-                    type="password"
-                    required
-                    disabled={!isAdmin}
-                  />
-                  <FormTextField
-                    name="confirmPassword"
-                    label="Confirm Password"
-                    type="password"
-                    required
-                    disabled={!isAdmin}
-                  />
-                </>
-              )}
-
-              <Divider />
-
-              <Typography variant="h6">Personal Information</Typography>
-
-              <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
-                <FormTextField
-                  name="first_name"
-                  label="First Name"
-                  required
-                  disabled={!isAdmin}
-                />
-                <FormTextField
-                  name="last_name"
-                  label="Last Name"
-                  required
-                  disabled={!isAdmin}
-                />
-              </Box>
-
-              <Divider />
-
-              <Typography variant="h6">Role & Permissions</Typography>
-
-              <FormSelect
-                name="role"
-                label="Role"
-                options={roleOptions}
-                required
-                disabled={!canEditRole}
-              />
-
-              {isEditMode && (
-                <FormSwitch
-                  name="is_active"
-                  label="Active Account"
-                  disabled={!canEditActiveStatus}
-                />
-              )}
-
-              <Box display="flex" gap={2} justifyContent="flex-end">
-                <Button
-                  variant="outlined"
-                  startIcon={<CancelIcon />}
-                  onClick={() => navigate('/users')}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  startIcon={<SaveIcon />}
-                  disabled={!isAdmin || createMutation.isPending || updateMutation.isPending}
-                >
-                  {isEditMode ? 'Update' : 'Create'} User
-                </Button>
-              </Box>
-            </Stack>
-          </form>
-        </FormProvider>
+        {isEditMode ? (
+          <FormProvider {...updateMethods}>
+            <form onSubmit={updateMethods.handleSubmit(onUpdateSubmit)}>{fields}</form>
+          </FormProvider>
+        ) : (
+          <FormProvider {...createMethods}>
+            <form onSubmit={createMethods.handleSubmit(onCreateSubmit)}>{fields}</form>
+          </FormProvider>
+        )}
       </Paper>
     </Box>
   );

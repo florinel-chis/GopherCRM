@@ -17,6 +17,12 @@ export interface ApiMeta {
 // to the response itself; endpoint modules that need them cast to this type.
 export type ApiResponseWithMeta<T> = AxiosResponse<T> & { meta?: ApiMeta };
 
+interface ApiErrorEnvelope {
+  success: false;
+  error: APIError;
+  meta?: ApiMeta;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1';
 const API_TIMEOUT = Number(import.meta.env.VITE_API_TIMEOUT) || 30000;
 
@@ -68,7 +74,7 @@ class ApiClient {
         }
         return response;
       },
-      async (error: AxiosError<APIError>) => {
+      async (error: AxiosError<APIError | ApiErrorEnvelope>) => {
         const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
         // Skip token refresh for auth endpoints — a 401 on login/register
@@ -132,7 +138,7 @@ class ApiClient {
 
         // Unwrap error response if it's in the wrapped format
         if (error.response?.data && 'success' in error.response.data && 'error' in error.response.data) {
-          error.response.data = (error.response.data as any).error;
+          error.response.data = error.response.data.error;
         }
         
         return Promise.reject(error);

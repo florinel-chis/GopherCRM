@@ -151,7 +151,8 @@ export const Component: React.FC = () => {
       // `customer_id`, which orders by a foreign key rather than by the company
       // name shown here — and the raw column id is rejected outright.
       sortable: false,
-      format: (value: any) => value?.company_name || 'N/A',
+      format: (value: Ticket['customer']) =>
+        (value && 'company_name' in value ? value.company_name : undefined) || 'N/A',
     },
     {
       id: 'status',
@@ -184,7 +185,7 @@ export const Component: React.FC = () => {
       // Same as Customer above: only `assigned_to_id` is allowlisted, which does
       // not order by the assignee name this column renders.
       sortable: false,
-      format: (value: any) => {
+      format: (value: Ticket['assigned_to']) => {
         if (value) {
           return `${value.first_name} ${value.last_name}`;
         }

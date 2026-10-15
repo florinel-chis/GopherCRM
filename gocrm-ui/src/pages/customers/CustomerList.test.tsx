@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, requireElement } from '@/test/test-utils';
 import { Component as CustomerList } from './CustomerList';
 import { customersApi } from '@/api/endpoints';
 import { createMockCustomer } from '@/test/factories';
@@ -30,8 +30,8 @@ describe('CustomerList', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useNavigate as any).mockReturnValue(mockNavigate);
-    (customersApi.getCustomers as any).mockResolvedValue({
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(customersApi.getCustomers).mockResolvedValue({
       data: mockCustomers,
       total: 3,
       page: 1,
@@ -102,14 +102,14 @@ describe('CustomerList', () => {
     await waitFor(() => {
       const row = screen.getByText('Customer A').closest('tr');
       expect(row).toBeInTheDocument();
-      fireEvent.click(row!);
+      fireEvent.click(requireElement(row));
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/customers/1');
   });
 
   it('handles customer deletion', async () => {
-    (customersApi.deleteCustomer as any).mockResolvedValue({});
+    vi.mocked(customersApi.deleteCustomer).mockResolvedValue(undefined);
     
     render(<CustomerList />);
 
@@ -123,7 +123,7 @@ describe('CustomerList', () => {
     // Skip the header row and find the delete button in the first data row
     const firstDataRow = rows[1];
     const deleteButton = firstDataRow.querySelector('button svg[data-testid="DeleteIcon"]')?.parentElement;
-    fireEvent.click(deleteButton!);
+    fireEvent.click(requireElement(deleteButton));
 
     // Confirm deletion
     await waitFor(() => {

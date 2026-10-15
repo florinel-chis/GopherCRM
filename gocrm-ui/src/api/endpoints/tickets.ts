@@ -1,5 +1,5 @@
 import { api } from '../client';
-import type { Ticket, PaginationParams, PaginatedResponse } from '@/types';
+import type { BackendTicket, Ticket, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface TicketFilters extends PaginationParams {
   status?: string;
@@ -27,6 +27,13 @@ export interface UpdateTicketData {
   assigned_to_id?: number;
 }
 
+type TicketWriteData = Omit<CreateTicketData, 'subject'> & { title: string };
+
+interface TicketsResponse {
+  tickets: BackendTicket[];
+  total: number;
+}
+
 export interface TicketComment {
   id: number;
   ticket_id: number;
@@ -42,7 +49,7 @@ export interface TicketComment {
 }
 
 // Helper function to transform backend ticket to frontend format
-const transformTicketFromBackend = (backendTicket: any): Ticket => {
+const transformTicketFromBackend = (backendTicket: BackendTicket): Ticket => {
   return {
     ...backendTicket,
     subject: backendTicket.title || '', // Backend uses 'title', frontend expects 'subject'
@@ -56,7 +63,7 @@ const transformTicketFromBackend = (backendTicket: any): Ticket => {
 
 export const ticketsApi = {
   getTickets: async (filters?: TicketFilters): Promise<PaginatedResponse<Ticket>> => {
-    const response = await api.get<any>('/tickets', { params: filters });
+    const response = await api.get<TicketsResponse>('/tickets', { params: filters });
     // Backend returns { tickets: [...], total: number }
     const tickets = response.data.tickets || [];
     return {
@@ -69,7 +76,7 @@ export const ticketsApi = {
   },
 
   getTicket: async (id: number): Promise<Ticket> => {
-    const response = await api.get<any>(`/tickets/${id}`);
+    const response = await api.get<BackendTicket>(`/tickets/${id}`);
     return transformTicketFromBackend(response.data);
   },
 
@@ -83,20 +90,20 @@ export const ticketsApi = {
       customer_id: data.customer_id,
       assigned_to_id: data.assigned_to_id,
     };
-    const response = await api.post<any>('/tickets', transformedData);
+    const response = await api.post<BackendTicket>('/tickets', transformedData);
     return transformTicketFromBackend(response.data);
   },
 
   updateTicket: async (id: number, data: UpdateTicketData): Promise<Ticket> => {
     // Transform frontend data to backend format
-    const transformedData: any = {};
+    const transformedData: Partial<TicketWriteData> = {};
     if (data.subject !== undefined) transformedData.title = data.subject;
     if (data.description !== undefined) transformedData.description = data.description;
     if (data.status !== undefined) transformedData.status = data.status;
     if (data.priority !== undefined) transformedData.priority = data.priority;
     if (data.assigned_to_id !== undefined) transformedData.assigned_to_id = data.assigned_to_id;
     
-    const response = await api.put<any>(`/tickets/${id}`, transformedData);
+    const response = await api.put<BackendTicket>(`/tickets/${id}`, transformedData);
     return transformTicketFromBackend(response.data);
   },
 
@@ -105,7 +112,7 @@ export const ticketsApi = {
   },
 
   assignTicket: async (id: number, userId: number): Promise<Ticket> => {
-    const response = await api.post<any>(`/tickets/${id}/assign`, { user_id: userId });
+    const response = await api.post<BackendTicket>(`/tickets/${id}/assign`, { user_id: userId });
     return transformTicketFromBackend(response.data);
   },
 
