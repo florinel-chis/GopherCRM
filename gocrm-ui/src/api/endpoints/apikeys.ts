@@ -20,8 +20,18 @@ export interface GeneratedAPIKey extends APIKey {
   key: string; // Plain text key, only returned on creation
 }
 
+interface BackendAPIKey extends APIKey {
+  // The API omits this field; retain defensive removal for unexpected responses.
+  key_hash?: string;
+}
+
+interface CreateAPIKeyResponse {
+  key: string;
+  api_key: BackendAPIKey;
+}
+
 // Helper function to transform backend API key to frontend format
-const transformAPIKeyFromBackend = (backendKey: any): APIKey => {
+const transformAPIKeyFromBackend = (backendKey: BackendAPIKey): APIKey => {
   // Remove sensitive fields that shouldn't be exposed
   const safeKey = { ...backendKey };
   delete safeKey.key_hash;
@@ -32,7 +42,7 @@ export const apiKeysApi = {
   getAPIKeys: async (filters?: APIKeyFilters): Promise<PaginatedResponse<APIKey>> => {
     // Backend returns a bare APIKey[] (unwrapped from the envelope by the
     // client interceptor); pagination is synthesized client-side.
-    const response = await api.get<any>('/api-keys', { params: filters });
+    const response = await api.get<BackendAPIKey[]>('/api-keys', { params: filters });
     const apiKeys = Array.isArray(response.data) ? response.data : [];
     return {
       data: apiKeys.map(transformAPIKeyFromBackend),
@@ -44,20 +54,20 @@ export const apiKeysApi = {
   },
 
   getAPIKey: async (id: number): Promise<APIKey> => {
-    const response = await api.get<any>(`/api-keys/${id}`);
+    const response = await api.get<BackendAPIKey>(`/api-keys/${id}`);
     return transformAPIKeyFromBackend(response.data);
   },
 
   createAPIKey: async (data: CreateAPIKeyData): Promise<GeneratedAPIKey> => {
     // Backend returns { key, api_key }: the plaintext key (shown exactly
     // once) alongside the stored key record.
-    const response = await api.post<any>('/api-keys', data);
+    const response = await api.post<CreateAPIKeyResponse>('/api-keys', data);
     const { key, api_key } = response.data;
     return { ...transformAPIKeyFromBackend(api_key), key };
   },
 
   updateAPIKey: async (id: number, data: UpdateAPIKeyData): Promise<APIKey> => {
-    const response = await api.put<any>(`/api-keys/${id}`, data);
+    const response = await api.put<BackendAPIKey>(`/api-keys/${id}`, data);
     return transformAPIKeyFromBackend(response.data);
   },
 
