@@ -1,5 +1,5 @@
 -- Migration: v1.2.0 Schema Parity
--- Date: 2026-09-28
+-- Date: 2026-10-01
 -- Description: Brings migrations into parity with models.MigrateDatabase() for v1.2.0.
 -- Adds columns to users, customers, leads, and configurations, plus missing tables:
 -- labels, task_labels, password_reset_tokens, bulk_operations, bulk_operation_items,

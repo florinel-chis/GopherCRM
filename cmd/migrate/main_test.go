@@ -117,3 +117,64 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 			"table %q should be created in migrations", table)
 	}
 }
+
+func TestMigrationSequence_UpgradePathFromExistingMain(t *testing.T) {
+	migrateDir := filepath.Join("..", "..", "migrations")
+	entries, err := os.ReadDir(migrateDir)
+	require.NoError(t, err)
+
+	type migrationEntry struct {
+		version string
+		name    string
+	}
+	var upMigrations []migrationEntry
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		parts := strings.SplitN(entry.Name(), "_", 2)
+		require.Len(t, parts, 2, "migration file must follow <version>_<name>.up.sql format")
+		upMigrations = append(upMigrations, migrationEntry{
+			version: parts[0],
+			name:    entry.Name(),
+		})
+	}
+
+	require.NotEmpty(t, upMigrations)
+
+	// Ensure strictly ascending order
+	for i := 1; i < len(upMigrations); i++ {
+		assert.True(t, upMigrations[i-1].version < upMigrations[i].version,
+			"migrations must be strictly sorted: %s should be before %s",
+			upMigrations[i-1].name, upMigrations[i].name)
+	}
+
+	// The last migration present on main before this branch was 20260930120000_add_deals.
+	const mainHeadVersion = "20260930120000"
+	var pendingMigrations []migrationEntry
+	var foundMainHead bool
+
+	for _, m := range upMigrations {
+		if m.version == mainHeadVersion {
+			foundMainHead = true
+			continue
+		}
+		if m.version > mainHeadVersion {
+			pendingMigrations = append(pendingMigrations, m)
+		}
+	}
+
+	require.True(t, foundMainHead, "main head migration %s must be present in migrations directory", mainHeadVersion)
+	require.GreaterOrEqual(t, len(pendingMigrations), 2, "expected at least 2 pending migrations after main head")
+
+	// First pending migration MUST be schema parity so existing databases don't skip it
+	assert.Contains(t, pendingMigrations[0].name, "v1_2_0_schema_parity",
+		"first migration after main must apply schema parity, got %s", pendingMigrations[0].name)
+	assert.Equal(t, "20261001120000", pendingMigrations[0].version)
+
+	// Second pending migration is ticket comments
+	assert.Contains(t, pendingMigrations[1].name, "add_ticket_comments",
+		"ticket comments migration should follow schema parity, got %s", pendingMigrations[1].name)
+}
+
