@@ -82,6 +82,7 @@ func (s *bulkOperationService) CreateBulkOperation(userID uint, resourceType str
 	operation := &models.BulkOperation{
 		UserID:        userID,
 		ResourceType:  resourceType,
+		Type:          operationType,
 		OperationType: operationType,
 		Status:        models.StatusPending,
 		TotalItems:    totalItems,
@@ -207,7 +208,7 @@ func (s *bulkOperationService) ProcessBulkAction(userID uint, resourceType strin
 // User bulk operations
 func (s *bulkOperationService) BulkCreateUsers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -298,7 +299,7 @@ func (s *bulkOperationService) BulkCreateUsers(request *models.BulkCreateRequest
 
 func (s *bulkOperationService) BulkUpdateUsers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -348,7 +349,7 @@ func (s *bulkOperationService) BulkUpdateUsers(request *models.BulkUpdateRequest
 
 func (s *bulkOperationService) BulkDeleteUsers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.IDs)); err != nil {
 		return nil, err
@@ -537,7 +538,7 @@ func (s *bulkOperationService) bulkChangeUserRole(operationID uint, userIDs []ui
 // Placeholder implementations for other resource types (similar pattern)
 func (s *bulkOperationService) BulkCreateLeads(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -630,7 +631,7 @@ func (s *bulkOperationService) BulkCreateLeads(request *models.BulkCreateRequest
 
 func (s *bulkOperationService) BulkUpdateLeads(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -680,7 +681,7 @@ func (s *bulkOperationService) BulkUpdateLeads(request *models.BulkUpdateRequest
 
 func (s *bulkOperationService) BulkDeleteLeads(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.IDs)); err != nil {
 		return nil, err
@@ -759,7 +760,7 @@ func (s *bulkOperationService) BulkActionLeads(request *models.BulkActionRequest
 
 func (s *bulkOperationService) BulkCreateCustomers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -847,7 +848,7 @@ func (s *bulkOperationService) BulkCreateCustomers(request *models.BulkCreateReq
 
 func (s *bulkOperationService) BulkUpdateCustomers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -897,7 +898,7 @@ func (s *bulkOperationService) BulkUpdateCustomers(request *models.BulkUpdateReq
 
 func (s *bulkOperationService) BulkDeleteCustomers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.IDs)); err != nil {
 		return nil, err
@@ -961,12 +962,6 @@ func (s *bulkOperationService) BulkActionCustomers(request *models.BulkActionReq
 
 	// Process bulk action based on action type
 	switch request.Action {
-	case models.CustomerBulkActionTypes.Activate:
-		return s.bulkActivateCustomers(operation.ID, request.IDs, true, startTime)
-	case models.CustomerBulkActionTypes.Deactivate:
-		return s.bulkActivateCustomers(operation.ID, request.IDs, false, startTime)
-	case models.CustomerBulkActionTypes.UpdateType:
-		return s.bulkUpdateCustomerType(operation.ID, request.IDs, request.Parameters, startTime)
 	case models.CustomerBulkActionTypes.Assign:
 		return s.bulkAssignCustomers(operation.ID, request.IDs, request.Parameters, startTime)
 	default:
@@ -976,7 +971,7 @@ func (s *bulkOperationService) BulkActionCustomers(request *models.BulkActionReq
 
 func (s *bulkOperationService) BulkCreateTasks(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -1073,7 +1068,7 @@ func (s *bulkOperationService) BulkCreateTasks(request *models.BulkCreateRequest
 
 func (s *bulkOperationService) BulkUpdateTasks(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -1123,7 +1118,7 @@ func (s *bulkOperationService) BulkUpdateTasks(request *models.BulkUpdateRequest
 
 func (s *bulkOperationService) BulkDeleteTasks(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.IDs)); err != nil {
 		return nil, err
@@ -1202,7 +1197,7 @@ func (s *bulkOperationService) BulkActionTasks(request *models.BulkActionRequest
 
 func (s *bulkOperationService) BulkCreateTickets(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -1300,7 +1295,7 @@ func (s *bulkOperationService) BulkCreateTickets(request *models.BulkCreateReque
 
 func (s *bulkOperationService) BulkUpdateTickets(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.Items)); err != nil {
 		return nil, err
@@ -1350,7 +1345,7 @@ func (s *bulkOperationService) BulkUpdateTickets(request *models.BulkUpdateReque
 
 func (s *bulkOperationService) BulkDeleteTickets(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error) {
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validateBulkRequest(len(request.IDs)); err != nil {
 		return nil, err
@@ -1420,8 +1415,6 @@ func (s *bulkOperationService) BulkActionTickets(request *models.BulkActionReque
 		return s.bulkAssignTickets(operation.ID, request.IDs, request.Parameters, startTime)
 	case models.TicketBulkActionTypes.UpdatePriority:
 		return s.bulkUpdateTicketPriority(operation.ID, request.IDs, request.Parameters, startTime)
-	case models.TicketBulkActionTypes.UpdateCategory:
-		return s.bulkUpdateTicketCategory(operation.ID, request.IDs, request.Parameters, startTime)
 	default:
 		return nil, fmt.Errorf("unsupported ticket action: %s", request.Action)
 	}
@@ -1487,7 +1480,7 @@ func (s *bulkOperationService) convertMapToModel(data map[string]interface{}, mo
 
 func (s *bulkOperationService) buildBulkResponse(operationID uint, totalItems, successItems int, errors []error, results interface{}, startTime time.Time) *models.BulkResponse {
 	processingTime := time.Since(startTime)
-	
+
 	var bulkErrors []models.BulkItemError
 	for i, err := range errors {
 		bulkErrors = append(bulkErrors, models.BulkItemError{
@@ -1520,7 +1513,7 @@ func (s *bulkOperationService) buildBulkResponse(operationID uint, totalItems, s
 
 func (s *bulkOperationService) buildBulkDeleteResponse(operationID uint, totalItems, successItems int, errors []error, startTime time.Time) *models.BulkResponse {
 	processingTime := time.Since(startTime)
-	
+
 	var bulkErrors []models.BulkItemError
 	for i, err := range errors {
 		bulkErrors = append(bulkErrors, models.BulkItemError{
@@ -1617,35 +1610,6 @@ func (s *bulkOperationService) bulkUpdateLeadSource(operationID uint, leadIDs []
 }
 
 // Customer bulk action helpers
-func (s *bulkOperationService) bulkActivateCustomers(operationID uint, customerIDs []uint, isActive bool, startTime time.Time) (*models.BulkResponse, error) {
-	updates := make([]models.BulkUpdateItem, len(customerIDs))
-	for i, id := range customerIDs {
-		updates[i] = models.BulkUpdateItem{
-			ID:      id,
-			Updates: map[string]interface{}{"is_active": isActive},
-		}
-	}
-
-	return s.performBulkUpdateAction(operationID, "customers", updates, startTime)
-}
-
-func (s *bulkOperationService) bulkUpdateCustomerType(operationID uint, customerIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newType, err := getStringParam(parameters, "type")
-	if err != nil {
-		return nil, err
-	}
-
-	updates := make([]models.BulkUpdateItem, len(customerIDs))
-	for i, id := range customerIDs {
-		updates[i] = models.BulkUpdateItem{
-			ID:      id,
-			Updates: map[string]interface{}{"type": newType},
-		}
-	}
-
-	return s.performBulkUpdateAction(operationID, "customers", updates, startTime)
-}
-
 func (s *bulkOperationService) bulkAssignCustomers(operationID uint, customerIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
 	assigneeID, err := getFloatParam(parameters, "assigned_to_id")
 	if err != nil {
@@ -1784,23 +1748,6 @@ func (s *bulkOperationService) bulkUpdateTicketPriority(operationID uint, ticket
 	return s.performBulkUpdateAction(operationID, "tickets", updates, startTime)
 }
 
-func (s *bulkOperationService) bulkUpdateTicketCategory(operationID uint, ticketIDs []uint, parameters map[string]interface{}, startTime time.Time) (*models.BulkResponse, error) {
-	newCategory, err := getStringParam(parameters, "category")
-	if err != nil {
-		return nil, err
-	}
-
-	updates := make([]models.BulkUpdateItem, len(ticketIDs))
-	for i, id := range ticketIDs {
-		updates[i] = models.BulkUpdateItem{
-			ID:      id,
-			Updates: map[string]interface{}{"category": newCategory},
-		}
-	}
-
-	return s.performBulkUpdateAction(operationID, "tickets", updates, startTime)
-}
-
 // Generic helper for performing bulk update actions
 func (s *bulkOperationService) performBulkUpdateAction(operationID uint, resourceType string, updates []models.BulkUpdateItem, startTime time.Time) (*models.BulkResponse, error) {
 	var results interface{}
@@ -1812,7 +1759,7 @@ func (s *bulkOperationService) performBulkUpdateAction(operationID uint, resourc
 			return fmt.Errorf("transaction not found in context")
 		}
 		txRepo := s.bulkRepo.WithTx(tx)
-		
+
 		switch resourceType {
 		case "leads":
 			results, operationErrors = txRepo.BulkUpdateLeads(updates)

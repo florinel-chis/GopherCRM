@@ -108,6 +108,8 @@ type TicketService interface {
 	GetPriorityCounts() (map[string]int64, error)
 	GetRecent(limit int) ([]models.Ticket, error)
 	GetRecentlyResolved(limit int) ([]models.Ticket, error)
+	CreateComment(comment *models.TicketComment) error
+	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 }
 
 type TaskService interface {
@@ -251,37 +253,37 @@ type BulkOperationService interface {
 	GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, int64, error)
 	ListAllBulkOperations(offset, limit int) ([]models.BulkOperation, int64, error)
 	UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error
-	
+
 	// Generic bulk operations
 	ProcessBulkCreate(userID uint, resourceType string, request *models.BulkCreateRequest) (*models.BulkResponse, error)
 	ProcessBulkUpdate(userID uint, resourceType string, request *models.BulkUpdateRequest) (*models.BulkResponse, error)
 	ProcessBulkDelete(userID uint, resourceType string, request *models.BulkDeleteRequest) (*models.BulkResponse, error)
 	ProcessBulkAction(userID uint, resourceType string, request *models.BulkActionRequest) (*models.BulkResponse, error)
-	
+
 	// User bulk operations
 	BulkCreateUsers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkUpdateUsers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkDeleteUsers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionUsers(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-	
+
 	// Lead bulk operations
 	BulkCreateLeads(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkUpdateLeads(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkDeleteLeads(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionLeads(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-	
+
 	// Customer bulk operations
 	BulkCreateCustomers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkUpdateCustomers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkDeleteCustomers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionCustomers(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-	
+
 	// Task bulk operations
 	BulkCreateTasks(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkUpdateTasks(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkDeleteTasks(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
 	BulkActionTasks(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-	
+
 	// Bulk status updates. All-or-nothing, authorized per record against the
 	// same rules the single-record update applies.
 	BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)

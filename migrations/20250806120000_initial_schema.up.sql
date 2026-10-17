@@ -16,9 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at datetime(3) NULL,
     PRIMARY KEY (id),
     UNIQUE KEY idx_users_email (email),
-    KEY idx_users_deleted_at (deleted_at),
-    KEY idx_users_active_role (is_active, role),
-    KEY idx_users_last_login_at (last_login_at)
+    KEY idx_users_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Customers table
@@ -67,7 +65,6 @@ CREATE TABLE IF NOT EXISTS leads (
     PRIMARY KEY (id),
     KEY idx_leads_deleted_at (deleted_at),
     KEY idx_leads_owner_id (owner_id),
-    KEY idx_leads_owner_status (owner_id, status),
     KEY idx_leads_customer_id (customer_id),
     CONSTRAINT fk_leads_owner FOREIGN KEY (owner_id) REFERENCES users(id),
     CONSTRAINT fk_leads_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
@@ -90,8 +87,6 @@ CREATE TABLE IF NOT EXISTS tickets (
     KEY idx_tickets_deleted_at (deleted_at),
     KEY idx_tickets_customer_id (customer_id),
     KEY idx_tickets_assigned_to_id (assigned_to_id),
-    KEY idx_tickets_customer_status (customer_id, status),
-    KEY idx_tickets_assigned_status (assigned_to_id, status),
     CONSTRAINT fk_tickets_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
     CONSTRAINT fk_tickets_assigned_to FOREIGN KEY (assigned_to_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -113,7 +108,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     PRIMARY KEY (id),
     KEY idx_tasks_deleted_at (deleted_at),
     KEY idx_tasks_assigned_to_id (assigned_to_id),
-    KEY idx_tasks_assigned_status (assigned_to_id, status),
     KEY idx_tasks_lead_id (lead_id),
     KEY idx_tasks_customer_id (customer_id),
     CONSTRAINT fk_tasks_assigned_to FOREIGN KEY (assigned_to_id) REFERENCES users(id),
@@ -138,7 +132,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     UNIQUE KEY idx_api_keys_key_hash (key_hash),
     KEY idx_api_keys_deleted_at (deleted_at),
     KEY idx_api_keys_user_id (user_id),
-    KEY idx_api_keys_active_user (is_active, user_id),
     CONSTRAINT fk_api_keys_user FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

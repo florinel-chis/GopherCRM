@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Component as TicketDetail } from './TicketDetail';
@@ -54,7 +54,7 @@ const renderDetail = () => {
           <Route path="/tickets/:id" element={<TicketDetail />} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 };
 
@@ -70,7 +70,7 @@ describe('TicketDetail action gating', () => {
         subject: 'Login issue',
         assigned_to_id: ASSIGNEE_ID,
         assigned_to: createMockUser({ id: ASSIGNEE_ID, role: 'support' }),
-      })
+      }),
     );
   });
 
@@ -85,9 +85,7 @@ describe('TicketDetail action gating', () => {
   });
 
   it('shows Edit but not Delete for the support user the ticket is assigned to', async () => {
-    mockUseAuth.mockReturnValue(
-      authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' }))
-    );
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' })));
 
     renderDetail();
 
@@ -98,7 +96,7 @@ describe('TicketDetail action gating', () => {
 
   it('shows neither Edit nor Delete for a support user the ticket is not assigned to', async () => {
     mockUseAuth.mockReturnValue(
-      authState(createMockUser({ id: ASSIGNEE_ID + 1, role: 'support' }))
+      authState(createMockUser({ id: ASSIGNEE_ID + 1, role: 'support' })),
     );
 
     renderDetail();
@@ -135,16 +133,116 @@ describe('TicketDetail action gating', () => {
         subject: 'Login issue',
         assigned_to_id: undefined,
         assigned_to: undefined,
-      })
+      }),
     );
-    mockUseAuth.mockReturnValue(
-      authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' }))
-    );
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' })));
 
     renderDetail();
 
     expect(await screen.findByText('Login issue')).toBeInTheDocument();
     expect(queryEditButton()).not.toBeInTheDocument();
     expect(queryDeleteButton()).not.toBeInTheDocument();
+  });
+});
+
+describe('TicketDetail comments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders comments and displays Internal Note chip for internal comments', async () => {
+    vi.mocked(ticketsApi.getTicket).mockResolvedValue(
+      createMockTicket({
+        id: 1,
+        subject: 'Login issue',
+        assigned_to_id: ASSIGNEE_ID,
+        comments: [
+          {
+            id: 101,
+            ticket_id: 1,
+            user_id: 1,
+            content: 'Public comment here',
+            is_internal: false,
+            created_at: '2026-10-17T12:00:00Z',
+            updated_at: '2026-10-17T12:00:00Z',
+            user: createMockUser({ id: 1, first_name: 'Alice', last_name: 'Smith' }),
+          },
+          {
+            id: 102,
+            ticket_id: 1,
+            user_id: ASSIGNEE_ID,
+            content: 'Internal staff note',
+            is_internal: true,
+            created_at: '2026-10-17T12:05:00Z',
+            updated_at: '2026-10-17T12:05:00Z',
+            user: createMockUser({ id: ASSIGNEE_ID, first_name: 'Bob', last_name: 'Support' }),
+          },
+        ],
+      }),
+    );
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
+
+    renderDetail();
+
+    expect(await screen.findByText('Public comment here')).toBeInTheDocument();
+    expect(screen.getByText('Internal staff note')).toBeInTheDocument();
+    expect(screen.getByText('Internal Note')).toBeInTheDocument();
+  });
+
+  it('allows an assigned support user to submit an internal comment', async () => {
+    vi.mocked(ticketsApi.getTicket).mockResolvedValue(
+      createMockTicket({
+        id: 1,
+        subject: 'Login issue',
+        assigned_to_id: ASSIGNEE_ID,
+      }),
+    );
+    vi.mocked(ticketsApi.addComment).mockResolvedValue({
+      id: 201,
+      ticket_id: 1,
+      user_id: ASSIGNEE_ID,
+      content: 'Investigating in backend logs',
+      is_internal: true,
+      created_at: '2026-10-17T12:10:00Z',
+    });
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' })));
+
+    renderDetail();
+
+    expect(await screen.findByText('Login issue')).toBeInTheDocument();
+    const commentInput = screen.getByPlaceholderText('Add a comment...');
+    fireEvent.change(commentInput, { target: { value: 'Investigating in backend logs' } });
+
+    const internalCheckbox = screen.getByLabelText(/internal note/i);
+    fireEvent.click(internalCheckbox);
+
+    const form = commentInput.closest('form');
+    expect(form).not.toBeNull();
+    if (form) {
+      fireEvent.submit(form);
+    }
+
+    await waitFor(() => {
+      expect(ticketsApi.addComment).toHaveBeenCalledWith(1, {
+        content: 'Investigating in backend logs',
+        is_internal: true,
+      });
+    });
+  });
+
+  it('hides the Add Comment form for customer or sales users', async () => {
+    vi.mocked(ticketsApi.getTicket).mockResolvedValue(
+      createMockTicket({
+        id: 1,
+        subject: 'Login issue',
+        assigned_to_id: ASSIGNEE_ID,
+      }),
+    );
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role: 'customer' })));
+
+    renderDetail();
+
+    expect(await screen.findByText('Login issue')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Add a comment...')).not.toBeInTheDocument();
   });
 });

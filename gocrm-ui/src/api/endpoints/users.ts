@@ -1,4 +1,5 @@
 import { api } from '../client';
+import type { ApiResponseWithMeta } from '../client';
 import type { User, PaginationParams, PaginatedResponse } from '@/types';
 
 export interface UserFilters extends PaginationParams {
@@ -23,11 +24,6 @@ export interface UpdateUserData {
   is_active?: boolean;
 }
 
-interface UsersResponse {
-  users: User[];
-  total: number;
-}
-
 // Helper function to transform backend user to frontend format
 const transformUserFromBackend = (backendUser: User): User => {
   return {
@@ -39,20 +35,18 @@ const transformUserFromBackend = (backendUser: User): User => {
 
 export const usersApi = {
   getUsers: async (filters?: UserFilters): Promise<PaginatedResponse<User>> => {
-    const response = await api.get<User[] | UsersResponse | null>('/users', { params: filters });
-    // User handler incorrectly returns just the array at data level
-    // We need to check if it's wrapped or not
-    const data = response.data;
-    const isWrapped = data && !Array.isArray(data);
-    const users = isWrapped ? (data.users || []) : (data || []);
-    const total = isWrapped ? data.total : users.length;
-    
+    const response = (await api.get<User[]>('/users', { params: filters })) as ApiResponseWithMeta<
+      User[]
+    >;
+    const users = Array.isArray(response.data) ? response.data : [];
+    const total = response.meta?.total ?? users.length;
+
     return {
       data: users.map(transformUserFromBackend),
-      total: total || 0,
+      total: total,
       page: filters?.page || 1,
       limit: filters?.limit || 10,
-      total_pages: Math.ceil((total || 0) / (filters?.limit || 10)),
+      total_pages: Math.ceil(total / (filters?.limit || 10)),
     };
   },
 
@@ -77,11 +71,11 @@ export const usersApi = {
 
   activateUser: async (id: number): Promise<User> => {
     const response = await api.post<User>(`/users/${id}/activate`);
-    return response.data;
+    return transformUserFromBackend(response.data);
   },
 
   deactivateUser: async (id: number): Promise<User> => {
     const response = await api.post<User>(`/users/${id}/deactivate`);
-    return response.data;
+    return transformUserFromBackend(response.data);
   },
 };

@@ -467,3 +467,92 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	utils.LogHandlerResponse(logger, http.StatusOK, user)
 	utils.RespondSuccess(c, http.StatusOK, user)
 }
+
+// Activate godoc
+// @Summary Activate a user account
+// @Description Sets a user's active status to true (admin role only)
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} utils.APIResponse{data=models.User} "User activated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /users/{id}/activate [post]
+func (h *UserHandler) Activate(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "UserHandler.Activate")
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid user ID")
+		return
+	}
+
+	user, err := h.userService.Update(uint(id), map[string]interface{}{"is_active": true})
+	if err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(utils.LogError(err)).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to activate user")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, user)
+	utils.RespondSuccess(c, http.StatusOK, user)
+}
+
+// Deactivate godoc
+// @Summary Deactivate a user account
+// @Description Sets a user's active status to false (admin role only). Admins cannot deactivate their own account.
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} utils.APIResponse{data=models.User} "User deactivated successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or attempt to deactivate your own account"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /users/{id}/deactivate [post]
+func (h *UserHandler) Deactivate(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "UserHandler.Deactivate")
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid user ID")
+		return
+	}
+
+	// Prevent self-deactivation
+	currentUserID := c.GetUint("user_id")
+	if uint(id) == currentUserID {
+		utils.RespondBadRequest(c, "You cannot deactivate your own account")
+		return
+	}
+
+	user, err := h.userService.Update(uint(id), map[string]interface{}{"is_active": false})
+	if err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(utils.LogError(err)).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to deactivate user")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, user)
+	utils.RespondSuccess(c, http.StatusOK, user)
+}

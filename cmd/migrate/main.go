@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/mysql"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	_ "github.com/go-sql-driver/mysql"
 )
 
 // commandCreate authors a new migration file pair; every other command talks to
@@ -36,6 +37,18 @@ func checkCommandSupported(command, driver string) error {
 		return ErrSQLiteUnsupported
 	}
 	return nil
+}
+
+// migrationDSN ensures the MySQL DSN enables multiStatements, which
+// golang-migrate requires to execute multi-statement migration files.
+func migrationDSN(dsn string) string {
+	if strings.Contains(dsn, "multiStatements=") {
+		return dsn
+	}
+	if strings.Contains(dsn, "?") {
+		return dsn + "&multiStatements=true"
+	}
+	return dsn + "?multiStatements=true"
 }
 
 func main() {
@@ -74,7 +87,7 @@ func main() {
 	}
 
 	// Setup database connection for migrate library
-	db, err := sql.Open("mysql", cfg.Database.DSN())
+	db, err := sql.Open("mysql", migrationDSN(cfg.Database.DSN()))
 	if err != nil {
 		log.Fatalf("Failed to open database connection: %v", err)
 	}

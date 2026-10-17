@@ -800,10 +800,10 @@ func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_NoCustomerRecord_Forbi
 	})
 
 	expectedTicket := &models.Ticket{
-		BaseModel:   models.BaseModel{ID: 1},
-		Title:       "Some Ticket",
-		Status:      models.TicketStatusOpen,
-		CustomerID:  5,
+		BaseModel:  models.BaseModel{ID: 1},
+		Title:      "Some Ticket",
+		Status:     models.TicketStatusOpen,
+		CustomerID: 5,
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
@@ -826,10 +826,10 @@ func (suite *TicketHandlerTestSuite) TestGet_CustomerRole_NoCustomerService_Forb
 	})
 
 	expectedTicket := &models.Ticket{
-		BaseModel:   models.BaseModel{ID: 1},
-		Title:       "Some Ticket",
-		Status:      models.TicketStatusOpen,
-		CustomerID:  5,
+		BaseModel:  models.BaseModel{ID: 1},
+		Title:      "Some Ticket",
+		Status:     models.TicketStatusOpen,
+		CustomerID: 5,
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(expectedTicket, nil)
@@ -944,6 +944,347 @@ func (suite *TicketHandlerTestSuite) TestListByCustomer_CustomerRole_LookupError
 
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
 	suite.mockService.AssertNotCalled(suite.T(), "GetByCustomer", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Admin_Success() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Ticket 1",
+	}
+	expectedComments := []models.TicketComment{
+		{BaseModel: models.BaseModel{ID: 10}, TicketID: 1, Body: "Public comment", IsInternal: false},
+		{BaseModel: models.BaseModel{ID: 11}, TicketID: 1, Body: "Internal note", IsInternal: true},
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockService.On("ListComments", uint(1), true).Return(expectedComments, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Sales_Success() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 3, string(models.RoleSales))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Ticket 1",
+	}
+	expectedComments := []models.TicketComment{
+		{BaseModel: models.BaseModel{ID: 10}, TicketID: 1, Body: "Public comment", IsInternal: false},
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockService.On("ListComments", uint(1), true).Return(expectedComments, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Support_Assigned_Success() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 2, string(models.RoleSupport))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:    models.BaseModel{ID: 1},
+		Title:        "Ticket 1",
+		AssignedToID: uintPtr(2),
+	}
+	expectedComments := []models.TicketComment{
+		{BaseModel: models.BaseModel{ID: 10}, TicketID: 1, Body: "Internal note", IsInternal: true},
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockService.On("ListComments", uint(1), true).Return(expectedComments, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Support_NotAssigned_Forbidden() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 2, string(models.RoleSupport))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:    models.BaseModel{ID: 1},
+		Title:        "Ticket 1",
+		AssignedToID: uintPtr(5), // assigned to someone else
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "ListComments", mock.Anything, mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Customer_OwnTicket_Success() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:  models.BaseModel{ID: 1},
+		Title:      "Ticket 1",
+		CustomerID: 7,
+	}
+	customer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 7},
+		UserID:    uintPtr(10),
+	}
+	expectedComments := []models.TicketComment{
+		{BaseModel: models.BaseModel{ID: 10}, TicketID: 1, Body: "Public comment", IsInternal: false},
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(customer, nil)
+	suite.mockService.On("ListComments", uint(1), false).Return(expectedComments, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_Customer_OtherCustomer_Forbidden() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.ListComments(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:  models.BaseModel{ID: 1},
+		Title:      "Ticket 1",
+		CustomerID: 7,
+	}
+	customer := &models.Customer{
+		BaseModel: models.BaseModel{ID: 8}, // different customer
+		UserID:    uintPtr(10),
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockCustomerService.On("GetByUserID", uint(10)).Return(customer, nil)
+
+	req := httptest.NewRequest("GET", "/tickets/1/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "ListComments", mock.Anything, mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestListComments_TicketNotFound() {
+	suite.router.GET("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.ListComments(c)
+	})
+
+	suite.mockService.On("GetByID", uint(999)).Return(nil, fmt.Errorf("ticket 999 not found: %w", apperrors.ErrNotFound))
+
+	req := httptest.NewRequest("GET", "/tickets/999/comments", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_Admin_Success() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.CreateComment(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Ticket 1",
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockService.On("CreateComment", mock.MatchedBy(func(cm *models.TicketComment) bool {
+		return cm.TicketID == 1 && cm.AuthorUserID == 1 && cm.Body == "Admin note" && cm.IsInternal == true
+	})).Return(nil).Run(func(args mock.Arguments) {
+		cm := args.Get(0).(*models.TicketComment)
+		cm.ID = 100
+	})
+
+	reqBody := CreateTicketCommentRequest{
+		Content:    "Admin note",
+		IsInternal: true,
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusCreated, w.Code)
+	var response utils.APIResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_Support_Assigned_Success() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 2, string(models.RoleSupport))
+		suite.handler.CreateComment(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:    models.BaseModel{ID: 1},
+		Title:        "Ticket 1",
+		AssignedToID: uintPtr(2),
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+	suite.mockService.On("CreateComment", mock.MatchedBy(func(cm *models.TicketComment) bool {
+		return cm.TicketID == 1 && cm.AuthorUserID == 2 && cm.Body == "Support reply" && !cm.IsInternal
+	})).Return(nil)
+
+	reqBody := CreateTicketCommentRequest{
+		Body:       "Support reply",
+		IsInternal: false,
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusCreated, w.Code)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_Support_NotAssigned_Forbidden() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 2, string(models.RoleSupport))
+		suite.handler.CreateComment(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel:    models.BaseModel{ID: 1},
+		Title:        "Ticket 1",
+		AssignedToID: uintPtr(5), // assigned to someone else
+	}
+
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+
+	reqBody := CreateTicketCommentRequest{
+		Body: "Support reply",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "CreateComment", mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_Customer_Forbidden() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 10, string(models.RoleCustomer))
+		suite.handler.CreateComment(c)
+	})
+
+	reqBody := CreateTicketCommentRequest{
+		Body: "Customer reply",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "CreateComment", mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_Sales_Forbidden() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 4, string(models.RoleSales))
+		suite.handler.CreateComment(c)
+	})
+
+	reqBody := CreateTicketCommentRequest{
+		Body: "Sales reply",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "CreateComment", mock.Anything)
+}
+
+func (suite *TicketHandlerTestSuite) TestCreateComment_EmptyBody_BadRequest() {
+	suite.router.POST("/tickets/:id/comments", func(c *gin.Context) {
+		suite.setAuthContext(c, 1, string(models.RoleAdmin))
+		suite.handler.CreateComment(c)
+	})
+
+	ticket := &models.Ticket{
+		BaseModel: models.BaseModel{ID: 1},
+		Title:     "Ticket 1",
+	}
+	suite.mockService.On("GetByID", uint(1)).Return(ticket, nil)
+
+	reqBody := CreateTicketCommentRequest{
+		Body: "   ",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/tickets/1/comments", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "CreateComment", mock.Anything)
 }
 
 // Ensure the service import is used by verifying the interface

@@ -247,7 +247,7 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 	require.NoError(t, err)
 
 	for _, expected := range []string{
-		"users", "leads", "customers", "companies", "deals", "deal_stage_changes", "tickets", "tasks",
+		"users", "leads", "customers", "companies", "deals", "deal_stage_changes", "tickets", "ticket_comments", "tasks",
 		"api_keys", "configurations", "refresh_tokens",
 		"bulk_operations", "bulk_operation_items",
 	} {
@@ -282,13 +282,29 @@ func TestUserErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		UserID: user.ID, ResourceType: "customers", Type: models.BulkDelete,
 		Status: models.StatusCompleted, TotalItems: 1,
 	}).Error)
+	thirdParty := newErasureSubject("thirdparty")
+	testCust := thirdParty.asCustomer(t, db)
+	ticket := &models.Ticket{
+		Title: "Test ticket", Description: "Need help", Status: models.TicketStatusOpen,
+		Priority: models.TicketPriorityMedium, CustomerID: testCust.ID,
+	}
+	require.NoError(t, db.Create(ticket).Error)
+	comment := &models.TicketComment{
+		TicketID: ticket.ID, AuthorUserID: user.ID, Body: "Call " + subject.Phone + " about this issue",
+		IsInternal: false,
+	}
+	require.NoError(t, db.Create(comment).Error)
 
-	require.Equal(t, []string{"users"}, tablesHolding(t, db, subject.identifiers()),
+	require.Equal(t, []string{"ticket_comments", "users"}, tablesHolding(t, db, subject.identifiers()),
 		"the sweep must be able to see the person before the erasure, or its silence afterwards proves nothing")
 
 	require.NoError(t, repository.NewUserRepository(db).Delete(user.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+
+	var scrubbed models.TicketComment
+	require.NoError(t, db.First(&scrubbed, comment.ID).Error)
+	assert.Equal(t, "[deleted]", scrubbed.Body)
 
 	// ...and the sweep is still working: it can still find somebody who was not
 	// erased. Without this the test above would also pass on a sweep that had
