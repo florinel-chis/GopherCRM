@@ -4,6 +4,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { RouteErrorBoundary } from '@/components/ErrorBoundary';
 import { Login } from '@/pages/auth/Login';
 import { Register } from '@/pages/auth/Register';
+import { ForgotPassword } from '@/pages/auth/ForgotPassword';
+import { ResetPassword } from '@/pages/auth/ResetPassword';
 import { Dashboard } from '@/pages/Dashboard';
 import { NotFound } from '@/pages/NotFound';
 import { Unauthorized } from '@/pages/Unauthorized';
@@ -17,6 +19,16 @@ export const router = createBrowserRouter([
   {
     path: '/register',
     element: <Register />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: '/forgot-password',
+    element: <ForgotPassword />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: '/reset-password',
+    element: <ResetPassword />,
     errorElement: <RouteErrorBoundary />,
   },
   {
