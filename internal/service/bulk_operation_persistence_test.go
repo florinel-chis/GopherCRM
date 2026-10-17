@@ -46,6 +46,7 @@ func (s *BulkOperationPersistenceSuite) SetupTest() {
 		&models.Company{}, &models.Lead{},
 		&models.Customer{},
 		&models.Ticket{},
+		&models.TicketComment{},
 		&models.Task{},
 		&models.APIKey{},
 		&models.RefreshToken{},

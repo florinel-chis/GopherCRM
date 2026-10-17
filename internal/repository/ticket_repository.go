@@ -20,7 +20,9 @@ func (r *ticketRepository) Create(ticket *models.Ticket) error {
 
 func (r *ticketRepository) GetByID(id uint) (*models.Ticket, error) {
 	var ticket models.Ticket
-	err := r.db.Preload("Customer").Preload("AssignedTo").First(&ticket, id).Error
+	err := r.db.Preload("Customer").Preload("AssignedTo").Preload("Comments", func(db *gorm.DB) *gorm.DB {
+		return db.Order("created_at ASC, id ASC")
+	}).Preload("Comments.Author").First(&ticket, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +162,20 @@ func (r *ticketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, err
 		Limit(limit).
 		Find(&tickets).Error
 	return tickets, err
+}
+
+func (r *ticketRepository) CreateComment(comment *models.TicketComment) error {
+	return r.db.Create(comment).Error
+}
+
+func (r *ticketRepository) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {
+	var comments []models.TicketComment
+	query := r.db.Where("ticket_id = ?", ticketID)
+	if !includeInternal {
+		query = query.Where("is_internal = ?", false)
+	}
+	err := query.Preload("Author").Order("created_at ASC, id ASC").Find(&comments).Error
+	return comments, err
 }
 
 func (r *ticketRepository) WithTx(tx *gorm.DB) TicketRepository {

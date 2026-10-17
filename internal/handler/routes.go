@@ -16,6 +16,8 @@ func SetupUserRoutes(router *gin.RouterGroup, handler *UserHandler) {
 		users.GET("/:id", handler.Get)
 		users.PUT("/:id", handler.Update)
 		users.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+		users.POST("/:id/activate", middleware.RequireRole(models.RoleAdmin), handler.Activate)
+		users.POST("/:id/deactivate", middleware.RequireRole(models.RoleAdmin), handler.Deactivate)
 	}
 }
 
@@ -98,8 +100,10 @@ func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
 		tickets.GET("/:id", handler.Get)
 		tickets.PUT("/:id", handler.Update)
 		tickets.DELETE("/:id", handler.Delete)
+		tickets.GET("/:id/comments", handler.ListComments)
+		tickets.POST("/:id/comments", handler.CreateComment)
 	}
-	
+
 	// Customer-specific ticket routes
 	router.GET("/customers/:id/tickets", handler.ListByCustomer)
 }
@@ -147,7 +151,7 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 	{
 		// Public endpoint for UI configurations (authenticated users only)
 		configs.GET("/ui", handler.GetUIConfigurations)
-		
+
 		// Admin-only endpoints
 		configs.GET("", middleware.RequireRole(models.RoleAdmin), handler.GetAll)
 		configs.GET("/category/:category", middleware.RequireRole(models.RoleAdmin), handler.GetByCategory)

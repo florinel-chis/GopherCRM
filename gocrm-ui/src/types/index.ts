@@ -109,8 +109,7 @@ export const DEAL_STAGE_VALUES = DEAL_STAGES.map((stage) => stage.value) as [
   ...DealStage[],
 ];
 
-export const isClosedDealStage = (stage: DealStage): boolean =>
-  stage === 'won' || stage === 'lost';
+export const isClosedDealStage = (stage: DealStage): boolean => stage === 'won' || stage === 'lost';
 
 export const dealStageLabel = (stage: DealStage): string =>
   DEAL_STAGES.find((candidate) => candidate.value === stage)?.label ?? stage;
@@ -215,6 +214,7 @@ export interface Comment {
   ticket_id: number;
   user_id: number;
   user?: User;
+  is_internal?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -291,6 +291,21 @@ export interface BackendTask {
   updated_at: string;
 }
 
+export interface BackendTicketComment {
+  id: number;
+  ticket_id: number;
+  author_user_id?: number;
+  user_id?: number;
+  author?: User;
+  user?: User;
+  body?: string;
+  comment?: string;
+  content?: string;
+  is_internal?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BackendTicket {
   id: number;
   title: string;
@@ -301,6 +316,7 @@ export interface BackendTicket {
   customer?: BackendCustomer;
   assigned_to_id?: number;
   assigned_to?: User;
+  comments?: BackendTicketComment[];
   created_at: string;
   updated_at: string;
 }

@@ -118,7 +118,12 @@ func (r *userRepository) Delete(id uint) error {
 			"failed_login_attempts": 0,
 			"locked_until":          nil,
 		},
-		AfterScrub: purgeCredentials,
+		AfterScrub: func(tx *gorm.DB, id uint) error {
+			if err := purgeCredentials(tx, id); err != nil {
+				return err
+			}
+			return scrubUserTicketComments(tx, id)
+		},
 	})
 }
 

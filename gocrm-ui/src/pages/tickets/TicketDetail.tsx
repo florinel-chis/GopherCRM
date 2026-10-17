@@ -18,6 +18,8 @@ import {
   Avatar,
   Card,
   CardContent,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -77,6 +79,7 @@ export const Component: React.FC = () => {
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [comment, setComment] = useState('');
+  const [isInternal, setIsInternal] = useState(false);
 
   const { data: ticket, isLoading } = useQuery({
     queryKey: ['ticket', id],
@@ -97,11 +100,13 @@ export const Component: React.FC = () => {
   });
 
   const addCommentMutation = useMutation({
-    mutationFn: (content: string) => ticketsApi.addComment(Number(id), { content }),
+    mutationFn: (data: { content: string; is_internal: boolean }) =>
+      ticketsApi.addComment(Number(id), data),
     onSuccess: () => {
       showSuccess('Comment added successfully');
       queryClient.invalidateQueries({ queryKey: ['ticket', id] });
       setComment('');
+      setIsInternal(false);
     },
     onError: () => {
       showError('Failed to add comment');
@@ -111,7 +116,7 @@ export const Component: React.FC = () => {
   const handleAddComment = (e: React.FormEvent) => {
     e.preventDefault();
     if (comment.trim()) {
-      addCommentMutation.mutate(comment);
+      addCommentMutation.mutate({ content: comment, is_internal: isInternal });
     }
   };
 
@@ -138,7 +143,10 @@ export const Component: React.FC = () => {
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="h4">Ticket #{ticket.id}</Typography>
           <Chip
-            label={ticket.status.split('_').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')}
+            label={ticket.status
+              .split('_')
+              .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+              .join(' ')}
             color={getStatusColor(ticket.status)}
           />
           <Chip
@@ -158,10 +166,7 @@ export const Component: React.FC = () => {
             </Button>
           )}
           {canDelete && (
-            <IconButton
-              color="error"
-              onClick={() => setDeleteDialog(true)}
-            >
+            <IconButton color="error" onClick={() => setDeleteDialog(true)}>
               <DeleteIcon />
             </IconButton>
           )}
@@ -173,7 +178,7 @@ export const Component: React.FC = () => {
           <Typography variant="h5" gutterBottom>
             {ticket.subject}
           </Typography>
-          
+
           <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={3} mt={3}>
             <Box>
               <Box display="flex" alignItems="center" gap={1} mb={2}>
@@ -182,12 +187,10 @@ export const Component: React.FC = () => {
                   <Typography variant="caption" color="text.secondary">
                     Customer
                   </Typography>
-                  <Typography>
-                    {customerName || 'N/A'}
-                  </Typography>
+                  <Typography>{customerName || 'N/A'}</Typography>
                 </Box>
               </Box>
-              
+
               <Box display="flex" alignItems="center" gap={1} mb={2}>
                 <PersonIcon color="action" />
                 <Box>
@@ -195,24 +198,24 @@ export const Component: React.FC = () => {
                     Created By
                   </Typography>
                   <Typography>
-                    {ticket.created_by ? `${ticket.created_by.first_name} ${ticket.created_by.last_name}` : 'Unknown'}
+                    {ticket.created_by
+                      ? `${ticket.created_by.first_name} ${ticket.created_by.last_name}`
+                      : 'Unknown'}
                   </Typography>
                 </Box>
               </Box>
-              
+
               <Box display="flex" alignItems="center" gap={1}>
                 <CalendarIcon color="action" />
                 <Box>
                   <Typography variant="caption" color="text.secondary">
                     Created
                   </Typography>
-                  <Typography>
-                    {formatDate(ticket.created_at, 'MMM dd, yyyy HH:mm')}
-                  </Typography>
+                  <Typography>{formatDate(ticket.created_at, 'MMM dd, yyyy HH:mm')}</Typography>
                 </Box>
               </Box>
             </Box>
-            
+
             <Box>
               <Box display="flex" alignItems="center" gap={1} mb={2}>
                 <AssignmentIcon color="action" />
@@ -221,11 +224,13 @@ export const Component: React.FC = () => {
                     Assigned To
                   </Typography>
                   <Typography>
-                    {ticket.assigned_to ? `${ticket.assigned_to.first_name} ${ticket.assigned_to.last_name}` : 'Unassigned'}
+                    {ticket.assigned_to
+                      ? `${ticket.assigned_to.first_name} ${ticket.assigned_to.last_name}`
+                      : 'Unassigned'}
                   </Typography>
                 </Box>
               </Box>
-              
+
               <Box display="flex" alignItems="center" gap={1} mb={2}>
                 <FlagIcon color="action" />
                 <Box>
@@ -237,16 +242,14 @@ export const Component: React.FC = () => {
                   </Typography>
                 </Box>
               </Box>
-              
+
               <Box display="flex" alignItems="center" gap={1}>
                 <CalendarIcon color="action" />
                 <Box>
                   <Typography variant="caption" color="text.secondary">
                     Last Updated
                   </Typography>
-                  <Typography>
-                    {formatDate(ticket.updated_at, 'MMM dd, yyyy HH:mm')}
-                  </Typography>
+                  <Typography>{formatDate(ticket.updated_at, 'MMM dd, yyyy HH:mm')}</Typography>
                 </Box>
               </Box>
             </Box>
@@ -273,16 +276,26 @@ export const Component: React.FC = () => {
               {ticket.comments.map((comment) => (
                 <ListItem key={comment.id} alignItems="flex-start" sx={{ px: 0 }}>
                   <ListItemAvatar>
-                    <Avatar>
-                      {comment.user?.first_name?.charAt(0) || 'U'}
-                    </Avatar>
+                    <Avatar>{comment.user?.first_name?.charAt(0) || 'U'}</Avatar>
                   </ListItemAvatar>
                   <ListItemText
                     primary={
                       <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Typography variant="subtitle2">
-                          {comment.user ? `${comment.user.first_name} ${comment.user.last_name}` : 'Unknown User'}
-                        </Typography>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <Typography variant="subtitle2">
+                            {comment.user
+                              ? `${comment.user.first_name} ${comment.user.last_name}`
+                              : 'Unknown User'}
+                          </Typography>
+                          {comment.is_internal && (
+                            <Chip
+                              label="Internal Note"
+                              size="small"
+                              color="warning"
+                              variant="outlined"
+                            />
+                          )}
+                        </Box>
                         <Typography variant="caption" color="text.secondary">
                           {formatDate(comment.created_at, 'MMM dd, yyyy HH:mm')}
                         </Typography>
@@ -303,31 +316,43 @@ export const Component: React.FC = () => {
             </Typography>
           )}
 
-          <Card variant="outlined">
-            <CardContent>
-              <form onSubmit={handleAddComment}>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={3}
-                  placeholder="Add a comment..."
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  sx={{ mb: 2 }}
-                />
-                <Box display="flex" justifyContent="flex-end">
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    startIcon={<SendIcon />}
-                    disabled={!comment.trim() || addCommentMutation.isPending}
-                  >
-                    Add Comment
-                  </Button>
-                </Box>
-              </form>
-            </CardContent>
-          </Card>
+          {canEdit && (
+            <Card variant="outlined">
+              <CardContent>
+                <form onSubmit={handleAddComment}>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    placeholder="Add a comment..."
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    sx={{ mb: 2 }}
+                  />
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={isInternal}
+                          onChange={(e) => setIsInternal(e.target.checked)}
+                          size="small"
+                        />
+                      }
+                      label={<Typography variant="body2">Internal note</Typography>}
+                    />
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      startIcon={<SendIcon />}
+                      disabled={!comment.trim() || addCommentMutation.isPending}
+                    >
+                      Add Comment
+                    </Button>
+                  </Box>
+                </form>
+              </CardContent>
+            </Card>
+          )}
         </Paper>
       </Stack>
 

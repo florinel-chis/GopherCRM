@@ -233,3 +233,13 @@ func purgeCredentials(tx *gorm.DB, userID uint) error {
 	}
 	return nil
 }
+
+// scrubUserTicketComments redacts the body of ticket comments authored by this
+// user to "[deleted]" so personal data in comment text is scrubbed while the
+// ticket discussion history remains coherent.
+func scrubUserTicketComments(tx *gorm.DB, userID uint) error {
+	if err := tx.Model(&models.TicketComment{}).Where("author_user_id = ?", userID).Update("body", "[deleted]").Error; err != nil {
+		return fmt.Errorf("scrubbing ticket comments of user %d: %w", userID, err)
+	}
+	return nil
+}
