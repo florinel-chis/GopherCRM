@@ -212,7 +212,16 @@ func (s *authService) ValidateToken(tokenString string) (*models.User, error) {
 		}
 
 		userID := uint(userIDFloat)
-		return s.userRepo.GetByID(userID)
+		user, err := s.userRepo.GetByID(userID)
+		if err != nil {
+			return nil, err
+		}
+		if !user.IsActive {
+			utils.Logger.WithField("user_id", user.ID).
+				Warn("Rejected bearer token of a deactivated user")
+			return nil, errors.New("user account is deactivated")
+		}
+		return user, nil
 	}
 
 	return nil, errors.New("invalid token")

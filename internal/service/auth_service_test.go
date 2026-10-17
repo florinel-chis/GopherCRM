@@ -437,6 +437,7 @@ func TestAuthService_ValidateToken(t *testing.T) {
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
 			Role:      models.RoleCustomer,
+			IsActive:  true,
 		}
 
 		token, _ := authService.GenerateJWT(user)
@@ -447,6 +448,25 @@ func TestAuthService_ValidateToken(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, validatedUser)
 		assert.Equal(t, user.ID, validatedUser.ID)
+		mockUserRepo.AssertExpectations(t)
+	})
+
+	t.Run("deactivated user", func(t *testing.T) {
+		user := &models.User{
+			BaseModel: models.BaseModel{ID: 2},
+			Email:     "deactivated@example.com",
+			Role:      models.RoleCustomer,
+			IsActive:  false,
+		}
+
+		token, _ := authService.GenerateJWT(user)
+		mockUserRepo.On("GetByID", uint(2)).Return(user, nil)
+
+		validatedUser, err := authService.ValidateToken(token)
+
+		assert.Error(t, err)
+		assert.Equal(t, "user account is deactivated", err.Error())
+		assert.Nil(t, validatedUser)
 		mockUserRepo.AssertExpectations(t)
 	})
 
