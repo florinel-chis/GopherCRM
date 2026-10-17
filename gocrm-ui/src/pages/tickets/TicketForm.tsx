@@ -17,6 +17,7 @@ import {
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { FormTextField, FormSelect } from '@/components/form';
 import { Loading } from '@/components/Loading';
+import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi, customersApi, usersApi, type CreateTicketData, type UpdateTicketData } from '@/api/endpoints';
 import type { BackendCustomer, Customer, User } from '@/types';
@@ -52,6 +53,7 @@ export const Component: React.FC = () => {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
+  const { user } = useAuth();
   const isEditMode = !!id;
   
   const preselectedCustomerId = searchParams.get('customer_id');
@@ -71,7 +73,7 @@ export const Component: React.FC = () => {
   });
 
   const { data: ticket, isLoading: ticketLoading } = useQuery({
-    queryKey: ['ticket', id],
+    queryKey: ['ticket', id, user?.id],
     queryFn: () => ticketsApi.getTicket(Number(id)),
     enabled: isEditMode,
   });

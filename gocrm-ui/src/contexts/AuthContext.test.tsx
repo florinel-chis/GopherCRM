@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { renderHook, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from '@/hooks/useAuth';
 import { authApi } from '@/api/endpoints';
@@ -210,6 +211,90 @@ describe('AuthContext', () => {
 
     expect(authApi.register).toHaveBeenCalled();
     expect(apiClient.setToken).toHaveBeenCalledWith('test-token');
+  });
+
+  it('clears query cache on logout when QueryClientProvider is present', async () => {
+    const queryClient = new QueryClient();
+    const clearSpy = vi.spyOn(queryClient, 'clear');
+    vi.mocked(apiClient.getToken).mockReturnValue('test-token');
+    vi.mocked(authApi.getCurrentUser).mockResolvedValue(mockUser);
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>{children}</AuthProvider>
+      </QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.user).toEqual(mockUser);
+    });
+
+    clearSpy.mockClear();
+
+    await act(async () => {
+      await result.current.logout();
+    });
+
+    expect(clearSpy).toHaveBeenCalled();
+  });
+
+  it('clears query cache on login when QueryClientProvider is present', async () => {
+    const queryClient = new QueryClient();
+    const clearSpy = vi.spyOn(queryClient, 'clear');
+    vi.mocked(apiClient.getToken).mockReturnValue(null);
+    vi.mocked(authApi.login).mockResolvedValue({
+      token: 'test-token',
+      user: mockUser,
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>{children}</AuthProvider>
+      </QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    clearSpy.mockClear();
+
+    await act(async () => {
+      await result.current.login({
+        email: 'test@example.com',
+        password: 'password',
+      });
+    });
+
+    expect(clearSpy).toHaveBeenCalled();
+  });
+
+  it('clears query cache on 401/403 auth error during loadUser', async () => {
+    const queryClient = new QueryClient();
+    const clearSpy = vi.spyOn(queryClient, 'clear');
+    const authErr = Object.assign(new Error('Unauthorized'), {
+      response: { status: 401 },
+    });
+    vi.mocked(apiClient.getToken).mockReturnValue('expired-token');
+    vi.mocked(authApi.getCurrentUser).mockRejectedValue(authErr);
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>{children}</AuthProvider>
+      </QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(clearSpy).toHaveBeenCalled();
   });
 
   it('throws error when useAuth is used outside AuthProvider', () => {

@@ -82,7 +82,7 @@ export const Component: React.FC = () => {
   const [isInternal, setIsInternal] = useState(false);
 
   const { data: ticket, isLoading } = useQuery({
-    queryKey: ['ticket', id],
+    queryKey: ['ticket', id, user?.id],
     queryFn: () => ticketsApi.getTicket(Number(id)),
     enabled: !!id,
   });

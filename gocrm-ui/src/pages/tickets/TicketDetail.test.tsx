@@ -245,4 +245,71 @@ describe('TicketDetail comments', () => {
     expect(await screen.findByText('Login issue')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Add a comment...')).not.toBeInTheDocument();
   });
+
+  it('does not leak internal notes across account switch from staff to customer', async () => {
+    const sharedQueryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 1000 * 60 * 5 } },
+    });
+
+    const staffTicket = createMockTicket({
+      id: 1,
+      subject: 'Login issue',
+      assigned_to_id: ASSIGNEE_ID,
+      comments: [
+        {
+          id: 101,
+          ticket_id: 1,
+          user_id: ASSIGNEE_ID,
+          content: 'Confidential staff investigation note',
+          is_internal: true,
+          created_at: '2026-10-17T12:00:00Z',
+          updated_at: '2026-10-17T12:00:00Z',
+        },
+      ],
+    });
+
+    const customerTicket = createMockTicket({
+      id: 1,
+      subject: 'Login issue',
+      assigned_to_id: ASSIGNEE_ID,
+      comments: [],
+    });
+
+    // 1. Staff user views the ticket
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: ASSIGNEE_ID, role: 'support' })));
+    vi.mocked(ticketsApi.getTicket).mockResolvedValueOnce(staffTicket);
+
+    const { unmount } = render(
+      <QueryClientProvider client={sharedQueryClient}>
+        <MemoryRouter initialEntries={['/tickets/1']}>
+          <Routes>
+            <Route path="/tickets/:id" element={<TicketDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Confidential staff investigation note')).toBeInTheDocument();
+    expect(screen.getByText('Internal Note')).toBeInTheDocument();
+    unmount();
+
+    // 2. Account switch to customer in same tab (stale cache must not serve staff data)
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 99, role: 'customer' })));
+    vi.mocked(ticketsApi.getTicket).mockResolvedValueOnce(customerTicket);
+
+    render(
+      <QueryClientProvider client={sharedQueryClient}>
+        <MemoryRouter initialEntries={['/tickets/1']}>
+          <Routes>
+            <Route path="/tickets/:id" element={<TicketDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Login issue')).toBeInTheDocument();
+    expect(screen.queryByText('Confidential staff investigation note')).not.toBeInTheDocument();
+    expect(screen.queryByText('Internal Note')).not.toBeInTheDocument();
+    expect(ticketsApi.getTicket).toHaveBeenCalledTimes(2);
+  });
 });
