@@ -132,7 +132,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_NilPointerLeavesLab
 	task := suite.existingTask()
 	suite.mockTaskRepo.On("Update", task).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, 1))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, false, 1))
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -143,7 +143,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_EmptySliceClearsThe
 
 	suite.mockTaskRepo.On("UpdateWithLabels", task, []models.Label(nil)).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &empty, 1))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &empty, false, 1))
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -156,7 +156,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_ReplacesTheSet() {
 	suite.mockLabelRepo.On("FindByIDs", ids).Return(labels, nil)
 	suite.mockTaskRepo.On("UpdateWithLabels", task, labels).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &ids, 1))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &ids, false, 1))
 }
 
 func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsTheWholeRequest() {
@@ -165,7 +165,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsThe
 
 	suite.mockLabelRepo.On("FindByIDs", ids).Return([]models.Label{}, nil)
 
-	err := suite.service.UpdateWithLabels(task, &ids, 1)
+	err := suite.service.UpdateWithLabels(task, &ids, false, 1)
 	assert.ErrorIs(suite.T(), err, apperrors.ErrLabelNotFound)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)

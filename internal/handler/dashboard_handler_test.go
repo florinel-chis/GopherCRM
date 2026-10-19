@@ -592,6 +592,44 @@ func (suite *DashboardHandlerTestSuite) TestGetUpcomingTasks_NonAdminScopedToAss
 	suite.assertEmptyDataArray(rec)
 }
 
+// A task assigned to a sales or support user but linked to a lead they may not
+// see (another rep's lead, linked by an admin or before the lead changed hands)
+// is listed without the lead: neither its data nor its id.
+func (suite *DashboardHandlerTestSuite) TestGetUpcomingTasks_HidesALeadTheAssigneeMayNotSee() {
+	for _, role := range []models.UserRole{models.RoleSales, models.RoleSupport} {
+		suite.SetupTest()
+		router := suite.newAnalyticsRouter(role, 2)
+		suite.mockTaskService.On("GetUpcomingByAssignee", uint(2), 5).Return([]models.Task{*taskLinkedToLead(2, 9)}, nil)
+
+		rec := suite.doGet(router, "/dashboard/upcoming-tasks")
+
+		require.Equal(suite.T(), http.StatusOK, rec.Code, rec.Body.String())
+		body := rec.Body.String()
+		assert.Contains(suite.T(), body, "Call back", "%s: the task itself is listed", role)
+		assert.NotContains(suite.T(), body, hiddenLeadEmail, role)
+		assert.NotContains(suite.T(), body, `"lead_id"`, role)
+		assert.NotContains(suite.T(), body, `"lead":`, role)
+		suite.mockTaskService.AssertExpectations(suite.T())
+	}
+}
+
+// The lead stays for a sales user who owns it and for an admin.
+func (suite *DashboardHandlerTestSuite) TestGetUpcomingTasks_ShowsTheLeadToItsOwnerAndToAdmins() {
+	router := suite.newAnalyticsRouter(models.RoleSales, 2)
+	suite.mockTaskService.On("GetUpcomingByAssignee", uint(2), 5).Return([]models.Task{*taskLinkedToLead(2, 2)}, nil)
+	rec := suite.doGet(router, "/dashboard/upcoming-tasks")
+	require.Equal(suite.T(), http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(suite.T(), rec.Body.String(), `"lead_id":30`)
+	assert.Contains(suite.T(), rec.Body.String(), hiddenLeadEmail)
+
+	router = suite.newAnalyticsRouter(models.RoleAdmin, 1)
+	suite.mockTaskService.On("GetUpcoming", 5).Return([]models.Task{*taskLinkedToLead(2, 9)}, nil)
+	rec = suite.doGet(router, "/dashboard/upcoming-tasks")
+	require.Equal(suite.T(), http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(suite.T(), rec.Body.String(), `"lead_id":30`)
+	assert.Contains(suite.T(), rec.Body.String(), hiddenLeadEmail)
+}
+
 func (suite *DashboardHandlerTestSuite) TestGetUpcomingTasks_LimitIsCapped() {
 	router := suite.newAnalyticsRouter(models.RoleAdmin, 1)
 	suite.mockTaskService.On("GetUpcoming", 50).Return([]models.Task{}, nil)

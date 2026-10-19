@@ -254,6 +254,58 @@ func (s *LeadVisibilityIntegrationTestSuite) TestTaskReads_HideHistoricalLinks()
 	s.assertNoLead(body, "support after reassignment")
 }
 
+// The update oracle: the assignee of a task carrying a hidden link must not be
+// able to find that link by sending lead ids. The stored hidden id is refused
+// exactly like another hidden lead and like a missing one, and no probe writes
+// anything. The owner of the lead may still send it back unchanged.
+func (s *LeadVisibilityIntegrationTestSuite) TestTaskUpdate_SendingTheHiddenStoredLeadIsNoOracle() {
+	otherLead := &models.Lead{FirstName: "Other", LastName: "Lead", Email: "other-hidden@example.com", OwnerID: s.alice.ID, Status: models.LeadStatusNew}
+	s.Require().NoError(s.db.Create(otherLead).Error)
+
+	for _, assignee := range []*models.User{s.bob, s.support} {
+		status, envelope, body := s.call(s.admin, http.MethodPost, "/tasks", map[string]interface{}{
+			"title": "Admin-made link", "assigned_to_id": assignee.ID, "lead_id": s.alicesLead.ID,
+		})
+		s.Require().Equal(http.StatusCreated, status, body)
+		taskID := dataID(envelope)
+
+		var answers []string
+		for _, probe := range []uint{s.alicesLead.ID, otherLead.ID, 999999} {
+			status, envelope, body = s.call(assignee, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID), map[string]interface{}{
+				"title": "Probe", "lead_id": probe,
+			})
+			s.Equalf(http.StatusNotFound, status, "%s probing lead %d: %s", assignee.Email, probe, body)
+			s.NotContains(body, alicesLeadEmail)
+			errBody, _ := envelope["error"].(map[string]interface{})
+			answers = append(answers, fmt.Sprintf("%d %v", status, errBody["code"]))
+
+			stored := s.storedTask(taskID)
+			s.Equal("Admin-made link", stored.Title, "a refused probe writes nothing")
+			s.Require().NotNil(stored.LeadID)
+			s.Equal(s.alicesLead.ID, *stored.LeadID)
+		}
+		s.Equal(answers[0], answers[1], "%s: the stored hidden id answers like another hidden lead", assignee.Email)
+		s.Equal(answers[0], answers[2], "%s: ...and like a missing one", assignee.Email)
+
+		// Leaving lead_id out still lets the assignee work on the task.
+		status, _, body = s.call(assignee, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID), map[string]interface{}{"title": "Worked on"})
+		s.Require().Equal(http.StatusOK, status, body)
+		s.assertNoLead(body, assignee.Email+" update without lead_id")
+	}
+
+	// Alice owns the lead: echoing it back on her own task is accepted.
+	status, envelope, body := s.call(s.alice, http.MethodPost, "/tasks", map[string]interface{}{
+		"title": "Mine", "assigned_to_id": s.alice.ID, "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusCreated, status, body)
+	taskID := dataID(envelope)
+	status, _, body = s.call(s.alice, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID), map[string]interface{}{
+		"title": "Still mine", "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusOK, status, body)
+	s.Equal("Still mine", s.storedTask(taskID).Title)
+}
+
 // A link Alice legitimately made stops showing once the lead is hers no
 // longer, and shows to whoever owns the lead now.
 func (s *LeadVisibilityIntegrationTestSuite) TestTaskReads_FollowLeadOwnershipChanges() {
@@ -332,6 +384,53 @@ func (s *LeadVisibilityIntegrationTestSuite) TestDealReads_HideHistoricalLinks()
 	status, _, body = s.call(s.bob, http.MethodGet, fmt.Sprintf("/deals/%d", dealID), nil)
 	s.Require().Equal(http.StatusOK, status)
 	s.Contains(body, alicesLeadEmail, "the new owner of the lead sees it")
+}
+
+// The update oracle on deals: Bob owns a deal an admin linked to Alice's lead.
+// Sending that lead_id back is the same 400 INVALID_REFERENCE as another
+// hidden lead or a missing one, and nothing is written. Alice may echo her own
+// lead back on her own deal.
+func (s *LeadVisibilityIntegrationTestSuite) TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle() {
+	otherLead := &models.Lead{FirstName: "Other", LastName: "Lead", Email: "other-hidden@example.com", OwnerID: s.alice.ID, Status: models.LeadStatusNew}
+	s.Require().NoError(s.db.Create(otherLead).Error)
+
+	status, envelope, body := s.call(s.admin, http.MethodPost, "/deals", map[string]interface{}{
+		"title": "Admin-linked", "owner_id": s.bob.ID, "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusCreated, status, body)
+	dealID := dataID(envelope)
+	history := s.count(&models.DealStageChange{})
+
+	var answers []string
+	for _, probe := range []uint{s.alicesLead.ID, otherLead.ID, 999999} {
+		status, envelope, body = s.call(s.bob, http.MethodPut, fmt.Sprintf("/deals/%d", dealID), map[string]interface{}{
+			"title": "Probe", "stage": "proposal", "lead_id": probe,
+		})
+		s.Equalf(http.StatusBadRequest, status, "probing lead %d: %s", probe, body)
+		s.NotContains(body, alicesLeadEmail)
+		errBody, _ := envelope["error"].(map[string]interface{})
+		s.Equal("INVALID_REFERENCE", errBody["code"])
+		answers = append(answers, fmt.Sprintf("%d %v", status, errBody["code"]))
+
+		stored := s.storedDeal(dealID)
+		s.Equal("Admin-linked", stored.Title, "a refused probe writes nothing")
+		s.Equal(models.DealStageQualification, stored.Stage)
+		s.Require().NotNil(stored.LeadID)
+		s.Equal(s.alicesLead.ID, *stored.LeadID)
+	}
+	s.Equal(answers[0], answers[1], "the stored hidden id answers like another hidden lead")
+	s.Equal(answers[0], answers[2], "...and like a missing one")
+	s.Equal(history, s.count(&models.DealStageChange{}), "no probe writes a history row")
+
+	status, envelope, body = s.call(s.alice, http.MethodPost, "/deals", map[string]interface{}{"title": "Alice's deal", "lead_id": s.alicesLead.ID})
+	s.Require().Equal(http.StatusCreated, status, body)
+	aliceDeal := dataID(envelope)
+	status, _, body = s.call(s.alice, http.MethodPut, fmt.Sprintf("/deals/%d", aliceDeal), map[string]interface{}{
+		"title": "Alice's deal, edited", "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusOK, status, body)
+	s.Contains(body, alicesLeadEmail, "the owner keeps seeing her lead")
+	s.Equal("Alice's deal, edited", s.storedDeal(aliceDeal).Title)
 }
 
 func TestLeadVisibilityIntegrationTestSuite(t *testing.T) {

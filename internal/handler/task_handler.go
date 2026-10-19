@@ -404,7 +404,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id different from the stored one must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one); a stored link is kept when lead_id is absent, and is omitted from the response when the caller may not see it. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id that is sent must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when lead_id is absent, and is omitted from the response when the caller may not see it. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -491,7 +491,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		task.CustomerID = req.CustomerID
 	}
 
-	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, currentUserID); err != nil {
+	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, req.LeadID != nil, currentUserID); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||

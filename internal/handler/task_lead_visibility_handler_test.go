@@ -141,13 +141,31 @@ func TestTaskUpdate_ResponseHidesALeadTheCallerMayNotSee(t *testing.T) {
 		// The stored link travels to the service untouched; only the response
 		// is redacted.
 		return task.LeadID != nil && *task.LeadID == 30 && task.Title == "Renamed"
-	}), (*[]uint)(nil), uint(2)).Return(nil)
+	}), (*[]uint)(nil), false, uint(2)).Return(nil)
 
 	w := serveJSON(newTaskLeadRouter(svc, models.RoleSales, 2), http.MethodPut, "/tasks/5", gin.H{"title": "Renamed"})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.NotContains(t, w.Body.String(), hiddenLeadEmail)
 	assert.NotContains(t, w.Body.String(), `"lead_id"`)
 	svc.AssertExpectations(t)
+}
+
+// A lead_id in the body reaches the service flagged as sent, even when it is
+// the stored (hidden) link, so the service re-checks it; the refusal is the
+// same 404 as for any other hidden lead and the response carries no lead.
+func TestTaskUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink(t *testing.T) {
+	for _, sent := range []uint{30, 31} {
+		svc := new(MockTaskService)
+		svc.On("GetByID", uint(5)).Return(taskLinkedToLead(2, 9), nil)
+		svc.On("UpdateWithLabels", mock.MatchedBy(func(task *models.Task) bool {
+			return task.LeadID != nil && *task.LeadID == sent
+		}), (*[]uint)(nil), true, uint(2)).Return(fmt.Errorf("unknown lead_id %d: %w", sent, apperrors.ErrLeadNotFound))
+
+		w := serveJSON(newTaskLeadRouter(svc, models.RoleSales, 2), http.MethodPut, "/tasks/5", gin.H{"lead_id": sent})
+		assert.Equal(t, http.StatusNotFound, w.Code, "lead %d: %s", sent, w.Body.String())
+		assert.NotContains(t, w.Body.String(), hiddenLeadEmail)
+		svc.AssertExpectations(t)
+	}
 }
 
 // A lead the service refuses as hidden is a 404, exactly like a missing lead,

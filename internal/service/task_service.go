@@ -170,14 +170,15 @@ func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]model
 // Update persists the task and leaves its label set untouched. It has no
 // acting user, so it cannot link the task to another lead.
 func (s *taskService) Update(task *models.Task) error {
-	return s.UpdateWithLabels(task, nil, 0)
+	return s.UpdateWithLabels(task, nil, false, 0)
 }
 
 // UpdateWithLabels persists the task and, when labelIDs is non-nil, REPLACES
 // its label set with the referenced labels. A non-nil empty slice clears the
 // set; nil leaves it exactly as it was. A lead link that differs from the
-// stored one must be a lead actorID may see; the stored link is kept as it is.
-func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, actorID uint) error {
+// stored one, or any lead link the request sent (leadIDSent), must be a lead
+// actorID may see; a stored link the request did not mention is kept as it is.
+func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent bool, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_id", task.ID), "TaskService", "Update")
 
 	// Get existing task to validate the update
@@ -204,12 +205,15 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, acto
 		newAssignee = assignee
 	}
 
-	// Validate lead if being changed: the new one must exist and be visible to
+	// Validate lead if being changed or sent: it must exist and be visible to
 	// the actor. The ids are compared, not the pointers, so an edit that leaves
-	// the link alone stays possible after the lead changed hands.
+	// lead_id out stays possible after the lead changed hands. A lead_id that
+	// was sent is checked even when it equals the stored one: otherwise 200 for
+	// the stored id and 404 for every other hidden one would reveal the link
+	// the read side hides.
 	leadChanged := linkChanged(task.LeadID, existingTask.LeadID)
 	var lead *models.Lead
-	if leadChanged {
+	if task.LeadID != nil && (leadChanged || leadIDSent) {
 		lead, err = checkLeadLink(s.leadRepo, s.userRepo, actorID, *task.LeadID)
 		if err != nil {
 			logger.WithError(utils.LogError(err)).Warn("Lead link rejected")

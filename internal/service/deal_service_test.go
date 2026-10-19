@@ -118,7 +118,7 @@ func (suite *DealServiceTestSuite) TestAmountBound_OnCreateAndUpdate() {
 
 	stored := &models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", Stage: models.DealStageProposal, Currency: "EUR", OwnerID: 1}
 	suite.mockRepo.On("GetByID", uint(5)).Return(stored, nil).Once()
-	err = suite.service.Update(&models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", AmountCents: maxAmount + 1, OwnerID: 1}, nil, 1)
+	err = suite.service.Update(&models.Deal{BaseModel: models.BaseModel{ID: 5}, Title: "X", AmountCents: maxAmount + 1, OwnerID: 1}, nil, false, 1)
 	suite.Require().Error(err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrValidation), "got %v", err)
 	assert.Contains(suite.T(), err.Error(), "amount_cents must be at most 1000000000000")
@@ -420,7 +420,7 @@ func TestDealService_AFailedHistoryWriteRollsBackTheDeal(t *testing.T) {
 	// Update with a stage change: same thing.
 	stored.Stage = models.DealStageProposal
 	stored.Owner = nil
-	err = svc.Update(stored, nil, owner.ID)
+	err = svc.Update(stored, nil, false, owner.ID)
 	require.Error(t, err)
 	again, err := healthy.GetByID(deal.ID)
 	require.NoError(t, err)
@@ -519,7 +519,7 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 	stored.Title = "Edited"
 	stored.Currency = ""
 	stored.Owner = nil
-	require.NoError(t, svc.Update(stored, nil, owner.ID))
+	require.NoError(t, svc.Update(stored, nil, false, owner.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Edited", stored.Title)
@@ -529,7 +529,7 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 
 	explicit := 25
 	stored.Owner = nil
-	require.NoError(t, svc.Update(stored, &explicit, owner.ID))
+	require.NoError(t, svc.Update(stored, &explicit, false, owner.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 25, stored.Probability, "an explicit probability is applied on the same stage")
@@ -539,7 +539,7 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 	stored.Stage = models.DealStageLost
 	stored.LostReason = "priced out"
 	stored.Owner = nil
-	require.NoError(t, svc.Update(stored, nil, owner.ID))
+	require.NoError(t, svc.Update(stored, nil, false, owner.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 0, stored.Probability)
@@ -555,7 +555,7 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 	// dropped because the deal is no longer lost.
 	stored.Stage = models.DealStageProposal
 	stored.Owner = nil
-	require.NoError(t, svc.Update(stored, nil, owner.ID))
+	require.NoError(t, svc.Update(stored, nil, false, owner.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 40, stored.Probability)
@@ -564,7 +564,7 @@ func TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges(t *te
 	assert.Len(t, historyOf(t, db, deal.ID), 3)
 
 	// An unknown deal is a miss.
-	err = svc.Update(&models.Deal{BaseModel: models.BaseModel{ID: 999}, Title: "X", OwnerID: owner.ID}, nil, owner.ID)
+	err = svc.Update(&models.Deal{BaseModel: models.BaseModel{ID: 999}, Title: "X", OwnerID: owner.ID}, nil, false, owner.ID)
 	assert.True(t, errors.Is(err, apperrors.ErrNotFound))
 }
 
@@ -601,7 +601,7 @@ func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
 	require.NoError(t, err)
 	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
 	stored.Title = "Edited after the erasure"
-	require.NoError(t, svc.Update(stored, nil, actor.ID), "links the request did not set are not re-checked")
+	require.NoError(t, svc.Update(stored, nil, false, actor.ID), "links the request did not set are not re-checked")
 
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
@@ -618,14 +618,14 @@ func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
 	unknown := uint(999999)
 	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
 	stored.CustomerID = &unknown
-	err = svc.Update(stored, nil, actor.ID)
+	err = svc.Update(stored, nil, false, actor.ID)
 	assert.True(t, errors.Is(err, apperrors.ErrCustomerNotFound), "got %v", err)
 
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
 	stored.CustomerID = nil
-	require.NoError(t, svc.Update(stored, nil, actor.ID))
+	require.NoError(t, svc.Update(stored, nil, false, actor.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	assert.Nil(t, stored.CustomerID, "clearing the link to an erased customer still works")
@@ -635,7 +635,7 @@ func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
 	require.NoError(t, db.Create(live).Error)
 	stored.Owner, stored.Customer, stored.Lead = nil, nil, nil
 	stored.CustomerID = &live.ID
-	require.NoError(t, svc.Update(stored, nil, actor.ID))
+	require.NoError(t, svc.Update(stored, nil, false, actor.ID))
 	stored, err = svc.GetByID(deal.ID)
 	require.NoError(t, err)
 	require.NotNil(t, stored.CustomerID)

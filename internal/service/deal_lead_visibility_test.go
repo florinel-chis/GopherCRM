@@ -75,7 +75,7 @@ func TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy(t *testing.T) {
 	edit.Owner, edit.Lead = nil, nil
 	edit.Title = "Moved"
 	edit.LeadID = &bobsLead.ID
-	err = svc.Update(edit, nil, alice.ID)
+	err = svc.Update(edit, nil, true, alice.ID)
 	assert.True(t, errors.Is(err, apperrors.ErrLeadNotFound), "got %v", err)
 	after := storedDeal(t, db, own.ID)
 	assert.Equal(t, "Own lead", after.Title, "a refused update writes nothing")
@@ -89,7 +89,7 @@ func TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy(t *testing.T) {
 	require.NoError(t, err)
 	edit.Owner, edit.Lead = nil, nil
 	edit.LeadID = &bobsLead.ID
-	require.NoError(t, svc.Update(edit, nil, admin.ID))
+	require.NoError(t, svc.Update(edit, nil, true, admin.ID))
 	assert.Equal(t, bobsLead.ID, *storedDeal(t, db, own.ID).LeadID)
 
 	// Alice can still edit the deal that carries a link she cannot see: the
@@ -98,15 +98,37 @@ func TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy(t *testing.T) {
 	require.NoError(t, err)
 	edit.Owner, edit.Lead = nil, nil
 	edit.Title = "Renamed by the owner"
-	require.NoError(t, svc.Update(edit, nil, alice.ID))
+	require.NoError(t, svc.Update(edit, nil, false, alice.ID))
 	after = storedDeal(t, db, adminMade.ID)
 	assert.Equal(t, "Renamed by the owner", after.Title)
 	require.NotNil(t, after.LeadID)
 	assert.Equal(t, bobsLead.ID, *after.LeadID)
 
+	// Sending the hidden stored lead_id back is refused exactly like any other
+	// hidden lead, so Alice cannot find the link by probing ids; neither probe
+	// writes anything.
+	carolsLead := seedDealLead(t, db, "carols-lead@example.com", admin.ID)
+	for _, probe := range []uint{bobsLead.ID, carolsLead.ID} {
+		edit, err = svc.GetByID(adminMade.ID)
+		require.NoError(t, err)
+		edit.Owner, edit.Lead = nil, nil
+		edit.Title = "Probe"
+		leadID := probe
+		edit.LeadID = &leadID
+		err = svc.Update(edit, nil, true, alice.ID)
+		assert.True(t, errors.Is(err, apperrors.ErrLeadNotFound), "lead %d: got %v", probe, err)
+		after = storedDeal(t, db, adminMade.ID)
+		assert.Equal(t, "Renamed by the owner", after.Title, "lead %d: a refused probe writes nothing", probe)
+		require.NotNil(t, after.LeadID)
+		assert.Equal(t, bobsLead.ID, *after.LeadID)
+	}
+
 	// ...and may clear it.
+	edit, err = svc.GetByID(adminMade.ID)
+	require.NoError(t, err)
+	edit.Owner, edit.Lead = nil, nil
 	edit.LeadID = nil
 	edit.Title = "Cleared"
-	require.NoError(t, svc.Update(edit, nil, alice.ID))
+	require.NoError(t, svc.Update(edit, nil, true, alice.ID))
 	assert.Nil(t, storedDeal(t, db, adminMade.ID).LeadID)
 }

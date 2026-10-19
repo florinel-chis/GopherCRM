@@ -112,7 +112,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_OmittedFieldLeavesLabelsAlone
 	suite.mockService.On("GetByID", uint(1)).Return(&models.Task{
 		BaseModel: models.BaseModel{ID: 1}, Title: "Existing", AssignedToID: 1,
 	}, nil)
-	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil), uint(1)).Return(nil)
+	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil), false, uint(1)).Return(nil)
 
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"title": "Renamed"})
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
@@ -125,7 +125,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_EmptyArrayClearsLabels() {
 	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"),
 		mock.MatchedBy(func(ids *[]uint) bool {
 			return ids != nil && len(*ids) == 0
-		}), uint(1)).Return(nil)
+		}), false, uint(1)).Return(nil)
 
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"label_ids": []uint{}})
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
@@ -138,7 +138,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_PresentArrayReplacesLabels() 
 	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"),
 		mock.MatchedBy(func(ids *[]uint) bool {
 			return ids != nil && len(*ids) == 2 && (*ids)[0] == 3 && (*ids)[1] == 5
-		}), uint(1)).Return(nil)
+		}), false, uint(1)).Return(nil)
 
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"label_ids": []uint{3, 5}})
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
@@ -148,7 +148,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_UnknownLabelIs400InvalidRefer
 	suite.mockService.On("GetByID", uint(1)).Return(&models.Task{
 		BaseModel: models.BaseModel{ID: 1}, Title: "Existing", AssignedToID: 1,
 	}, nil)
-	suite.mockService.On("UpdateWithLabels", mock.Anything, mock.Anything, uint(1)).
+	suite.mockService.On("UpdateWithLabels", mock.Anything, mock.Anything, false, uint(1)).
 		Return(fmt.Errorf("unknown label ids [99]: %w", apperrors.ErrLabelNotFound))
 
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"label_ids": []uint{99}})
@@ -197,7 +197,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_RejectsMoreThanOneHundredLabe
 
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"label_ids": ids})
 	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
-	suite.mockService.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // Zero is not a usable label id; rejecting it at the binding keeps the id list
@@ -215,7 +215,7 @@ func (suite *TaskLabelHandlerTestSuite) TestCreate_RejectsZeroLabelID() {
 func (suite *TaskLabelHandlerTestSuite) TestUpdate_RejectsZeroLabelID() {
 	w := suite.do(http.MethodPut, "/tasks/1", gin.H{"label_ids": []uint{0}})
 	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
-	suite.mockService.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (suite *TaskLabelHandlerTestSuite) TestList_LabelFilterForAdmin() {

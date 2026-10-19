@@ -140,14 +140,17 @@ type TaskService interface {
 	// INVALID_REFERENCE.
 	//
 	// actorID is the user making the change. A lead link the write sets (on
-	// an update: one that differs from the stored link) must name a lead the
+	// an update: one that differs from the stored link, or one the request
+	// sent at all, which the caller reports as leadIDSent) must name a lead the
 	// actor may see under CanViewLead; a lead that is hidden from the actor
-	// yields apperrors.ErrLeadNotFound, exactly like a missing one. Create and
-	// Update have no actor and so cannot set a lead link at all. Reads return
-	// the stored link as is: callers answering a user pass the result through
-	// RedactTaskLead / RedactTaskLeads.
+	// yields apperrors.ErrLeadNotFound, exactly like a missing one. A sent
+	// lead_id equal to a stored hidden link is refused like any other hidden
+	// id, so the answer cannot reveal the link. Create and Update have no
+	// actor and so cannot set a lead link at all. Reads return the stored link
+	// as is: callers answering a user pass the result through RedactTaskLead /
+	// RedactTaskLeads.
 	CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error
-	UpdateWithLabels(task *models.Task, labelIDs *[]uint, actorID uint) error
+	UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent bool, actorID uint) error
 	// ListByLabel and the ByAssignee variant back the ?label_id= filter, with
 	// the same admin/non-admin split as the rest of the task listings.
 	ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
@@ -214,8 +217,11 @@ type DealService interface {
 	// Update saves the deal as given. When its stage differs from the stored
 	// one the change goes through the same transition rules as ChangeStage and
 	// records a history row; a nil probability then takes the new stage's
-	// default, and otherwise leaves the stored probability alone.
-	Update(deal *models.Deal, probability *int, actorID uint) error
+	// default, and otherwise leaves the stored probability alone. leadIDSent
+	// reports that the request carried lead_id: a lead link it carries is
+	// checked even when it equals the stored one, so a stored link hidden from
+	// the actor cannot be confirmed by sending its id back.
+	Update(deal *models.Deal, probability *int, leadIDSent bool, actorID uint) error
 	// ChangeStage moves the deal to stage. The same stage again is a no-op
 	// that writes nothing. A nil lostReason keeps whatever a lost deal had.
 	ChangeStage(id uint, stage models.DealStage, probability *int, lostReason *string, actorID uint) (*models.Deal, error)

@@ -169,7 +169,7 @@ func (suite *DealHandlerTestSuite) TestRoleMatrix() {
 		}},
 		{"update", http.MethodPut, "/deals/5", validDealBody(), adminAndSales, func() {
 			suite.mockService.On("GetByID", uint(5)).Return(ownDeal(5), nil).Twice()
-			suite.mockService.On("Update", mock.Anything, mock.Anything, uint(1)).Return(nil).Once()
+			suite.mockService.On("Update", mock.Anything, mock.Anything, mock.Anything, uint(1)).Return(nil).Once()
 		}},
 		{"stage", http.MethodPost, "/deals/5/stage", gin.H{"stage": "won"}, adminAndSales, func() {
 			suite.mockService.On("GetByID", uint(5)).Return(ownDeal(5), nil).Once()
@@ -556,7 +556,7 @@ func (suite *DealHandlerTestSuite) TestSalesMayOnlyTouchItsOwnDeals() {
 		assert.Equalf(suite.T(), http.StatusForbidden, w.Code, "%s %s", route.method, route.path)
 		assert.Contains(suite.T(), w.Body.String(), "your own deals")
 	}
-	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	suite.mockService.AssertNotCalled(suite.T(), "ChangeStage", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	suite.mockService.AssertNotCalled(suite.T(), "History", mock.Anything)
 
@@ -582,7 +582,7 @@ func (suite *DealHandlerTestSuite) TestUpdate_ReplacesTheFieldsAndKeepsTheOwner(
 		// preloaded owner copy is dropped.
 		return d.ID == 5 && d.Title == "New" && d.Notes == "" && d.CompanyID != nil && *d.CompanyID == 3 && d.OwnerID == 7 &&
 			d.Owner == nil && d.Stage == models.DealStageWon && d.Currency == "" && d.AmountCents == 0
-	}), mock.MatchedBy(func(p *int) bool { return p == nil }), uint(1)).Return(nil)
+	}), mock.MatchedBy(func(p *int) bool { return p == nil }), false, uint(1)).Return(nil)
 
 	w := suite.do(http.MethodPut, "/deals/5", gin.H{"title": "New", "stage": "won"})
 	assert.Equal(suite.T(), http.StatusOK, w.Code, w.Body.String())
@@ -601,21 +601,21 @@ func (suite *DealHandlerTestSuite) TestUpdate_LinksAbsentKeepZeroClearsValueSets
 	suite.mockService.On("GetByID", uint(5)).Return(fresh(), nil).Twice()
 	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool {
 		return d.CompanyID != nil && *d.CompanyID == 3 && d.CustomerID != nil && *d.CustomerID == 4 && d.LeadID == nil
-	}), mock.Anything, uint(1)).Return(nil).Once()
+	}), mock.Anything, false, uint(1)).Return(nil).Once()
 	w := suite.do(http.MethodPut, "/deals/5", gin.H{"title": "Acme"})
 	assert.Equal(suite.T(), http.StatusOK, w.Code, "absent keeps")
 
 	suite.mockService.On("GetByID", uint(5)).Return(fresh(), nil).Twice()
 	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool {
 		return d.CompanyID == nil && d.CustomerID != nil && *d.CustomerID == 4
-	}), mock.Anything, uint(1)).Return(nil).Once()
+	}), mock.Anything, false, uint(1)).Return(nil).Once()
 	w = suite.do(http.MethodPut, "/deals/5", gin.H{"title": "Acme", "company_id": 0})
 	assert.Equal(suite.T(), http.StatusOK, w.Code, "0 clears")
 
 	suite.mockService.On("GetByID", uint(5)).Return(fresh(), nil).Twice()
 	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool {
 		return d.CompanyID != nil && *d.CompanyID == 9 && d.LeadID != nil && *d.LeadID == 11
-	}), mock.Anything, uint(1)).Return(nil).Once()
+	}), mock.Anything, true, uint(1)).Return(nil).Once()
 	w = suite.do(http.MethodPut, "/deals/5", gin.H{"title": "Acme", "company_id": 9, "lead_id": 11})
 	assert.Equal(suite.T(), http.StatusOK, w.Code, "a value sets")
 }
@@ -636,7 +636,7 @@ func (suite *DealHandlerTestSuite) TestUpdate_OwnerRules() {
 
 	// ...but may keep naming itself.
 	suite.mockService.On("GetByID", uint(5)).Return(fresh(), nil).Twice()
-	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool { return d.OwnerID == 42 }), mock.Anything, uint(42)).Return(nil).Once()
+	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool { return d.OwnerID == 42 }), mock.Anything, false, uint(42)).Return(nil).Once()
 	w = suite.do(http.MethodPut, "/deals/5", gin.H{"title": "Acme", "owner_id": 42})
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 
@@ -644,7 +644,7 @@ func (suite *DealHandlerTestSuite) TestUpdate_OwnerRules() {
 	suite.role = models.RoleAdmin
 	suite.userID = 1
 	suite.mockService.On("GetByID", uint(5)).Return(fresh(), nil).Twice()
-	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool { return d.OwnerID == 8 }), mock.Anything, uint(1)).Return(nil).Once()
+	suite.mockService.On("Update", mock.MatchedBy(func(d *models.Deal) bool { return d.OwnerID == 8 }), mock.Anything, false, uint(1)).Return(nil).Once()
 	w = suite.do(http.MethodPut, "/deals/5", gin.H{"title": "Acme", "owner_id": 8})
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 }
@@ -655,7 +655,7 @@ func (suite *DealHandlerTestSuite) TestUpdate_NotFoundReferencesAndTooLong() {
 	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
 
 	suite.mockService.On("GetByID", uint(5)).Return(ownDeal(5), nil).Once()
-	suite.mockService.On("Update", mock.Anything, mock.Anything, uint(1)).
+	suite.mockService.On("Update", mock.Anything, mock.Anything, true, uint(1)).
 		Return(fmt.Errorf("unknown lead_id 9: %w", apperrors.ErrLeadNotFound)).Once()
 	body := validDealBody()
 	body["lead_id"] = 9
@@ -884,7 +884,7 @@ func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
 	svc.On("GetByID", uint(5)).Return(ownDeal(5), nil).Maybe()
 	svc.On("GetByID", uint(0)).Return(nil, apperrors.ErrNotFound).Maybe()
 	svc.On("Create", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
-	svc.On("Update", mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
+	svc.On("Update", mock.Anything, mock.Anything, mock.Anything, uint(1)).Return(nil).Maybe()
 
 	send := func(method, path string, amount int64) *httptest.ResponseRecorder {
 		body, err := json.Marshal(gin.H{"title": "X", "amount_cents": amount})
@@ -913,7 +913,7 @@ func TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage(t *testing.T) {
 		assert.Equal(t, "AmountCents must be at most 1000000000000", resp.Error.Details["AmountCents"], w.Body.String())
 	}
 	svc.AssertNotCalled(t, "Create", mock.Anything, mock.Anything, mock.Anything)
-	svc.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+	svc.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 
 	w := send(http.MethodPost, "/deals", maxAmount)
 	assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())

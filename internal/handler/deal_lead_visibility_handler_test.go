@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -67,7 +69,7 @@ func TestDealRoutes_HideALeadTheOwnerMayNotSee(t *testing.T) {
 			// The stored link is passed on untouched (absent keeps it).
 			svc.On("Update", mock.MatchedBy(func(d *models.Deal) bool {
 				return d.LeadID != nil && *d.LeadID == 30 && d.Lead == nil
-			}), mock.Anything, uint(42)).Return(nil).Once()
+			}), mock.Anything, false, uint(42)).Return(nil).Once()
 			svc.On("GetByID", uint(5)).Return(dealLinkedToLead(42, 9), nil).Once()
 		}},
 		{"stage", http.MethodPost, "/deals/5/stage", gin.H{"stage": "won"}, func(svc *mocks.DealService) {
@@ -89,6 +91,30 @@ func TestDealRoutes_HideALeadTheOwnerMayNotSee(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), `"lead":`, route.name)
 		svc.AssertExpectations(t)
 	}
+}
+
+// A lead_id in the body reaches the service flagged as sent, even when it is
+// the stored (hidden) link; absent, it is not. The refusal is the same 400
+// INVALID_REFERENCE for the stored id and any other hidden one.
+func TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink(t *testing.T) {
+	var codes []string
+	for _, sent := range []uint{30, 31} {
+		svc := new(mocks.DealService)
+		svc.On("GetByID", uint(5)).Return(dealLinkedToLead(42, 9), nil).Once()
+		svc.On("Update", mock.MatchedBy(func(d *models.Deal) bool {
+			return d.LeadID != nil && *d.LeadID == sent
+		}), mock.Anything, true, uint(42)).Return(fmt.Errorf("unknown lead_id %d: %w", sent, apperrors.ErrLeadNotFound)).Once()
+
+		body := validDealBody()
+		body["lead_id"] = sent
+		w := serveJSON(newDealLeadRouter(svc, models.RoleSales, 42), http.MethodPut, "/deals/5", body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.NotContains(t, w.Body.String(), hiddenLeadEmail)
+		codes = append(codes, decodeResponse(t, w).Error.Code)
+		svc.AssertExpectations(t)
+	}
+	assert.Equal(t, apperrors.CodeInvalidReference, codes[0])
+	assert.Equal(t, codes[0], codes[1], "the stored hidden id answers like any other hidden id")
 }
 
 func TestDealGet_ShowsTheLeadToItsOwnerAndToAdmins(t *testing.T) {

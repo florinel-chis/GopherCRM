@@ -7638,16 +7638,17 @@ paths:
         absent keep the stored link, 0 clears it, another value sets it (a live row,
         else 400 INVALID_REFERENCE). Links are checked only when the request sets
         them; a deal keeps links to erased records and stays editable. A lead_id that
-        is checked must name a lead the caller may see, as on create; a stored lead
-        link the caller may not see is kept when lead_id is absent and omitted from
-        the response. owner_id absent keeps the owner (sales may only name themselves,
-        admins any live user); currency absent keeps the stored code. amount_cents
-        is 0 to 1000000000000 (10^12 cents), as on create. A stage different from
-        the stored one goes through the same rules as POST /deals/{id}/stage — probability
-        defaults to the new stage''s unless sent, won is 100 and lost 0, closed_at
-        set or cleared, lost_reason kept only on lost — and writes a history row in
-        the same transaction. The same stage writes no history row; probability is
-        then applied only when sent.'
+        is sent is always checked, even when it equals the stored link, and must name
+        a lead the caller may see, as on create, so sending lead ids cannot reveal
+        a hidden link; a stored lead link the caller may not see is kept unchecked
+        when lead_id is absent and omitted from the response. owner_id absent keeps
+        the owner (sales may only name themselves, admins any live user); currency
+        absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents),
+        as on create. A stage different from the stored one goes through the same
+        rules as POST /deals/{id}/stage — probability defaults to the new stage''s
+        unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason
+        kept only on lost — and writes a history row in the same transaction. The
+        same stage writes no history row; probability is then applied only when sent.'
       parameters:
       - description: Deal ID
         in: path
@@ -10090,15 +10091,15 @@ paths:
         tasks assigned to them. Only admins may change assigned_to_id (sending the
         current assignee back unchanged is not treated as a reassignment). A task
         that is already completed cannot be moved to another status, and a task cannot
-        reference both a lead and a customer. A lead_id different from the stored
-        one must name a lead the caller may see (as on create; a hidden lead is a
-        404 like a missing one); a stored link is kept when lead_id is absent, and
-        is omitted from the response when the caller may not see it. label_ids, when
-        present, REPLACES the whole label set — an empty array clears it — while omitting
-        the field leaves the labels untouched; an id that matches no label rejects
-        the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted,
-        each of which must be positive; a longer list is rejected as a validation
-        error.
+        reference both a lead and a customer. A lead_id that is sent must name a lead
+        the caller may see (as on create; a hidden lead is a 404 like a missing one),
+        even when it equals the stored link, so sending lead ids cannot reveal a hidden
+        link; a stored link is kept unchecked when lead_id is absent, and is omitted
+        from the response when the caller may not see it. label_ids, when present,
+        REPLACES the whole label set — an empty array clears it — while omitting the
+        field leaves the labels untouched; an id that matches no label rejects the
+        whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each
+        of which must be positive; a longer list is rejected as a validation error.
       parameters:
       - description: Task ID
         in: path

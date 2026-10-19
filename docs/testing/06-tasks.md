@@ -606,16 +606,25 @@ regression anchors, not endorsements.
   4. As B, `GET` that task, `GET /tasks`, `GET /tasks/my`, then `PUT` its title.
   5. As admin, reassign it to the support user; as support, `GET` it.
   6. As A, create a task linked to A's own lead; move the lead to B (admin); `GET` the task as A.
+  7. On a task from step 3 (and one the admin assigned to support), `PUT` as the assignee with
+     `lead_id` set to A's lead (the stored, hidden link), then to another lead A owns, then to an id
+     that matches no lead. As A, `PUT` a task linked to A's own lead with that same `lead_id`.
 - **Expected:** Steps 1–2: **404**, the answer an unknown `lead_id` gets; no task is written and
   the `PUT` changes nothing, title included. Step 3: **201**, and the admin sees the lead. Steps 4–6:
   **200** with neither `lead_id` nor `lead` in any body, while the stored link is kept and B's
-  title change is saved; the admin still sees the lead on its reads and lists. The policy is
-  `service.CanViewLead` (admin every lead, sales its own, every other role none), checked on
-  writes and re-applied to every task returned, on `/dashboard/upcoming-tasks` and
+  title change is saved; the admin still sees the lead on its reads and lists. Step 7: all three
+  probes get the same **404**, so the stored link cannot be found by sending lead ids, and none of
+  them changes the task; A's echo of her own lead is **200**. A `lead_id` that is sent is always
+  checked, even when it equals the stored one; only an absent `lead_id` keeps a hidden link
+  unchecked. The policy is `service.CanViewLead` (admin every lead, sales its own, every other role
+  none), checked on writes and re-applied to every task returned, on `/dashboard/upcoming-tasks` and
   `/tasks/upcoming` as well.
 - **Automation:** blocked — needs a non-admin role-login helper. Go:
   `internal/integration/lead_visibility_integration_test.go` (`TestTaskCreate_SupportCannotLinkALead`,
   `TestTaskCreate_SalesOnlyWithItsOwnLead`, `TestTaskUpdate_CannotRelinkToAHiddenLead`,
-  `TestTaskReads_HideHistoricalLinks`, `TestTaskReads_FollowLeadOwnershipChanges`);
-  `task_service_test.go` (`TestCreate_LeadHiddenFromTheActorIsRejected`, `TestUpdate_*Lead*`);
-  `task_lead_visibility_handler_test.go`.
+  `TestTaskUpdate_SendingTheHiddenStoredLeadIsNoOracle`, `TestTaskReads_HideHistoricalLinks`,
+  `TestTaskReads_FollowLeadOwnershipChanges`); `task_service_test.go`
+  (`TestCreate_LeadHiddenFromTheActorIsRejected`, `TestUpdate_*Lead*`);
+  `task_lead_visibility_handler_test.go`; `dashboard_handler_test.go`
+  (`TestGetUpcomingTasks_HidesALeadTheAssigneeMayNotSee`,
+  `TestGetUpcomingTasks_ShowsTheLeadToItsOwnerAndToAdmins`).

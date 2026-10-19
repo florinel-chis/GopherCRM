@@ -609,12 +609,20 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   2. As admin, create a deal owned by B linked to A's lead.
   3. As B, `GET` that deal, `GET /deals`, `PUT` its title, move its stage.
   4. Move A's lead to B (admin) and `GET` the deal as B again.
+  5. Before step 4, as B, `PUT` the deal from step 2 with `lead_id` set to A's lead (the stored,
+     hidden link), then to another lead A owns, then to an id that matches no lead. As A, `PUT` a
+     deal of A's linked to A's own lead with that same `lead_id`.
 - **Expected:** Step 1: **400** `INVALID_REFERENCE`, exactly as for an unknown `lead_id`; no deal
   or history row is written and the `PUT` changes nothing. Step 2: **201**, the admin sees the lead.
   Step 3: **200** on every route with neither `lead_id` nor `lead` in the body; the title change is
-  saved and the stored link is kept. Step 4: B now gets `lead_id` and `lead`.
+  saved and the stored link is kept. Step 4: B now gets `lead_id` and `lead`. Step 5: all three
+  probes get the same **400** `INVALID_REFERENCE`, so the stored link cannot be found by sending
+  lead ids, and none of them changes the deal or writes a history row; A's echo is **200**. A
+  `lead_id` that is sent is always checked, even when it equals the stored one; only an absent
+  `lead_id` keeps a hidden link unchecked.
 - **Automation:** blocked — needs a role-login helper for sales. Go:
   `lead_visibility_integration_test.go` `TestDealWrites_SalesCannotLinkAnotherRepsLead`,
-  `TestDealReads_HideHistoricalLinks`; `deal_lead_visibility_test.go`
+  `TestDealReads_HideHistoricalLinks`, `TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle`;
+  `deal_lead_visibility_test.go`
   `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy`; `deal_lead_visibility_handler_test.go`
-  `TestDealRoutes_HideALeadTheOwnerMayNotSee`.
+  `TestDealRoutes_HideALeadTheOwnerMayNotSee`, `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink`.
