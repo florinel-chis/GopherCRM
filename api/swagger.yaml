@@ -6823,14 +6823,14 @@ paths:
       - dashboard
   /dashboard/recent-tickets:
     get:
-      description: 'The most recently created tickets the caller may see, as a bare
+      description: The most recently created tickets the caller may see, as a bare
         array ordered by creation time descending, ties broken by id descending. Admin
         and sales see every ticket; support sees only the tickets assigned to it,
         so tickets assigned to someone else and unassigned tickets are excluded. The
         narrowing is part of the query and applies before the limit, so hidden tickets
         never crowd out permitted ones; a caller with no visible ticket gets an empty
         array. Restricted to the admin, sales and support roles; customer-role callers
-        receive 403.'
+        receive 403.
       parameters:
       - default: 5
         description: Maximum tickets to return, capped at 50
