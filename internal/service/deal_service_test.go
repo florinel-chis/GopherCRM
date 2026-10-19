@@ -578,7 +578,7 @@ func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
 	// Erasure purges the owner's credentials and scrubs the lead's form
 	// submissions in the same transaction, so those tables have to exist.
 	require.NoError(t, db.AutoMigrate(&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{},
-		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
+		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}, &models.TicketComment{}))
 	owner := seedDealOwner(t, db)
 	actor := &models.User{Email: "deal-editor@example.com", Password: "x", FirstName: "A", LastName: "D", Role: models.RoleAdmin, IsActive: true}
 	require.NoError(t, db.Create(actor).Error)

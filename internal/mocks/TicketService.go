@@ -342,6 +342,22 @@ func (_m *TicketService) Search(query string, offset int, limit int, sortBy stri
 	return r0, r1, r2
 }
 
+// CreateComment provides a mock function with given fields: comment
+func (_m *TicketService) CreateComment(comment *models.TicketComment) error {
+	ret := _m.Called(comment)
+	return ret.Error(0)
+}
+
+// ListComments provides a mock function with given fields: ticketID, includeInternal
+func (_m *TicketService) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {
+	ret := _m.Called(ticketID, includeInternal)
+	var r0 []models.TicketComment
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.TicketComment)
+	}
+	return r0, ret.Error(1)
+}
+
 // NewTicketService creates a new instance of TicketService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewTicketService(t interface {

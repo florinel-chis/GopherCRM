@@ -275,3 +275,72 @@ func (s *ticketService) GetRecent(limit int) ([]models.Ticket, error) {
 func (s *ticketService) GetRecentlyResolved(limit int) ([]models.Ticket, error) {
 	return s.ticketRepo.ListRecentlyResolved(limit)
 }
+
+func (s *ticketService) CreateComment(comment *models.TicketComment) error {
+	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", comment.TicketID), "TicketService", "CreateComment")
+
+	// Verify ticket exists
+	_, err := s.ticketRepo.GetByID(comment.TicketID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
+			return fmt.Errorf("ticket %d not found: %w", comment.TicketID, apperrors.ErrNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to lookup ticket for comment")
+		return err
+	}
+
+	// Verify author exists
+	author, err := s.userRepo.GetByID(comment.AuthorUserID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Author not found")
+			return fmt.Errorf("author not found: %w", apperrors.ErrNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to lookup comment author")
+		return err
+	}
+	comment.Author = author
+
+	if err := s.ticketRepo.CreateComment(comment); err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to create ticket comment")
+		return err
+	}
+
+	comment.UserID = comment.AuthorUserID
+	comment.User = comment.Author
+	comment.Content = comment.Body
+
+	logger.WithField("comment_id", comment.ID).Info("Ticket comment created successfully")
+	return nil
+}
+
+func (s *ticketService) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", ticketID), "TicketService", "ListComments")
+
+	// Verify ticket exists
+	_, err := s.ticketRepo.GetByID(ticketID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
+			return nil, fmt.Errorf("ticket %d not found: %w", ticketID, apperrors.ErrNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to lookup ticket for listing comments")
+		return nil, err
+	}
+
+	comments, err := s.ticketRepo.ListComments(ticketID, includeInternal)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list ticket comments")
+		return nil, err
+	}
+
+	for i := range comments {
+		comments[i].UserID = comments[i].AuthorUserID
+		comments[i].User = comments[i].Author
+		comments[i].Content = comments[i].Body
+	}
+
+	logger.WithField("count", len(comments)).Info("Ticket comments retrieved successfully")
+	return comments, nil
+}

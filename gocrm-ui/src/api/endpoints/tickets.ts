@@ -38,11 +38,14 @@ export interface TicketComment {
   id: number;
   ticket_id: number;
   user_id: number;
-  comment: string;
+  comment?: string;
+  body?: string;
+  content?: string;
+  is_internal?: boolean;
   created_at: string;
   user?: {
     id: number;
-    username: string;
+    username?: string;
     first_name: string;
     last_name: string;
   };
@@ -56,7 +59,16 @@ const transformTicketFromBackend = (backendTicket: BackendTicket): Ticket => {
     // Add fields that frontend expects but backend doesn't provide
     created_by_id: backendTicket.customer_id, // Assuming customer created the ticket
     created_by: backendTicket.customer,
-    comments: [], // Backend doesn't have comments yet
+    comments: (backendTicket.comments || []).map((c) => ({
+      id: c.id,
+      ticket_id: c.ticket_id,
+      user_id: c.user_id ?? c.author_user_id ?? 0,
+      user: c.user ?? c.author,
+      content: c.content ?? c.body ?? c.comment ?? '',
+      is_internal: !!c.is_internal,
+      created_at: c.created_at,
+      updated_at: c.updated_at,
+    })),
     closed_at: backendTicket.status === 'closed' ? backendTicket.updated_at : undefined,
   };
 };
@@ -102,7 +114,7 @@ export const ticketsApi = {
     if (data.status !== undefined) transformedData.status = data.status;
     if (data.priority !== undefined) transformedData.priority = data.priority;
     if (data.assigned_to_id !== undefined) transformedData.assigned_to_id = data.assigned_to_id;
-    
+
     const response = await api.put<BackendTicket>(`/tickets/${id}`, transformedData);
     return transformTicketFromBackend(response.data);
   },
@@ -121,12 +133,22 @@ export const ticketsApi = {
     return response.data;
   },
 
-  addTicketComment: async (id: number, comment: string): Promise<TicketComment> => {
-    const response = await api.post<TicketComment>(`/tickets/${id}/comments`, { comment });
+  addTicketComment: async (
+    id: number,
+    comment: string,
+    is_internal?: boolean,
+  ): Promise<TicketComment> => {
+    const response = await api.post<TicketComment>(`/tickets/${id}/comments`, {
+      comment,
+      is_internal,
+    });
     return response.data;
   },
 
-  addComment: async (id: number, data: { content: string }): Promise<TicketComment> => {
+  addComment: async (
+    id: number,
+    data: { content?: string; comment?: string; body?: string; is_internal?: boolean },
+  ): Promise<TicketComment> => {
     const response = await api.post<TicketComment>(`/tickets/${id}/comments`, data);
     return response.data;
   },

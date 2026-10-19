@@ -484,12 +484,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   pages show the grey "Inactive" chip. This is the reversible suspension — no personal data is
   touched. A **new** login attempt returns 401 with the same generic "invalid credentials" message
   as a wrong password (deliberate anti-enumeration), and `POST /auth/refresh` for that account is
-  refused. The already-issued access token keeps working until it expires: `authService.
-  ValidateToken` looks the user up by id and never checks `IsActive`, so the open tab continues to
-  make successful API calls.
-- **Known issue:** Deactivation does not terminate a live session. There is no token blocklist, and
-  `ValidateToken` in `internal/service/auth_service.go` only resolves the user by id, so an issued
-  JWT cannot be revoked early. FEATURES.md row 7.5 and gap G20 record the missing E2E coverage.
+  refused. Live sessions are revoked immediately: `authService.ValidateToken` checks `user.IsActive`
+  on every authenticated request, so previously-issued access tokens return 401 Unauthorized as soon as the
+  account is deactivated.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-028 — Reactivate a deactivated user

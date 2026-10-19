@@ -94,7 +94,7 @@ func (r *bulkOperationRepository) UpdateItem(item *models.BulkOperationItem) err
 
 func (r *bulkOperationRepository) GetItemsByOperationID(operationID uint) ([]models.BulkOperationItem, error) {
 	var items []models.BulkOperationItem
-	err := r.db.Where("bulk_operation_id = ?", operationID).
+	err := r.db.Where("operation_id = ?", operationID).
 		Order("created_at ASC").
 		Find(&items).Error
 	return items, err

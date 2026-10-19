@@ -57,6 +57,7 @@ func MigrateDatabase() error {
 			&Deal{},
 			&DealStageChange{},
 			&Ticket{},
+			&TicketComment{},
 			&Label{},
 			&Task{},
 			&APIKey{},

@@ -115,7 +115,7 @@ export const Component: React.FC = () => {
   });
 
   const { data, isLoading } = useQuery({
-    queryKey: ['tickets', filters],
+    queryKey: ['tickets', user?.id, filters],
     queryFn: () => ticketsApi.getTickets(filters),
   });
 

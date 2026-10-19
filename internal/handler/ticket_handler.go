@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -40,6 +41,23 @@ type UpdateTicketRequest struct {
 	Priority     models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
 	AssignedToID *uint                 `json:"assigned_to_id,omitempty"`
 	Resolution   string                `json:"resolution,omitempty"`
+}
+
+type CreateTicketCommentRequest struct {
+	Body       string `json:"body"`
+	Comment    string `json:"comment"`
+	Content    string `json:"content"`
+	IsInternal bool   `json:"is_internal"`
+}
+
+func (r CreateTicketCommentRequest) GetBody() string {
+	if strings.TrimSpace(r.Body) != "" {
+		return strings.TrimSpace(r.Body)
+	}
+	if strings.TrimSpace(r.Comment) != "" {
+		return strings.TrimSpace(r.Comment)
+	}
+	return strings.TrimSpace(r.Content)
 }
 
 // Create godoc
@@ -365,7 +383,17 @@ func (h *TicketHandler) Get(c *gin.Context) {
 			utils.RespondForbidden(c, "Customers can only view their own tickets")
 			return
 		}
-		// Customer is associated with this ticket - allow access
+		// Customer is associated with this ticket - filter internal comments
+		if len(ticket.Comments) > 0 {
+			filtered := make([]models.TicketComment, 0, len(ticket.Comments))
+			for _, comment := range ticket.Comments {
+				if !comment.IsInternal {
+					filtered = append(filtered, comment)
+				}
+			}
+			ticket.Comments = filtered
+		}
+		// Allow access
 		utils.LogHandlerResponse(logger, http.StatusOK, ticket)
 		utils.RespondSuccess(c, http.StatusOK, ticket)
 		return
@@ -532,4 +560,168 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusNoContent, nil)
 	c.Status(http.StatusNoContent)
+}
+
+// ListComments godoc
+// @Summary List comments for a ticket
+// @Description Retrieve comments for a ticket. Admin and sales users can view comments on any ticket; support users can only view comments on tickets assigned to them; customer users can only view non-internal comments on tickets belonging to their customer record.
+// @Tags tickets
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Ticket ID"
+// @Success 200 {object} utils.APIResponse{data=[]models.TicketComment} "Comments retrieved successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the ticket is outside the caller's scope"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets/{id}/comments [get]
+func (h *TicketHandler) ListComments(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "TicketHandler.ListComments")
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid ticket ID")
+		return
+	}
+
+	ticket, err := h.ticketService.GetByID(uint(id))
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
+			utils.RespondNotFound(c, "Ticket not found")
+		} else {
+			logger.WithError(utils.LogError(err)).Error("Failed to get ticket for listing comments")
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+
+	currentUserID := c.GetUint("user_id")
+	currentUserRole := c.GetString("user_role")
+
+	includeInternal := true
+	if currentUserRole == string(models.RoleCustomer) {
+		if h.customerService == nil {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		customer, err := h.customerService.GetByUserID(currentUserID)
+		if err != nil || customer == nil || ticket.CustomerID != customer.ID {
+			utils.RespondForbidden(c, "Customers can only view their own tickets")
+			return
+		}
+		includeInternal = false
+	} else if currentUserRole == string(models.RoleSupport) {
+		if ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID {
+			utils.RespondForbidden(c, "You can only view comments on tickets assigned to you")
+			return
+		}
+	}
+
+	comments, err := h.ticketService.ListComments(uint(id), includeInternal)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list ticket comments")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, comments)
+	utils.RespondSuccess(c, http.StatusOK, comments)
+}
+
+// CreateComment godoc
+// @Summary Create a comment on a ticket
+// @Description Add a new comment or internal note to a ticket. Admin users can comment on any ticket; support users can only comment on tickets assigned to them. Customers and sales users are forbidden.
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Ticket ID"
+// @Param request body CreateTicketCommentRequest true "Ticket comment creation request"
+// @Success 201 {object} utils.APIResponse{data=models.TicketComment} "Comment created successfully"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID, request data or empty comment body"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - only admin and assigned support can comment"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /tickets/{id}/comments [post]
+func (h *TicketHandler) CreateComment(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "TicketHandler.CreateComment")
+
+	currentUserID := c.GetUint("user_id")
+	currentUserRole := c.GetString("user_role")
+
+	if currentUserRole == string(models.RoleCustomer) {
+		utils.RespondForbidden(c, "Customers cannot add comments")
+		return
+	}
+	if currentUserRole == string(models.RoleSales) {
+		utils.RespondForbidden(c, "Sales users cannot add comments")
+		return
+	}
+	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSupport) {
+		utils.RespondForbidden(c, "Only support and admin users can add comments")
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid ticket ID")
+		return
+	}
+
+	ticket, err := h.ticketService.GetByID(uint(id))
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
+			utils.RespondNotFound(c, "Ticket not found")
+		} else {
+			logger.WithError(utils.LogError(err)).Error("Failed to get ticket for creating comment")
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+
+	if currentUserRole == string(models.RoleSupport) &&
+		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
+		utils.RespondForbidden(c, "You can only comment on tickets assigned to you")
+		return
+	}
+
+	var req CreateTicketCommentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	body := req.GetBody()
+	if body == "" {
+		utils.RespondBadRequest(c, "Comment body is required")
+		return
+	}
+
+	comment := &models.TicketComment{
+		TicketID:     uint(id),
+		AuthorUserID: currentUserID,
+		Body:         body,
+		IsInternal:   req.IsInternal,
+	}
+
+	if err := h.ticketService.CreateComment(comment); err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to create comment")
+		if apperrors.IsNotFound(err) {
+			utils.RespondNotFound(c, err.Error())
+		} else {
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusCreated, comment)
+	utils.RespondSuccess(c, http.StatusCreated, comment)
 }

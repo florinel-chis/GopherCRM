@@ -361,6 +361,22 @@ func (_m *TicketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, er
 	return r0, ret.Error(1)
 }
 
+// CreateComment provides a mock function with given fields: comment
+func (_m *TicketRepository) CreateComment(comment *models.TicketComment) error {
+	ret := _m.Called(comment)
+	return ret.Error(0)
+}
+
+// ListComments provides a mock function with given fields: ticketID, includeInternal
+func (_m *TicketRepository) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {
+	ret := _m.Called(ticketID, includeInternal)
+	var r0 []models.TicketComment
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.TicketComment)
+	}
+	return r0, ret.Error(1)
+}
+
 func (_m *TicketRepository) WithTx(tx *gorm.DB) repository.TicketRepository {
 	_m.Called(tx)
 	return _m

@@ -106,6 +106,8 @@ type TicketRepository interface {
 	CountByPriority() (map[string]int64, error)
 	ListRecent(limit int) ([]models.Ticket, error)
 	ListRecentlyResolved(limit int) ([]models.Ticket, error)
+	CreateComment(comment *models.TicketComment) error
+	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 	WithTx(tx *gorm.DB) TicketRepository
 }
 

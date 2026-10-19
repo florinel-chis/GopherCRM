@@ -29,17 +29,17 @@ type UserHandlerTestSuite struct {
 
 func (suite *UserHandlerTestSuite) SetupTest() {
 	gin.SetMode(gin.TestMode)
-	
+
 	// Initialize logger
 	logConfig := &config.LoggingConfig{
 		Level:  "debug",
 		Format: "json",
 	}
 	utils.InitLogger(logConfig)
-	
+
 	suite.mockService = new(mocks.UserService)
 	suite.handler = NewUserHandler(suite.mockService)
-	
+
 	suite.router = gin.New()
 	suite.router.Use(func(c *gin.Context) {
 		// Set required context values for tests
@@ -56,7 +56,7 @@ func (suite *UserHandlerTestSuite) TearDownTest() {
 
 func (suite *UserHandlerTestSuite) TestCreate_Success() {
 	suite.router.POST("/users", suite.handler.Create)
-	
+
 	payload := CreateUserRequest{
 		Email:     "new@example.com",
 		Password:  "Str0ng!Pass",
@@ -64,7 +64,7 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 		LastName:  "User",
 		Role:      models.RoleCustomer,
 	}
-	
+
 	suite.mockService.On("Register", mock.MatchedBy(func(u *models.User) bool {
 		return u.Email == payload.Email &&
 			u.FirstName == payload.FirstName &&
@@ -76,16 +76,16 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 		user := args.Get(0).(*models.User)
 		user.ID = 1
 	})
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -95,7 +95,7 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 
 func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 	suite.router.POST("/users", suite.handler.Create)
-	
+
 	payload := CreateUserRequest{
 		Email:     "existing@example.com",
 		Password:  "Str0ng!Pass",
@@ -103,19 +103,19 @@ func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 		LastName:  "User",
 		Role:      models.RoleCustomer,
 	}
-	
+
 	suite.mockService.On("Register", mock.Anything, payload.Password).
 		Return(fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail))
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -125,21 +125,21 @@ func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 
 func (suite *UserHandlerTestSuite) TestList_Success() {
 	suite.router.GET("/users", suite.handler.List)
-	
+
 	expectedUsers := []models.User{
 		{BaseModel: models.BaseModel{ID: 1}, Email: "user1@example.com"},
 		{BaseModel: models.BaseModel{ID: 2}, Email: "user2@example.com"},
 	}
-	
+
 	suite.mockService.On("List", 0, 20).Return(expectedUsers, int64(2), nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -150,23 +150,23 @@ func (suite *UserHandlerTestSuite) TestList_Success() {
 
 func (suite *UserHandlerTestSuite) TestGet_Success() {
 	suite.router.GET("/users/:id", suite.handler.Get)
-	
+
 	expectedUser := &models.User{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "user@example.com",
 		FirstName: "Test",
 		LastName:  "User",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(expectedUser, nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -180,14 +180,14 @@ func (suite *UserHandlerTestSuite) TestGet_Forbidden() {
 		c.Set("user_id", uint(2))
 	})
 	suite.router.GET("/users/:id", suite.handler.Get)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -197,32 +197,32 @@ func (suite *UserHandlerTestSuite) TestGet_Forbidden() {
 
 func (suite *UserHandlerTestSuite) TestUpdate_Success() {
 	suite.router.PUT("/users/:id", suite.handler.Update)
-	
+
 	payload := UpdateUserRequest{
 		FirstName: "Updated",
 		LastName:  "Name",
 	}
-	
+
 	expectedUser := &models.User{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "user@example.com",
 		FirstName: "Updated",
 		LastName:  "Name",
 	}
-	
+
 	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
 		return updates["first_name"] == "Updated" && updates["last_name"] == "Name"
 	})).Return(expectedUser, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/users/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -317,14 +317,14 @@ func (suite *UserHandlerTestSuite) TestUpdate_EmailConflict() {
 
 func (suite *UserHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/users/:id", suite.handler.Delete)
-	
+
 	suite.mockService.On("Delete", uint(2)).Return(nil)
-	
+
 	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
 }
 
@@ -381,14 +381,14 @@ func (suite *UserHandlerTestSuite) TestDelete_GenuineFailureIsInternalError() {
 
 func (suite *UserHandlerTestSuite) TestDelete_SelfDeletion() {
 	suite.router.DELETE("/users/:id", suite.handler.Delete)
-	
+
 	req := httptest.NewRequest(http.MethodDelete, "/users/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -398,23 +398,23 @@ func (suite *UserHandlerTestSuite) TestDelete_SelfDeletion() {
 
 func (suite *UserHandlerTestSuite) TestGetMe_Success() {
 	suite.router.GET("/users/me", suite.handler.GetMe)
-	
+
 	expectedUser := &models.User{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "current@example.com",
 		FirstName: "Current",
 		LastName:  "User",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(expectedUser, nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/users/me", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -423,7 +423,7 @@ func (suite *UserHandlerTestSuite) TestGetMe_Success() {
 
 func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	suite.router.PUT("/users/me", suite.handler.UpdateMe)
-	
+
 	payload := UpdateMeRequest{
 		FirstName: "Updated",
 		Password:  "NewStr0ng!Pass",
@@ -439,16 +439,16 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
 		return updates["first_name"] == "Updated" && updates["password"] == "NewStr0ng!Pass"
 	})).Return(expectedUser, nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/users/me", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -563,6 +563,80 @@ func (suite *UserHandlerTestSuite) TestList_SearchWithSort() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *UserHandlerTestSuite) TestActivate_Success() {
+	suite.router.POST("/users/:id/activate", suite.handler.Activate)
+
+	targetID := uint(2)
+	activatedUser := &models.User{
+		BaseModel: models.BaseModel{ID: targetID},
+		Email:     "target@example.com",
+		IsActive:  true,
+	}
+
+	suite.mockService.On("Update", targetID, map[string]interface{}{"is_active": true}).
+		Return(activatedUser, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/users/2/activate", nil)
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *UserHandlerTestSuite) TestActivate_NotFound() {
+	suite.router.POST("/users/:id/activate", suite.handler.Activate)
+
+	suite.mockService.On("Update", uint(99), map[string]interface{}{"is_active": true}).
+		Return(nil, apperrors.ErrNotFound)
+
+	req := httptest.NewRequest(http.MethodPost, "/users/99/activate", nil)
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNotFound, rec.Code)
+}
+
+func (suite *UserHandlerTestSuite) TestDeactivate_Success() {
+	suite.router.POST("/users/:id/deactivate", suite.handler.Deactivate)
+
+	targetID := uint(2)
+	deactivatedUser := &models.User{
+		BaseModel: models.BaseModel{ID: targetID},
+		Email:     "target@example.com",
+		IsActive:  false,
+	}
+
+	suite.mockService.On("Update", targetID, map[string]interface{}{"is_active": false}).
+		Return(deactivatedUser, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/users/2/deactivate", nil)
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.True(suite.T(), response.Success)
+}
+
+func (suite *UserHandlerTestSuite) TestDeactivate_SelfDeactivationPrevented() {
+	suite.router.POST("/users/:id/deactivate", suite.handler.Deactivate)
+
+	// Context user_id is set to 1 in SetupTest
+	req := httptest.NewRequest(http.MethodPost, "/users/1/deactivate", nil)
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.False(suite.T(), response.Success)
+	assert.Contains(suite.T(), response.Error.Message, "cannot deactivate your own account")
 }
 
 func TestUserHandlerTestSuite(t *testing.T) {
