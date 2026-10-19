@@ -755,20 +755,17 @@ the frontend gating.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new, via the `request`
   fixture)
 
-### TC-LEAD-046 — The Website field in the convert dialog is discarded
-- **Priority:** P2
-- **Type:** negative
+### TC-LEAD-046 — Conversion persists the Website field
+- **Priority:** P1
+- **Type:** regression
 - **Preconditions:** Admin logged in; a qualified lead created by the test.
-- **Steps:**
-  1. Open the convert dialog and fill Website with `https://example.com`.
-  2. Convert, then inspect the created customer (via `GET /customers/{id}` using the id from the
-     200 response body).
-- **Expected:** 200. The customer carries the Company, Address and Notes from the dialog but no
-  website anywhere: `ConvertLeadRequest.Website` is bound (`lead_handler.go:57`) and then never
-  copied into `customerData` (`lead_handler.go:515`), and `models.Customer` has no website column
-  at all.
-- **Known issue:** A form field that validates as a URL and is then silently dropped.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
+- **Steps:** Open the conversion dialog, enter `https://example.com`, convert, then reload the
+  resulting customer detail and edit pages.
+- **Expected:** 200. The response includes the created customer ID and website. The UI opens that
+  customer and displays the saved website link; the edit field retains it after a reload.
+  The API and dialog reject non-HTTP(S) URLs and values over 255 characters.
+- **Automation:** `gocrm-ui/e2e/tests/customer-website.spec.ts`; API validation and persistence in
+  `tests/customer_website_integration_test.go`; dialog validation in `ConvertLeadDialog.test.tsx`.
 
 ### TC-LEAD-047 — A sales user cannot convert a lead they do not own
 - **Priority:** P0

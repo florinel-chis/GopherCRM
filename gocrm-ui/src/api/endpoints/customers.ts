@@ -10,6 +10,7 @@ export interface CustomerFilters extends PaginationParams {
 }
 
 export interface CreateCustomerData {
+  website?: string;
   company_name: string;
   contact_name: string;
   email: string;
@@ -45,10 +46,10 @@ export const transformCustomerFromBackend = (backendCustomer: BackendCustomer): 
     ...backendCustomer,
     company_name: backendCustomer.company || '',
     contact_name: `${backendCustomer.first_name || ''} ${backendCustomer.last_name || ''}`.trim(),
-    // Add default values for fields that frontend expects but backend doesn't have
+    // Provide defaults for optional and UI-only fields.
     total_revenue: 0,
     is_active: true,
-    website: '',
+    website: backendCustomer.website ?? '',
     industry: '',
     annual_revenue: 0,
     employee_count: 0,
@@ -83,6 +84,7 @@ export const customersApi = {
       email: data.email,
       phone: data.phone,
       company: data.company_name,
+      website: data.website,
       address: data.address,
       city: data.city,
       state: data.state,
@@ -98,14 +100,15 @@ export const customersApi = {
   updateCustomer: async (id: number, data: UpdateCustomerData): Promise<Customer> => {
     // Transform frontend data to backend format
     const transformedData: Partial<CustomerWriteData> = {};
-    
+
     if (data.contact_name !== undefined) {
       const [firstName, ...lastNameParts] = data.contact_name.split(' ');
       transformedData.first_name = firstName || '';
       transformedData.last_name = lastNameParts.join(' ') || '';
     }
-    
+
     if (data.company_name !== undefined) transformedData.company = data.company_name;
+    if (data.website !== undefined) transformedData.website = data.website;
     if (data.email !== undefined) transformedData.email = data.email;
     if (data.phone !== undefined) transformedData.phone = data.phone;
     if (data.address !== undefined) transformedData.address = data.address;
@@ -115,7 +118,7 @@ export const customersApi = {
     if (data.postal_code !== undefined) transformedData.postal_code = data.postal_code;
     if (data.notes !== undefined) transformedData.notes = data.notes;
     if (data.company_id !== undefined) transformedData.company_id = data.company_id;
-    
+
     const response = await api.put<BackendCustomer>(`/customers/${id}`, transformedData);
     return transformCustomerFromBackend(response.data);
   },
@@ -125,7 +128,9 @@ export const customersApi = {
   },
 
   assignCustomer: async (id: number, userId: number): Promise<Customer> => {
-    const response = await api.post<BackendCustomer>(`/customers/${id}/assign`, { user_id: userId });
+    const response = await api.post<BackendCustomer>(`/customers/${id}/assign`, {
+      user_id: userId,
+    });
     return transformCustomerFromBackend(response.data);
   },
 

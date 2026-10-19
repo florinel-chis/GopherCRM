@@ -247,6 +247,7 @@ export interface Task {
 // Wire records retain the Go field names; endpoint transforms supply the
 // derived names and display defaults exposed by the frontend models above.
 export interface BackendCustomer {
+  website?: string;
   id: number;
   first_name: string;
   last_name: string;

@@ -40,6 +40,9 @@ func (s *customerService) checkCompanyLink(companyID *uint) error {
 }
 
 func (s *customerService) Create(customer *models.Customer) error {
+	if err := normalizeCustomerWebsite(customer); err != nil {
+		return err
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "customer"), "CustomerService", "Create")
 
 	// Check for duplicate email. The lookup must be unscoped: the unique index on
@@ -102,6 +105,9 @@ func (s *customerService) GetByUserID(userID uint) (*models.Customer, error) {
 }
 
 func (s *customerService) Update(customer *models.Customer) error {
+	if err := normalizeCustomerWebsite(customer); err != nil {
+		return err
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", customer.ID), "CustomerService", "Update")
 
 	// Check for duplicate email if email is being updated
@@ -132,7 +138,7 @@ func (s *customerService) Update(customer *models.Customer) error {
 // Delete erases the customer's personal data and then soft-deletes the row. It
 // is a GDPR Article 17 erasure and it is IRREVERSIBLE: the email becomes a
 // non-routable placeholder and every other personal field — names, phone,
-// company, position, postal address, free-text notes — is cleared. See
+// company, website, position, postal address, free-text notes — is cleared. See
 // customerRepository.Delete for the details.
 //
 // This is NOT how you park a dormant account. Nothing here is recoverable, so

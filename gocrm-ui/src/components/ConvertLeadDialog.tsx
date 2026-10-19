@@ -14,10 +14,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { FormTextField } from '@/components/form';
 import type { Lead } from '@/types';
+import { customerWebsiteSchema } from '@/utils/customerWebsite';
 
 const convertLeadSchema = z.object({
   company_name: z.string().optional(),
-  website: z.string().url('Invalid URL format').optional().or(z.literal('')),
+  website: customerWebsiteSchema,
   address: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -75,7 +76,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
     if (data.website?.trim()) filteredData.website = data.website.trim();
     if (data.address?.trim()) filteredData.address = data.address.trim();
     if (data.notes?.trim()) filteredData.notes = data.notes.trim();
-    
+
     onConfirm(filteredData);
   };
 
@@ -88,23 +89,25 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-      <DialogTitle>
-        Convert Lead to Customer
-      </DialogTitle>
-      
+      <DialogTitle>Convert Lead to Customer</DialogTitle>
+
       <DialogContent>
         <Box sx={{ mb: 3 }}>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Converting this lead will create a new customer record. The lead will be marked as "converted" and linked to the new customer.
+            Converting this lead will create a new customer record. The lead will be marked as
+            "converted" and linked to the new customer.
           </Alert>
-          
+
           <Typography variant="h6" gutterBottom>
             Lead Information
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            <strong>Contact:</strong> {lead.contact_name}<br />
-            <strong>Email:</strong> {lead.email}<br />
-            <strong>Phone:</strong> {lead.phone}<br />
+            <strong>Contact:</strong> {lead.contact_name}
+            <br />
+            <strong>Email:</strong> {lead.email}
+            <br />
+            <strong>Phone:</strong> {lead.phone}
+            <br />
             <strong>Current Company:</strong> {lead.company_name || 'Not specified'}
           </Typography>
         </Box>
@@ -117,7 +120,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               You can update or add additional information for the new customer record.
             </Typography>
-            
+
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <FormTextField
                 name="company_name"
@@ -125,14 +128,14 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
                 placeholder="Leave empty to use current company name"
                 fullWidth
               />
-              
+
               <FormTextField
                 name="website"
                 label="Website"
                 placeholder="https://example.com"
                 fullWidth
               />
-              
+
               <FormTextField
                 name="address"
                 label="Address"
@@ -141,7 +144,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
                 rows={2}
                 fullWidth
               />
-              
+
               <FormTextField
                 name="notes"
                 label="Conversion Notes"
@@ -154,7 +157,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
           </Box>
         </FormProvider>
       </DialogContent>
-      
+
       <DialogActions>
         <Button onClick={handleClose} disabled={isLoading}>
           Cancel

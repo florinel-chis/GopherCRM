@@ -1,5 +1,11 @@
 import { api } from '../client';
-import type { BackendLead, Lead, PaginationParams, PaginatedResponse } from '@/types';
+import type {
+  BackendCustomer,
+  BackendLead,
+  Lead,
+  PaginationParams,
+  PaginatedResponse,
+} from '@/types';
 
 export interface LeadFilters extends PaginationParams {
   status?: string;
@@ -78,7 +84,7 @@ export const leadsApi = {
       source: data.source,
       notes: data.notes || '',
     };
-    
+
     // Include owner_id if provided
     if (data.owner_id !== undefined) {
       transformedData.owner_id = data.owner_id;
@@ -86,7 +92,7 @@ export const leadsApi = {
     if (data.company_id !== undefined) {
       transformedData.company_id = data.company_id;
     }
-    
+
     const response = await api.post<BackendLead>('/leads', transformedData);
     return transformLeadFromBackend(response.data);
   },
@@ -94,13 +100,13 @@ export const leadsApi = {
   updateLead: async (id: number, data: UpdateLeadData): Promise<Lead> => {
     // Transform frontend data to match backend expectations
     const transformedData: Partial<LeadWriteData> = {};
-    
+
     if (data.contact_name !== undefined) {
       const [firstName, ...lastNameParts] = data.contact_name.split(' ');
       transformedData.first_name = firstName || '';
       transformedData.last_name = lastNameParts.join(' ') || '';
     }
-    
+
     if (data.company_name !== undefined) transformedData.company = data.company_name;
     if (data.email !== undefined) transformedData.email = data.email;
     if (data.phone !== undefined) transformedData.phone = data.phone;
@@ -108,7 +114,7 @@ export const leadsApi = {
     if (data.source !== undefined) transformedData.source = data.source;
     if (data.notes !== undefined) transformedData.notes = data.notes;
     if (data.company_id !== undefined) transformedData.company_id = data.company_id;
-    
+
     const response = await api.put<BackendLead>(`/leads/${id}`, transformedData);
     return transformLeadFromBackend(response.data);
   },
@@ -117,9 +123,12 @@ export const leadsApi = {
     await api.delete(`/leads/${id}`);
   },
 
-  convertLead: async (id: number, data?: { company_name?: string; website?: string; address?: string; notes?: string }): Promise<{ customer_id: number }> => {
-    const response = await api.post<{ customer_id: number }>(`/leads/${id}/convert`, data || {});
-    return response.data;
+  convertLead: async (
+    id: number,
+    data?: { company_name?: string; website?: string; address?: string; notes?: string },
+  ): Promise<{ customer_id: number }> => {
+    const response = await api.post<BackendCustomer>(`/leads/${id}/convert`, data || {});
+    return { customer_id: response.data.id };
   },
 
   assignLead: async (id: number, userId: number): Promise<Lead> => {
