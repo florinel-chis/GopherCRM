@@ -59,7 +59,7 @@ func (suite *TaskLabelServiceTestSuite) TestCreateWithLabels_AttachesResolvedLab
 	suite.mockTaskRepo.On("CreateWithLabels", mock.AnythingOfType("*models.Task"), labels).Return(nil)
 
 	task := &models.Task{Title: "Labelled", AssignedToID: 1}
-	assert.NoError(suite.T(), suite.service.CreateWithLabels(task, []uint{2}))
+	assert.NoError(suite.T(), suite.service.CreateWithLabels(task, []uint{2}, 1))
 }
 
 // Without any label ids the labelled path must be indistinguishable from the
@@ -70,7 +70,7 @@ func (suite *TaskLabelServiceTestSuite) TestCreateWithLabels_NoIDsUsesThePlainCr
 	suite.mockTaskRepo.On("Create", mock.AnythingOfType("*models.Task")).Return(nil)
 
 	task := &models.Task{Title: "Bare", AssignedToID: 1}
-	assert.NoError(suite.T(), suite.service.CreateWithLabels(task, nil))
+	assert.NoError(suite.T(), suite.service.CreateWithLabels(task, nil, 1))
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "CreateWithLabels", mock.Anything, mock.Anything)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -84,7 +84,7 @@ func (suite *TaskLabelServiceTestSuite) TestCreateWithLabels_UnknownIDRejectsThe
 	suite.mockLabelRepo.On("FindByIDs", []uint{2, 99}).
 		Return([]models.Label{{BaseModel: models.BaseModel{ID: 2}}}, nil)
 
-	err := suite.service.CreateWithLabels(&models.Task{Title: "Bad ref", AssignedToID: 1}, []uint{2, 99})
+	err := suite.service.CreateWithLabels(&models.Task{Title: "Bad ref", AssignedToID: 1}, []uint{2, 99}, 1)
 	assert.ErrorIs(suite.T(), err, apperrors.ErrLabelNotFound)
 	assert.Contains(suite.T(), err.Error(), "99", "the offending id belongs in the message")
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
@@ -100,7 +100,7 @@ func (suite *TaskLabelServiceTestSuite) TestCreateWithLabels_CollapsesRepeatedID
 	suite.mockLabelRepo.On("FindByIDs", []uint{2}).Return(labels, nil)
 	suite.mockTaskRepo.On("CreateWithLabels", mock.AnythingOfType("*models.Task"), labels).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.CreateWithLabels(&models.Task{Title: "Dup", AssignedToID: 1}, []uint{2, 2, 2}))
+	assert.NoError(suite.T(), suite.service.CreateWithLabels(&models.Task{Title: "Dup", AssignedToID: 1}, []uint{2, 2, 2}, 1))
 }
 
 // Labels are only resolved once the task itself is known to be valid; an
@@ -109,7 +109,7 @@ func (suite *TaskLabelServiceTestSuite) TestCreateWithLabels_InvalidAssigneeShor
 	suite.mockUserRepo.On("GetByID", uint(1)).
 		Return(&models.User{BaseModel: models.BaseModel{ID: 1}, IsActive: false}, nil)
 
-	err := suite.service.CreateWithLabels(&models.Task{Title: "Inactive", AssignedToID: 1}, []uint{2})
+	err := suite.service.CreateWithLabels(&models.Task{Title: "Inactive", AssignedToID: 1}, []uint{2}, 1)
 	assert.ErrorIs(suite.T(), err, apperrors.ErrInactiveUser)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -132,7 +132,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_NilPointerLeavesLab
 	task := suite.existingTask()
 	suite.mockTaskRepo.On("Update", task).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, false, 1))
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -143,7 +143,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_EmptySliceClearsThe
 
 	suite.mockTaskRepo.On("UpdateWithLabels", task, []models.Label(nil)).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &empty))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &empty, false, 1))
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockLabelRepo.AssertNotCalled(suite.T(), "FindByIDs", mock.Anything)
 }
@@ -156,7 +156,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_ReplacesTheSet() {
 	suite.mockLabelRepo.On("FindByIDs", ids).Return(labels, nil)
 	suite.mockTaskRepo.On("UpdateWithLabels", task, labels).Return(nil)
 
-	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &ids))
+	assert.NoError(suite.T(), suite.service.UpdateWithLabels(task, &ids, false, 1))
 }
 
 func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsTheWholeRequest() {
@@ -165,7 +165,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsThe
 
 	suite.mockLabelRepo.On("FindByIDs", ids).Return([]models.Label{}, nil)
 
-	err := suite.service.UpdateWithLabels(task, &ids)
+	err := suite.service.UpdateWithLabels(task, &ids, false, 1)
 	assert.ErrorIs(suite.T(), err, apperrors.ErrLabelNotFound)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
@@ -174,7 +174,7 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsThe
 func (suite *TaskLabelServiceTestSuite) TestListByLabel_ListsAndCountsAcrossEveryAssignee() {
 	tasks := []models.Task{{BaseModel: models.BaseModel{ID: 1}, Title: "Tagged"}}
 
-	suite.mockTaskRepo.On("ListByLabel", uint(3), (*uint)(nil), 0, 20, "title", "asc", []string{"AssignedTo", "Labels"}).
+	suite.mockTaskRepo.On("ListByLabel", uint(3), (*uint)(nil), 0, 20, "title", "asc", []string{"AssignedTo", "Labels", "Lead"}).
 		Return(tasks, nil)
 	suite.mockTaskRepo.On("CountByLabel", uint(3), (*uint)(nil)).Return(int64(1), nil)
 
@@ -191,7 +191,7 @@ func (suite *TaskLabelServiceTestSuite) TestListByLabelForAssignee_PushesTheAssi
 
 	suite.mockTaskRepo.On("ListByLabel", uint(3), mock.MatchedBy(func(id *uint) bool {
 		return id != nil && *id == assignee
-	}), 0, 20, "", "", []string{"AssignedTo", "Labels"}).Return([]models.Task{}, nil)
+	}), 0, 20, "", "", []string{"AssignedTo", "Labels", "Lead"}).Return([]models.Task{}, nil)
 	suite.mockTaskRepo.On("CountByLabel", uint(3), mock.MatchedBy(func(id *uint) bool {
 		return id != nil && *id == assignee
 	})).Return(int64(0), nil)

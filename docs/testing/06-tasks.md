@@ -590,3 +590,50 @@ regression anchors, not endorsements.
 - **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:494-500`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
 - **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in FEATURES.md.
 - **Automation:** blocked — needs a non-admin role-login helper to obtain a support token
+
+---
+
+## Lead visibility through tasks
+
+### TC-TASK-047 — A task cannot be used to link or read a lead the caller may not see
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Sales users A and B, a support user, and a lead owned by A.
+- **Steps:**
+  1. As support, `POST /api/v1/tasks` assigned to itself with A's `lead_id`. As B, the same.
+  2. As B, `PUT` one of its own tasks with A's `lead_id` and a new title.
+  3. As admin, create a task assigned to B linked to A's lead.
+  4. As B, `GET` that task, `GET /tasks`, `GET /tasks/my`, then `PUT` its title.
+  5. As admin, reassign it to the support user; as support, `GET` it.
+  6. As A, create a task linked to A's own lead; move the lead to B (admin); `GET` the task as A.
+  7. On a task from step 3 (and one the admin assigned to support), `PUT` as the assignee with
+     `lead_id` set to A's lead (the stored, hidden link), then to another lead A owns, then to an id
+     that matches no lead. As A, `PUT` a task linked to A's own lead with that same `lead_id`.
+- **Expected:** Steps 1–2: **404**, the answer an unknown `lead_id` gets; no task is written and
+  the `PUT` changes nothing, title included. Step 3: **201**, and the admin sees the lead. Steps 4–6:
+  **200** with neither `lead_id` nor `lead` in any body, while the stored link is kept and B's
+  title change is saved; the admin still sees the lead on its reads and lists. Step 7: all three
+  probes get the same **404**, so the stored link cannot be found by sending lead ids, and none of
+  them changes the task; A's echo of her own lead is **200**. A `lead_id` that is sent is always
+  checked, even when it equals the stored one; only an absent `lead_id` keeps a hidden link
+  unchecked. The policy is `service.CanViewLead` (admin every lead, sales its own, every other role
+  none), checked on writes and re-applied to every task returned, on `/dashboard/upcoming-tasks` and
+  `/tasks/upcoming` as well.
+- **Automation:** blocked — needs a non-admin role-login helper. Go:
+  `internal/integration/lead_visibility_integration_test.go` (`TestTaskCreate_SupportCannotLinkALead`,
+  `TestTaskCreate_SalesOnlyWithItsOwnLead`, `TestTaskUpdate_CannotRelinkToAHiddenLead`,
+  `TestTaskUpdate_SendingTheHiddenStoredLeadIsNoOracle`, `TestTaskReads_HideHistoricalLinks`,
+  `TestTaskReads_FollowLeadOwnershipChanges`); `task_service_test.go`
+  (`TestCreate_LeadHiddenFromTheActorIsRejected`, `TestUpdate_*Lead*`);
+  `task_lead_visibility_handler_test.go`; `dashboard_handler_test.go`
+  (`TestGetUpcomingTasks_HidesALeadTheAssigneeMayNotSee`,
+  `TestGetUpcomingTasks_ShowsTheLeadToItsOwnerAndToAdmins`).
+
+
+### TC-TASK-048 — Customer replacement cannot disclose a hidden lead link
+
+- **Type:** API / integration regression
+- **Setup:** Admin, sales A (owns a lead), sales B and support. For each role, assign one task with no link, one with A's lead, and one with an existing customer. Create another customer as the replacement.
+- **Steps:** As each assignee, PUT only `customer_id` naming the replacement. Repeat on a hidden-lead task with a nonexistent customer. As A, separately send both A's `lead_id` and a valid `customer_id`.
+- **Expected:** A valid customer-only request returns **200** for every starting association, clears any lead link, persists the replacement customer, and emits no old lead/customer data. The result does not disclose whether a hidden lead used to be linked. An invalid customer returns **404** without changing either the stored lead or any other task field. Explicitly sending both a visible lead and a customer remains **400** without a write.
+- **Coverage:** `TestLeadVisibilityIntegrationTestSuite/TestTaskUpdate_CustomerReplacementDoesNotRevealALead`, `TestTaskUpdate_InvalidCustomerPreservesHiddenLead`, and `TestTaskUpdate_ExplicitLeadAndCustomerStillConflict` exercise the real HTTP/service/repository path.

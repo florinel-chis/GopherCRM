@@ -50,17 +50,17 @@ func (_m *DealService) GetByID(id uint) (*models.Deal, error) {
 	return r0, ret.Error(1)
 }
 
-// Update provides a mock function with given fields: deal, probability, actorID
-func (_m *DealService) Update(deal *models.Deal, probability *int, actorID uint) error {
-	ret := _m.Called(deal, probability, actorID)
+// Update provides a mock function with given fields: deal, probability, leadIDSent, actorID
+func (_m *DealService) Update(deal *models.Deal, probability *int, leadIDSent bool, actorID uint) error {
+	ret := _m.Called(deal, probability, leadIDSent, actorID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*models.Deal, *int, uint) error); ok {
-		r0 = rf(deal, probability, actorID)
+	if rf, ok := ret.Get(0).(func(*models.Deal, *int, bool, uint) error); ok {
+		r0 = rf(deal, probability, leadIDSent, actorID)
 	} else {
 		r0 = ret.Error(0)
 	}

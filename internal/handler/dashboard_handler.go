@@ -607,7 +607,7 @@ func activityUserFrom(user *models.User) ActivityUser {
 
 // GetUpcomingTasks godoc
 // @Summary Tasks due soonest
-// @Description The open tasks with the nearest due dates, as a bare array ordered by due date ascending. Completed and cancelled tasks are excluded, as are tasks with no due date; overdue tasks are deliberately included, since they are the ones that most need attention. Admins see every assignee's tasks; every other role sees only the tasks assigned to them. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description The open tasks with the nearest due dates, as a bare array ordered by due date ascending. Completed and cancelled tasks are excluded, as are tasks with no due date; overdue tasks are deliberately included, since they are the ones that most need attention. Admins see every assignee's tasks; every other role sees only the tasks assigned to them. A task carries its lead (lead_id and lead) only when the caller may see that lead, as on GET /tasks/{id}. Restricted to the admin, sales and support roles; customer-role callers receive 403.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -639,6 +639,7 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 	if tasks == nil {
 		tasks = []models.Task{}
 	}
+	service.RedactTaskLeads(leadViewer(c), tasks)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, tasks)
 	utils.RespondSuccess(c, http.StatusOK, tasks)

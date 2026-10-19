@@ -36,10 +36,11 @@ func (r *taskRepository) GetByID(id uint) (*models.Task, error) {
 // GetByAssignedToID backs GET /tasks/my and the non-admin branch of GET /tasks.
 // Labels are preloaded here even though the assignee is not: a task's labels
 // are part of how it renders in every listing, so leaving them out would make
-// the chips disappear for exactly the callers who see this path.
+// the chips disappear for exactly the callers who see this path. The lead is
+// preloaded so the handler can decide whether the caller may see it.
 func (r *taskRepository) GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := r.db.Preload("Labels").Where("assigned_to_id = ?", assignedToID).Offset(offset).Limit(limit).Find(&tasks).Error
+	err := r.db.Preload("Labels").Preload("Lead").Where("assigned_to_id = ?", assignedToID).Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -56,7 +57,7 @@ func (r *taskRepository) Delete(id uint) error {
 
 func (r *taskRepository) List(offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := r.db.Preload("AssignedTo").Preload("Labels").Offset(offset).Limit(limit).Find(&tasks).Error
+	err := r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead").Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -166,9 +167,9 @@ func (r *taskRepository) ListDueBetween(assignedToID *uint, from, to time.Time, 
 
 // openDueQuery is the shared predicate behind the two due-date listings: a task
 // that is still open and actually has a due date, optionally narrowed to one
-// assignee.
+// assignee. The lead is preloaded for the lead-visibility decision.
 func (r *taskRepository) openDueQuery(assignedToID *uint) *gorm.DB {
-	query := r.db.Preload("AssignedTo").
+	query := r.db.Preload("AssignedTo").Preload("Lead").
 		Where("due_date IS NOT NULL").
 		Where("status NOT IN ?", []string{
 			string(models.TaskStatusCompleted),

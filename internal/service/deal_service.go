@@ -80,7 +80,7 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
-	if err := s.checkLinks(deal, nil); err != nil {
+	if err := s.checkLinks(deal, nil, true, actorID); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
@@ -134,8 +134,9 @@ func (s *dealService) GetByID(id uint) (*models.Deal, error) {
 // Update saves the deal. The stored row is re-read for its stage: a difference
 // is a transition and gets the history row; the same stage keeps closed_at as
 // it is and only applies an explicit probability. The links and the owner are
-// checked only where they differ from the stored row (see checkLinks).
-func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) error {
+// checked only where they differ from the stored row, the lead also when the
+// request sent lead_id (see checkLinks).
+func (s *dealService) Update(deal *models.Deal, probability *int, leadIDSent bool, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("deal_id", deal.ID), "DealService", "Update")
 
 	stored, err := s.GetByID(deal.ID)
@@ -152,7 +153,7 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
-	if err := s.checkLinks(deal, stored); err != nil {
+	if err := s.checkLinks(deal, stored, leadIDSent, actorID); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
@@ -545,8 +546,12 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 // request did not set exactly as stored, and such a link is not re-checked,
 // so a deal keeps its links to erased records (erasure soft-deletes the row)
 // and stays editable. A link the request cleared is nil and needs no check;
-// one set to another id must name a live row, as on a create.
-func (s *dealService) checkLinks(deal, stored *models.Deal) error {
+// one set to another id must name a live row, as on a create. A lead link that
+// is checked must moreover be visible to actorID, and a lead link the request
+// sent (leadIDSent) is checked even when it equals the stored one: otherwise
+// the stored id would be the only hidden lead an update accepts, which gives
+// away the link the read side redacts.
+func (s *dealService) checkLinks(deal, stored *models.Deal, leadIDSent bool, actorID uint) error {
 	var previousCompany, previousCustomer, previousLead *uint
 	ownerChanged := true
 	if stored != nil {
@@ -578,11 +583,10 @@ func (s *dealService) checkLinks(deal, stored *models.Deal) error {
 			return err
 		}
 	}
-	if linkChanged(deal.LeadID, previousLead) {
-		if _, err := s.leadRepo.GetByID(*deal.LeadID); err != nil {
-			if isNotFound(err) {
-				return fmt.Errorf("unknown lead_id %d: %w", *deal.LeadID, apperrors.ErrLeadNotFound)
-			}
+	if deal.LeadID != nil && (leadIDSent || linkChanged(deal.LeadID, previousLead)) {
+		// The lead must also be one the acting user may see (CanViewLead);
+		// one it may not see is reported exactly like a missing one.
+		if _, err := checkLeadLink(s.leadRepo, s.userRepo, actorID, *deal.LeadID); err != nil {
 			return err
 		}
 	}

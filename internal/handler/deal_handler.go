@@ -123,7 +123,7 @@ func optionalID(id *uint) *uint {
 
 // Create godoc
 // @Summary Create a deal
-// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 to 1000000000000 (10^12 cents; a larger value is a 400); currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
+// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 to 1000000000000 (10^12 cents; a larger value is a 400); currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none); lead_id must moreover name a lead the caller may see — admins any lead, sales users only the leads they own — and a lead the caller may not see is the same 400 INVALID_REFERENCE as a missing one. owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -180,6 +180,7 @@ func (h *DealHandler) Create(c *gin.Context) {
 	if created, err := h.dealService.GetByID(deal.ID); err == nil {
 		deal = created
 	}
+	service.RedactDealLead(leadViewer(c), deal)
 
 	utils.LogHandlerResponse(logger, http.StatusCreated, deal)
 	utils.RespondSuccess(c, http.StatusCreated, deal)
@@ -187,7 +188,7 @@ func (h *DealHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List deals
-// @Description One page of deals (admin and sales roles; sales users see only the deals they own, whatever owner_id says). data is the array of deals, each with its owner, company, customer and lead; meta carries the pagination. search matches title and notes (substring; case-insensitive on MySQL and MariaDB, case-sensitive on SQLite). Filters combine: stage, company_id, customer_id, owner_id (admin only) and open=true, which selects every stage but won and lost. sort_by must be one of the listed columns — any other value is a 400, never interpolated — and defaults to created_at; sort_order defaults to desc. page (1-based) overrides offset when supplied.
+// @Description One page of deals (admin and sales roles; sales users see only the deals they own, whatever owner_id says). data is the array of deals, each with its owner, company, customer and lead (lead_id and lead only when the caller may see that lead, as on GET /deals/{id}); meta carries the pagination. search matches title and notes (substring; case-insensitive on MySQL and MariaDB, case-sensitive on SQLite). Filters combine: stage, company_id, customer_id, owner_id (admin only) and open=true, which selects every stage but won and lost. sort_by must be one of the listed columns — any other value is a 400, never interpolated — and defaults to created_at; sort_order defaults to desc. page (1-based) overrides offset when supplied.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
@@ -263,6 +264,7 @@ func (h *DealHandler) List(c *gin.Context) {
 		h.respondError(c, logger, err)
 		return
 	}
+	service.RedactDealLeads(leadViewer(c), deals)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, deals)
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))
@@ -309,7 +311,7 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a deal
-// @Description One deal (admin and sales roles) with its owner, company, customer and lead preloaded. Sales users can only view their own deals (403 otherwise).
+// @Description One deal (admin and sales roles) with its owner, company, customer and lead preloaded. Sales users can only view their own deals (403 otherwise). lead_id and lead are omitted when the caller may not see the linked lead (a sales user sees only the leads it owns); this is decided on every read, so it follows lead ownership changes and links an admin made. The same applies to every deal this API returns.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
@@ -330,6 +332,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
+	service.RedactDealLead(leadViewer(c), deal)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, deal)
 	utils.RespondSuccess(c, http.StatusOK, deal)
@@ -337,7 +340,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a deal
-// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents), as on create. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
+// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. A lead_id that is sent is always checked, even when it equals the stored link, and must name a lead the caller may see, as on create, so sending lead ids cannot reveal a hidden link; a stored lead link the caller may not see is kept unchecked when lead_id is absent and omitted from the response. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents), as on create. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -389,7 +392,7 @@ func (h *DealHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if err := h.dealService.Update(deal, req.Probability, currentUserID); err != nil {
+	if err := h.dealService.Update(deal, req.Probability, req.LeadID != nil, currentUserID); err != nil {
 		h.respondError(c, logger, err)
 		return
 	}
@@ -397,6 +400,7 @@ func (h *DealHandler) Update(c *gin.Context) {
 	if refreshed, err := h.dealService.GetByID(deal.ID); err == nil {
 		deal = refreshed
 	}
+	service.RedactDealLead(leadViewer(c), deal)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, deal)
 	utils.RespondSuccess(c, http.StatusOK, deal)
@@ -443,6 +447,7 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 		h.respondError(c, logger, err)
 		return
 	}
+	service.RedactDealLead(leadViewer(c), moved)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, moved)
 	utils.RespondSuccess(c, http.StatusOK, moved)
@@ -556,6 +561,7 @@ func (h *DealHandler) ListByCompany(c *gin.Context) {
 		h.respondError(c, logger, err)
 		return
 	}
+	service.RedactDealLeads(leadViewer(c), deals)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, deals)
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))
@@ -602,6 +608,7 @@ func (h *DealHandler) ListByCustomer(c *gin.Context) {
 		h.respondError(c, logger, err)
 		return
 	}
+	service.RedactDealLeads(leadViewer(c), deals)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, deals)
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))

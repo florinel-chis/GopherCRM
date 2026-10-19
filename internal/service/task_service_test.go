@@ -12,6 +12,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
@@ -130,14 +131,17 @@ func (suite *TaskServiceTestSuite) TestCreate_WithLead_Success() {
 	lead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "lead@example.com",
+		OwnerID:   5,
 	}
 
 	suite.mockUserRepo.On("GetByID", uint(1)).Return(assignee, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(&models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleAdmin}, nil)
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(lead, nil)
 	suite.mockTaskRepo.On("Create", mock.AnythingOfType("*models.Task")).Return(nil)
 
-	err := suite.service.Create(task)
+	err := suite.service.CreateWithLabels(task, nil, 7)
 	assert.NoError(suite.T(), err)
+	assert.Same(suite.T(), lead, task.Lead, "the checked lead is attached for the response")
 }
 
 func (suite *TaskServiceTestSuite) TestCreate_LeadNotFound() {
@@ -222,22 +226,169 @@ func (suite *TaskServiceTestSuite) TestCreate_BothLeadAndCustomer() {
 		BaseModel: models.BaseModel{ID: 1},
 		IsActive:  true,
 	}
-	
+
 	lead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},
 	}
-	
+
 	customer := &models.Customer{
 		BaseModel: models.BaseModel{ID: 1},
 	}
 
 	suite.mockUserRepo.On("GetByID", uint(1)).Return(assignee, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(&models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleAdmin}, nil)
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(lead, nil)
 	suite.mockCustomerRepo.On("GetByID", uint(1)).Return(customer, nil)
 
-	err := suite.service.Create(task)
+	err := suite.service.CreateWithLabels(task, nil, 7)
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrTaskLeadCustomerConflict))
+}
+
+// --- lead visibility ---------------------------------------------------------
+
+// leadVisibilityFixture primes an active assignee (id 1), a lead owned by user
+// 20 (id 30) and the acting user (id 10) with the given role.
+func (suite *TaskServiceTestSuite) leadVisibilityFixture(actorRole models.UserRole) *models.Lead {
+	suite.mockUserRepo.On("GetByID", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}, IsActive: true}, nil).Maybe()
+	suite.mockUserRepo.On("GetByID", uint(10)).Return(&models.User{BaseModel: models.BaseModel{ID: 10}, Role: actorRole, IsActive: true}, nil).Maybe()
+	lead := &models.Lead{BaseModel: models.BaseModel{ID: 30}, Email: "lead@example.com", OwnerID: 20}
+	suite.mockLeadRepo.On("GetByID", uint(30)).Return(lead, nil).Maybe()
+	return lead
+}
+
+// Support, customer and a sales user who does not own the lead are all refused,
+// with the same sentinel a missing lead gets, and nothing is written.
+func (suite *TaskServiceTestSuite) TestCreate_LeadHiddenFromTheActorIsRejected() {
+	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer, models.RoleSales} {
+		suite.SetupTest()
+		suite.leadVisibilityFixture(role)
+		leadID := uint(30)
+		task := &models.Task{Title: "Probe", AssignedToID: 1, LeadID: &leadID}
+
+		err := suite.service.CreateWithLabels(task, nil, 10)
+		assert.Truef(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "%s: got %v", role, err)
+		assert.Nilf(suite.T(), task.Lead, "%s: nothing about the lead is handed back", role)
+		suite.mockTaskRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
+		suite.mockTaskRepo.AssertNotCalled(suite.T(), "CreateWithLabels", mock.Anything, mock.Anything)
+	}
+}
+
+func (suite *TaskServiceTestSuite) TestCreate_SalesMayLinkItsOwnLead() {
+	lead := suite.leadVisibilityFixture(models.RoleSales)
+	lead.OwnerID = 10
+	leadID := uint(30)
+	task := &models.Task{Title: "Follow up", AssignedToID: 1, LeadID: &leadID}
+	suite.mockTaskRepo.On("Create", task).Return(nil)
+
+	require.NoError(suite.T(), suite.service.CreateWithLabels(task, nil, 10))
+	assert.Same(suite.T(), lead, task.Lead)
+}
+
+// Create has no acting user, so it cannot link a lead at all, whoever owns it.
+func (suite *TaskServiceTestSuite) TestCreate_WithoutAnActorCannotLinkALead() {
+	suite.leadVisibilityFixture(models.RoleAdmin)
+	leadID := uint(30)
+
+	err := suite.service.Create(&models.Task{Title: "Anonymous", AssignedToID: 1, LeadID: &leadID})
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "got %v", err)
+	suite.mockUserRepo.AssertNotCalled(suite.T(), "GetByID", uint(10))
+	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
+}
+
+// A failing lookup of the actor is a server error, not a hidden lead.
+func (suite *TaskServiceTestSuite) TestCreate_ActorLookupFailureIsNotALeadMiss() {
+	suite.mockUserRepo.On("GetByID", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}, IsActive: true}, nil)
+	suite.mockUserRepo.On("GetByID", uint(10)).Return(nil, errors.New("connection refused"))
+	suite.mockLeadRepo.On("GetByID", uint(30)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 30}, OwnerID: 10}, nil)
+	leadID := uint(30)
+
+	err := suite.service.CreateWithLabels(&models.Task{Title: "X", AssignedToID: 1, LeadID: &leadID}, nil, 10)
+	assert.Error(suite.T(), err)
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound))
+	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
+}
+
+// An update that moves the task onto a lead hidden from the actor is refused
+// and writes nothing.
+func (suite *TaskServiceTestSuite) TestUpdate_ChangingToAHiddenLeadIsRejected() {
+	suite.leadVisibilityFixture(models.RoleSales)
+	suite.mockTaskRepo.On("GetByID", uint(5)).Return(&models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1}, nil)
+	leadID := uint(30)
+	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &leadID}
+
+	err := suite.service.UpdateWithLabels(task, nil, true, 10)
+	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "got %v", err)
+	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
+}
+
+// A link the update leaves out (lead_id absent) is not re-checked — compared by
+// id, not by pointer — so the assignee can keep editing a task whose lead has
+// changed hands. Hiding that link is the read side's job (RedactTaskLead).
+func (suite *TaskServiceTestSuite) TestUpdate_UnchangedLinkIsNotRechecked() {
+	stored, same := uint(30), uint(30)
+	suite.mockTaskRepo.On("GetByID", uint(5)).Return(&models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &stored}, nil)
+	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, Title: "Renamed", AssignedToID: 1, LeadID: &same,
+		Lead: &models.Lead{BaseModel: models.BaseModel{ID: 30}, OwnerID: 20}}
+	suite.mockTaskRepo.On("Update", task).Return(nil)
+
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, false, 10))
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
+	suite.mockUserRepo.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
+}
+
+// Sending lead_id equal to a stored link the actor may not see is refused like
+// any other hidden lead, so the answer cannot confirm which lead the redacted
+// link points at. Nothing is written.
+func (suite *TaskServiceTestSuite) TestUpdate_SendingTheStoredHiddenLeadIsRejected() {
+	for _, role := range []models.UserRole{models.RoleSales, models.RoleSupport} {
+		suite.SetupTest()
+		suite.leadVisibilityFixture(role)
+		suite.mockLeadRepo.On("GetByID", uint(31)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 31}, OwnerID: 20}, nil).Maybe()
+		stored := uint(30)
+		suite.mockTaskRepo.On("GetByID", uint(5)).Return(&models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &stored}, nil)
+
+		var answers []error
+		for _, sent := range []uint{30, 31} {
+			leadID := sent
+			task := &models.Task{BaseModel: models.BaseModel{ID: 5}, Title: "Probe", AssignedToID: 1, LeadID: &leadID}
+			answers = append(answers, suite.service.UpdateWithLabels(task, nil, true, 10))
+		}
+		for i, err := range answers {
+			assert.Truef(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "%s, probe %d: got %v", role, i, err)
+		}
+		suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+		suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
+	}
+}
+
+// The owner of the lead may send the stored lead_id back unchanged.
+func (suite *TaskServiceTestSuite) TestUpdate_SendingTheStoredVisibleLeadIsAccepted() {
+	lead := suite.leadVisibilityFixture(models.RoleSales)
+	lead.OwnerID = 10
+	stored, sent := uint(30), uint(30)
+	suite.mockTaskRepo.On("GetByID", uint(5)).Return(&models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &stored}, nil)
+	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, Title: "Renamed", AssignedToID: 1, LeadID: &sent}
+	suite.mockTaskRepo.On("Update", task).Return(nil)
+
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, 10))
+}
+
+// Moving the link drops the lead preloaded for the old one before the save,
+// so GORM cannot write the old id back, and attaches the new one afterwards.
+func (suite *TaskServiceTestSuite) TestUpdate_ChangingToAVisibleLeadSwapsThePreloadedLead() {
+	lead := suite.leadVisibilityFixture(models.RoleAdmin)
+	old, next := uint(29), uint(30)
+	suite.mockTaskRepo.On("GetByID", uint(5)).Return(&models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &old}, nil)
+	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &next,
+		Lead: &models.Lead{BaseModel: models.BaseModel{ID: 29}}}
+	suite.mockTaskRepo.On("Update", mock.MatchedBy(func(t *models.Task) bool {
+		return t.Lead == nil && t.LeadID != nil && *t.LeadID == 30
+	})).Return(nil)
+
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, 10))
+	assert.Same(suite.T(), lead, task.Lead)
 }
 
 func (suite *TaskServiceTestSuite) TestGetByID_Success() {

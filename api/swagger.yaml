@@ -7159,8 +7159,10 @@ paths:
         by due date ascending. Completed and cancelled tasks are excluded, as are
         tasks with no due date; overdue tasks are deliberately included, since they
         are the ones that most need attention. Admins see every assignee's tasks;
-        every other role sees only the tasks assigned to them. Restricted to the admin,
-        sales and support roles; customer-role callers receive 403.
+        every other role sees only the tasks assigned to them. A task carries its
+        lead (lead_id and lead) only when the caller may see that lead, as on GET
+        /tasks/{id}. Restricted to the admin, sales and support roles; customer-role
+        callers receive 403.
       parameters:
       - default: 5
         description: Maximum tasks to return, capped at 50
@@ -7229,8 +7231,9 @@ paths:
     get:
       description: 'One page of deals (admin and sales roles; sales users see only
         the deals they own, whatever owner_id says). data is the array of deals, each
-        with its owner, company, customer and lead; meta carries the pagination. search
-        matches title and notes (substring; case-insensitive on MySQL and MariaDB,
+        with its owner, company, customer and lead (lead_id and lead only when the
+        caller may see that lead, as on GET /deals/{id}); meta carries the pagination.
+        search matches title and notes (substring; case-insensitive on MySQL and MariaDB,
         case-sensitive on SQLite). Filters combine: stage, company_id, customer_id,
         owner_id (admin only) and open=true, which selects every stage but won and
         lost. sort_by must be one of the listed columns — any other value is a 400,
@@ -7384,10 +7387,13 @@ paths:
         per stage (qualification 10, proposal 40, negotiation 70); won is always 100
         and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored
         only when the stage is lost. company_id, customer_id and lead_id are optional
-        and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none). owner_id
-        defaults to the caller; sales users may only name themselves (403 otherwise),
-        admins any live user. A first history row (from_stage null) is written in
-        the same transaction; when the stage is won or lost, closed_at is set.
+        and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none); lead_id
+        must moreover name a lead the caller may see — admins any lead, sales users
+        only the leads they own — and a lead the caller may not see is the same 400
+        INVALID_REFERENCE as a missing one. owner_id defaults to the caller; sales
+        users may only name themselves (403 otherwise), admins any live user. A first
+        history row (from_stage null) is written in the same transaction; when the
+        stage is won or lost, closed_at is set.
       parameters:
       - description: Deal
         in: body
@@ -7539,6 +7545,10 @@ paths:
     get:
       description: One deal (admin and sales roles) with its owner, company, customer
         and lead preloaded. Sales users can only view their own deals (403 otherwise).
+        lead_id and lead are omitted when the caller may not see the linked lead (a
+        sales user sees only the leads it owns); this is decided on every read, so
+        it follows lead ownership changes and links an admin made. The same applies
+        to every deal this API returns.
       parameters:
       - description: Deal ID
         in: path
@@ -7627,8 +7637,12 @@ paths:
         follow the rule of company_id on leads: company_id, customer_id and lead_id
         absent keep the stored link, 0 clears it, another value sets it (a live row,
         else 400 INVALID_REFERENCE). Links are checked only when the request sets
-        them; a deal keeps links to erased records and stays editable. owner_id absent
-        keeps the owner (sales may only name themselves, admins any live user); currency
+        them; a deal keeps links to erased records and stays editable. A lead_id that
+        is sent is always checked, even when it equals the stored link, and must name
+        a lead the caller may see, as on create, so sending lead ids cannot reveal
+        a hidden link; a stored lead link the caller may not see is kept unchecked
+        when lead_id is absent and omitted from the response. owner_id absent keeps
+        the owner (sales may only name themselves, admins any live user); currency
         absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents),
         as on create. A stage different from the stored one goes through the same
         rules as POST /deals/{id}/stage — probability defaults to the new stage''s
@@ -9712,7 +9726,8 @@ paths:
         sort_order. label_id filters to the tasks carrying that label and takes precedence
         over search: when both are sent, search is ignored. An unparseable or non-positive
         label_id is ignored, and a label_id that matches no label simply yields an
-        empty page rather than a 404.'
+        empty page rather than a 404. Each task carries its lead (lead_id and lead)
+        only when the caller may see that lead, as on GET /tasks/{id}.'
       parameters:
       - description: Page number (1-based); overrides offset when greater than 0
         in: query
@@ -9817,12 +9832,15 @@ paths:
       - application/json
       description: Create a new task (admin, support and sales roles only). Non-admin
         callers may only assign the task to themselves; admins may assign it to any
-        active user. A task may reference a lead or a customer, but not both. The
-        new task always starts in status "pending" regardless of the request body.
-        Optional label_ids attaches existing labels; a repeated id is attached once,
-        and any id that matches no label rejects the whole request with 400 INVALID_REFERENCE.
-        At most 100 ids are accepted, each of which must be positive; a longer list
-        is rejected as a validation error.
+        active user. A task may reference a lead or a customer, but not both. lead_id
+        must name a lead the caller may see — admins any lead, sales users only the
+        leads they own, every other role none — and a lead the caller may not see
+        is answered with 404 exactly like a missing one. The new task always starts
+        in status "pending" regardless of the request body. Optional label_ids attaches
+        existing labels; a repeated id is attached once, and any id that matches no
+        label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids
+        are accepted, each of which must be positive; a longer list is rejected as
+        a validation error.
       parameters:
       - description: Task creation request
         in: body
@@ -9982,7 +10000,11 @@ paths:
       - tasks
     get:
       description: Retrieve a single task. Admins can view any task; every other role
-        can only view tasks assigned to them.
+        can only view tasks assigned to them. lead_id and lead are omitted when the
+        caller may not see the linked lead (sales users see only the leads they own,
+        roles other than admin and sales none); this is decided on every read, so
+        it follows reassignments and lead ownership changes. The same applies to every
+        task this API returns.
       parameters:
       - description: Task ID
         in: path
@@ -10064,16 +10086,24 @@ paths:
     put:
       consumes:
       - application/json
-      description: Partially update a task; only the fields present in the request
+      description: 'Partially update a task; only the fields present in the request
         body are applied. Admins can update any task; every other role can only update
         tasks assigned to them. Only admins may change assigned_to_id (sending the
         current assignee back unchanged is not treated as a reassignment). A task
         that is already completed cannot be moved to another status, and a task cannot
-        reference both a lead and a customer. label_ids, when present, REPLACES the
-        whole label set — an empty array clears it — while omitting the field leaves
-        the labels untouched; an id that matches no label rejects the whole request
-        with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must
-        be positive; a longer list is rejected as a validation error.
+        reference both a lead and a customer. A lead_id that is sent must name a lead
+        the caller may see (as on create; a hidden lead is a 404 like a missing one),
+        even when it equals the stored link, so sending lead ids cannot reveal a hidden
+        link; a stored link is kept unchecked when both link fields are absent, and
+        is omitted from the response when the caller may not see it. Sending customer_id
+        without lead_id replaces the association: the lead link is cleared and the
+        customer link is set after validation, regardless of visibility of the old
+        lead. Sending both link fields still rejects the request; an invalid customer
+        leaves the task unchanged. label_ids, when present, REPLACES the whole label
+        set — an empty array clears it — while omitting the field leaves the labels
+        untouched; an id that matches no label rejects the whole request with 400
+        INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive;
+        a longer list is rejected as a validation error.'
       parameters:
       - description: Task ID
         in: path
