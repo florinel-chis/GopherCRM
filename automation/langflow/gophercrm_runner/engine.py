@@ -67,9 +67,14 @@ class Runner:
             numbers.insert(0, active)
         result = []
         for number in numbers:
+            if self.store.stopped(number):
+                continue
+            if self.store.read(f'issue-{number}').get('stage') in {'merged', 'pr_ready'}:
+                continue
             issue = await self.issue(number)
             if issue['state'] == 'OPEN' or number == active:
-                result.append({'issue': number, 'title': issue['title'], 'url': issue['url']})
+                result.append({'issue': number, 'title': issue['title'], 'url': issue['url'],
+                               'completion_target': self.config.completion_target})
             if len(result) == limit:
                 break
         return result
@@ -92,7 +97,7 @@ class Runner:
             raise GateError('Candidate commit does not contain the recorded main base; revalidate it')
 
     async def changed_paths(self, worktree, base):
-        tracked = await self.command('git', 'diff', '--name-only', '-z', base, cwd=worktree)
+        tracked = await self.command('git', 'diff', '--no-renames', '--name-only', '-z', base, cwd=worktree)
         untracked = await self.command('git', 'ls-files', '--others', '--exclude-standard', '-z',
                                        cwd=worktree)
         return sorted(set(p for p in (tracked + '\0' + untracked).split('\0') if p))
@@ -123,8 +128,11 @@ class Runner:
 
     async def prepare(self, issue):
         await self.check_remote()
-        record = self.store.read(f'issue-{issue["number"]}')
+        record = self.store.journal(issue['number'])
         if record:
+            if record.get('legacy'):
+                raise GateError('Unfinished legacy execution: use the matching runner and saved journal; '
+                                'automatic adoption is unsupported')
             if record.get('policy') != self.policy:
                 raise GateError('Execution policy changed; use the original configuration to resume')
             if record['stage'] == 'preparing' and Path(record['worktree']).exists():
@@ -141,9 +149,14 @@ class Runner:
         base = await self.command('git', 'rev-parse', 'origin/main')
         worktree = self.config.state_dir / 'worktrees' / f'issue-{issue["number"]}'
         branch = f'automation/remediate-{issue["number"]}'
-        record = {'issue': issue['number'], 'policy': self.policy, 'base': base,
+        record = {'schema_version': 2, 'execution_id': uuid.uuid4().hex,
+                  'completion_target': self.config.completion_target,
+                  'required_checks': list(self.config.required_checks),
+                  'issue': issue['number'], 'policy': self.policy, 'base': base,
                   'branch': branch, 'worktree': str(worktree), 'head': base,
                   'stage': 'preparing', 'repairs': 0, 'pr': None}
+        if not self.store.admit(issue['number']):
+            return None
         self.save(record)
         worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         await self.command('git', 'worktree', 'add', '-b', branch, str(worktree), base)
@@ -273,6 +286,8 @@ class Runner:
         record['review'] = verdict
         if verdict['approved']:
             record.update(reviewed_head=record['head'], stage='publish')
+        else:
+            record.update(stage='repair_pending', feedback=json.dumps(verdict))
         self.save(record)
         return verdict
 
@@ -292,6 +307,7 @@ class Runner:
         if len(existing) > 1 or (existing and existing[0]['state'] != 'OPEN'):
             raise GateError('Branch has an ambiguous or already closed PR')
         record['previous_remote_head'] = existing[0]['headRefOid'] if existing else None
+        record['stage'] = 'publishing'
         self.save(record)
         await self.command('git', 'push', '--set-upstream', 'origin', record['branch'], cwd=worktree)
         body = self.config.state_dir / f'pr-{issue["number"]}.md'
@@ -401,32 +417,76 @@ class Runner:
     async def finish(self, record, pr):
         if pr.get('state') != 'MERGED' or not (pr.get('mergeCommit') or {}).get('oid'):
             raise GateError('GitHub has not confirmed the merge')
-        if pr.get('headRefOid') != record['head']:
+        if (pr.get('headRefOid') != record['head'] or pr.get('headRefName') != record['branch']
+                or pr.get('baseRefName') != 'main'):
             raise GateError('Merged PR does not match the validated commit')
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         self.save(record)
-        self.store.write('active', {})
+        self.store.release(record['issue'])
         return {'issue': record['issue'], 'status': 'merged', 'url': pr['url'],
                 'merge_commit': record['merge_commit']}
 
+    async def reconcile(self, record):
+        """Observe remote results before prerequisites for any new mutation."""
+        if not record:
+            return None
+        await self.check_remote()
+        if not record.get('pr') and record.get('stage') == 'publishing':
+            matches = json.loads(await self.gh('pr', 'list', '--head', record['branch'], '--state', 'all',
+                                               '--json', PR_FIELDS))
+            if len(matches) > 1:
+                raise GateError('Ambiguous publication recovery; inspect remote PRs')
+            if matches:
+                pr = matches[0]
+                if (pr.get('headRefOid') != record['head'] or pr.get('baseRefOid') != record['base']
+                        or pr.get('baseRefName') != 'main' or pr.get('headRefName') != record['branch']):
+                    raise GateError('Publication recovery found a mismatched PR')
+                record.update(pr=pr['number'], stage='ci')
+                self.save(record)
+        if not record.get('pr'):
+            return None
+        pr = await self.pr(record['pr'])
+        if pr.get('headRefName') != record['branch'] or pr.get('baseRefName') != 'main':
+            raise GateError('Recorded PR branch changed; inspect recovery')
+        if pr['state'] == 'MERGED':
+            return await self.finish(record, pr)
+        if record['stage'] == 'merged':
+            raise GateError('Recorded merge no longer matches GitHub; inspect recovery')
+        if record['stage'] == 'pr_ready':
+            merge_gate(record, pr, tuple(record['required_checks']), require_approval=False)
+            live_main = await self.command('git', 'ls-remote', 'origin', 'refs/heads/main')
+            if not live_main or live_main.split()[0] != record['base']:
+                raise GateError('PR-ready base advanced; explicit new validation is required')
+            self.store.release(record['issue'])
+            return {'issue': record['issue'], 'status': 'pr_ready', 'url': pr['url'],
+                    'completion_target': record['completion_target']}
+        if pr['state'] != 'OPEN':
+            raise GateError('Recorded PR is closed without a matching merge')
+        return None
+
     async def run_issue(self, number: int, *, execute: bool = False):
-        issue = await self.issue(number)
+        self.config.allows(number)
         if not execute:
+            issue = await self.issue(number)
             return {'issue': number, 'status': 'planned', 'title': issue['title'],
-                    'stages': ['implement', 'test', 'review', 'repair/retest', 'CI', 'merge']}
+                    'completion_target': self.config.completion_target,
+                    'stages': ['implement', 'test', 'review', 'repair/retest', 'CI',
+                               'pr_ready' if self.config.completion_target == 'pr' else 'merge']}
         with self.store.exclusive():
+            record = self.store.journal(number)
+            result = await self.reconcile(record)
+            if result is not None:
+                return result
+            if self.store.stopped(number):
+                return {'issue': number, 'status': 'stopped', 'completion_target': self.config.completion_target}
             active = self.store.read('active').get('issue')
             if active is not None and active != number:
                 raise GateError(f'Issue #{active} must finish before another ticket can start')
-            record = self.store.read(f'issue-{number}')
             try:
+                issue = await self.issue(number)
                 record = await self.prepare(issue)
-                self.store.write('active', {'issue': number})
-                # Reconcile a lost merge response before doing any additional work.
-                if record.get('pr'):
-                    existing = await self.pr(record['pr'])
-                    if existing['state'] == 'MERGED':
-                        return await self.finish(record, existing)
+                if record is None or not self.store.admit(number):
+                    return {'issue': number, 'status': 'stopped', 'completion_target': self.config.completion_target}
                 if record['stage'] == 'preparing':
                     raise GateError('Interrupted worktree creation: inspect the journal and worktree')
                 if issue['state'] != 'OPEN':
@@ -438,17 +498,20 @@ class Runner:
                 if record['stage'] == 'revalidating':
                     await self.complete_revalidation(record)
                 while True:
-                    if record['stage'] in {'validate', 'review'}:
+                    if record['stage'] == 'repair_pending':
+                        await self.repair(issue, record, record['feedback'])
+                    if record['stage'] == 'validate':
                         try:
                             await self.validate(record)
                         except CommandError as exc:
                             await self.repair(issue, record, str(exc))
                             continue
+                    if record['stage'] == 'review':
                         verdict = await self.review(issue, record)
                         if not verdict['approved']:
                             await self.repair(issue, record, json.dumps(verdict))
                             continue
-                    if record['stage'] == 'publish':
+                    if record['stage'] in {'publish', 'publishing'}:
                         await self.publish(issue, record)
                     try:
                         await self.wait_ci(record)
@@ -460,10 +523,17 @@ class Runner:
                     raise GateError('Local commit changed before merge')
                 pr = await self.pr(record['pr'])
                 await self.contains_base(record)
-                merge_gate(record, pr, self.config.required_checks)
+                merge_gate(record, pr, self.config.required_checks,
+                           require_approval=record['completion_target'] == 'merge')
                 live_main = await self.command('git', 'ls-remote', 'origin', 'refs/heads/main')
                 if not live_main or live_main.split()[0] != record['base']:
                     raise GateError('Live main advanced; revalidate before merging')
+                if record['completion_target'] == 'pr':
+                    record.update(stage='pr_ready', url=pr['url'], last_error=None)
+                    self.save(record)
+                    self.store.release(number)
+                    return {'issue': number, 'status': 'pr_ready', 'url': pr['url'],
+                            'completion_target': record['completion_target']}
                 record['stage'] = 'merging'
                 self.save(record)
                 await self.gh('pr', 'merge', str(record['pr']), '--squash',

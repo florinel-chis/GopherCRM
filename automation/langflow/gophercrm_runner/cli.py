@@ -14,9 +14,15 @@ def main():
     run = sub.add_parser('run', help='Run the Langflow workflow (preview by default)')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--limit', type=int, default=1)
-    run.add_argument('--execute', action='store_true', help='Implement and merge tickets after all gates pass')
+    run.add_argument('--execute', action='store_true', help='Run to the configured PR-ready or merge target')
     status = sub.add_parser('status', help='Read the private execution journal')
     status.add_argument('--config', type=Path, required=True)
+    for name, help_text in (
+        ('stop-after-current', 'Finish the admitted ticket, then stop even a preloaded queue'),
+        ('resume-queue', 'Explicitly allow admission of another configured ticket'),
+    ):
+        control = sub.add_parser(name, help=help_text)
+        control.add_argument('--config', type=Path, required=True)
     revalidate = sub.add_parser('revalidate', help='Merge current main into the active worktree and invalidate prior gates')
     revalidate.add_argument('--config', type=Path, required=True)
     revalidate.add_argument('--issue', type=int, required=True)
@@ -40,12 +46,18 @@ def main():
         from .config import Config
         from .engine import Runner
         asyncio.run(Runner(Config.load(args.config)).revalidate(args.issue))
-    elif args.command == 'status':
+    elif args.command in {'status', 'stop-after-current', 'resume-queue'}:
         from .config import Config
         from .state import Store
         config = Config.load(args.config)
         store = Store(config.state_dir)
-        print(json.dumps({'active': store.read('active'), 'last_error': store.read('last_error'), 'tickets': [
+        if args.command == 'stop-after-current':
+            store.stop_after_current()
+        elif args.command == 'resume-queue':
+            store.resume_queue()
+        print(json.dumps({'completion_target': config.completion_target,
+                         'control': store.read('control'), 'active': store.read('active'),
+                         'last_error': store.read('last_error'), 'tickets': [
             store.read(f'issue-{n}') for n in config.issues if store.read(f'issue-{n}')
         ]}, indent=2))
     else:

@@ -37,6 +37,8 @@ class Config:
     ci_timeout_seconds: int = 3600
     ci_poll_seconds: int = 30
     max_repair_rounds: int = 3
+    # Omitted in older operator policies: preserve their authorized merge target.
+    completion_target: str = 'merge'
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -64,6 +66,8 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if self.completion_target not in {'pr', 'merge'}:
+            raise GateError('completion_target must be pr or merge')
         if not re.fullmatch(r'[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*', self.repository):
             raise GateError('Invalid GitHub owner/repository')
         if not self.issues or any(type(n) is not int or n <= 0 for n in self.issues):

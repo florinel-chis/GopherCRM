@@ -22,7 +22,7 @@ def build_flow(config_path='', *, mode='preview', limit=1):
     graph.add_component_edge('Loop-main', ('done', 'results'), 'RemediationSummary-main')
     graph.initialize()
     payload = graph.dump(name='GopherCRM remediation runner',
-                         description='Explicit GitHub queue → sequential Loop → implement/test/review/merge. Preview by default.')
+                         description='Explicit GitHub queue → sequential Loop → implement/test/review → configured PR-ready or merge target. Preview by default.')
     # Loop's feedback handle is a synthetic input supplied by the editor, not a
     # regular Component input, so add that edge to the public serialized schema.
     payload['data']['edges'].append({

@@ -3,6 +3,7 @@
   "checkout": "/absolute/path/to/gophercrm",
   "state_dir": "/absolute/path/to/private/gophercrm-runner-state",
   "tracker": 94,
+  "completion_target": "pr",
   "workflow_addition_issues": [121],
   "issues": [95, 96, 97, 98, 99, 100, 106, 121, 101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120],
   "required_checks": [

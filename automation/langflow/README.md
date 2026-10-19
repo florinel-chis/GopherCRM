@@ -1,6 +1,6 @@
 # GopherCRM Langflow remediation runner
 
-This workflow processes the validated tickets in [tracking issue #94](https://github.com/florinel-chis/GopherCRM/issues/94). It defaults to **preview**. Execution implements one ticket at a time, tests it, asks an independent Claude process for an adversarial review, repairs findings, retests, opens a PR, waits for CI, and merges the reviewed commit. It then advances to the next ticket. No ticket execution is scheduled automatically.
+This workflow processes the validated tickets in [tracking issue #94](https://github.com/florinel-chis/GopherCRM/issues/94). It defaults to **preview**. Execution implements one ticket at a time, tests it, asks an independent Claude process for an adversarial review, repairs findings, retests, opens a PR, and waits for CI. Newly generated configurations explicitly select `completion_target: "pr"` and stop at **PR-ready**. A trusted `"merge"` target additionally merges the reviewed commit. Older configurations without this field retain their merge target; preview and status display the effective target. No ticket execution is scheduled automatically.
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,10 @@ flowchart LR
   Tests -->|Failure| Repair
   CI -->|Regression logs| Repair
   Repair --> Tests
-  CI --> Merge[Merge tested and reviewed commit]
+  CI --> Target{Completion target}
+  Target --> PR[PR ready]
+  Target --> Merge[Merge tested and reviewed commit]
+  PR --> Loop
   Merge --> Loop
   Loop --> Results[Results]
 ```
@@ -57,7 +60,7 @@ First inspect `config.json`, authenticate `gh` and `claude`, install Playwright 
 
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
 
-To process one issue through merge:
+To process one issue through its configured completion target:
 
 ```sh
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
@@ -75,6 +78,18 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 ```
 
 State, private logs, and worktrees live under the configured `state_dir`. A process lock prevents simultaneous execution, and an active-issue journal prevents moving on from an unfinished ticket. A repeated run reconciles an already merged PR before doing more work. Published branches/PRs are reused. Worktrees and logs are retained for inspection; the runner does not reset or remove them.
+
+Stop after the admitted ticket, including when Langflow has already loaded more tickets:
+
+```sh
+gophercrm-runner stop-after-current --config "$HOME/.local/share/gophercrm-runner/config.json"
+# Only when another ticket is intended:
+gophercrm-runner resume-queue --config "$HOME/.local/share/gophercrm-runner/config.json"
+```
+
+With no active ticket, a stop request blocks all new admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Changed or closed PRs require investigation.
+
+Journals use schema version 2. Reading a legacy journal preserves its exact bytes in an immutable, private backup before conversion. A matching completed remote merge can be reconciled, but unfinished legacy work must use its matching old runner and saved journal; automatic adoption is unsupported. Unknown newer schemas are refused. Never restore a backup without checking for later remote actions.
 
 If main advances while a PR is waiting, the runner stops. Merge current main into the active worktree and invalidate previous gates with:
 
