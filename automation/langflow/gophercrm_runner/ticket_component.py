@@ -6,7 +6,7 @@ from lfx.template.field.base import Output
 
 
 class RemediateTicket(Component):
-    display_name = 'Implement → test → review → merge'
+    display_name = 'Implement → test → review → PR / merge'
     description = 'One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.'
     icon = 'GitPullRequest'
     inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data', 'JSON'], required=True)]

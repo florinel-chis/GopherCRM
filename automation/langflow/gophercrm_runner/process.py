@@ -24,7 +24,8 @@ class Commands:
 
     async def run(self, args: list[str] | tuple[str, ...], *, cwd: Path,
                   timeout: int = 120, input_text: str | None = None,
-                  check: bool = True) -> tuple[int, str]:
+                  check: bool = True, env: dict[str, str] | None = None, on_start=None) -> tuple[int, str]:
+        self.log_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
         path = self.log_dir / f'{stamp}-{uuid.uuid4().hex[:8]}.log'
@@ -36,9 +37,11 @@ class Commands:
             with os.fdopen(fd, 'wb') as output, os.fdopen(error_fd, 'wb') as errors:
                 proc = await asyncio.create_subprocess_exec(
                     *args, cwd=cwd, stdin=asyncio.subprocess.PIPE,
-                    stdout=output, stderr=errors, start_new_session=True,
+                    stdout=output, stderr=errors, start_new_session=True, env=env,
                 )
                 try:
+                    if on_start is not None:
+                        on_start(proc.pid)
                     await asyncio.wait_for(
                         proc.communicate(input_text.encode() if input_text is not None else None), timeout,
                     )

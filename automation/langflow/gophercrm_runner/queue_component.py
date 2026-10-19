@@ -26,5 +26,5 @@ class RemediationQueue(Component):
             raise GateError(f'Set a local configuration path and a valid mode (path set: {bool(path)}, mode: {self.mode!r})')
         runner = Runner(Config.load(path))
         tickets = await runner.queue(self.limit)
-        self.status = f'{len(tickets)} ticket(s), {self.mode}'
+        self.status = f'{len(tickets)} ticket(s), {self.mode}, target: {runner.config.completion_target}'
         return DataFrame([dict(ticket, config_path=path, mode=self.mode) for ticket in tickets])

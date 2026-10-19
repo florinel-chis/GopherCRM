@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "florinel-chis/GopherCRM",
+  "issue": 96,
+  "objective": "Dashboard activities respect the caller's role and ownership scope.",
+  "non_goals": ["Changing aggregate dashboard statistics", "Changing frontend interactions"],
+  "scope_paths": ["internal/handler/*", "internal/service/*", "internal/repository/*", "internal/integration/*", "internal/mocks/*", "api/*", "docs/testing/02-dashboard.md"],
+  "dependencies": [
+    {"issue": 95, "pr": 124, "merge_commit": "52dd572542531188fb80ea9fc87506d94f5241de"}
+  ],
+  "validation_profile": "backend-database",
+  "context_refs": ["AGENTS.md", "docs/DEVELOPMENT.md"],
+  "acceptance": [
+    {
+      "id": "AC-1",
+      "requirement": "Dashboard activity visibility is enforced on SQLite and MySQL for admin, sales and support callers.",
+      "verification": {"kind": "automated", "check_id": "dashboard-activity"}
+    }
+  ]
+}

@@ -62,7 +62,7 @@ def check_state(checks: list[dict], required: tuple[str, ...]) -> str:
     return 'success'
 
 
-def merge_gate(record: dict, pr: dict, required: tuple[str, ...]) -> None:
+def merge_gate(record: dict, pr: dict, required: tuple[str, ...], *, require_approval=True) -> None:
     head = record['head']
     if not head or any(record.get(key) != head for key in ('tested_head', 'reviewed_head')):
         raise GateError('Current commit has not passed both tests and review')
@@ -70,7 +70,8 @@ def merge_gate(record: dict, pr: dict, required: tuple[str, ...]) -> None:
         raise GateError('PR head or base changed after validation; revalidate before merging')
     if (pr.get('state') != 'OPEN' or pr.get('isDraft') is not False
             or pr.get('mergeable') != 'MERGEABLE'
-            or pr.get('reviewDecision') in {'CHANGES_REQUESTED', 'REVIEW_REQUIRED'}):
+            or pr.get('reviewDecision') == 'CHANGES_REQUESTED'
+            or (require_approval and pr.get('reviewDecision') == 'REVIEW_REQUIRED')):
         raise GateError('GitHub PR is not ready to merge')
     if check_state(pr.get('statusCheckRollup', []), required) != 'success':
         raise GateError('Every required CI check must succeed')

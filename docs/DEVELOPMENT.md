@@ -175,15 +175,21 @@ go test -cover ./...                # per-package statement coverage
 go test -run TestFunctionName ./internal/service/
 ```
 
-Current state: 9 Go packages pass, including under `-race` with zero races detected; backend
-statement coverage is 46.9%. The frontend has 16 test files / 142 tests and `tsc` is clean. ESLint
-currently reports around 40 errors, all pre-existing and mostly unused Playwright fixture arguments —
-they are unrelated to recent work, so do not treat a clean lint run as a gate until they are cleared.
+Use current command output for test counts and coverage; historical counts are not release gates.
+`make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
+ESLint is a required, passing gate. Browser validation runs separately with `make e2e`
+(MySQL by default) and `make e2e E2E_DB_DRIVER=sqlite`; CI also covers MariaDB.
+
+Runner changes additionally require `make verify-runner`. Install `automation/langflow[flows]`
+in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpreter is not
+`python3`. This target runs the deterministic workflow suite, compares the checked-in graph
+without rewriting it, and tests the read-only database probe. Runner CI uses the same target,
+including merge-group events. See the [runner guide](../automation/langflow/README.md).
 
 Backend coverage spans handlers, services, middleware (auth, rate limit, error handler, recovery,
 request ID), utils (sort, password, response, crypto, context, transaction), config, and models.
 
-The E2E suite is 100 tests across 9 spec files and needs a real backend and database. Admin accounts
+The E2E suite needs a real backend and database. Admin accounts
 cannot be self-registered — `gocrm-ui/e2e/global-setup.ts` seeds them by shelling out to
 `cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [ADMIN_TESTING.md](ADMIN_TESTING.md).
 

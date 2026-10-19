@@ -27,6 +27,15 @@ def ready_pr():
                 headRefName='automation/remediate-95', baseRefName='main')
 
 
+def fixture_manifest(number):
+    return dict(schema_version=1, repository='example/repo', issue=number,
+                objective='Fix the scoped behavior', non_goals=['Unrelated changes'],
+                scope_paths=['feature.txt', 'internal/**', 'migrations/**', 'Makefile', '.env'],
+                dependencies=[], validation_profile='backend', context_refs=['AGENTS.md'],
+                acceptance=[dict(id='AC-1', requirement='Feature regression passes',
+                                 verification=dict(kind='automated', check_id='regression'))])
+
+
 class GateTests(unittest.TestCase):
     def test_ci_requires_all_checks_and_current_success(self):
         checks = green_checks()
@@ -95,6 +104,25 @@ class FakeCommands:
     async def run(self, args, *, cwd, **kwargs):
         args = tuple(args)
         self.calls.append(args)
+        versions = {('git', '--version'): 'git version 2.54.0',
+                    ('gh', '--version'): 'gh version 2.92.0',
+                    ('claude', '--version'): '2.1.303 (Claude Code)',
+                    ('go', 'version'): 'go version go1.26.3 darwin/arm64',
+                    ('node', '--version'): 'v26.12.0', ('npm', '--version'): '11.20.0',
+                    ('make', '--version'): 'GNU Make 3.81',
+                    ('mysql', '--version'): 'mysql Ver 8.0.46'}
+        if args in versions:
+            return 0, versions[args]
+        if args == ('claude', 'auth', 'status', '--json'):
+            return 0, '{"loggedIn": true}'
+        if args == ('gh', 'auth', 'status'):
+            return 0, 'Authenticated'
+        if args[:2] == ('gh', 'api'):
+            return 0, '{}'
+        if args == ('go', 'run', './automation/langflow/probes/mysql'):
+            return 0, '{"migration":"ok","e2e":"ok"}'
+        if args == ('go', 'test', './cmd/migrate', '-list', '^TestMigration'):
+            return 0, 'TestMigrationFresh_FullUpAndDown\nTestMigrationUpgrade_FromMainAutoMigratedSchema\n'
         if args[:4] == ('git', 'remote', 'get-url', 'origin'):
             return 0, 'https://github.com/example/repo.git'
         if args[:2] == ('git', 'fetch'):
@@ -109,16 +137,21 @@ class FakeCommands:
             return 0, ''
         if args[0] == 'claude':
             assert 'Bash' not in args[args.index('--tools') + 1]
-            if '--json-schema' in args:
+            if 'Edit' not in args[args.index('--tools') + 1]:
                 self.reviews += 1
                 rejected = self.reviews <= self.reject_reviews
                 result = dict(is_error=False, structured_output=dict(approved=not rejected,
-                    blocking_findings=['Concrete missing edge case'] if rejected else [], summary='Reviewed'))
+                    blocking_findings=['Concrete missing edge case'] if rejected else [], summary='Reviewed',
+                    criteria=[dict(id='AC-1', passed=not rejected, evidence=['acceptance-regression'],
+                                   finding='Missing edge case' if rejected else '')]))
             else:
                 self.implementations += 1
                 (cwd / 'feature.txt').write_text(f'Implementation {self.implementations}\n')
-                result = dict(is_error=False, result='Implemented')
+                result = dict(is_error=False, structured_output=dict(summary='Implemented',
+                    addressed_criteria=['AC-1'], remaining_gaps=[]))
             return 0, json.dumps(result)
+        if args == ('go', 'test', '-json', '-count=1', './feature'):
+            return 0, json.dumps(dict(Package='example/repo/feature', Test='TestFeature', Action='pass'))
         if args == ('make', 'verify'):
             self.tests += 1
             if self.tests <= self.fail_tests:
@@ -166,24 +199,36 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
                      ('config', 'user.name', 'Runner Test')]:
             subprocess.run(['git', *args], cwd=self.checkout, check=True, capture_output=True)
         (self.checkout / 'README.md').write_text('Fixture\n')
+        (self.checkout / 'AGENTS.md').write_text('Fixture repository guidance\n')
         subprocess.run(['git', 'add', '.'], cwd=self.checkout, check=True, capture_output=True)
         subprocess.run(['git', 'commit', '-m', 'fixture'], cwd=self.checkout, check=True, capture_output=True)
         subprocess.run(['git', 'update-ref', 'refs/remotes/origin/main', 'HEAD'],
                        cwd=self.checkout, check=True, capture_output=True)
         self.config = Config(repository='example/repo', checkout=self.checkout,
-                             state_dir=self.root / 'state', issues=(95, 96), max_repair_rounds=2)
+                             state_dir=self.root / 'state', issues=(95, 96), max_repair_rounds=2,
+                             min_free_disk_mb=1, acceptance_checks={'regression': {
+                                 'argv': ['go', 'test', '-json', '-count=1', './feature'],
+                                 'tests': [{'package': 'example/repo/feature', 'name': 'TestFeature'}]}})
         self.commands = FakeCommands(self.root)
         self.commands.base = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
                                                      cwd=self.checkout, text=True).strip()
         self.runner = Runner(self.config, self.commands)
 
+    async def asyncSetUp(self):
+        for number in self.config.issues:
+            path = self.root / f'manifest-{number}.json'
+            path.write_text(json.dumps(fixture_manifest(number)))
+            await self.runner.freeze(number, path)
+        self.commands.calls.clear()
+
     def tearDown(self):
         self.temp.cleanup()
 
     async def test_preview_has_no_mutations_or_agent_calls(self):
+        before = {str(p): p.read_bytes() for p in self.config.state_dir.rglob('*') if p.is_file()}
         result = await self.runner.run_issue(95)
         self.assertEqual(result['status'], 'planned')
-        self.assertFalse(self.config.state_dir.exists())
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.config.state_dir.rglob('*') if p.is_file()})
         self.assertEqual(self.commands.calls, [('gh', 'issue', 'view', '95', '--json',
             'number,title,body,state,url', '--repo', 'example/repo')])
 
@@ -259,6 +304,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         record = self.runner.store.read('issue-95')
         self.assertIsNone(record['tested_head'])
         self.assertIsNone(record['reviewed_head'])
+        await self.runner.freeze(95, self.root / 'manifest-95.json', refresh=True)
         await self.runner.run_issue(95, execute=True)
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (2, 2, 1))
 
@@ -288,6 +334,8 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(record['tested_head'])
         self.commands.run = original
         self.commands.fail_ci = False
+        await self.runner.revalidate(95)
+        await self.runner.freeze(95, self.root / 'manifest-95.json', refresh=True)
         await self.runner.run_issue(95, execute=True)
         self.assertEqual(self.runner.store.read('issue-95')['base'], target)
         self.assertEqual((self.commands.tests, self.commands.reviews), (2, 2))
@@ -306,7 +354,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         worktree = Path(self.runner.store.read('issue-95')['worktree'])
         subprocess.run(['git', 'merge', '--abort'], cwd=worktree, check=True, capture_output=True)
         self.commands.fail_ci = False
-        with self.assertRaisesRegex(GateError, 'does not contain'):
+        with self.assertRaisesRegex(GateError, 'does not contain|changed|refresh'):
             await self.runner.run_issue(95, execute=True)
         self.assertEqual(self.commands.merges, 0)
 
@@ -315,7 +363,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def db_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 path = kwargs['cwd'] / 'migrations/change.sql'
                 path.parent.mkdir()
                 path.write_text('SELECT 1;\n')
@@ -331,7 +379,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def bad_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 (kwargs['cwd'] / 'Makefile').write_text('verify:\n\ttrue\n')
             return result
 
@@ -381,11 +429,12 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def ignored_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 (kwargs['cwd'] / '.env').write_text('TEST_OVERRIDE=true\n')
             return result
 
         self.commands.run = ignored_agent
+        await self.runner.freeze(95, self.root / 'manifest-95.json', refresh=True)
         with self.assertRaisesRegex(GateError, 'ignored files'):
             await self.runner.run_issue(95, execute=True)
         self.assertEqual(self.commands.tests, 0)
@@ -400,6 +449,12 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_readonly_command_creates_a_private_state_parent(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            await Commands(root / 'state' / 'logs').run([sys.executable, '-c', 'print("ok")'], cwd=root)
+            self.assertEqual((root / 'state').stat().st_mode & 0o777, 0o700)
+
     async def test_stderr_warning_does_not_corrupt_structured_stdout(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
