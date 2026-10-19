@@ -23,6 +23,7 @@ func NewCustomerHandler(customerService service.CustomerService) *CustomerHandle
 }
 
 type CreateCustomerRequest struct {
+	Website    string `json:"website,omitempty"`
 	FirstName  string `json:"first_name" binding:"required"`
 	LastName   string `json:"last_name" binding:"required"`
 	Email      string `json:"email" binding:"required,email"`
@@ -41,18 +42,20 @@ type CreateCustomerRequest struct {
 }
 
 type UpdateCustomerRequest struct {
-	FirstName  string `json:"first_name,omitempty"`
-	LastName   string `json:"last_name,omitempty"`
-	Email      string `json:"email,omitempty" binding:"omitempty,email"`
-	Phone      string `json:"phone,omitempty"`
-	Company    string `json:"company,omitempty"`
-	Position   string `json:"position,omitempty"`
-	Address    string `json:"address,omitempty"`
-	City       string `json:"city,omitempty"`
-	State      string `json:"state,omitempty"`
-	Country    string `json:"country,omitempty"`
-	PostalCode string `json:"postal_code,omitempty"`
-	Notes      string `json:"notes,omitempty"`
+	// Website: absent leaves the value alone; an empty string clears it.
+	Website    *string `json:"website,omitempty"`
+	FirstName  string  `json:"first_name,omitempty"`
+	LastName   string  `json:"last_name,omitempty"`
+	Email      string  `json:"email,omitempty" binding:"omitempty,email"`
+	Phone      string  `json:"phone,omitempty"`
+	Company    string  `json:"company,omitempty"`
+	Position   string  `json:"position,omitempty"`
+	Address    string  `json:"address,omitempty"`
+	City       string  `json:"city,omitempty"`
+	State      string  `json:"state,omitempty"`
+	Country    string  `json:"country,omitempty"`
+	PostalCode string  `json:"postal_code,omitempty"`
+	Notes      string  `json:"notes,omitempty"`
 	// CompanyID: absent leaves the link alone, 0 clears it, any other value
 	// must name a live company.
 	CompanyID *uint `json:"company_id,omitempty"`
@@ -70,11 +73,12 @@ type AssignCustomerRequest struct {
 var customerExportColumns = []string{
 	"id", "first_name", "last_name", "email", "phone", "company",
 	"address", "notes", "assigned_to_id", "created_at", "updated_at",
+	"website",
 }
 
 // Create godoc
 // @Summary Create a new customer
-// @Description Create a new customer (admin and sales roles only). Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
+// @Description Create a new customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL. Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -107,6 +111,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	}
 
 	customer := &models.Customer{
+		Website:    req.Website,
 		FirstName:  req.FirstName,
 		LastName:   req.LastName,
 		Email:      req.Email,
@@ -127,6 +132,8 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	if err := h.customerService.Create(customer); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create customer")
 		switch {
+		case errors.Is(err, apperrors.ErrValidation):
+			utils.RespondBadRequest(c, err.Error())
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
 		case errors.Is(err, apperrors.ErrCompanyNotFound):
@@ -284,7 +291,7 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a customer
-// @Description Update a customer (admin and sales roles only). Only non-empty fields in the request are applied; empty fields leave the stored value unchanged. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
+// @Description Update a customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL; omitted or null leaves it unchanged, an empty string clears it. Other text fields apply only when non-empty. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -339,6 +346,9 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	}
 
 	// Apply updates
+	if req.Website != nil {
+		customer.Website = *req.Website
+	}
 	if req.FirstName != "" {
 		customer.FirstName = req.FirstName
 	}
@@ -388,6 +398,8 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	if err := h.customerService.Update(customer); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
 		switch {
+		case errors.Is(err, apperrors.ErrValidation):
+			utils.RespondBadRequest(c, err.Error())
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			utils.RespondConflict(c, "customer with this email already exists")
 		case errors.Is(err, apperrors.ErrCompanyNotFound):
@@ -569,6 +581,7 @@ func customerExportRecord(customer *models.Customer) []string {
 		assignedTo,
 		customer.CreatedAt.Format(time.RFC3339),
 		customer.UpdatedAt.Format(time.RFC3339),
+		csvSafeField(customer.Website),
 	}
 }
 

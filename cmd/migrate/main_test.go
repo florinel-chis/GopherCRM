@@ -336,7 +336,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 	ver, dirty, err = m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261017120000), ver)
+	assert.Equal(t, uint(20261019120000), ver)
 
 	// 5. Verify models.MigrateDatabase() on top continues to succeed without error
 	models.DB = gormDB
@@ -391,7 +391,7 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	ver, dirty, err := m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261017120000), ver)
+	assert.Equal(t, uint(20261019120000), ver)
 
 	// Full rollback to 0
 	err = m.Down()

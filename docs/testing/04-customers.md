@@ -177,9 +177,9 @@ depend on that are flagged.
   1. `/customers` → "Add Customer".
   2. Fill the required fields; type `example.com` (no scheme) into Website.
   3. Click "Create Customer".
-- **Expected:** No request is made; the Website field shows "Invalid URL". Clearing the field to the
-  empty string passes — the schema is `z.string().url().or(z.literal('')).optional()`.
-- **Known issue:** Website is validated but never sent. See TC-CUST-012.
+- **Expected:** No request is made; the Website field shows "Website must be an http(s) URL".
+  Empty values are allowed; values over 255 characters are rejected. Both customer creation and
+  lead conversion apply these rules, and the API independently validates them.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-010 — Duplicate email on create returns 409 but the UI shows a generic message
@@ -217,7 +217,7 @@ depend on that are flagged.
   `last_name`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
-### TC-CUST-012 — Industry, Website, Employees, Annual Revenue and Active are collected but never sent
+### TC-CUST-012 — Industry, Employees, Annual Revenue and Active are collected but never sent
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Admin logged in.
@@ -228,13 +228,23 @@ depend on that are flagged.
   3. Click "Create Customer" and inspect the `POST /api/v1/customers` request body.
   4. Open the new customer's detail page.
 - **Expected:** The request body contains only `first_name, last_name, email, phone, company,
-  address, city, state, country, postal_code, notes` — the five extra fields are absent
+  website, address, city, state, country, postal_code, notes` — the four extra fields are absent
   (`customersApi.createCustomer` builds `transformedData` explicitly). 201. The detail page shows
   Industry "Not specified", Annual Revenue "Not specified", Employees "Not specified", Total Revenue
   "$0" and an "Active" chip, whatever was typed or toggled.
-- **Known issue:** Five form controls are inert. `models.Customer` has no matching columns; the
+- **Known issue:** Four form controls are inert. `models.Customer` has no matching columns; the
   backend also owns a `Position` field that the form never exposes.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+
+### TC-CUST-012a — Website persists through both creation paths and can be cleared
+- **Priority:** P1
+- **Type:** regression
+- **Steps:** Create a customer with a website, reopen it, change the website, reopen again, then
+  clear it and reload. Convert a qualified lead with a website and reload the resulting customer.
+- **Expected:** Detail links and edit fields retain the saved website. Clearing it removes the link.
+  Conversion navigates to the newly created customer's ID. Unrelated API updates preserve websites.
+- **Automation:** `gocrm-ui/e2e/tests/customer-website.spec.ts`; API regression coverage in
+  `tests/customer_website_integration_test.go` also checks validation, export and erasure.
 
 ### TC-CUST-013 — Support user cannot create a customer
 - **Priority:** P0
@@ -351,8 +361,8 @@ depend on that are flagged.
   1. Open the customer's detail page, Details tab.
   2. Read the Contact Information and Business Information blocks.
 - **Expected:** Industry reads "Not specified", Annual Revenue "Not specified", Employees "Not
-  specified", Total Revenue "$0", and the Website row is absent entirely (it is rendered only when
-  `customer.website` is truthy, and the transform sets it to `''`).
+  specified", and Total Revenue "$0". The Website row displays the saved URL as a link; it is
+  absent when the saved website is empty.
 - **Known issue:** Same root cause as TC-CUST-002 and TC-CUST-012 — the fields do not exist in
   `models.Customer`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)

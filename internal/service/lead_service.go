@@ -295,6 +295,9 @@ func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder 
 // either half erases both, or the person would survive in the other one. See
 // repository/erasure_cascade.go.
 func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
+	if err := normalizeCustomerWebsite(customerData); err != nil {
+		return nil, err
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", leadID), "LeadService", "ConvertToCustomer")
 
 	// First, validate the lead outside of transaction

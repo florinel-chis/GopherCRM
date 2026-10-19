@@ -20,12 +20,6 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   rather than the record the test created, plus a one-shot `isVisible()` guard that falls through
   to a positional `button` fallback when the icon has not painted yet. Green today, latently flaky —
   port the customers approach across.
-- **Customer `website` is collected and discarded** — both forms that create a customer, the
-  customer form itself and the lead-conversion dialog, render a `Website` input (URL-validated, and
-  declared on the TypeScript `Customer` type), but the Go `Customer` model has no such column. The
-  value is silently dropped on save and comes back empty on the next edit. Either store it (model
-  field, DTOs, migration) or drop the input; leaving it teaches users the CRM keeps something it
-  never had.
 - **Vitest cases that time out on a loaded machine**
   - **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
     running; load average up to 71):**
@@ -58,7 +52,6 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 - **Serve the OpenAPI spec** — the spec is now generated from handler annotations into `api/`
   (`make swagger`); serving it (e.g. gin-swagger with a Swagger UI route) remains unimplemented
-- **CI pipeline** — build, lint, unit tests, and E2E on pull requests
 - **Coordinated shutdown for detached background work** — an AEO run executes in a goroutine
   launched with `context.Background()` (`aeo_service.go`, `go executor.Execute(...)`), so it is
   neither cancelled nor waited for at SIGTERM: `stopBackground()` only stops the scheduler from
@@ -104,9 +97,6 @@ pagination, strict configuration typing, and — instead of deleting the fronten
 called missing routes — the routes now exist (auth session lifecycle, dashboard analytics, bulk
 status updates, API-key management, customer export/assign, upcoming tasks). Still open:
 
-- **UI pages for the password-reset flow** — `authApi.changePassword` now has one
-  (`/settings/profile`), but `requestPasswordReset` and `resetPassword` are still called by no
-  page; the reset email links to `/reset-password?token=...`, which has no route in the SPA yet.
 - **Access-token blocklist** — logout/rotation revoke refresh tokens only; an issued JWT stays
   valid until expiry.
 - **Concurrent-refresh stampede** — several simultaneous 401s can race the refresh interceptor;

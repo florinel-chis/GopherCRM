@@ -108,6 +108,7 @@ func (s erasureSubject) asCustomer(t *testing.T, db *gorm.DB) *models.Customer {
 		Email:     s.Email,
 		Phone:     s.Phone,
 		Company:   s.Company,
+		Website:   "https://example.com/" + s.FirstName,
 		Position:  s.Position,
 		Address:   "12 Privacy Lane",
 		City:      "Bucharest",

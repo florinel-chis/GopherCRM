@@ -512,6 +512,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // ConvertToCustomer godoc
 // @Summary Convert lead to customer
 // @Description Convert a lead to a customer with additional customer information (admin or owning sales user only)
+// @Description Optional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -562,6 +563,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 
 	// Create customer data from request and lead
 	customerData := &models.Customer{
+		Website:   req.Website,
 		FirstName: lead.FirstName,
 		LastName:  lead.LastName,
 		Email:     lead.Email,
@@ -575,6 +577,8 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
 		switch {
+		case errors.Is(err, apperrors.ErrValidation):
+			utils.RespondBadRequest(c, err.Error())
 		case errors.Is(err, apperrors.ErrLeadConverted):
 			utils.RespondBadRequest(c, "lead already converted")
 		case errors.Is(err, apperrors.ErrLeadMissingEmail):
