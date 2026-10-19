@@ -723,7 +723,7 @@ func TestCustomerHandlerTestSuite(t *testing.T) {
 // previous download, so the header is pinned here rather than derived.
 var exportCSVColumns = []string{
 	"id", "first_name", "last_name", "email", "phone", "company",
-	"address", "notes", "assigned_to_id", "created_at", "updated_at",
+	"address", "notes", "assigned_to_id", "created_at", "updated_at", "website",
 }
 
 func (suite *CustomerHandlerTestSuite) TestExport_Success() {
@@ -763,7 +763,7 @@ func (suite *CustomerHandlerTestSuite) TestExport_Success() {
 	assert.Equal(suite.T(), []string{
 		"1", "John", "Doe", "john@example.com", "+1234567890", "Acme Corp",
 		"123 Main St", "Important customer", "9",
-		created.Format(time.RFC3339), updated.Format(time.RFC3339),
+		created.Format(time.RFC3339), updated.Format(time.RFC3339), "",
 	}, records[1])
 	// An unassigned customer must export as an empty cell, not as "0" or "<nil>".
 	assert.Equal(suite.T(), "", records[2][8])

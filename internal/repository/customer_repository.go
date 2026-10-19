@@ -85,7 +85,7 @@ func (r *customerRepository) Update(customer *models.Customer) error {
 // Delete erases a customer under the GDPR right to erasure (Article 17).
 //
 // As with users, this is NOT deactivation: it is irreversible. Every
-// personal-data field on the customer — names, email, phone, company, position,
+// personal-data field on the customer — names, email, phone, company, website, position,
 // the full postal address and the free-text notes — is overwritten in place,
 // and only then is the row soft-deleted, in the SAME transaction, so a crash
 // cannot leave a live anonymised record behind.
@@ -114,6 +114,7 @@ func (r *customerRepository) Delete(id uint) error {
 			"last_name":   "",
 			"phone":       "",
 			"company":     "",
+			"website":     "",
 			"position":    "",
 			"address":     "",
 			"city":        "",

@@ -1,17 +1,19 @@
 # GopherCRM Feature Documentation & Test Coverage
 
-> **Last updated:** 2026-08-05, after the privacy/erasure and security-fix work.
+> **Last updated:** 2026-10-19 for password-reset pages, CI, and customer websites.
+> **Baseline audit:** 2026-08-05; historical suite totals below have not been recounted.
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
 
-Every row below was re-checked against the code and the test files in this commit. Where a claim
+The baseline rows were checked against the code and tests during the original audit;
+later additions identify their own coverage. Where a claim
 could not be established from the code it is marked **unverified** rather than guessed. Test counts
 are mechanical: Playwright `test(...)` calls; Go test cases (top-level `func Test*` for plain files,
 testify suite `Test*` methods for suite files — the one-line suite runner is not counted); and
 Vitest `it(...)`/`test(...)` calls. Go subtests inside a `t.Run` are noted where they carry the
 coverage.
 
-Verified totals at the time of writing:
+Historical totals from the baseline audit:
 
 | Suite | Result |
 |---|---|
@@ -21,6 +23,13 @@ Verified totals at the time of writing:
 | E2E (`playwright test --list`) | 100 tests in 9 files (execution not re-run for this update) |
 | `tsc -b` | clean |
 | `eslint .` | 40 errors, 137 warnings (pre-existing) |
+
+## Continuous integration
+
+[CI](../.github/workflows/ci.yml) runs on pull requests, merge-queue groups and pushes to `main`.
+It checks repository hygiene; Go build, vet and race tests; frontend build, lint and unit tests;
+and Playwright on MySQL 8, MariaDB 10.11 and SQLite. `make verify` runs the non-browser
+checks locally; `make e2e` runs the browser suite.
 
 ## How to Read This Document
 
@@ -49,13 +58,14 @@ Status meanings:
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 1.1 | **User Registration** | User fills form (name, email, password), account created, redirected to dashboard. **Always creates a `customer`** — a client-supplied role is ignored | `registration.spec.ts`: 15 tests (valid registration, validation errors, email format, password strength, duplicate email, network error, Enter key submit, loading state, visibility toggle) | `auth_handler_test.go`: 5 tests (RoleInjection_ForcedToCustomer, NoRole_DefaultsToCustomer, DuplicateEmail_Conflict, WeakPassword_BadRequest, Success); `user_service_test.go`: TestRegister_Success, TestRegister_UserExists, TestRegister_SoftDeletedUserExists | `AuthContext.test.tsx`: handles registration; `Register.validation.test.tsx`: 7 password-policy tests | `auth_integration_test.go`: TestRegisterEndpoint; `soft_delete_email_reuse_test.go`: TestRegisterRejectsEmailOfSoftDeletedUser, TestRegisterHandlerReturns409ForSoftDeletedEmail, TestRegisterHandlerReturns409ForLiveDuplicateEmail | **covered** | -- |
 | 1.2 | **User Login** | User enters email/password, receives JWT, redirected to dashboard | `login.spec.ts`: 11 tests (render, success, wrong password, unknown email, empty fields, invalid email format, visibility toggle, navigate to registration, Enter key, protected route access, unauthenticated redirect) | `auth_service_test.go`: `TestAuthService_Login` with subtests (successful login, invalid email, wrong password, inactive user) | `AuthContext.test.tsx`: handles login successfully | `auth_integration_test.go`: TestLoginEndpoint; `user_test.go`: TestUserLogin | **covered** | -- |
-| 1.3 | **Session Refresh** | Access token would auto-refresh via refresh token | -- | `auth_service_cookie_test.go`: TestAuthService_RefreshAccessToken asserts the stub error | -- | -- | **gap** | Not implemented. `authService.RefreshAccessToken` returns `errors.New("refresh tokens not implemented")` (`internal/service/auth_service.go:244`), and no `/auth/refresh` route is registered |
-| 1.4 | **Logout** | User clicks logout, client-side token storage cleared | -- | `auth_service_cookie_test.go`: TestAuthService_InvalidateRefreshToken asserts the stub error | `AuthContext.test.tsx`: handles logout; `client.test.ts`: removes access and refresh tokens from BOTH storages | -- | **partial** | There is no server-side logout endpoint; logout is purely a client-side token wipe |
+| 1.3 | **Session Refresh** | `/auth/refresh` rotates refresh tokens and returns a new access token; reuse of a revoked token is rejected | -- | `auth_session_test.go`: rotation, expiry, replay and inactive-owner cases | `client.test.ts`: refresh-token storage (interceptor behaviour not covered) | `auth_session_integration_test.go`: session lifecycle | **partial** | Further concurrent-refresh hardening remains on the roadmap |
+| 1.4 | **Logout** | `/auth/logout` revokes the refresh token; the client clears its session | -- | `auth_session_test.go`: logout cases | `AuthContext.test.tsx`, `client.test.ts` | `auth_session_integration_test.go`: session lifecycle | **partial** | Issued access tokens remain valid until expiry unless the account is deactivated or erased |
 | 1.5 | **CSRF Protection** | HMAC-SHA256 signed token, 24h expiry, skipped for safe methods and API-key auth | -- | `csrf_test.go`: 6 tests (valid roundtrip, expired, tampered, empty, malformed, cross-secret); `auth_service_cookie_test.go`: Generate/Validate | -- | -- | **gap** | **The middleware is not wired.** `internal/middleware/csrf.go` exists and `config.CSRFConfig` is declared, but `middleware.CSRF` is never installed in `cmd/main.go`, so no route requires a token. Only the token codec is tested; there is no `middleware/csrf_test.go` |
 | 1.6 | **API Key Auth** | CLI tools authenticate via `Authorization: ApiKey gcrm_xxx`. Keys hashed with HMAC-SHA256 (legacy SHA256 fallback) | -- | `apikey_handler_test.go`: 7 tests; `auth_service_test.go`: TestAuthService_ValidateAPIKey with subtests incl. *key of an erased user is rejected* and *key of a deactivated user is rejected*; `crypto_test.go`: 5 table-driven tests | -- | `apikey_integration_test.go`: TestAPIKeyAuthentication; `erasure_test.go`: TestAPIKeyOfAnErasedUserCannotAuthenticate, TestAPIKeyOfADeactivatedUserCannotAuthenticate | **covered** | -- |
 | 1.7 | **Account Lockout** | Account locked for 15 min after 5 failed login attempts | -- | `auth_service_test.go` subtests: account locked, lock expired allows login, failed attempts increment and lock after 5, successful login resets failed attempts | -- | -- | **covered** | -- |
 | 1.8 | **Password Complexity** | Min 10 chars with uppercase, lowercase, digit and special char | `registration.spec.ts`: validates password requirements | `password_test.go`: 1 table-driven test with 8 cases; `auth_handler_test.go`: TestRegister_WeakPassword_BadRequest | `Register.validation.test.tsx`: 7 tests, including the regression that `Password1` used to be accepted | -- | **covered** | The frontend zod schema now mirrors `internal/utils/password.go` |
 | 1.9 | **Token Storage** | Tokens go to `sessionStorage` unless "remember me" is chosen, in which case `localStorage` | -- | -- | `client.test.ts`: 14 tests over persist/non-persist, storage precedence and cross-storage cleanup | -- | **covered** | Frontend-only behaviour; no E2E test asserts token lifetime across a tab close |
+| 1.10 | **Password reset** | `/forgot-password` requests a reset email; `/reset-password?token=...` validates the new password and confirms the reset, then offers sign-in | -- | `auth_session_test.go`: request/confirm reset cases | `ForgotPassword.test.tsx`, `ResetPassword.test.tsx`: validation, submission, confirmation, request failure and missing token | `auth_session_integration_test.go`: `TestPasswordResetRoundTrip` | **partial** | Browser reset journey has no E2E test; production delivery requires SMTP configuration |
 
 ---
 
@@ -99,6 +109,7 @@ Status meanings:
 | 4.5 | **Search Customers** | Search across first_name, last_name, email, company, phone, notes | `admin-customers.spec.ts`: search customers | `customer_handler_test.go`: TestList_SearchByEmail, TestList_SearchWithSort | `CustomerList.test.tsx`: filters customers by search term | -- | **covered** | -- |
 | 4.6 | **Sort Customers** | Click column headers to sort | -- | `customer_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
 | 4.7 | **Pagination** | Navigate customer pages | -- | `customer_handler_test.go`: TestList_WithPagination | -- | `customer_integration_test.go`: TestPagination | **covered** | -- |
+| 4.8 | **Customer website** | Optional HTTP/HTTPS URL, trimmed, at most 255 characters; saved through customer create/edit and lead conversion, returned on reads and appended to CSV exports. Omitted/null on update preserves it; an empty string clears it. Erasure scrubs it | `customer-website.spec.ts`: create/edit/clear after reload and conversion-to-detail navigation | `customer_website_test.go`: validation on all write paths | `customers.test.ts`, `leads.test.ts`, `CustomerForm.test.tsx`, `ConvertLeadDialog.test.tsx` | `customer_website_integration_test.go`: persistence, invalid writes, conversion, export and erasure; `customer_website_upgrade_test.go`: populated SQLite upgrade; `cmd/migrate/customer_website_test.go`: SQL/AutoMigrate ordering and rollback | **covered** | Previously discarded values cannot be recovered; rolling back the website migration removes saved websites |
 
 ---
 

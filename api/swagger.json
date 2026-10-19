@@ -6350,7 +6350,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a new customer (admin and sales roles only). Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.",
+                "description": "Create a new customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL. Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6800,7 +6800,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update a customer (admin and sales roles only). Only non-empty fields in the request are applied; empty fields leave the stored value unchanged. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.",
+                "description": "Update a customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL; omitted or null leaves it unchanged, an empty string clears it. Other text fields apply only when non-empty. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.",
                 "consumes": [
                     "application/json"
                 ],
@@ -13025,7 +13025,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Convert a lead to a customer with additional customer information (admin or owning sales user only)",
+                "description": "Convert a lead to a customer with additional customer information (admin or owning sales user only)\nOptional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.",
                 "consumes": [
                     "application/json"
                 ],
@@ -17841,6 +17841,9 @@
                 },
                 "user_id": {
                     "type": "integer"
+                },
+                "website": {
+                    "type": "string"
                 }
             }
         },
@@ -19232,6 +19235,9 @@
                 },
                 "state": {
                     "type": "string"
+                },
+                "website": {
+                    "type": "string"
                 }
             }
         },
@@ -19991,6 +19997,10 @@
                     "type": "string"
                 },
                 "state": {
+                    "type": "string"
+                },
+                "website": {
+                    "description": "Website: absent leaves the value alone; an empty string clears it.",
                     "type": "string"
                 }
             }

@@ -43,13 +43,14 @@ const invalidReference = (message: string) => ({
 });
 
 const fillRequired = () => {
-  fireEvent.change(screen.getByLabelText(/Primary Contact Name/i), { target: { value: 'Jane Smith' } });
+  fireEvent.change(screen.getByLabelText(/Primary Contact Name/i), {
+    target: { value: 'Jane Smith' },
+  });
   fireEvent.change(screen.getByLabelText(/^Email/i), { target: { value: 'jane@acme.example' } });
   fireEvent.change(screen.getByLabelText(/^Phone/i), { target: { value: '+40 21 555 0100' } });
 };
 
-const pickCompany = () =>
-  pickAutocompleteOption('Company (linked)', 'Acme Widgets (acme.example)');
+const pickCompany = () => pickAutocompleteOption('Company (linked)', 'Acme Widgets (acme.example)');
 
 describe('CustomerForm linked company', () => {
   const mockNavigate = vi.fn();
@@ -65,6 +66,42 @@ describe('CustomerForm linked company', () => {
     vi.mocked(customersApi.updateCustomer).mockResolvedValue(createMockCustomer());
   });
 
+  it('submits a trimmed website on creation', async () => {
+    render(<CustomerForm />);
+    fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
+      target: { value: 'Example' },
+    });
+    fillRequired();
+    fireEvent.change(screen.getByLabelText('Website'), {
+      target: { value: '  https://example.com  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
+    await waitFor(() =>
+      expect(customersApi.createCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({ website: 'https://example.com' }),
+      ),
+    );
+  });
+
+  it('loads a saved website and sends an empty string when cleared', async () => {
+    vi.mocked(useParams).mockReturnValue({ id: '5' });
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(
+      createMockCustomer({ id: 5, website: 'https://example.com', phone: '123' }),
+    );
+    render(<CustomerForm />);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Website')).toHaveValue('https://example.com'),
+    );
+    fireEvent.change(screen.getByLabelText('Website'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Update Customer' }));
+    await waitFor(() =>
+      expect(customersApi.updateCustomer).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({ website: '' }),
+      ),
+    );
+  });
+
   describe('create mode', () => {
     it('renders the free-text company and the linked company side by side', () => {
       render(<CustomerForm />);
@@ -76,7 +113,9 @@ describe('CustomerForm linked company', () => {
     it('omits company_id when no company is linked (existing behaviour intact)', async () => {
       render(<CustomerForm />);
 
-      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), { target: { value: 'Loose Ltd' } });
+      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
+        target: { value: 'Loose Ltd' },
+      });
       fillRequired();
       fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
 
@@ -93,7 +132,7 @@ describe('CustomerForm linked company', () => {
       await pickCompany();
       await waitFor(
         () => expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme Widgets'),
-        { timeout: 3000 }
+        { timeout: 3000 },
       );
       fillRequired();
       fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
@@ -102,7 +141,7 @@ describe('CustomerForm linked company', () => {
         timeout: 3000,
       });
       expect(customersApi.createCustomer).toHaveBeenCalledWith(
-        expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 })
+        expect.objectContaining({ company_name: 'Acme Widgets', company_id: 7 }),
       );
     });
 
@@ -130,15 +169,21 @@ describe('CustomerForm linked company', () => {
 
       await waitFor(() => expect(companiesApi.getCompany).toHaveBeenCalledWith(7));
       await waitFor(() => {
-        expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
+        expect(screen.getByLabelText('Company (linked)')).toHaveValue(
+          'Acme Widgets (acme.example)',
+        );
       });
 
-      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), { target: { value: 'Acme Widgets' } });
+      fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
+        target: { value: 'Acme Widgets' },
+      });
       fillRequired();
       fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
 
       await waitFor(() => {
-        expect(customersApi.createCustomer).toHaveBeenCalledWith(expect.objectContaining({ company_id: 7 }));
+        expect(customersApi.createCustomer).toHaveBeenCalledWith(
+          expect.objectContaining({ company_id: 7 }),
+        );
       });
     });
 
@@ -153,7 +198,11 @@ describe('CustomerForm linked company', () => {
   });
 
   describe('edit mode', () => {
-    const existing = createMockCustomer({ id: 5, company_name: 'Acme (typed)', phone: '+40 21 555 0100' });
+    const existing = createMockCustomer({
+      id: 5,
+      company_name: 'Acme (typed)',
+      phone: '+40 21 555 0100',
+    });
 
     beforeEach(() => {
       vi.mocked(useParams).mockReturnValue({ id: '5' });
@@ -168,31 +217,48 @@ describe('CustomerForm linked company', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Update Customer' }));
 
       await waitFor(() => expect(customersApi.updateCustomer).toHaveBeenCalled());
-      expect(vi.mocked(customersApi.updateCustomer).mock.calls[0][1]).not.toHaveProperty('company_id');
+      expect(vi.mocked(customersApi.updateCustomer).mock.calls[0][1]).not.toHaveProperty(
+        'company_id',
+      );
     });
 
     it('preselects the linked company from company_record and sends the id back', async () => {
-      vi.mocked(customersApi.getCustomer).mockResolvedValue({ ...existing, company_id: 7, company_record: acme });
+      vi.mocked(customersApi.getCustomer).mockResolvedValue({
+        ...existing,
+        company_id: 7,
+        company_record: acme,
+      });
 
       render(<CustomerForm />);
       await waitFor(() => {
-        expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
+        expect(screen.getByLabelText('Company (linked)')).toHaveValue(
+          'Acme Widgets (acme.example)',
+        );
       });
       expect(companiesApi.getCompany).not.toHaveBeenCalled();
 
       fireEvent.click(screen.getByRole('button', { name: 'Update Customer' }));
 
       await waitFor(() => {
-        expect(customersApi.updateCustomer).toHaveBeenCalledWith(5, expect.objectContaining({ company_id: 7 }));
+        expect(customersApi.updateCustomer).toHaveBeenCalledWith(
+          5,
+          expect.objectContaining({ company_id: 7 }),
+        );
       });
     });
 
     it('sends company_id 0 when the previously linked company is cleared', async () => {
-      vi.mocked(customersApi.getCustomer).mockResolvedValue({ ...existing, company_id: 7, company_record: acme });
+      vi.mocked(customersApi.getCustomer).mockResolvedValue({
+        ...existing,
+        company_id: 7,
+        company_record: acme,
+      });
 
       render(<CustomerForm />);
       await waitFor(() => {
-        expect(screen.getByLabelText('Company (linked)')).toHaveValue('Acme Widgets (acme.example)');
+        expect(screen.getByLabelText('Company (linked)')).toHaveValue(
+          'Acme Widgets (acme.example)',
+        );
       });
 
       fireEvent.click(screen.getByLabelText('Clear'));
@@ -201,7 +267,10 @@ describe('CustomerForm linked company', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Update Customer' }));
 
       await waitFor(() => {
-        expect(customersApi.updateCustomer).toHaveBeenCalledWith(5, expect.objectContaining({ company_id: 0 }));
+        expect(customersApi.updateCustomer).toHaveBeenCalledWith(
+          5,
+          expect.objectContaining({ company_id: 0 }),
+        );
       });
     });
   });

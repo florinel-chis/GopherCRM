@@ -635,7 +635,7 @@ func (suite *CustomerIntegrationTestSuite) TestExportCustomers_AdminGetsCSVFile(
 	suite.Require().Len(records, 3, "header row plus one row per customer")
 	assert.Equal(suite.T(), []string{
 		"id", "first_name", "last_name", "email", "phone", "company",
-		"address", "notes", "assigned_to_id", "created_at", "updated_at",
+		"address", "notes", "assigned_to_id", "created_at", "updated_at", "website",
 	}, records[0])
 
 	byEmail := map[string][]string{}
