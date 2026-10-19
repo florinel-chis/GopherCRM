@@ -1,0 +1,36 @@
+name: Remediation runner
+
+on:
+  pull_request:
+    paths:
+      - 'automation/langflow/**'
+      - '.github/workflows/remediation-runner.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'automation/langflow/**'
+      - '.github/workflows/remediation-runner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  runner:
+    name: Langflow runner tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: automation/langflow/pyproject.toml
+      - name: Install pinned workflow engine
+        run: python -m pip install './automation/langflow[flows]'
+      - name: Exercise gates, worktrees, repair loop, cancellation, and serialized workflow
+        run: python -m unittest discover -s automation/langflow/tests -v
+      - name: Verify the checked-in workflow matches its components
+        run: |
+          gophercrm-runner export automation/langflow/flows/remediation.json
+          git diff --exit-code -- automation/langflow/flows/remediation.json

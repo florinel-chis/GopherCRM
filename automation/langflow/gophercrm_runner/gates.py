@@ -1,0 +1,116 @@
+"""Pure, fail-closed predicates used immediately before publication and merge."""
+
+import json
+from pathlib import PurePosixPath
+
+from .config import GateError
+
+
+REVIEW_SCHEMA = {
+    'type': 'object', 'additionalProperties': False,
+    'required': ['approved', 'blocking_findings', 'summary'],
+    'properties': {
+        'approved': {'type': 'boolean'},
+        'blocking_findings': {'type': 'array', 'items': {'type': 'string'}},
+        'summary': {'type': 'string'},
+    },
+}
+
+
+def agent_result(output: str, *, review: bool = False) -> dict:
+    try:
+        result = json.loads(output)
+    except (ValueError, TypeError) as exc:
+        raise GateError('Claude did not return a JSON result') from exc
+    if not isinstance(result, dict) or result.get('is_error') is not False:
+        raise GateError('Claude failed or omitted its success status')
+    if result.get('permission_denials'):
+        raise GateError('Claude could not complete its work with the configured tools')
+    if not review:
+        return result
+    verdict = result.get('structured_output')
+    if (not isinstance(verdict, dict) or set(verdict) != set(REVIEW_SCHEMA['required'])
+            or type(verdict['approved']) is not bool
+            or not isinstance(verdict['summary'], str)
+            or not isinstance(verdict['blocking_findings'], list)
+            or any(not isinstance(f, str) or not f.strip() for f in verdict['blocking_findings'])):
+        raise GateError('Claude review has no valid structured verdict')
+    if verdict['approved'] and verdict['blocking_findings']:
+        raise GateError('Contradictory review verdict')
+    return verdict
+
+
+def check_state(checks: list[dict], required: tuple[str, ...]) -> str:
+    """Return pending, failed, or success; absent/duplicate checks never pass."""
+    names = [c.get('name', c.get('context')) for c in checks]
+    if len(names) != len(set(names)):
+        return 'pending'
+    states = {}
+    for check, name in zip(checks, names):
+        if check.get('__typename') == 'StatusContext':
+            states[name] = check.get('state', 'PENDING')
+        else:
+            states[name] = (check.get('conclusion') if check.get('status') == 'COMPLETED'
+                            else 'PENDING')
+    if any(s in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED',
+                 'STARTUP_FAILURE', 'STALE'} for s in states.values()):
+        return 'failed'
+    if not set(required).issubset(states) or any(states[n] != 'SUCCESS' for n in required):
+        return 'pending'
+    if any(s not in {'SUCCESS', 'NEUTRAL', 'SKIPPED'} for s in states.values()):
+        return 'pending'
+    return 'success'
+
+
+def merge_gate(record: dict, pr: dict, required: tuple[str, ...]) -> None:
+    head = record['head']
+    if not head or any(record.get(key) != head for key in ('tested_head', 'reviewed_head')):
+        raise GateError('Current commit has not passed both tests and review')
+    if pr.get('headRefOid') != head or pr.get('baseRefOid') != record['base']:
+        raise GateError('PR head or base changed after validation; revalidate before merging')
+    if (pr.get('state') != 'OPEN' or pr.get('isDraft') is not False
+            or pr.get('mergeable') != 'MERGEABLE'
+            or pr.get('reviewDecision') in {'CHANGES_REQUESTED', 'REVIEW_REQUIRED'}):
+        raise GateError('GitHub PR is not ready to merge')
+    if check_state(pr.get('statusCheckRollup', []), required) != 'success':
+        raise GateError('Every required CI check must succeed')
+
+
+def validate_paths(paths: list[str], *, new_workflows: set[str] | None = None) -> None:
+    new_workflows = new_workflows or set()
+    for name in paths:
+        path = PurePosixPath(name)
+        if (path.is_absolute() or '..' in path.parts or '.git' in path.parts
+                or name.startswith('automation/langflow/')
+                or (path.name.startswith('.env') and path.name != '.env.example')
+                or path.suffix.lower() in {'.pem', '.key', '.sqlite', '.sqlite3', '.db'}):
+            raise GateError(f'Agent changed a protected or private path: {name}')
+        if (name in {'Makefile', '.gitignore', 'gocrm-ui/package.json', 'gocrm-ui/package-lock.json'}
+                or name.startswith(('scripts/ci/', 'scripts/e2e/', 'gocrm-ui/tsconfig',
+                                    'gocrm-ui/vite.config', 'gocrm-ui/eslint.config'))
+                or (name.startswith('.github/workflows/') and name not in new_workflows)):
+            raise GateError(f'Agent changed an existing validation gate: {name}')
+
+
+def touches_database(paths: list[str]) -> bool:
+    return any(p.startswith(('migrations/', 'cmd/migrate/', 'internal/database/', 'internal/models/',
+                             'internal/repository/', 'internal/service/', 'internal/utils/transaction'))
+               for p in paths)
+
+
+def migration_coverage(output: str) -> None:
+    required = {'TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema'}
+    passed = set()
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get('Action') == 'skip':
+            raise GateError('Migration coverage was skipped')
+        if event.get('Action') == 'pass':
+            passed.add(event.get('Test'))
+    if not required.issubset(passed):
+        raise GateError('Fresh and upgrade migration tests did not both report success')
