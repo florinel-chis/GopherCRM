@@ -30,3 +30,11 @@ class AgentTests(unittest.TestCase):
         output['permission_denials'] = ['Write']
         with self.assertRaises(GateError):
             parse(json.dumps(output), review=False, criteria=[{'id': 'AC-1'}])
+
+    def test_nonfinite_provider_cost_is_unknown(self):
+        from gophercrm_runner.agents import parse
+        for cost in [float('nan'), float('inf')]:
+            raw = dict(is_error=False, structured_output=dict(summary='done', addressed_criteria=['AC-1'], remaining_gaps=[]),
+                       total_cost_usd=cost)
+            _, metadata = parse(json.dumps(raw), review=False, criteria=[{'id': 'AC-1'}])
+            self.assertEqual(metadata['cost'], {'status': 'unavailable', 'usd': None})

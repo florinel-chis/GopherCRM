@@ -1,6 +1,7 @@
 """The existing Claude CLI adapter, with explicit permissions and observed metadata."""
 
 import json
+import math
 
 from .config import GateError
 from .evidence import review_coverage
@@ -63,6 +64,6 @@ def parse(output, *, review, criteria):
     cost = raw.get('total_cost_usd')
     metadata = {'observed_models': sorted(observed) if isinstance(observed, dict) and observed else None,
                 'usage': usage or None, 'cost': {'status': 'unavailable', 'usd': None}}
-    if type(cost) in {int, float} and cost >= 0:
+    if type(cost) in {int, float} and math.isfinite(cost) and cost >= 0:
         metadata['cost'] = {'status': 'provider-reported', 'usd': cost}
     return report, metadata

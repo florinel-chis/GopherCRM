@@ -9,8 +9,38 @@
   "chromium_path": "",
   "agent_model": "",
   "acceptance_checks": {},
-  "workflow_addition_issues": [121],
-  "issues": [95, 96, 97, 98, 99, 100, 106, 121, 101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120],
+  "workflow_addition_issues": [
+    121
+  ],
+  "issues": [
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    106,
+    121,
+    101,
+    102,
+    103,
+    104,
+    105,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120
+  ],
   "required_checks": [
     "Repository hygiene",
     "Backend (build, vet, test)",
@@ -19,15 +49,36 @@
     "E2E (Playwright on MariaDB 10.11)",
     "E2E (Playwright on SQLite)"
   ],
-  "test_commands": [["make", "verify"]],
+  "test_commands": [
+    [
+      "make",
+      "verify"
+    ]
+  ],
   "database_test_commands": [
-    ["make", "e2e", "E2E_DB_DRIVER=sqlite"],
-    ["make", "e2e", "E2E_DB_DRIVER=mysql"],
-    ["go", "test", "-json", "-count=1", "./cmd/migrate"]
+    [
+      "make",
+      "e2e",
+      "E2E_DB_DRIVER=sqlite"
+    ],
+    [
+      "make",
+      "e2e",
+      "E2E_DB_DRIVER=mysql"
+    ],
+    [
+      "go",
+      "test",
+      "-json",
+      "-count=1",
+      "./cmd/migrate"
+    ]
   ],
   "agent_timeout_seconds": 1800,
   "test_timeout_seconds": 3600,
   "ci_timeout_seconds": 3600,
   "ci_poll_seconds": 30,
-  "max_repair_rounds": 3
+  "max_repair_rounds": 3,
+  "max_provider_calls": 8,
+  "issue_timeout_seconds": 14400
 }

@@ -1,5 +1,6 @@
 from dataclasses import replace
 import os
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -76,11 +77,21 @@ class ReadinessTests(fixtures.EngineTests):
         self.assertEqual(self.commands.implementations, 0)
 
     async def test_verification_isolated_from_application_db_environment(self):
+        # A real tracked lockfile makes this the same fresh-checkout path used by the app.
+        frontend = self.checkout / 'gocrm-ui'
+        frontend.mkdir()
+        (frontend / 'package-lock.json').write_text('{}')
+        subprocess.run(['git', 'add', '.'], cwd=self.checkout, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', 'add fixture lockfile'], cwd=self.checkout, check=True, capture_output=True)
+        subprocess.run(['git', 'update-ref', 'refs/remotes/origin/main', 'HEAD'], cwd=self.checkout, check=True)
+        self.commands.base = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.checkout, text=True).strip()
+        await self.runner.freeze(95, self.root / 'manifest-95.json', refresh=True)
         original = self.commands.run
         captured = []
 
         async def capture(args, **kwargs):
             if tuple(args) == ('make', 'verify'):
+                self.assertTrue((kwargs['cwd'] / 'gocrm-ui/package-lock.json').is_file())
                 captured.append(kwargs.get('env'))
             return await original(args, **kwargs)
 
@@ -88,6 +99,7 @@ class ReadinessTests(fixtures.EngineTests):
         with patch.dict(os.environ, {'DB_HOST': 'wrong.example', 'DB_PORT': '13308',
                                      'TEST_MYSQL_DSN': 'private-dsn'}):
             await self.runner.run_issue(95, execute=True)
+        self.assertEqual(len(captured), 1)
         self.assertIsNotNone(captured[0])
         self.assertNotIn('DB_HOST', captured[0])
         self.assertNotIn('DB_PORT', captured[0])

@@ -29,6 +29,10 @@ class EnvironmentError(GateError):
     """An operator prerequisite failed; do not ask a coding agent to repair it."""
 
 
+class BudgetError(GateError):
+    """Durable execution limits prohibit another mutating step or provider call."""
+
+
 @dataclass(frozen=True)
 class Config:
     repository: str
@@ -52,6 +56,8 @@ class Config:
     chromium_path: str = ''
     acceptance_checks: dict = field(default_factory=dict)
     agent_model: str = ''
+    max_provider_calls: int = 8
+    issue_timeout_seconds: int = 14400
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -119,7 +125,8 @@ class Config:
         if not set(REQUIRED_CHECKS).issubset(self.required_checks):
             raise GateError('All six repository checks must remain required')
         for name in ('agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
-                     'ci_poll_seconds', 'max_repair_rounds', 'min_free_disk_mb'):
+                     'ci_poll_seconds', 'max_repair_rounds', 'min_free_disk_mb',
+                     'max_provider_calls', 'issue_timeout_seconds'):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise GateError(f'{name} must be a positive integer')
         if not (self.checkout / '.git').exists():

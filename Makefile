@@ -12,7 +12,8 @@ help:
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
 	@echo "  make test         - Run Go tests"
-	@echo "  make verify       - Everything CI runs except e2e: size check, Go build/vet/test -race, frontend build/lint/test"
+	@echo "  make verify       - Core CI checks: hygiene, Go build/vet/test -race, frontend build/lint/test"
+	@echo "  make verify-runner - Runner tests, workflow export parity, and database probe tests"
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
 	@echo "                      (make e2e E2E_DB_DRIVER=sqlite runs it on a new SQLite file instead)"
@@ -37,8 +38,8 @@ build:
 test:
 	go test $(GO_PKGS)
 
-# verify runs exactly what CI runs; CI calls these targets, so the two cannot
-# drift apart. Run it before pushing a branch.
+# Core CI jobs call these targets. Browser and runner checks have separate
+# targets below. Run make verify before pushing a branch.
 .PHONY: verify verify-hygiene verify-backend verify-frontend
 verify: verify-hygiene verify-backend verify-frontend
 
@@ -90,3 +91,10 @@ build-tools:
 # binary ("missing LC_UUID load command"). The flag is a no-op elsewhere.
 swagger:
 	go run -ldflags "-B gobuildid" github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/main.go --output api --outputTypes json,yaml --parseDependency
+# Install automation/langflow[flows] in an isolated Python 3.12 environment first.
+RUNNER_PYTHON ?= python3
+.PHONY: verify-runner
+verify-runner:
+	PYTHONPATH=automation/langflow $(RUNNER_PYTHON) -m unittest discover -s automation/langflow/tests -v
+	PYTHONPATH=automation/langflow $(RUNNER_PYTHON) -m gophercrm_runner.verify_export
+	go test ./automation/langflow/probes/mysql

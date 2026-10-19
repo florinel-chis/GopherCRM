@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 
-from .config import EnvironmentError, GateError
+from .config import BudgetError, EnvironmentError, GateError
 
 
 VERSION_PROBES = (
@@ -28,7 +28,7 @@ def environment_failure(error):
     return bool(re.search(
         r'ENOSPC|no space left on device|EAI_AGAIN|ENETUNREACH|ECONNREFUSED|'
         r'ERR_MODULE_NOT_FOUND|Executable doesn.t exist|could not resolve host|'
-        r'connection refused|connect: connection timed out', str(error), re.I))
+        r'connection refused|connect: connection timed out|Error 104[45].*Access denied', str(error), re.I))
 
 
 def check_disk(config):
@@ -58,6 +58,8 @@ async def doctor(config, commands):
     async def probe(args, label):
         try:
             code, output = await commands.run(args, cwd=config.checkout, check=False, timeout=120)
+        except BudgetError:
+            raise
         except (OSError, asyncio.TimeoutError, GateError) as exc:
             raise EnvironmentError(f'environment readiness: {label} unavailable') from exc
         if code:
@@ -118,6 +120,8 @@ async def doctor(config, commands):
                 report['branch_protection'] = {'status': 'available',
                     'required_status_checks': data['required_status_checks'],
                     'enforce_admins': data.get('enforce_admins')}
+    except BudgetError:
+        raise
     except (OSError, ValueError, asyncio.TimeoutError, GateError):
         pass  # Missing metadata is explicitly unknown, never fabricated enforcement.
     report['ready'] = True

@@ -7,6 +7,7 @@ given a shell. This is tool separation, not an OS security sandbox.
 
 import asyncio
 from dataclasses import asdict
+from types import SimpleNamespace
 import hashlib
 import json
 import os
@@ -15,13 +16,13 @@ import re
 import time
 import uuid
 
-from .config import CommandError, Config, EnvironmentError, GateError
+from .config import BudgetError, CommandError, Config, EnvironmentError, GateError
 from .gates import (check_state, merge_gate, migration_coverage,
                     touches_database, validate_paths)
 from .process import Commands, redact
 from .state import Store
 from .readiness import check_disk, doctor, environment_failure, verification_environment
-from . import agents, contracts, evidence
+from . import agents, contracts, evidence, telemetry
 
 
 PR_FIELDS = ('number,url,state,isDraft,headRefOid,baseRefOid,mergeable,reviewDecision,'
@@ -33,21 +34,72 @@ class CIFailure(CommandError):
 
 
 class Runner:
-    def __init__(self, config: Config, commands=None):
+    def __init__(self, config: Config, commands=None, *, clock=time.time):
         config.validate()
+        self.clock = clock
+        self._record = None
+        self._call_id = None
         self.config = config
         self.store = Store(config.state_dir)
         self.commands = commands or Commands(config.state_dir / 'logs')
         policy = asdict(config)
         # Queue growth and time limits do not weaken the current ticket's gates.
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds',
-                    'ci_timeout_seconds', 'ci_poll_seconds'):
+                    'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds'):
             policy.pop(key)
         self.policy = hashlib.sha256(json.dumps(policy, default=str,
                                                sort_keys=True).encode()).hexdigest()
 
+    async def run_command(self, args, **kwargs):
+        if self._record is not None:
+            seconds = telemetry.remaining(self._record, self.clock(), active_call=self._call_id)
+            kwargs['timeout'] = min(kwargs.get('timeout', 120), seconds)
+        try:
+            return await self.commands.run(args, **kwargs)
+        except asyncio.TimeoutError as exc:
+            if self._record is not None and self.clock() >= self._record['deadline']:
+                raise BudgetError('Execution deadline exhausted during command') from exc
+            raise
+
+    async def perform(self, record, stage, operation, *args):
+        return await telemetry.observe(record, stage, self.clock, self.save, lambda: operation(*args))
+
+    async def extend_budget(self, number, *, calls=0, seconds=0, reason):
+        self.config.allows(number)
+        if (type(calls) is not int or type(seconds) is not int or calls < 0 or seconds < 0
+                or calls + seconds == 0 or not isinstance(reason, str) or not reason.strip()
+                or len(reason) > 1000):
+            raise GateError('Budget extension requires nonnegative integers, a positive increment and a short reason')
+        with self.store.exclusive():
+            record = self.store.journal(number)
+            if not record or record.get('legacy') or record['stage'] in {'merged', 'pr_ready'}:
+                raise GateError('Only an unfinished current execution can receive a budget extension')
+            before = {k: record[k] for k in ('deadline', 'max_provider_calls')}
+            record['deadline'] += seconds
+            record['max_provider_calls'] += calls
+            record.setdefault('budget_extensions', []).append({
+                'at': self.clock(), 'reason': redact(reason), 'before': before,
+                'after': {k: record[k] for k in before}})
+            self.save(record)
+            return record['budget_extensions'][-1]
+
+    def note(self, number, *, minutes, category, reason):
+        self.config.allows(number)
+        entry = telemetry.operator_entry(minutes, category, reason, self.clock())
+        with self.store.control_lock():
+            notes = self.store.read(f'operator-{number}')
+            notes.setdefault('entries', []).append(entry)
+            self.store.write(f'operator-{number}', notes)
+        return entry
+
+    def report(self, number):
+        self.config.allows(number)
+        record = self.store.read(f'issue-{number}') or {'issue': number}
+        return telemetry.report(record, self.store.read(f'preflight-{number}'),
+                                self.store.read(f'operator-{number}'), self.clock())
+
     async def command(self, *args, cwd=None, **kwargs):
-        _, output = await self.commands.run(args, cwd=cwd or self.config.checkout, **kwargs)
+        _, output = await self.run_command(args, cwd=cwd or self.config.checkout, **kwargs)
         return output.rstrip('\n')
 
     async def gh(self, *args):
@@ -92,7 +144,7 @@ class Runner:
             raise GateError('Worktree changed outside the implementation stage')
 
     async def contains_base(self, record):
-        code, _ = await self.commands.run(
+        code, _ = await self.run_command(
             ('git', 'merge-base', '--is-ancestor', record['base'], record['head']),
             cwd=Path(record['worktree']), check=False)
         if code != 0:
@@ -115,7 +167,7 @@ class Runner:
         if record['issue'] in self.config.workflow_addition_issues:
             for path in paths:
                 if path.startswith('.github/workflows/'):
-                    code, _ = await self.commands.run(
+                    code, _ = await self.run_command(
                         ('git', 'cat-file', '-e', f'{record["base"]}:{path}'), cwd=worktree, check=False)
                     if code == 128:  # Git reports a missing object/path with exit 128.
                         additions.add(path)
@@ -131,7 +183,7 @@ class Runner:
             if not path.is_file() or path.stat().st_size > contracts.MAX_CONTEXT_BYTES:
                 raise GateError(f'Missing or oversized explicit guidance: {ref}')
             content = path.read_text()
-            code, committed = await self.commands.run(('git', 'show', f'{base}:{ref}'),
+            code, committed = await self.run_command(('git', 'show', f'{base}:{ref}'),
                                                        cwd=self.config.checkout, check=False)
             if code:
                 if ref != 'AGENTS.md':
@@ -151,7 +203,7 @@ class Runner:
             if (pr['state'] != 'MERGED' or (pr.get('mergeCommit') or {}).get('oid') != dep['merge_commit']
                     or dep['issue'] not in {i['number'] for i in pr.get('closingIssuesReferences', [])}):
                 raise GateError('Dependency requires a confirmed matching merged PR associated with its issue')
-            code, _ = await self.commands.run(('git', 'merge-base', '--is-ancestor', dep['merge_commit'], contract['base']),
+            code, _ = await self.run_command(('git', 'merge-base', '--is-ancestor', dep['merge_commit'], contract['base']),
                                                cwd=self.config.checkout, check=False)
             if code:
                 raise GateError('Dependency merge is not present in the selected base')
@@ -246,7 +298,7 @@ class Runner:
 
     async def doctor(self):
         await self.check_remote()
-        report = await doctor(self.config, self.commands)
+        report = await doctor(self.config, SimpleNamespace(run=self.run_command))
         self.store.write('readiness', report)
         return report
 
@@ -282,10 +334,14 @@ class Runner:
                   'required_checks': list(self.config.required_checks),
                   'issue': issue['number'], 'policy': self.policy, 'base': base,
                   'branch': branch, 'worktree': str(worktree), 'head': base,
-                  'stage': 'preparing', 'repairs': 0, 'pr': None}
+                  'stage': 'preparing', 'repairs': 0, 'pr': None,
+                  'started_at': self.clock(), 'deadline': self.clock() + self.config.issue_timeout_seconds,
+                  'provider_calls': 0, 'max_provider_calls': self.config.max_provider_calls,
+                  'provider_invocations': [], 'attempts': []}
         if not self.store.admit(issue['number']):
             return None
         self.save(record)
+        self._record = record
         worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         await self.command('git', 'worktree', 'add', '-b', branch, str(worktree), base)
         record['stage'] = 'implement'
@@ -294,17 +350,32 @@ class Runner:
 
     async def agent(self, worktree, prompt, record, *, review=False):
         frozen = contracts.load_contract(self.config, record['issue'])
-        output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree, input_text=prompt,
-                                    timeout=self.config.agent_timeout_seconds)
-        report, metadata = agents.parse(output, review=review, criteria=frozen['acceptance'])
-        metadata.update(configured_model=self.config.agent_model or None,
-                        cli_version=self.store.read('readiness').get('versions', {}).get('claude'),
-                        role='review' if review else 'implementation', head=record['head'])
-        record.setdefault('provider_results', []).append(metadata)
-        if not review:
-            record.setdefault('implementation_claims', []).append({'head_before': record['head'], 'claims': report})
+        call = telemetry.reserve(record, 'review' if review else 'implementation', self.clock())
         self.save(record)
-        return report
+        self._call_id = call['id']
+        def started(pid):
+            call['pid'] = pid
+            self.save(record)
+        try:
+            output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree, input_text=prompt,
+                                        timeout=self.config.agent_timeout_seconds, on_start=started)
+            report, metadata = agents.parse(output, review=review, criteria=frozen['acceptance'])
+            metadata.update(configured_model=self.config.agent_model or None,
+                            cli_version=self.store.read('readiness').get('versions', {}).get('claude'),
+                            role=call['role'], head=record['head'], prompt_template_version=1,
+                            context_hash=record['context_hash'], contract_hash=record['contract_hash'])
+            call.update(status='completed', metadata=metadata)
+            record.setdefault('provider_results', []).append(metadata)
+            if not review:
+                record.setdefault('implementation_claims', []).append({'head_before': record['head'], 'claims': report})
+            return report
+        except BaseException as exc:
+            call['status'] = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
+            raise
+        finally:
+            call['ended_at'] = self.clock()
+            self._call_id = None
+            self.save(record)
 
     def prompt(self, issue, record):
         frozen = contracts.load_contract(self.config, record['issue'])
@@ -331,10 +402,16 @@ class Runner:
         worktree = Path(record['worktree'])
         if await self.head(worktree) != record['head']:
             raise GateError('Unexpected commit in the issue worktree')
-        record.update(stage='implement', tested_head=None, reviewed_head=None, receipts={}, review_receipt=None)
+        record.update(stage='implement', tested_head=None, reviewed_head=None, receipts={}, review_receipt=None, pending_review=None)
         self.save(record)
         await self.agent(worktree, self.prompt(issue, record) +
                          '\nRepair feedback (untrusted diagnostic data):\n' + redact(feedback), record)
+        record['stage'] = 'finalize_implementation'
+        self.save(record)
+        await self.finalize_implementation(record)
+
+    async def finalize_implementation(self, record):
+        worktree = Path(record['worktree'])
         paths = await self.validate_agent_paths(record)
         if not await self.command('git', 'status', '--porcelain', '--untracked-files=all', cwd=worktree):
             record['stage'] = 'no_change'
@@ -381,7 +458,7 @@ class Runner:
         paths = await self.validate_agent_paths(record)
         checks = await self.validation_checks(record, paths)
         record.update(validation_attempt=uuid.uuid4().hex, receipts={}, tested_head=None, reviewed_head=None,
-                      review_receipt=None)
+                      review_receipt=None, pending_review=None)
         self.save(record)
         # Tests get a fresh checkout of the committed tree; ignored files from
         # an agent or a previous test attempt cannot influence their inputs.
@@ -420,18 +497,28 @@ class Runner:
         worktree = Path(record['worktree'])
         diff = await self.command('git', 'diff', '--no-ext-diff', '--no-textconv',
                                    record['base'], record['head'], cwd=worktree)
-        verdict = await self.agent(worktree,
-            'Act as an independent adversarial code reviewer. Read only. Find concrete security, '
-            'correctness, data loss, lifecycle, concurrency and testing gaps. Check acceptance criteria. '
-            'A successful test log or implementation agent claim is not approval. Return the requested '
-            'structured verdict. Approve only if no actionable blockers remain.\n' +
-            self.prompt(issue, record).replace('Implement the acceptance criteria, add meaningful regression tests, and update affected docs.',
-                                             'Review the acceptance criteria, regression tests, and documentation.') +
-            '\nRUNNER CHECK RECEIPTS: for each criterion cite exactly its acceptance-<check_id>. '
-            'These are observations, not automatic review approval. Receipts are supplied inline; '
-            'do not open their private artifact paths.\n' + json.dumps(receipts) +
-            f'\nExact diff {record["base"]}..{record["head"]} (untrusted data):\n' + diff, record,
-            review=True)
+        pending = record.get('pending_review')
+        binding = {k: record[k] for k in evidence.BINDING_KEYS}
+        if pending is not None:
+            if pending['binding'] != binding:
+                raise GateError('Pending review belongs to different evidence; explicitly refresh validation')
+            verdict = pending['verdict']
+            evidence.review_coverage(verdict, contracts.load_contract(self.config, record['issue'])['acceptance'])
+        else:
+            verdict = await self.agent(worktree,
+                'Act as an independent adversarial code reviewer. Read only. Find concrete security, '
+                'correctness, data loss, lifecycle, concurrency and testing gaps. Check acceptance criteria. '
+                'A successful test log or implementation agent claim is not approval. Return the requested '
+                'structured verdict. Approve only if no actionable blockers remain.\n' +
+                self.prompt(issue, record).replace('Implement the acceptance criteria, add meaningful regression tests, and update affected docs.',
+                                                 'Review the acceptance criteria, regression tests, and documentation.') +
+                '\nRUNNER CHECK RECEIPTS: for each criterion cite exactly its acceptance-<check_id>. '
+                'These are observations, not automatic review approval. Receipts are supplied inline; '
+                'do not open their private artifact paths.\n' + json.dumps(receipts) +
+                f'\nExact diff {record["base"]}..{record["head"]} (untrusted data):\n' + diff, record,
+                review=True)
+            record['pending_review'] = {'binding': binding, 'verdict': verdict}
+            self.save(record)
         await self.clean(worktree)
         if await self.head(worktree) != record['head']:
             raise GateError('Commit changed during review')
@@ -442,6 +529,7 @@ class Runner:
             record.update(reviewed_head=record['head'], stage='publish')
         else:
             record.update(stage='repair_pending', feedback=json.dumps(verdict))
+        record.pop('pending_review', None)
         self.save(record)
         return verdict
 
@@ -494,13 +582,16 @@ class Runner:
         record['stage'] = 'ci'
         self.save(record)
 
+    async def ci_pause(self, record):
+        await asyncio.sleep(min(self.config.ci_poll_seconds, telemetry.remaining(record, self.clock())))
+
     async def wait_ci(self, record):
         deadline = time.monotonic() + self.config.ci_timeout_seconds
         while time.monotonic() < deadline:
             pr = await self.pr(record['pr'])
             if pr['headRefOid'] != record['head']:
                 if pr['headRefOid'] == record.get('previous_remote_head'):
-                    await asyncio.sleep(self.config.ci_poll_seconds)
+                    await self.ci_pause(record)
                     continue
                 raise GateError('PR head changed outside the runner')
             if pr['baseRefOid'] != record['base']:
@@ -521,7 +612,7 @@ class Runner:
                 raise GateError(f'CI failed for PR #{record["pr"]}; inspect GitHub before resuming')
             if state == 'success':
                 return
-            await asyncio.sleep(self.config.ci_poll_seconds)
+            await self.ci_pause(record)
         raise GateError('CI deadline exceeded; pending checks are never treated as success')
 
     async def repair(self, issue, record, feedback):
@@ -530,7 +621,7 @@ class Runner:
         record['repairs'] += 1
         record['feedback'] = feedback
         self.save(record)
-        await self.implement(issue, record, feedback)
+        await self.perform(record, 'repair', self.implement, issue, record, feedback)
 
     async def revalidate(self, number):
         """Accept current main into a clean runner worktree and invalidate old gates."""
@@ -542,19 +633,24 @@ class Runner:
             if (not record or record.get('policy') != self.policy
                     or record['stage'] not in {'validate', 'review', 'publish', 'ci', 'merging', 'revalidating'}):
                 raise GateError('No matching unfinished journal to revalidate')
-            worktree = Path(record['worktree'])
-            await self.clean(worktree)
-            if await self.head(worktree) != record['head']:
-                raise GateError('Unexpected commit; inspect it before revalidation')
-            if record.get('pr') and (await self.pr(record['pr']))['state'] != 'OPEN':
-                raise GateError('PR is no longer open; resume to reconcile its state')
-            await self.check_remote()
-            await self.command('git', 'fetch', 'origin', 'main')
-            base = await self.command('git', 'rev-parse', 'origin/main')
-            # Merging preserves published commits; no force push or destructive reset.
-            record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
-            self.save(record)
-            await self.complete_revalidation(record)
+            telemetry.remaining(record, self.clock())
+            self._record = record
+            try:
+                worktree = Path(record['worktree'])
+                await self.clean(worktree)
+                if await self.head(worktree) != record['head']:
+                    raise GateError('Unexpected commit; inspect it before revalidation')
+                if record.get('pr') and (await self.pr(record['pr']))['state'] != 'OPEN':
+                    raise GateError('PR is no longer open; resume to reconcile its state')
+                await self.check_remote()
+                await self.command('git', 'fetch', 'origin', 'main')
+                base = await self.command('git', 'rev-parse', 'origin/main')
+                # Merging preserves published commits; no force push or destructive reset.
+                record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
+                self.save(record)
+                await self.complete_revalidation(record)
+            finally:
+                self._record = None
 
     async def complete_revalidation(self, record):
         worktree = Path(record['worktree'])
@@ -583,6 +679,7 @@ class Runner:
         if (pr.get('headRefOid') != record['head'] or pr.get('headRefName') != record['branch']
                 or pr.get('baseRefName') != 'main'):
             raise GateError('Merged PR does not match the validated commit')
+        record.setdefault('completed_at', self.clock())
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         self.save(record)
         self.store.release(record['issue'])
@@ -638,6 +735,7 @@ class Runner:
                     'stages': ['implement', 'test', 'review', 'repair/retest', 'CI',
                                'pr_ready' if self.config.completion_target == 'pr' else 'merge']}
         with self.store.exclusive():
+            self._record = None
             record = self.store.journal(number)
             result = await self.reconcile(record)
             if result is not None:
@@ -650,7 +748,13 @@ class Runner:
             try:
                 if record.get('legacy'):
                     raise GateError('Unfinished legacy execution: use the matching runner and saved journal')
-                await self.doctor()
+                if record:
+                    telemetry.interrupted_attempts(record)
+                    telemetry.remaining(record, self.clock())
+                    self._record = record
+                preflight = self.store.read(f'preflight-{number}')
+                await telemetry.observe(preflight, 'readiness', self.clock,
+                    lambda value: self.store.write(f'preflight-{number}', value), self.doctor)
                 issue = await self.issue(number)
                 record = await self.prepare(issue)
                 if record is None or not self.store.admit(number):
@@ -662,7 +766,10 @@ class Runner:
                 if issue['state'] != 'OPEN':
                     raise GateError('Issue was closed without a confirmed runner merge')
                 if record['stage'] == 'implement':
-                    await self.implement(issue, record, record.get('feedback', '') + '\n' + record.get('last_error', ''))
+                    await self.perform(record, 'implementation', self.implement, issue, record,
+                                       (record.get('feedback') or '') + '\n' + (record.get('last_error') or ''))
+                if record['stage'] == 'finalize_implementation':
+                    await self.perform(record, 'recovery', self.finalize_implementation, record)
                 if record['stage'] == 'committing':
                     await self.commit(record)
                 if record['stage'] == 'revalidating':
@@ -672,19 +779,19 @@ class Runner:
                         await self.repair(issue, record, record['feedback'])
                     if record['stage'] == 'validate':
                         try:
-                            await self.validate(record)
+                            await self.perform(record, 'validation', self.validate, record)
                         except CommandError as exc:
                             await self.repair(issue, record, str(exc))
                             continue
                     if record['stage'] == 'review':
-                        verdict = await self.review(issue, record)
+                        verdict = await self.perform(record, 'review', self.review, issue, record)
                         if not verdict['approved']:
                             await self.repair(issue, record, json.dumps(verdict))
                             continue
                     if record['stage'] in {'publish', 'publishing'}:
-                        await self.publish(issue, record)
+                        await self.perform(record, 'publication', self.publish, issue, record)
                     try:
-                        await self.wait_ci(record)
+                        await self.perform(record, 'ci', self.wait_ci, record)
                         break
                     except CIFailure as exc:
                         await self.repair(issue, record, str(exc))
@@ -701,6 +808,7 @@ class Runner:
                 if not live_main or live_main.split()[0] != record['base']:
                     raise GateError('Live main advanced; revalidate before merging')
                 if record['completion_target'] == 'pr':
+                    record.setdefault('completed_at', self.clock())
                     record.update(stage='pr_ready', url=pr['url'], last_error=None)
                     self.save(record)
                     self.store.release(number)
@@ -708,14 +816,19 @@ class Runner:
                             'completion_target': record['completion_target']}
                 record['stage'] = 'merging'
                 self.save(record)
-                await self.gh('pr', 'merge', str(record['pr']), '--squash',
-                              '--match-head-commit', record['head'])
+                await self.perform(record, 'merge', self.gh, 'pr', 'merge', str(record['pr']), '--squash',
+                                   '--match-head-commit', record['head'])
                 return await self.finish(record, await self.pr(record['pr']))
             except BaseException as exc:
                 record = record or self.store.read(f'issue-{number}')
                 if record:
                     record['last_error'] = redact(str(exc))[-12000:]
+                    record['last_failure'] = {'category': telemetry.category(exc, record.get('stage')),
+                                              'at': self.clock(), 'error': record['last_error']}
                     self.save(record)
                 else:
                     self.store.write('last_error', {'issue': number, 'error': redact(str(exc))[-12000:]})
                 raise
+            finally:
+                self._record = None
+                self._call_id = None

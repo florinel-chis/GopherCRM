@@ -3,7 +3,21 @@
 import argparse
 import asyncio
 import json
+import signal
 from pathlib import Path
+
+
+def run_async(operation):
+    """SIGTERM follows the same cancellation/child cleanup path as Ctrl-C."""
+    async def supervised():
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        try:
+            return await operation
+        finally:
+            loop.remove_signal_handler(signal.SIGTERM)
+    return asyncio.run(supervised())
 
 
 def main():
@@ -33,6 +47,20 @@ def main():
     revalidate = sub.add_parser('revalidate', help='Merge current main into the active worktree and invalidate prior gates')
     revalidate.add_argument('--config', type=Path, required=True)
     revalidate.add_argument('--issue', type=int, required=True)
+    for name in ('extend-budget', 'report', 'note'):
+        control = sub.add_parser(name)
+        control.add_argument('--config', type=Path, required=True)
+        control.add_argument('--issue', type=int, required=True)
+        if name == 'report':
+            control.add_argument('--json', action='store_true')
+        else:
+            control.add_argument('--reason', required=True)
+            if name == 'extend-budget':
+                control.add_argument('--calls', type=int, default=0)
+                control.add_argument('--seconds', type=int, default=0)
+            else:
+                control.add_argument('--minutes', type=float, required=True)
+                control.add_argument('--category', choices=('intervention', 'review', 'preparation'), required=True)
     setup = sub.add_parser('setup', help='Create private local configuration and Langflow login settings')
     setup.add_argument('--checkout', type=Path, required=True)
     setup.add_argument('--directory', type=Path, required=True)
@@ -49,16 +77,27 @@ def main():
             local.setup(args.checkout, args.directory)
         else:
             local.serve(args.directory, args.port)
-    elif args.command in {'revalidate', 'doctor', 'freeze'}:
+    elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note'}:
         from .config import Config
         from .engine import Runner
         runner = Runner(Config.load(args.config))
-        if args.command == 'doctor':
-            print(json.dumps(asyncio.run(runner.doctor()), indent=2))
+        if args.command == 'report':
+            report = runner.report(args.issue)
+            if args.json:
+                print(json.dumps(report, indent=2))
+            else:
+                from .telemetry import format_report
+                print(format_report(report))
+        elif args.command == 'note':
+            print(json.dumps(runner.note(args.issue, minutes=args.minutes, category=args.category, reason=args.reason), indent=2))
+        elif args.command == 'extend-budget':
+            print(json.dumps(run_async(runner.extend_budget(args.issue, calls=args.calls, seconds=args.seconds, reason=args.reason)), indent=2))
+        elif args.command == 'doctor':
+            print(json.dumps(run_async(runner.doctor()), indent=2))
         elif args.command == 'freeze':
-            print(json.dumps(asyncio.run(runner.freeze(args.issue, args.manifest, refresh=args.refresh)), indent=2))
+            print(json.dumps(run_async(runner.freeze(args.issue, args.manifest, refresh=args.refresh)), indent=2))
         else:
-            asyncio.run(runner.revalidate(args.issue))
+            run_async(runner.revalidate(args.issue))
     elif args.command in {'status', 'stop-after-current', 'resume-queue'}:
         from .config import Config
         from .state import Store
@@ -75,7 +114,7 @@ def main():
         ]}, indent=2))
     else:
         from .flows import run_flow
-        result = asyncio.run(run_flow(args.config, execute=args.execute, limit=args.limit))
+        result = run_async(run_flow(args.config, execute=args.execute, limit=args.limit))
         print(json.dumps([item.model_dump(mode='json') for item in result], indent=2))
 
 

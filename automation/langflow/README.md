@@ -31,7 +31,7 @@ Run these commands from the repository root. Use an isolated environment outside
 
 ```sh
 uv venv --python 3.12 "$HOME/.local/share/gophercrm-langflow/venv"
-uv pip install --python "$HOME/.local/share/gophercrm-langflow/venv/bin/python" -e './automation/langflow[ui]'
+uv pip install --python "$HOME/.local/share/gophercrm-langflow/venv/bin/python" './automation/langflow[ui]'
 source "$HOME/.local/share/gophercrm-langflow/venv/bin/activate"
 gophercrm-runner setup --checkout "$PWD" --directory "$HOME/.local/share/gophercrm-runner"
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 2
@@ -139,16 +139,56 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 Issue, guidance, check-registry or contract changes stop execution. Inspect them, update the operator manifest when needed, then use `freeze --refresh`. Refresh preserves old contract snapshots/history and spent work, invalidates prior tests/review/receipts, and requires fresh validation. It cannot silently adopt a changed executable policy or promote a completed PR-ready execution. If main changed, revalidate the candidate first and update the trusted checkout's guidance to that base before refreshing.
 
-Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and timeout changes are permitted during an active ticket; validation policy changes are not. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
+Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and per-command timeout changes are permitted during an active ticket; validation policy changes are not. Editing configured total limits never changes an admitted execution’s persisted limits. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
+
+## Limits and operational reports
+
+New executions default to eight provider CLI invocations and a four-hour total deadline. Each
+implementation or review invocation reserves one call durably before process launch. These are
+CLI invocation counts, not underlying API-request or token limits. The deadline includes downtime
+and bounds subprocess timeouts. The three-repair ceiling remains independent. No hard monetary
+or token limit is supported; unknown configuration fields fail rather than imply enforcement.
+
+Resuming never refunds calls or resets the deadline. Normal cancellation and CLI SIGTERM terminate
+the child process group. A hard crash leaving a running invocation blocks further mutation; inspect
+its process and private journal before recovery. A call reservation remains spent even if no result
+was captured. Confirmed remote merges can still be reconciled after budget expiry.
+
+```sh
+gophercrm-runner report --config /absolute/path/to/config.json --issue 96
+gophercrm-runner report --config /absolute/path/to/config.json --issue 96 --json
+# Only after explicitly deciding to extend this unfinished execution:
+gophercrm-runner extend-budget --config /absolute/path/to/config.json --issue 96 --calls 1 --seconds 3600 --reason 'Reviewed the blocked execution and approved another attempt'
+# Record actual active time; do not substitute elapsed wall time:
+gophercrm-runner note --config /absolute/path/to/config.json --issue 96 --minutes 5 --category intervention --reason 'Restored the disposable database connection'
+```
+
+Extensions add to the original deadline/ceiling and retain history, spent calls, repairs and evidence.
+Reports retain failed stage attempts and distinguish environment, implementation/test, review, CI,
+budget and recovery failures. Interrupted attempts have unknown active duration. Provider-reported
+cost is labelled separately from actual billing; incomplete cost has no fabricated total. Missing
+operator minutes stay unknown, and explicit entries are labelled partial rather than exhaustive.
+Configured and observed model identities are separate. The MVP uses one optional `agent_model`
+setting for both roles, with separate fresh processes and unchanged permissions.
+
+A successful implementation is saved before formatting/commit recovery; a review verdict is saved
+before post-review checks. Resume can finalize those results without paying for a duplicate call or
+rerolling a rejection. Logs, contracts and receipts remain private. The report is a selected,
+redacted summary; raw `status` journals are intended for local inspection.
+
+The [MVP process report](workflow-mvp-process.md) contains the refined execution prompt,
+coverage boundaries, observed failures and follow-up priorities. It distinguishes the single
+operational canary from the deferred controlled benchmark.
 
 ## Maintain and test the runner
 
 ```sh
-python -m unittest discover -s automation/langflow/tests -v
-gophercrm-runner export automation/langflow/flows/remediation.json
+make verify-runner RUNNER_PYTHON=python
 make verify
+# Only after intentionally changing workflow components:
+gophercrm-runner export automation/langflow/flows/remediation.json
 ```
 
-Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow runs these tests and checks that the exported graph matches its source. Changes to the runner itself are excluded from the automated issue agent's writable paths.
+Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).

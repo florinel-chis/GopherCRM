@@ -24,7 +24,7 @@ class Commands:
 
     async def run(self, args: list[str] | tuple[str, ...], *, cwd: Path,
                   timeout: int = 120, input_text: str | None = None,
-                  check: bool = True, env: dict[str, str] | None = None) -> tuple[int, str]:
+                  check: bool = True, env: dict[str, str] | None = None, on_start=None) -> tuple[int, str]:
         self.log_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
@@ -40,6 +40,8 @@ class Commands:
                     stdout=output, stderr=errors, start_new_session=True, env=env,
                 )
                 try:
+                    if on_start is not None:
+                        on_start(proc.pid)
                     await asyncio.wait_for(
                         proc.communicate(input_text.encode() if input_text is not None else None), timeout,
                     )
