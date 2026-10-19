@@ -25,13 +25,13 @@ const reportFixture: AEOCitationsReport = {
   total_answers: 24,
   total_citations: 31,
   answers_with_citations: 12,
-  owned_citation_rate: 33.3,
+  owned_citation_rate: 25.8,
   by_company: [
     {
       company: 'Acme',
       is_brand: true,
       citations: 8,
-      citation_rate: 25,
+      citation_rate: 25.8,
       with_brand_mention: 6,
       brand_mention_rate: 75,
     },
@@ -39,7 +39,7 @@ const reportFixture: AEOCitationsReport = {
       company: 'Globex',
       is_brand: false,
       citations: 5,
-      citation_rate: 12.5,
+      citation_rate: 16.1,
       with_brand_mention: 1,
       brand_mention_rate: 20,
     },
@@ -50,7 +50,7 @@ const reportFixture: AEOCitationsReport = {
       company: 'Acme',
       is_owned: true,
       citations: 8,
-      citation_rate: 25,
+      citation_rate: 25.8,
       with_brand_mention: 6,
       brand_mention_rate: 75,
     },
@@ -59,7 +59,7 @@ const reportFixture: AEOCitationsReport = {
       company: '',
       is_owned: false,
       citations: 4,
-      citation_rate: 16.7,
+      citation_rate: 12.9,
       with_brand_mention: 2,
       brand_mention_rate: 50,
     },
@@ -126,15 +126,17 @@ describe('AEOCitations', () => {
   it('renders the headline rates and both comparison charts', async () => {
     renderPage();
 
-    expect(await screen.findByText('Owned-domain citation rate')).toBeInTheDocument();
-    expect(screen.getByText('33.3%')).toBeInTheDocument();
+    expect(await screen.findByText('Owned-domain citation share')).toBeInTheDocument();
+    expect(screen.getAllByText('25.8%')).toHaveLength(2);
+    expect(screen.getByText('share of all citations linking to domains you own')).toBeInTheDocument();
+    expect(screen.getByText("Share of all citations linking to each company's domains.")).toBeInTheDocument();
     expect(screen.getByText('Total citations')).toBeInTheDocument();
     expect(screen.getByText('31')).toBeInTheDocument();
     expect(screen.getByText('50.0% of 24 answers')).toBeInTheDocument();
 
     expect(screen.getByTestId('aeo-citation-rate-chart')).toBeInTheDocument();
     expect(screen.getByTestId('aeo-brand-mention-rate-chart')).toBeInTheDocument();
-    expect(screen.getByText('Citation rate by company')).toBeInTheDocument();
+    expect(screen.getByText('Citation share by company')).toBeInTheDocument();
     expect(screen.getByText('Citations with brand mention')).toBeInTheDocument();
   });
 
@@ -143,13 +145,15 @@ describe('AEOCitations', () => {
 
     expect(await screen.findByText('Top cited domains')).toBeInTheDocument();
 
+    expect(screen.getByRole('columnheader', { name: 'Citation share' })).toBeInTheDocument();
+
     const ownedRow = screen.getByText('acme.com').closest('tr');
     expect(ownedRow).not.toBeNull();
     expect(within(ownedRow as HTMLElement).getByText('Owned')).toBeInTheDocument();
     expect(ownedRow).toHaveTextContent('75.0%');
 
     const otherRow = screen.getByText('g2.com').closest('tr');
-    expect(otherRow).toHaveTextContent('16.7%');
+    expect(otherRow).toHaveTextContent('12.9%');
     // An unattributed domain renders an em dash in the company column.
     expect(otherRow).toHaveTextContent('—');
   });

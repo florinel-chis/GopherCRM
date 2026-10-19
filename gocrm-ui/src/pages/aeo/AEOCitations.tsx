@@ -200,9 +200,9 @@ export const Component: React.FC = () => {
 
       <Box display="flex" flexWrap="wrap" gap={2} mb={3}>
         <MetricTile
-          title="Owned-domain citation rate"
+          title="Owned-domain citation share"
           value={formatPercent(report.owned_citation_rate)}
-          caption="answers citing a domain you own"
+          caption="share of all citations linking to domains you own"
         />
         <MetricTile title="Total citations" value={String(report.total_citations)} />
         <MetricTile
@@ -221,10 +221,10 @@ export const Component: React.FC = () => {
       <Box display="flex" flexWrap="wrap" gap={3} mb={3}>
         <Paper sx={{ p: 2, flex: '1 1 420px', minWidth: 320 }}>
           <Typography variant="h6" gutterBottom>
-            Citation rate by company
+            Citation share by company
           </Typography>
           <Typography variant="body2" color="text.secondary" gutterBottom>
-            Share of answers citing each company&apos;s domains.
+            Share of all citations linking to each company&apos;s domains.
           </Typography>
           {citationRateData.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
@@ -234,7 +234,7 @@ export const Component: React.FC = () => {
             <CompanyBarChart
               testId="aeo-citation-rate-chart"
               data={citationRateData}
-              label="Citation rate"
+              label="Citation share"
               color={COMPETITOR_COLOR}
             />
           )}
@@ -275,7 +275,7 @@ export const Component: React.FC = () => {
                 <TableCell>Domain</TableCell>
                 <TableCell>Company</TableCell>
                 <TableCell align="right">Citations</TableCell>
-                <TableCell align="right">Citation rate</TableCell>
+                <TableCell align="right">Citation share</TableCell>
                 <TableCell align="right">With brand mention</TableCell>
                 <TableCell align="right">Brand-mention rate</TableCell>
               </TableRow>
