@@ -67,6 +67,7 @@ for (const { action, website } of [
     expect((await saved).status()).toBe(200);
     await page.waitForURL('**/customers');
     await page.goto(`/customers/${customer.id}/edit`);
+    await expect(customers.emailInput).toHaveValue(data.email);
     await expect(customers.websiteInput).toHaveValue(website);
     await page.goto(`/customers/${customer.id}`);
     if (website) {
