@@ -138,8 +138,16 @@ type TaskService interface {
 	// (non-nil, empty). An id that matches no label yields
 	// apperrors.ErrLabelNotFound, which the handler answers with 400
 	// INVALID_REFERENCE.
-	CreateWithLabels(task *models.Task, labelIDs []uint) error
-	UpdateWithLabels(task *models.Task, labelIDs *[]uint) error
+	//
+	// actorID is the user making the change. A lead link the write sets (on
+	// an update: one that differs from the stored link) must name a lead the
+	// actor may see under CanViewLead; a lead that is hidden from the actor
+	// yields apperrors.ErrLeadNotFound, exactly like a missing one. Create and
+	// Update have no actor and so cannot set a lead link at all. Reads return
+	// the stored link as is: callers answering a user pass the result through
+	// RedactTaskLead / RedactTaskLeads.
+	CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error
+	UpdateWithLabels(task *models.Task, labelIDs *[]uint, actorID uint) error
 	// ListByLabel and the ByAssignee variant back the ?label_id= filter, with
 	// the same admin/non-admin split as the rest of the task listings.
 	ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
@@ -192,6 +200,11 @@ type CompanyService interface {
 // closed_at is set on entering won or lost and cleared on leaving them, and
 // lost_reason is kept only while lost. Every stage change, the create
 // included, writes one history row in the same transaction.
+//
+// A lead link that Create or Update checks must also be visible to the acting
+// user (actorID) under CanViewLead; a hidden lead is apperrors.ErrLeadNotFound,
+// like a missing one. Reads return the stored link as is: callers answering a
+// user pass the result through RedactDealLead / RedactDealLeads.
 type DealService interface {
 	// Create writes the deal and its first history row (from_stage NULL). A
 	// nil probability takes the stage's default.

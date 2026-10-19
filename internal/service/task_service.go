@@ -10,6 +10,11 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
+// taskListPreloads are the associations the task listings carry. The lead is
+// among them because RedactTaskLead decides on it: without it every lead link
+// would read as hidden to non-admins.
+var taskListPreloads = []string{"AssignedTo", "Labels", "Lead"}
+
 type taskService struct {
 	taskRepo     repository.TaskRepository
 	userRepo     repository.UserRepository
@@ -28,14 +33,16 @@ func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.User
 	}
 }
 
-// Create persists a task without touching its label set.
+// Create persists a task without touching its label set. It has no acting
+// user, so it cannot link a lead (see CanViewLead).
 func (s *taskService) Create(task *models.Task) error {
-	return s.CreateWithLabels(task, nil)
+	return s.CreateWithLabels(task, nil, 0)
 }
 
 // CreateWithLabels persists a task and attaches the referenced labels. With no
-// label ids it is exactly Create, down to the repository call it makes.
-func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error {
+// label ids it is exactly Create, down to the repository call it makes. A lead
+// link must be a lead actorID may see.
+func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "task"), "TaskService", "Create")
 
 	// Set default values
@@ -58,12 +65,13 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 		return fmt.Errorf("cannot assign task to inactive user: %w", apperrors.ErrInactiveUser)
 	}
 
-	// Validate lead if provided
+	// Validate lead if provided: it must exist and be visible to the actor.
+	var lead *models.Lead
 	if task.LeadID != nil {
-		_, err := s.leadRepo.GetByID(*task.LeadID)
+		lead, err = checkLeadLink(s.leadRepo, s.userRepo, actorID, *task.LeadID)
 		if err != nil {
-			logger.WithError(utils.LogError(err)).Warn("Lead not found")
-			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
+			logger.WithError(utils.LogError(err)).Warn("Lead link rejected")
+			return err
 		}
 	}
 
@@ -88,6 +96,9 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 		return err
 	}
 
+	// The checked lead is attached only after the write, for the response, so
+	// GORM never saves it as an association of the new task.
+	task.Lead = nil
 	if len(labels) == 0 {
 		err = s.taskRepo.Create(task)
 	} else {
@@ -97,6 +108,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint) error
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
+	task.Lead = lead
 
 	logger.WithFields(map[string]interface{}{
 		"task_id": task.ID,
@@ -155,15 +167,17 @@ func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]model
 	return tasks, total, nil
 }
 
-// Update persists the task and leaves its label set untouched.
+// Update persists the task and leaves its label set untouched. It has no
+// acting user, so it cannot link the task to another lead.
 func (s *taskService) Update(task *models.Task) error {
-	return s.UpdateWithLabels(task, nil)
+	return s.UpdateWithLabels(task, nil, 0)
 }
 
 // UpdateWithLabels persists the task and, when labelIDs is non-nil, REPLACES
 // its label set with the referenced labels. A non-nil empty slice clears the
-// set; nil leaves it exactly as it was.
-func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) error {
+// set; nil leaves it exactly as it was. A lead link that differs from the
+// stored one must be a lead actorID may see; the stored link is kept as it is.
+func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_id", task.ID), "TaskService", "Update")
 
 	// Get existing task to validate the update
@@ -175,6 +189,7 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 	}
 
 	// Validate assignee if being changed
+	var newAssignee *models.User
 	if task.AssignedToID != existingTask.AssignedToID {
 		assignee, err := s.userRepo.GetByID(task.AssignedToID)
 		if err != nil {
@@ -186,14 +201,19 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 			logger.WithField("assignee_id", task.AssignedToID).Warn("Cannot assign task to inactive user")
 			return fmt.Errorf("cannot assign task to inactive user: %w", apperrors.ErrInactiveUser)
 		}
+		newAssignee = assignee
 	}
 
-	// Validate lead if being changed
-	if task.LeadID != existingTask.LeadID && task.LeadID != nil {
-		_, err := s.leadRepo.GetByID(*task.LeadID)
+	// Validate lead if being changed: the new one must exist and be visible to
+	// the actor. The ids are compared, not the pointers, so an edit that leaves
+	// the link alone stays possible after the lead changed hands.
+	leadChanged := linkChanged(task.LeadID, existingTask.LeadID)
+	var lead *models.Lead
+	if leadChanged {
+		lead, err = checkLeadLink(s.leadRepo, s.userRepo, actorID, *task.LeadID)
 		if err != nil {
-			logger.WithError(utils.LogError(err)).Warn("Lead not found")
-			return fmt.Errorf("lead not found: %w", apperrors.ErrLeadNotFound)
+			logger.WithError(utils.LogError(err)).Warn("Lead link rejected")
+			return err
 		}
 	}
 
@@ -218,24 +238,39 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) erro
 		return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
 	}
 
-	if labelIDs == nil {
-		if err := s.taskRepo.Update(task); err != nil {
-			utils.LogServiceResponse(logger, err)
+	var labels []models.Label
+	if labelIDs != nil {
+		labels, err = s.resolveLabels(*labelIDs)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Warn("Unknown label referenced")
 			return err
 		}
-		logger.WithField("task_id", task.ID).Info("Task updated successfully")
-		return nil
 	}
 
-	labels, err := s.resolveLabels(*labelIDs)
+	// Associations preloaded for the old links must not ride along into the
+	// save: GORM writes a belongs-to association's id back over the foreign
+	// key, which would silently undo a reassignment or a new lead_id.
+	if leadChanged || task.LeadID == nil {
+		task.Lead = nil
+	}
+	if newAssignee != nil {
+		task.AssignedTo = models.User{}
+	}
+
+	if labelIDs == nil {
+		err = s.taskRepo.Update(task)
+	} else {
+		err = s.taskRepo.UpdateWithLabels(task, labels)
+	}
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Warn("Unknown label referenced")
-		return err
-	}
-
-	if err := s.taskRepo.UpdateWithLabels(task, labels); err != nil {
 		utils.LogServiceResponse(logger, err)
 		return err
+	}
+	if leadChanged {
+		task.Lead = lead
+	}
+	if newAssignee != nil {
+		task.AssignedTo = *newAssignee
 	}
 
 	logger.WithField("task_id", task.ID).Info("Task updated successfully")
@@ -301,7 +336,7 @@ func (s *taskService) listByLabel(labelID uint, assigneeID *uint, offset, limit 
 		"limit":    limit,
 	}), "TaskService", "ListByLabel")
 
-	tasks, err := s.taskRepo.ListByLabel(labelID, assigneeID, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
+	tasks, err := s.taskRepo.ListByLabel(labelID, assigneeID, offset, limit, sortBy, sortOrder, taskListPreloads...)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to list tasks by label")
 		return nil, 0, err
@@ -375,7 +410,7 @@ func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([
 		"limit":  limit,
 	}), "TaskService", "ListSorted")
 
-	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
+	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, taskListPreloads...)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to list tasks sorted")
 		return nil, 0, err
@@ -397,7 +432,7 @@ func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder 
 		"limit":  limit,
 	}), "TaskService", "Search")
 
-	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, "AssignedTo", "Labels")
+	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, taskListPreloads...)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to search tasks")
 		return nil, 0, err

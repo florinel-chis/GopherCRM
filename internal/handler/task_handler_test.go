@@ -134,13 +134,13 @@ func (m *MockTaskService) GetRecentlyCompleted(limit int) ([]models.Task, error)
 	return args.Get(0).([]models.Task), args.Error(1)
 }
 
-func (m *MockTaskService) CreateWithLabels(task *models.Task, labelIDs []uint) error {
-	args := m.Called(task, labelIDs)
+func (m *MockTaskService) CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error {
+	args := m.Called(task, labelIDs, actorID)
 	return args.Error(0)
 }
 
-func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint) error {
-	args := m.Called(task, labelIDs)
+func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, actorID uint) error {
+	args := m.Called(task, labelIDs, actorID)
 	return args.Error(0)
 }
 
@@ -185,7 +185,7 @@ func (suite *TaskHandlerTestSuite) SetupTest() {
 	suite.mockService = new(MockTaskService)
 	suite.handler = NewTaskHandler(suite.mockService)
 	suite.router = gin.New()
-	
+
 	// Add middleware to set user context
 	suite.router.Use(func(c *gin.Context) {
 		// Default test user
@@ -193,7 +193,7 @@ func (suite *TaskHandlerTestSuite) SetupTest() {
 		c.Set("user_role", string(models.RoleAdmin))
 		c.Next()
 	})
-	
+
 	// Add error handler middleware to handle validation errors
 	suite.router.Use(func(c *gin.Context) {
 		c.Next()
@@ -205,7 +205,7 @@ func (suite *TaskHandlerTestSuite) SetupTest() {
 			}
 		}
 	})
-	
+
 	SetupTaskRoutes(suite.router.Group(""), suite.handler)
 }
 
@@ -225,17 +225,17 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_Success() {
 	// No label_ids in the body, so the handler passes a nil id list through.
 	suite.mockService.On("CreateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.Title == task.Title && t.AssignedToID == task.AssignedToID
-	}), []uint(nil)).Return(nil)
+	}), []uint(nil), uint(1)).Return(nil)
 
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusCreated, w.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -262,12 +262,12 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_NonAdminAssignToOther_Forbidde
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -284,7 +284,7 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_ValidationError() {
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
@@ -298,12 +298,12 @@ func (suite *TaskHandlerTestSuite) TestCreateTask_ServiceError() {
 		Status:       models.TaskStatusPending,
 	}
 
-	suite.mockService.On("CreateWithLabels", mock.AnythingOfType("*models.Task"), []uint(nil)).Return(errors.New("service error"))
+	suite.mockService.On("CreateWithLabels", mock.AnythingOfType("*models.Task"), []uint(nil), uint(1)).Return(errors.New("service error"))
 
 	body, _ := json.Marshal(task)
 	req, _ := http.NewRequest("POST", "/tasks", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
@@ -326,7 +326,7 @@ func (suite *TaskHandlerTestSuite) TestGetTask_Success() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -400,7 +400,7 @@ func (suite *TaskHandlerTestSuite) TestGetTasksByAssignee_Success() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -457,7 +457,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_Success() {
 	existingTask.ID = taskID
 
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
-	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil)).Return(nil)
+	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil), uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":  "Updated Task",
@@ -466,7 +466,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_Success() {
 	body, _ := json.Marshal(updateData)
 	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
@@ -499,7 +499,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminReassign_Forbidden() {
 	body, _ := json.Marshal(updateData)
 	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
@@ -529,7 +529,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminSameAssignee_Success()
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
 	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.Title == "Updated Task" && t.AssignedToID == uint(1)
-	}), (*[]uint)(nil)).Return(nil)
+	}), (*[]uint)(nil), uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":          "Updated Task",
@@ -597,7 +597,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_AdminReassign_Success() {
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
 	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.AssignedToID == uint(2)
-	}), (*[]uint)(nil)).Return(nil)
+	}), (*[]uint)(nil), uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"assigned_to_id": 2, // Admin reassigns to a different user
@@ -643,7 +643,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminAccessOthersTask_Forbi
 	body, _ := json.Marshal(updateData)
 	req, _ := http.NewRequest("PUT", "/tasks/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
 
@@ -720,7 +720,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_Success() {
 	suite.router.ServeHTTP(w, req)
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)

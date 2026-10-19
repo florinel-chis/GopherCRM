@@ -80,7 +80,7 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
-	if err := s.checkLinks(deal, nil); err != nil {
+	if err := s.checkLinks(deal, nil, actorID); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
@@ -152,7 +152,7 @@ func (s *dealService) Update(deal *models.Deal, probability *int, actorID uint) 
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
-	if err := s.checkLinks(deal, stored); err != nil {
+	if err := s.checkLinks(deal, stored, actorID); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Deal rejected")
 		return err
 	}
@@ -545,8 +545,9 @@ func (s *dealService) validate(deal *models.Deal, probability *int) error {
 // request did not set exactly as stored, and such a link is not re-checked,
 // so a deal keeps its links to erased records (erasure soft-deletes the row)
 // and stays editable. A link the request cleared is nil and needs no check;
-// one set to another id must name a live row, as on a create.
-func (s *dealService) checkLinks(deal, stored *models.Deal) error {
+// one set to another id must name a live row, as on a create. A lead link that
+// is checked must moreover be visible to actorID.
+func (s *dealService) checkLinks(deal, stored *models.Deal, actorID uint) error {
 	var previousCompany, previousCustomer, previousLead *uint
 	ownerChanged := true
 	if stored != nil {
@@ -579,10 +580,9 @@ func (s *dealService) checkLinks(deal, stored *models.Deal) error {
 		}
 	}
 	if linkChanged(deal.LeadID, previousLead) {
-		if _, err := s.leadRepo.GetByID(*deal.LeadID); err != nil {
-			if isNotFound(err) {
-				return fmt.Errorf("unknown lead_id %d: %w", *deal.LeadID, apperrors.ErrLeadNotFound)
-			}
+		// The lead must also be one the acting user may see (CanViewLead);
+		// one it may not see is reported exactly like a missing one.
+		if _, err := checkLeadLink(s.leadRepo, s.userRepo, actorID, *deal.LeadID); err != nil {
 			return err
 		}
 	}

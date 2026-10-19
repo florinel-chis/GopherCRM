@@ -55,7 +55,7 @@ type UpdateTaskRequest struct {
 
 // Create godoc
 // @Summary Create a new task
-// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. The new task always starts in status "pending" regardless of the request body. Optional label_ids attaches existing labels; a repeated id is attached once, and any id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. lead_id must name a lead the caller may see — admins any lead, sales users only the leads they own, every other role none — and a lead the caller may not see is answered with 404 exactly like a missing one. The new task always starts in status "pending" regardless of the request body. Optional label_ids attaches existing labels; a repeated id is attached once, and any id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -107,7 +107,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		Status:       models.TaskStatusPending,
 	}
 
-	if err := h.taskService.CreateWithLabels(task, req.LabelIDs); err != nil {
+	if err := h.taskService.CreateWithLabels(task, req.LabelIDs, currentUserID); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
@@ -127,13 +127,14 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
+	service.RedactTaskLead(leadViewer(c), task)
 	utils.LogHandlerResponse(logger, http.StatusCreated, task)
 	utils.RespondSuccess(c, http.StatusCreated, task)
 }
 
 // Get godoc
 // @Summary Get a task by ID
-// @Description Retrieve a single task. Admins can view any task; every other role can only view tasks assigned to them.
+// @Description Retrieve a single task. Admins can view any task; every other role can only view tasks assigned to them. lead_id and lead are omitted when the caller may not see the linked lead (sales users see only the leads they own, roles other than admin and sales none); this is decided on every read, so it follows reassignments and lead ownership changes. The same applies to every task this API returns.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -179,13 +180,14 @@ func (h *TaskHandler) Get(c *gin.Context) {
 		return
 	}
 
+	service.RedactTaskLead(leadViewer(c), task)
 	utils.LogHandlerResponse(logger, http.StatusOK, task)
 	utils.RespondSuccess(c, http.StatusOK, task)
 }
 
 // List godoc
 // @Summary List tasks
-// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them — EXCEPT when label_id is given, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search: when both are sent, search is ignored. An unparseable or non-positive label_id is ignored, and a label_id that matches no label simply yields an empty page rather than a 404.
+// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them — EXCEPT when label_id is given, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search: when both are sent, search is ignored. An unparseable or non-positive label_id is ignored, and a label_id that matches no label simply yields an empty page rather than a 404. Each task carries its lead (lead_id and lead) only when the caller may see that lead, as on GET /tasks/{id}.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -274,6 +276,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 		utils.RespondInternalError(c)
 		return
 	}
+	service.RedactTaskLeads(leadViewer(c), tasks)
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
@@ -323,6 +326,7 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 		utils.RespondInternalError(c)
 		return
 	}
+	service.RedactTaskLeads(leadViewer(c), tasks)
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
@@ -392,6 +396,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 	if tasks == nil {
 		tasks = []models.Task{}
 	}
+	service.RedactTaskLeads(leadViewer(c), tasks)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, tasks)
 	utils.RespondSuccess(c, http.StatusOK, tasks)
@@ -399,7 +404,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id different from the stored one must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one); a stored link is kept when lead_id is absent, and is omitted from the response when the caller may not see it. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -486,7 +491,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		task.CustomerID = req.CustomerID
 	}
 
-	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs); err != nil {
+	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, currentUserID); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
@@ -504,6 +509,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		return
 	}
 
+	service.RedactTaskLead(leadViewer(c), task)
 	utils.LogHandlerResponse(logger, http.StatusOK, task)
 	utils.RespondSuccess(c, http.StatusOK, task)
 }

@@ -7,11 +7,11 @@ the history, not an erasure). Every **Expected** states what the build does **to
 the handlers, service and repository; every automated case names the exact test title in
 `gocrm-ui/e2e/tests/admin-deals.spec.ts`.
 
-33 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
+34 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
 `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of them
 partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
 in Go or Vitest), 9 planned (7 against `admin-deals.spec.ts`, 2 against
-`admin-deals-board.spec.ts`), 8 blocked on the sales/support role-login helper. Every case
+`admin-deals-board.spec.ts`), 9 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
 
 **Sources**
@@ -35,6 +35,11 @@ names the Go test that already pins its API behaviour.
   edits its own deals: the list is always narrowed to the caller (`owner_id` in the query cannot
   widen it), and get, update, stage and history on another owner's deal answer **403** "You can
   only view your own deals" — the answer `GET /leads/{id}` gives, not a 404. Delete is admin only.
+- **A deal's lead follows the lead-visibility policy** (`service.CanViewLead`: admin every lead,
+  sales only the leads it owns). A `lead_id` the write sets must be a lead the caller may see; a
+  hidden lead is the same **400** `INVALID_REFERENCE` as a missing one. Every deal returned is
+  redacted per caller: `lead_id` and `lead` are omitted when the caller may not see the lead, which
+  is decided on each read (admin-made links, lead owner changes).
 - **Deals hold no personal data and are not erased.** `DELETE /deals/{id}` is a soft delete; the
   `deal_stage_changes` rows stay. Erasing a linked customer, lead or user leaves `customer_id`,
   `lead_id`, `owner_id` and `changed_by_id` in place as business links. A case may only delete
@@ -593,3 +598,23 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   these roles.
 - **Automation:** blocked — needs a role-login helper for support. Go: `deal_handler_test.go`
   `TestRoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.
+
+### TC-DEAL-034 — Sales cannot link or read another rep's lead through a deal
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Two sales users A and B; a lead owned by A.
+- **Steps:**
+  1. As B, `POST /api/v1/deals` with A's `lead_id`; then create a deal without a lead and `PUT` it
+     with A's `lead_id`.
+  2. As admin, create a deal owned by B linked to A's lead.
+  3. As B, `GET` that deal, `GET /deals`, `PUT` its title, move its stage.
+  4. Move A's lead to B (admin) and `GET` the deal as B again.
+- **Expected:** Step 1: **400** `INVALID_REFERENCE`, exactly as for an unknown `lead_id`; no deal
+  or history row is written and the `PUT` changes nothing. Step 2: **201**, the admin sees the lead.
+  Step 3: **200** on every route with neither `lead_id` nor `lead` in the body; the title change is
+  saved and the stored link is kept. Step 4: B now gets `lead_id` and `lead`.
+- **Automation:** blocked — needs a role-login helper for sales. Go:
+  `lead_visibility_integration_test.go` `TestDealWrites_SalesCannotLinkAnotherRepsLead`,
+  `TestDealReads_HideHistoricalLinks`; `deal_lead_visibility_test.go`
+  `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy`; `deal_lead_visibility_handler_test.go`
+  `TestDealRoutes_HideALeadTheOwnerMayNotSee`.

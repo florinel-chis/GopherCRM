@@ -590,3 +590,32 @@ regression anchors, not endorsements.
 - **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:494-500`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
 - **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in FEATURES.md.
 - **Automation:** blocked — needs a non-admin role-login helper to obtain a support token
+
+---
+
+## Lead visibility through tasks
+
+### TC-TASK-047 — A task cannot be used to link or read a lead the caller may not see
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Sales users A and B, a support user, and a lead owned by A.
+- **Steps:**
+  1. As support, `POST /api/v1/tasks` assigned to itself with A's `lead_id`. As B, the same.
+  2. As B, `PUT` one of its own tasks with A's `lead_id` and a new title.
+  3. As admin, create a task assigned to B linked to A's lead.
+  4. As B, `GET` that task, `GET /tasks`, `GET /tasks/my`, then `PUT` its title.
+  5. As admin, reassign it to the support user; as support, `GET` it.
+  6. As A, create a task linked to A's own lead; move the lead to B (admin); `GET` the task as A.
+- **Expected:** Steps 1–2: **404**, the answer an unknown `lead_id` gets; no task is written and
+  the `PUT` changes nothing, title included. Step 3: **201**, and the admin sees the lead. Steps 4–6:
+  **200** with neither `lead_id` nor `lead` in any body, while the stored link is kept and B's
+  title change is saved; the admin still sees the lead on its reads and lists. The policy is
+  `service.CanViewLead` (admin every lead, sales its own, every other role none), checked on
+  writes and re-applied to every task returned, on `/dashboard/upcoming-tasks` and
+  `/tasks/upcoming` as well.
+- **Automation:** blocked — needs a non-admin role-login helper. Go:
+  `internal/integration/lead_visibility_integration_test.go` (`TestTaskCreate_SupportCannotLinkALead`,
+  `TestTaskCreate_SalesOnlyWithItsOwnLead`, `TestTaskUpdate_CannotRelinkToAHiddenLead`,
+  `TestTaskReads_HideHistoricalLinks`, `TestTaskReads_FollowLeadOwnershipChanges`);
+  `task_service_test.go` (`TestCreate_LeadHiddenFromTheActorIsRejected`, `TestUpdate_*Lead*`);
+  `task_lead_visibility_handler_test.go`.
