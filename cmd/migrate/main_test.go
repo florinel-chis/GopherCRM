@@ -1,14 +1,25 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/models"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gormmysql "gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestCheckCommandSupported_SQLiteRejectsDatabaseCommands(t *testing.T) {
@@ -177,4 +188,218 @@ func TestMigrationSequence_UpgradePathFromExistingMain(t *testing.T) {
 	assert.Contains(t, pendingMigrations[1].name, "add_ticket_comments",
 		"ticket comments migration should follow schema parity, got %s", pendingMigrations[1].name)
 }
+
+func resolveTestMySQLBaseDSN() string {
+	candidates := []string{
+		os.Getenv("TEST_MYSQL_DSN"),
+	}
+	if cfg, err := config.Load(); err == nil && cfg.Database.Driver == config.DriverMySQL {
+		candidates = append(candidates, fmt.Sprintf("%s:%s@tcp(%s:%d)/",
+			cfg.Database.User, cfg.Database.Password, cfg.Database.Host, cfg.Database.Port))
+	}
+	user := os.Getenv("USER")
+	if user != "" {
+		candidates = append(candidates,
+			fmt.Sprintf("%s@unix(/tmp/mysql.sock)/", user),
+			fmt.Sprintf("%s:@unix(/tmp/mysql.sock)/", user),
+			fmt.Sprintf("%s:@tcp(127.0.0.1:3306)/", user),
+			fmt.Sprintf("%s@tcp(127.0.0.1:3306)/", user),
+		)
+	}
+	candidates = append(candidates,
+		"root@unix(/tmp/mysql.sock)/",
+		"root:@unix(/tmp/mysql.sock)/",
+		"root:@tcp(127.0.0.1:3306)/",
+		"root:root@tcp(127.0.0.1:3306)/",
+		"root:e2e-root-password@tcp(127.0.0.1:3306)/",
+		"gophercrm:e2e-password@tcp(127.0.0.1:3306)/",
+	)
+
+	for _, dsn := range candidates {
+		if dsn == "" {
+			continue
+		}
+		cleanDSN := dsn
+		if !strings.HasSuffix(cleanDSN, "/") {
+			cleanDSN += "/"
+		}
+		connectDSN := migrationDSN(cleanDSN)
+		db, err := sql.Open("mysql", connectDSN)
+		if err != nil {
+			continue
+		}
+		if err := db.Ping(); err == nil {
+			probeDB := fmt.Sprintf("gocrm_probe_%d", time.Now().UnixNano()%1000000)
+			if _, execErr := db.Exec("CREATE DATABASE " + probeDB); execErr == nil {
+				_, _ = db.Exec("DROP DATABASE " + probeDB)
+				db.Close()
+				return cleanDSN
+			}
+		}
+		db.Close()
+	}
+	return ""
+}
+
+func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
+	baseDSN := resolveTestMySQLBaseDSN()
+	if baseDSN == "" {
+		t.Skip("skipping database upgrade test: no reachable MySQL/MariaDB server")
+	}
+
+	serverDB, err := sql.Open("mysql", migrationDSN(baseDSN))
+	require.NoError(t, err)
+	defer serverDB.Close()
+
+	testDBName := fmt.Sprintf("gocrm_upg_%d", time.Now().UnixNano()%10000000)
+	_, err = serverDB.Exec("CREATE DATABASE " + testDBName)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupDB, err := sql.Open("mysql", migrationDSN(baseDSN))
+		if err == nil {
+			_, _ = cleanupDB.Exec("DROP DATABASE IF EXISTS " + testDBName)
+			cleanupDB.Close()
+		}
+	})
+
+	testDSN := baseDSN + testDBName + "?multiStatements=true&parseTime=true"
+	appDB, err := sql.Open("mysql", testDSN)
+	require.NoError(t, err)
+	defer appDB.Close()
+
+	driver, err := mysql.WithInstance(appDB, &mysql.Config{})
+	require.NoError(t, err)
+
+	migrationsPath, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+
+	m, err := migrate.NewWithDatabaseInstance("file://"+migrationsPath, "mysql", driver)
+	require.NoError(t, err)
+	defer m.Close()
+
+	// 1. Migrate up to main's head version: 20260930120000
+	err = m.Migrate(20260930120000)
+	require.NoError(t, err)
+
+	ver, dirty, err := m.Version()
+	require.NoError(t, err)
+	assert.False(t, dirty)
+	assert.Equal(t, uint(20260930120000), ver)
+
+	// 2. Simulate running main app server with AutoMigrate on main models
+	// (on main, MigrateDatabase ran AutoMigrate on these models, creating columns like
+	// users.failed_login_attempts, customers.assigned_to_id, leads.classification, etc.)
+	gormDB, err := gorm.Open(gormmysql.Open(testDSN), &gorm.Config{Logger: gormlogger.Discard})
+	require.NoError(t, err)
+
+	err = gormDB.AutoMigrate(
+		&models.User{},
+		&models.Company{},
+		&models.Lead{},
+		&models.Customer{},
+		&models.Deal{},
+		&models.DealStageChange{},
+		&models.Ticket{},
+		&models.Label{},
+		&models.Task{},
+		&models.APIKey{},
+		&models.Configuration{},
+		&models.RefreshToken{},
+		&models.PasswordResetToken{},
+		&models.BulkOperation{},
+		&models.BulkOperationItem{},
+		&models.AEOProfile{},
+		&models.AEOPrompt{},
+		&models.AEORun{},
+		&models.AEOAnswer{},
+		&models.AEOCitation{},
+		&models.Form{},
+		&models.FormSubmission{},
+		&models.FormConfirmationToken{},
+	)
+	require.NoError(t, err)
+
+	// Verify that main's AutoMigrate created failed_login_attempts in users
+	var count int
+	err = appDB.QueryRow(
+		"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'failed_login_attempts'",
+		testDBName,
+	).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "users.failed_login_attempts must already exist from main AutoMigrate")
+
+	// 3. Now upgrade with migrate.Up() — this MUST NOT fail with ERROR 1060 Duplicate column name
+	err = m.Up()
+	require.NoError(t, err, "migrating up from a database initialized by main must succeed idempotently")
+
+	// 4. Verify version is now clean at the latest migration
+	ver, dirty, err = m.Version()
+	require.NoError(t, err)
+	assert.False(t, dirty)
+	assert.Equal(t, uint(20261017120000), ver)
+
+	// 5. Verify models.MigrateDatabase() on top continues to succeed without error
+	models.DB = gormDB
+	err = models.MigrateDatabase()
+	assert.NoError(t, err)
+
+	// 6. Verify down migration also runs cleanly in reverse
+	err = m.Down()
+	assert.NoError(t, err)
+}
+
+func TestMigrationFresh_FullUpAndDown(t *testing.T) {
+	baseDSN := resolveTestMySQLBaseDSN()
+	if baseDSN == "" {
+		t.Skip("skipping database fresh migration test: no reachable MySQL/MariaDB server")
+	}
+
+	serverDB, err := sql.Open("mysql", migrationDSN(baseDSN))
+	require.NoError(t, err)
+	defer serverDB.Close()
+
+	testDBName := fmt.Sprintf("gocrm_fresh_test_%d", time.Now().UnixNano()%10000000)
+	_, err = serverDB.Exec("CREATE DATABASE " + testDBName)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupDB, err := sql.Open("mysql", migrationDSN(baseDSN))
+		if err == nil {
+			_, _ = cleanupDB.Exec("DROP DATABASE IF EXISTS " + testDBName)
+			cleanupDB.Close()
+		}
+	})
+
+	testDSN := baseDSN + testDBName + "?multiStatements=true&parseTime=true"
+	appDB, err := sql.Open("mysql", testDSN)
+	require.NoError(t, err)
+	defer appDB.Close()
+
+	driver, err := mysql.WithInstance(appDB, &mysql.Config{})
+	require.NoError(t, err)
+
+	migrationsPath, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+
+	m, err := migrate.NewWithDatabaseInstance("file://"+migrationsPath, "mysql", driver)
+	require.NoError(t, err)
+	defer m.Close()
+
+	// Full up on fresh database
+	err = m.Up()
+	require.NoError(t, err)
+
+	ver, dirty, err := m.Version()
+	require.NoError(t, err)
+	assert.False(t, dirty)
+	assert.Equal(t, uint(20261017120000), ver)
+
+	// Full rollback to 0
+	err = m.Down()
+	require.NoError(t, err)
+
+	_, _, err = m.Version()
+	assert.ErrorIs(t, err, migrate.ErrNilVersion)
+}
+
+
 

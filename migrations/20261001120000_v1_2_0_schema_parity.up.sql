@@ -6,21 +6,115 @@
 -- aeo_profiles, aeo_prompts, aeo_runs, aeo_answers, aeo_citations, forms,
 -- form_submissions, and form_confirmation_tokens.
 
--- 1. Alter existing tables
-ALTER TABLE users ADD COLUMN failed_login_attempts int NOT NULL DEFAULT 0;
-ALTER TABLE users ADD COLUMN locked_until datetime(3) NULL;
+-- 1. Alter existing tables (idempotent: safe if already created by AutoMigrate)
+SET @dbname = DATABASE();
 
-ALTER TABLE customers ADD COLUMN assigned_to_id bigint unsigned NULL;
-ALTER TABLE customers ADD KEY idx_customers_assigned_to_id (assigned_to_id);
-ALTER TABLE customers ADD CONSTRAINT fk_customers_assigned_to FOREIGN KEY (assigned_to_id) REFERENCES users(id);
+-- users.failed_login_attempts
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'users' AND COLUMN_NAME = 'failed_login_attempts'
+  ),
+  'SELECT 1',
+  'ALTER TABLE users ADD COLUMN failed_login_attempts int NOT NULL DEFAULT 0'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-ALTER TABLE leads ADD COLUMN classification varchar(20) DEFAULT 'unclassified';
-ALTER TABLE leads ADD COLUMN external_id varchar(255) NULL;
+-- users.locked_until
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'users' AND COLUMN_NAME = 'locked_until'
+  ),
+  'SELECT 1',
+  'ALTER TABLE users ADD COLUMN locked_until datetime(3) NULL'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-ALTER TABLE configurations ADD COLUMN is_sensitive tinyint(1) NOT NULL DEFAULT '0';
+-- customers.assigned_to_id
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'customers' AND COLUMN_NAME = 'assigned_to_id'
+  ),
+  'SELECT 1',
+  'ALTER TABLE customers ADD COLUMN assigned_to_id bigint unsigned NULL'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- customers.idx_customers_assigned_to_id
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'customers' AND (INDEX_NAME = 'idx_customers_assigned_to_id' OR COLUMN_NAME = 'assigned_to_id')
+  ),
+  'SELECT 1',
+  'ALTER TABLE customers ADD KEY idx_customers_assigned_to_id (assigned_to_id)'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- customers.fk_customers_assigned_to
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'customers' AND COLUMN_NAME = 'assigned_to_id' AND REFERENCED_TABLE_NAME = 'users'
+  ),
+  'SELECT 1',
+  'ALTER TABLE customers ADD CONSTRAINT fk_customers_assigned_to FOREIGN KEY (assigned_to_id) REFERENCES users(id)'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- leads.classification
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'classification'
+  ),
+  'SELECT 1',
+  'ALTER TABLE leads ADD COLUMN classification varchar(20) DEFAULT \'unclassified\''
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- leads.external_id
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'external_id'
+  ),
+  'SELECT 1',
+  'ALTER TABLE leads ADD COLUMN external_id varchar(255) NULL'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- configurations.is_sensitive
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'configurations' AND COLUMN_NAME = 'is_sensitive'
+  ),
+  'SELECT 1',
+  'ALTER TABLE configurations ADD COLUMN is_sensitive tinyint(1) NOT NULL DEFAULT \'0\''
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- 2. Labels and task_labels
-CREATE TABLE labels (
+CREATE TABLE IF NOT EXISTS labels (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -32,7 +126,7 @@ CREATE TABLE labels (
     KEY idx_labels_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE task_labels (
+CREATE TABLE IF NOT EXISTS task_labels (
     task_id bigint unsigned NOT NULL,
     label_id bigint unsigned NOT NULL,
     PRIMARY KEY (task_id, label_id),
@@ -42,7 +136,7 @@ CREATE TABLE task_labels (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. Password reset tokens
-CREATE TABLE password_reset_tokens (
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -59,7 +153,7 @@ CREATE TABLE password_reset_tokens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Bulk operations
-CREATE TABLE bulk_operations (
+CREATE TABLE IF NOT EXISTS bulk_operations (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -77,7 +171,7 @@ CREATE TABLE bulk_operations (
     CONSTRAINT fk_bulk_operations_user FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE bulk_operation_items (
+CREATE TABLE IF NOT EXISTS bulk_operation_items (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -94,7 +188,7 @@ CREATE TABLE bulk_operation_items (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. AEO module tables
-CREATE TABLE aeo_profiles (
+CREATE TABLE IF NOT EXISTS aeo_profiles (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -108,7 +202,7 @@ CREATE TABLE aeo_profiles (
     KEY idx_aeo_profiles_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE aeo_prompts (
+CREATE TABLE IF NOT EXISTS aeo_prompts (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -122,7 +216,7 @@ CREATE TABLE aeo_prompts (
     KEY idx_aeo_prompts_created_by_id (created_by_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE aeo_runs (
+CREATE TABLE IF NOT EXISTS aeo_runs (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -141,7 +235,7 @@ CREATE TABLE aeo_runs (
     KEY idx_aeo_runs_triggered_by_id (triggered_by_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE aeo_answers (
+CREATE TABLE IF NOT EXISTS aeo_answers (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -165,7 +259,7 @@ CREATE TABLE aeo_answers (
     KEY idx_aeo_answers_brand_mentioned (brand_mentioned)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE aeo_citations (
+CREATE TABLE IF NOT EXISTS aeo_citations (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -183,7 +277,7 @@ CREATE TABLE aeo_citations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 6. Forms module tables
-CREATE TABLE forms (
+CREATE TABLE IF NOT EXISTS forms (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -216,7 +310,7 @@ CREATE TABLE forms (
     KEY idx_forms_created_by_id (created_by_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE form_submissions (
+CREATE TABLE IF NOT EXISTS form_submissions (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
@@ -239,7 +333,7 @@ CREATE TABLE form_submissions (
     KEY idx_form_submissions_lead_id (lead_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE form_confirmation_tokens (
+CREATE TABLE IF NOT EXISTS form_confirmation_tokens (
     id bigint unsigned NOT NULL AUTO_INCREMENT,
     created_at datetime(3) NULL,
     updated_at datetime(3) NULL,
