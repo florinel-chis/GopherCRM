@@ -15,11 +15,12 @@ import re
 import time
 import uuid
 
-from .config import CommandError, Config, GateError
+from .config import CommandError, Config, EnvironmentError, GateError
 from .gates import (REVIEW_SCHEMA, agent_result, check_state, merge_gate, migration_coverage,
                     touches_database, validate_paths)
 from .process import Commands, redact
 from .state import Store
+from .readiness import check_disk, doctor, environment_failure, verification_environment
 
 
 PR_FIELDS = ('number,url,state,isDraft,headRefOid,baseRefOid,mergeable,reviewDecision,'
@@ -126,6 +127,12 @@ class Runner:
         if remote.removesuffix('.git') not in {f'https://github.com/{repo}', f'git@github.com:{repo}'}:
             raise GateError('origin does not match the trusted repository configuration')
 
+    async def doctor(self):
+        await self.check_remote()
+        report = await doctor(self.config, self.commands)
+        self.store.write('readiness', report)
+        return report
+
     async def prepare(self, issue):
         await self.check_remote()
         record = self.store.journal(issue['number'])
@@ -231,13 +238,14 @@ class Runner:
         self.save(record)
 
     async def validate(self, record):
+        check_disk(self.config)
         source = Path(record['worktree'])
         await self.clean(source)
         if await self.head(source) != record['head']:
             raise GateError('Commit changed before validation')
         await self.contains_base(record)
         paths = await self.validate_agent_paths(record)
-        commands = list(self.config.test_commands)
+        commands = [('make', 'verify')] + [c for c in self.config.test_commands if c != ('make', 'verify')]
         if touches_database(paths):
             if not self.config.database_test_commands or not os.environ.get('TEST_MYSQL_DSN'):
                 raise GateError('Database changes require database_test_commands and TEST_MYSQL_DSN')
@@ -249,16 +257,18 @@ class Runner:
         await self.command('git', 'worktree', 'add', '--detach', str(worktree), record['head'])
         record['validation_worktree'] = str(worktree)
         self.save(record)
-        # Isolated worktrees do not inherit ignored frontend dependencies.
-        if (worktree / 'gocrm-ui/package-lock.json').exists():
-            try:
-                await self.command('npm', 'ci', cwd=worktree / 'gocrm-ui',
-                                   timeout=self.config.test_timeout_seconds)
-            except CommandError as exc:
-                raise GateError('Frontend dependency installation failed; restore the environment and resume') from exc
         for command in commands:
-            output = await self.command(*command, cwd=worktree,
-                                        timeout=self.config.test_timeout_seconds)
+            try:
+                output = await self.command(*command, cwd=worktree,
+                    env=verification_environment() if command == ('make', 'verify') else None,
+                    timeout=self.config.test_timeout_seconds)
+            except CommandError as exc:
+                if environment_failure(exc):
+                    raise EnvironmentError('environment failure during validation; restore prerequisites '
+                                           'and resume without a code repair') from exc
+                raise
+            except OSError as exc:
+                raise EnvironmentError('environment failure launching validation') from exc
             if './cmd/migrate' in command:
                 migration_coverage(output)
         await self.clean(worktree)
@@ -483,6 +493,9 @@ class Runner:
             if active is not None and active != number:
                 raise GateError(f'Issue #{active} must finish before another ticket can start')
             try:
+                if record.get('legacy'):
+                    raise GateError('Unfinished legacy execution: use the matching runner and saved journal')
+                await self.doctor()
                 issue = await self.issue(number)
                 record = await self.prepare(issue)
                 if record is None or not self.store.admit(number):

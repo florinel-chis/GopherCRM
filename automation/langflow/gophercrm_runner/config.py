@@ -21,6 +21,10 @@ class CommandError(GateError):
     """A completed command failed; its diagnostics can inform a repair."""
 
 
+class EnvironmentError(GateError):
+    """An operator prerequisite failed; do not ask a coding agent to repair it."""
+
+
 @dataclass(frozen=True)
 class Config:
     repository: str
@@ -39,6 +43,9 @@ class Config:
     max_repair_rounds: int = 3
     # Omitted in older operator policies: preserve their authorized merge target.
     completion_target: str = 'merge'
+    min_free_disk_mb: int = 4096
+    disposable_database: bool = False
+    chromium_path: str = ''
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -66,6 +73,8 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if type(self.disposable_database) is not bool or not isinstance(self.chromium_path, str):
+            raise GateError('disposable_database must be boolean and chromium_path a string')
         if self.completion_target not in {'pr', 'merge'}:
             raise GateError('completion_target must be pr or merge')
         if not re.fullmatch(r'[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*', self.repository):
@@ -81,7 +90,7 @@ class Config:
         if not set(REQUIRED_CHECKS).issubset(self.required_checks):
             raise GateError('All six repository checks must remain required')
         for name in ('agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
-                     'ci_poll_seconds', 'max_repair_rounds'):
+                     'ci_poll_seconds', 'max_repair_rounds', 'min_free_disk_mb'):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise GateError(f'{name} must be a positive integer')
         if not (self.checkout / '.git').exists():

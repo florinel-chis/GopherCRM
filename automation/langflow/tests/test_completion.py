@@ -30,7 +30,7 @@ class CompletionTests(fixtures.EngineTests):
         original = self.commands.run
 
         async def stop_during_implementation(args, **kwargs):
-            if args[0] == 'claude':
+            if args[0] == 'claude' and '-p' in args:
                 self.runner.store.stop_after_current()
             return await original(args, **kwargs)
 
@@ -117,7 +117,7 @@ class CompletionTests(fixtures.EngineTests):
         original = self.commands.run
 
         async def drain(args, **kwargs):
-            if args[0] == 'claude':
+            if args[0] == 'claude' and '-p' in args:
                 self.runner.store.stop_after_current()
             return await original(args, **kwargs)
 

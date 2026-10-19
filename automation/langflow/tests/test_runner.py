@@ -95,6 +95,25 @@ class FakeCommands:
     async def run(self, args, *, cwd, **kwargs):
         args = tuple(args)
         self.calls.append(args)
+        versions = {('git', '--version'): 'git version 2.54.0',
+                    ('gh', '--version'): 'gh version 2.92.0',
+                    ('claude', '--version'): '2.1.303 (Claude Code)',
+                    ('go', 'version'): 'go version go1.26.3 darwin/arm64',
+                    ('node', '--version'): 'v26.12.0', ('npm', '--version'): '11.20.0',
+                    ('make', '--version'): 'GNU Make 3.81',
+                    ('mysql', '--version'): 'mysql Ver 8.0.46'}
+        if args in versions:
+            return 0, versions[args]
+        if args == ('claude', 'auth', 'status', '--json'):
+            return 0, '{"loggedIn": true}'
+        if args == ('gh', 'auth', 'status'):
+            return 0, 'Authenticated'
+        if args[:2] == ('gh', 'api'):
+            return 0, '{}'
+        if args == ('go', 'run', './automation/langflow/probes/mysql'):
+            return 0, '{"migration":"ok","e2e":"ok"}'
+        if args == ('go', 'test', './cmd/migrate', '-list', '^TestMigration'):
+            return 0, 'TestMigrationFresh_FullUpAndDown\nTestMigrationUpgrade_FromMainAutoMigratedSchema\n'
         if args[:4] == ('git', 'remote', 'get-url', 'origin'):
             return 0, 'https://github.com/example/repo.git'
         if args[:2] == ('git', 'fetch'):
@@ -171,7 +190,8 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         subprocess.run(['git', 'update-ref', 'refs/remotes/origin/main', 'HEAD'],
                        cwd=self.checkout, check=True, capture_output=True)
         self.config = Config(repository='example/repo', checkout=self.checkout,
-                             state_dir=self.root / 'state', issues=(95, 96), max_repair_rounds=2)
+                             state_dir=self.root / 'state', issues=(95, 96), max_repair_rounds=2,
+                             min_free_disk_mb=1)
         self.commands = FakeCommands(self.root)
         self.commands.base = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
                                                      cwd=self.checkout, text=True).strip()
@@ -315,7 +335,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def db_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 path = kwargs['cwd'] / 'migrations/change.sql'
                 path.parent.mkdir()
                 path.write_text('SELECT 1;\n')
@@ -331,7 +351,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def bad_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 (kwargs['cwd'] / 'Makefile').write_text('verify:\n\ttrue\n')
             return result
 
@@ -381,7 +401,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         async def ignored_agent(args, **kwargs):
             result = await original(args, **kwargs)
-            if args[0] == 'claude' and '--json-schema' not in args:
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
                 (kwargs['cwd'] / '.env').write_text('TEST_OVERRIDE=true\n')
             return result
 
@@ -400,6 +420,12 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_readonly_command_creates_a_private_state_parent(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            await Commands(root / 'state' / 'logs').run([sys.executable, '-c', 'print("ok")'], cwd=root)
+            self.assertEqual((root / 'state').stat().st_mode & 0o777, 0o700)
+
     async def test_stderr_warning_does_not_corrupt_structured_stdout(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

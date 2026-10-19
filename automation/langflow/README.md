@@ -58,7 +58,17 @@ First inspect `config.json`, authenticate `gh` and `claude`, install Playwright 
 - `TEST_MYSQL_DSN` pointing to a reachable disposable MySQL/MariaDB server, and successful fresh/upgrade migration tests; skipped migration tests fail the gate;
 - the E2E database environment described in [the E2E guide](../../gocrm-ui/e2e/README.md). `make e2e` resets its configured test database, so use the dedicated E2E database, never an application database.
 
+Set `disposable_database: true` only after provisioning that disposable server, and set `chromium_path` to the absolute installed Playwright Chromium executable. Supply explicit `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `E2E_DB_NAME` (`*_e2e`); the readiness probe does not load application `.env` files. `TEST_MYSQL_DSN` must target a TCP server without a database name so the migration suites can create isolated schemas.
+
+```sh
+gophercrm-runner doctor --config "$HOME/.local/share/gophercrm-runner/config.json"
+```
+
+Doctor checks tool versions, CLI authentication, private writable state, free disk (4 GiB by default), Chromium, required migration test names, and database connectivity using `SELECT 1`. It never resets a database, calls the coding model, or writes GitHub. Unavailable branch-protection metadata is reported as unknown. The same checks run before execution from either the CLI or Langflow; disk capacity is checked again before each fresh validation checkout. Environment failures stop for operator correction without consuming a code-repair round.
+
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
+
+`make verify` runs first and installs frontend dependencies itself. The runner does not run a second `npm ci`. Application `DB_*` settings are removed from that command's environment so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
 
 To process one issue through its configured completion target:
 

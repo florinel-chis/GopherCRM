@@ -17,6 +17,8 @@ def main():
     run.add_argument('--execute', action='store_true', help='Run to the configured PR-ready or merge target')
     status = sub.add_parser('status', help='Read the private execution journal')
     status.add_argument('--config', type=Path, required=True)
+    doctor = sub.add_parser('doctor', help='Read-only readiness checks; no coding model or remote mutations')
+    doctor.add_argument('--config', type=Path, required=True)
     for name, help_text in (
         ('stop-after-current', 'Finish the admitted ticket, then stop even a preloaded queue'),
         ('resume-queue', 'Explicitly allow admission of another configured ticket'),
@@ -42,10 +44,14 @@ def main():
             local.setup(args.checkout, args.directory)
         else:
             local.serve(args.directory, args.port)
-    elif args.command == 'revalidate':
+    elif args.command in {'revalidate', 'doctor'}:
         from .config import Config
         from .engine import Runner
-        asyncio.run(Runner(Config.load(args.config)).revalidate(args.issue))
+        runner = Runner(Config.load(args.config))
+        if args.command == 'doctor':
+            print(json.dumps(asyncio.run(runner.doctor()), indent=2))
+        else:
+            asyncio.run(runner.revalidate(args.issue))
     elif args.command in {'status', 'stop-after-current', 'resume-queue'}:
         from .config import Config
         from .state import Store
