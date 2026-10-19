@@ -25,6 +25,25 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_export_preserves_visual_editor_nodes_and_loop_feedback_handles(self):
+        payload = build_flow()
+        nodes = {node['id']: node for node in payload['data']['nodes']}
+        self.assertTrue(all(node['type'] == 'genericNode' for node in nodes.values()))
+        self.assertEqual(len(payload['data']['edges']), 4)
+        for edge in payload['data']['edges']:
+            source = json.loads(edge['sourceHandle'].replace('œ', '"'))
+            target = json.loads(edge['targetHandle'].replace('œ', '"'))
+            self.assertEqual(source, edge['data']['sourceHandle'])
+            self.assertEqual(target, edge['data']['targetHandle'])
+            output = next(o for o in nodes[edge['source']]['data']['node']['outputs'] if o['name'] == source['name'])
+            self.assertEqual(source['output_types'], [output['selected']])
+            if 'fieldName' in target:
+                field = nodes[edge['target']]['data']['node']['template'][target['fieldName']]
+                self.assertEqual(target['type'], field['type'])
+            else:
+                self.assertEqual((edge['target'], target['name']), ('Loop-main', 'item'))
+                self.assertIn('Message', target['output_types'])
+
     async def run_graph(self, mode='preview'):
         serialized = json.dumps(build_flow(str(self.policy), limit=2, mode=mode))
         graph = Graph.from_payload(json.loads(serialized))

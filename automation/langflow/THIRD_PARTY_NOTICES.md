@@ -1,7 +1,7 @@
 # Third-party notices
 
 The exported Langflow workflow embeds the native Loop component from Langflow/LFX 1.12.6.
-Source: https://github.com/langflow-ai/langflow/tree/1.12.6
+Source: https://github.com/langflow-ai/langflow/tree/v1.12.6
 
 ```text
 MIT License

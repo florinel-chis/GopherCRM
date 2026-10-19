@@ -9,7 +9,7 @@ class RemediateTicket(Component):
     display_name = 'Implement → test → review → merge'
     description = 'One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.'
     icon = 'GitPullRequest'
-    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data'], required=True)]
+    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data', 'JSON'], required=True)]
     outputs = [Output(name='result', display_name='Result', method='run_ticket')]
 
     async def run_ticket(self) -> Message:

@@ -30,8 +30,8 @@ def build_flow(config_path='', *, mode='preview', limit=1):
         'data': {
             'sourceHandle': {'id': 'RemediateTicket-main', 'name': 'result',
                              'dataType': 'RemediateTicket', 'output_types': ['Message']},
-            'targetHandle': {'id': 'Loop-main', 'fieldName': 'item',
-                             'inputTypes': ['Message'], 'type': 'other'},
+            'targetHandle': {'id': 'Loop-main', 'name': 'item',
+                             'dataType': 'LoopComponent', 'output_types': ['JSON', 'Message']},
         },
     })
     positions = {'RemediationQueue-main': (0, 100), 'Loop-main': (430, 100),
@@ -40,13 +40,28 @@ def build_flow(config_path='', *, mode='preview', limit=1):
     for node in payload['data']['nodes']:
         x, y = positions[node['id']]
         node['position'] = {'x': x, 'y': y}
+        node['type'] = 'genericNode'
+        for output in node['data']['node']['outputs']:
+            if 'JSON' in output['types']:
+                output['selected'] = 'JSON'
+            elif 'Table' in output['types']:
+                output['selected'] = 'Table'
+        node['data']['selected_output'] = node['data']['node']['outputs'][0]['name']
     payload['data']['edges'].sort(key=lambda edge: (
         edge['source'], edge['target'], edge['data']['sourceHandle']['name'],
-        edge['data']['targetHandle']['fieldName']))
+        edge['data']['targetHandle'].get('fieldName', edge['data']['targetHandle'].get('name'))))
+    nodes = {node['id']: node for node in payload['data']['nodes']}
     for index, edge in enumerate(payload['data']['edges']):
+        source = edge['data']['sourceHandle']
+        output = next(o for o in nodes[edge['source']]['data']['node']['outputs'] if o['name'] == source['name'])
+        source['output_types'] = [output['selected']]
+        target = edge['data']['targetHandle']
+        if 'fieldName' in target:
+            target['type'] = nodes[edge['target']]['data']['node']['template'][target['fieldName']]['type']
         edge['id'] = f'remediation-edge-{index}'
-        edge['sourceHandle'] = json.dumps(edge['data']['sourceHandle'], sort_keys=True)
-        edge['targetHandle'] = json.dumps(edge['data']['targetHandle'], sort_keys=True)
+        # The visual editor uses its escaped handle encoding in DOM identifiers.
+        edge['sourceHandle'] = json.dumps(source, sort_keys=True, separators=(',', ':')).replace('"', 'œ')
+        edge['targetHandle'] = json.dumps(target, sort_keys=True, separators=(',', ':')).replace('"', 'œ')
     return payload
 
 

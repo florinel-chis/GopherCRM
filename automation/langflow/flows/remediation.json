@@ -74,7 +74,7 @@
                   "Data",
                   "JSON"
                 ],
-                "selected": "Data",
+                "selected": "JSON",
                 "name": "item",
                 "display_name": "Item",
                 "method": "item_output",
@@ -92,7 +92,7 @@
                   "DataFrame",
                   "Table"
                 ],
-                "selected": "DataFrame",
+                "selected": "Table",
                 "name": "done",
                 "display_name": "Done",
                 "method": "done_output",
@@ -111,13 +111,15 @@
             "tool_mode": false
           },
           "type": "LoopComponent",
-          "id": "Loop-main"
+          "id": "Loop-main",
+          "selected_output": "item"
         },
         "id": "Loop-main",
         "position": {
           "x": 430,
           "y": 100
-        }
+        },
+        "type": "genericNode"
       },
       {
         "data": {
@@ -138,7 +140,8 @@
                 "advanced": false,
                 "api_editable": false,
                 "input_types": [
-                  "Data"
+                  "Data",
+                  "JSON"
                 ],
                 "dynamic": false,
                 "info": "",
@@ -154,7 +157,7 @@
                 "list": false,
                 "show": true,
                 "multiline": true,
-                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput\nfrom lfx.schema.data import Data\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass RemediateTicket(Component):\n    display_name = 'Implement \u2192 test \u2192 review \u2192 merge'\n    description = 'One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.'\n    icon = 'GitPullRequest'\n    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data'], required=True)]\n    outputs = [Output(name='result', display_name='Result', method='run_ticket')]\n\n    async def run_ticket(self) -> Message:\n        import json\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        item = self.ticket.data if isinstance(self.ticket, Data) else None\n        if not isinstance(item, dict) or item.get('mode') not in {'preview', 'execute'}:\n            raise GateError('Invalid queue item')\n        runner = Runner(Config.load(item['config_path']))\n        self.status = f'Issue #{item[\"issue\"]}: {item[\"mode\"]}'\n        result = await runner.run_issue(item['issue'], execute=item['mode'] == 'execute')\n        self.status = result['status']\n        return Message(text=json.dumps(result))\n",
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput\nfrom lfx.schema.data import Data\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass RemediateTicket(Component):\n    display_name = 'Implement \u2192 test \u2192 review \u2192 merge'\n    description = 'One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.'\n    icon = 'GitPullRequest'\n    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data', 'JSON'], required=True)]\n    outputs = [Output(name='result', display_name='Result', method='run_ticket')]\n\n    async def run_ticket(self) -> Message:\n        import json\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        item = self.ticket.data if isinstance(self.ticket, Data) else None\n        if not isinstance(item, dict) or item.get('mode') not in {'preview', 'execute'}:\n            raise GateError('Invalid queue item')\n        runner = Runner(Config.load(item['config_path']))\n        self.status = f'Issue #{item[\"issue\"]}: {item[\"mode\"]}'\n        result = await runner.run_issue(item['issue'], execute=item['mode'] == 'execute')\n        self.status = result['status']\n        return Message(text=json.dumps(result))\n",
                 "fileTypes": [],
                 "file_path": "",
                 "password": false,
@@ -204,13 +207,15 @@
             "tool_mode": false
           },
           "type": "RemediateTicket",
-          "id": "RemediateTicket-main"
+          "id": "RemediateTicket-main",
+          "selected_output": "result"
         },
         "id": "RemediateTicket-main",
         "position": {
           "x": 900,
           "y": 0
-        }
+        },
+        "type": "genericNode"
       },
       {
         "data": {
@@ -345,13 +350,15 @@
             "tool_mode": false
           },
           "type": "RemediationQueue",
-          "id": "RemediationQueue-main"
+          "id": "RemediationQueue-main",
+          "selected_output": "tickets"
         },
         "id": "RemediationQueue-main",
         "position": {
           "x": 0,
           "y": 100
-        }
+        },
+        "type": "genericNode"
       },
       {
         "data": {
@@ -439,13 +446,15 @@
             "tool_mode": false
           },
           "type": "RemediationSummary",
-          "id": "RemediationSummary-main"
+          "id": "RemediationSummary-main",
+          "selected_output": "summary"
         },
         "id": "RemediationSummary-main",
         "position": {
           "x": 900,
           "y": 400
-        }
+        },
+        "type": "genericNode"
       }
     ],
     "edges": [
@@ -458,7 +467,6 @@
             "id": "Loop-main",
             "name": "item",
             "output_types": [
-              "Data",
               "JSON"
             ]
           },
@@ -466,14 +474,15 @@
             "fieldName": "ticket",
             "id": "RemediateTicket-main",
             "inputTypes": [
-              "Data"
+              "Data",
+              "JSON"
             ],
-            "type": "FieldTypes.OTHER"
+            "type": "other"
           }
         },
         "id": "remediation-edge-0",
-        "sourceHandle": "{\"dataType\": \"LoopComponent\", \"id\": \"Loop-main\", \"name\": \"item\", \"output_types\": [\"Data\", \"JSON\"]}",
-        "targetHandle": "{\"fieldName\": \"ticket\", \"id\": \"RemediateTicket-main\", \"inputTypes\": [\"Data\"], \"type\": \"FieldTypes.OTHER\"}"
+        "sourceHandle": "{\u0153dataType\u0153:\u0153LoopComponent\u0153,\u0153id\u0153:\u0153Loop-main\u0153,\u0153name\u0153:\u0153item\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153ticket\u0153,\u0153id\u0153:\u0153RemediateTicket-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
       },
       {
         "source": "Loop-main",
@@ -484,7 +493,6 @@
             "id": "Loop-main",
             "name": "done",
             "output_types": [
-              "DataFrame",
               "Table"
             ]
           },
@@ -495,12 +503,12 @@
               "DataFrame",
               "Table"
             ],
-            "type": "FieldTypes.OTHER"
+            "type": "other"
           }
         },
         "id": "remediation-edge-1",
-        "sourceHandle": "{\"dataType\": \"LoopComponent\", \"id\": \"Loop-main\", \"name\": \"done\", \"output_types\": [\"DataFrame\", \"Table\"]}",
-        "targetHandle": "{\"fieldName\": \"results\", \"id\": \"RemediationSummary-main\", \"inputTypes\": [\"DataFrame\", \"Table\"], \"type\": \"FieldTypes.OTHER\"}"
+        "sourceHandle": "{\u0153dataType\u0153:\u0153LoopComponent\u0153,\u0153id\u0153:\u0153Loop-main\u0153,\u0153name\u0153:\u0153done\u0153,\u0153output_types\u0153:[\u0153Table\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153results\u0153,\u0153id\u0153:\u0153RemediationSummary-main\u0153,\u0153inputTypes\u0153:[\u0153DataFrame\u0153,\u0153Table\u0153],\u0153type\u0153:\u0153other\u0153}"
       },
       {
         "source": "RemediateTicket-main",
@@ -516,16 +524,17 @@
           },
           "targetHandle": {
             "id": "Loop-main",
-            "fieldName": "item",
-            "inputTypes": [
+            "name": "item",
+            "dataType": "LoopComponent",
+            "output_types": [
+              "JSON",
               "Message"
-            ],
-            "type": "other"
+            ]
           }
         },
         "id": "remediation-edge-2",
-        "sourceHandle": "{\"dataType\": \"RemediateTicket\", \"id\": \"RemediateTicket-main\", \"name\": \"result\", \"output_types\": [\"Message\"]}",
-        "targetHandle": "{\"fieldName\": \"item\", \"id\": \"Loop-main\", \"inputTypes\": [\"Message\"], \"type\": \"other\"}"
+        "sourceHandle": "{\u0153dataType\u0153:\u0153RemediateTicket\u0153,\u0153id\u0153:\u0153RemediateTicket-main\u0153,\u0153name\u0153:\u0153result\u0153,\u0153output_types\u0153:[\u0153Message\u0153]}",
+        "targetHandle": "{\u0153dataType\u0153:\u0153LoopComponent\u0153,\u0153id\u0153:\u0153Loop-main\u0153,\u0153name\u0153:\u0153item\u0153,\u0153output_types\u0153:[\u0153JSON\u0153,\u0153Message\u0153]}"
       },
       {
         "source": "RemediationQueue-main",
@@ -548,12 +557,12 @@
               "Data",
               "Message"
             ],
-            "type": "FieldTypes.OTHER"
+            "type": "other"
           }
         },
         "id": "remediation-edge-3",
-        "sourceHandle": "{\"dataType\": \"RemediationQueue\", \"id\": \"RemediationQueue-main\", \"name\": \"tickets\", \"output_types\": [\"Table\"]}",
-        "targetHandle": "{\"fieldName\": \"data\", \"id\": \"Loop-main\", \"inputTypes\": [\"DataFrame\", \"Table\", \"Data\", \"Message\"], \"type\": \"FieldTypes.OTHER\"}"
+        "sourceHandle": "{\u0153dataType\u0153:\u0153RemediationQueue\u0153,\u0153id\u0153:\u0153RemediationQueue-main\u0153,\u0153name\u0153:\u0153tickets\u0153,\u0153output_types\u0153:[\u0153Table\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153data\u0153,\u0153id\u0153:\u0153Loop-main\u0153,\u0153inputTypes\u0153:[\u0153DataFrame\u0153,\u0153Table\u0153,\u0153Data\u0153,\u0153Message\u0153],\u0153type\u0153:\u0153other\u0153}"
       }
     ]
   },
