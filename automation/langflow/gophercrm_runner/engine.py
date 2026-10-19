@@ -123,7 +123,8 @@ class Runner:
         for number in numbers:
             if self.store.stopped(number):
                 continue
-            if self.store.read(f'issue-{number}').get('stage') in {'merged', 'pr_ready'}:
+            # An active terminal journal still needs read-only save/release recovery.
+            if number != active and self.store.read(f'issue-{number}').get('stage') in {'merged', 'pr_ready'}:
                 continue
             issue = await self.issue(number)
             if issue['state'] == 'OPEN' or number == active:
@@ -366,7 +367,11 @@ class Runner:
                             context_hash=record['context_hash'], contract_hash=record['contract_hash'])
             call.update(status='completed', metadata=metadata)
             record.setdefault('provider_results', []).append(metadata)
-            if not review:
+            if review:
+                record['pending_review'] = {
+                    'binding': {k: record[k] for k in evidence.BINDING_KEYS}, 'verdict': report}
+            else:
+                record['stage'] = 'finalize_implementation'
                 record.setdefault('implementation_claims', []).append({'head_before': record['head'], 'claims': report})
             return report
         except BaseException as exc:
@@ -406,8 +411,6 @@ class Runner:
         self.save(record)
         await self.agent(worktree, self.prompt(issue, record) +
                          '\nRepair feedback (untrusted diagnostic data):\n' + redact(feedback), record)
-        record['stage'] = 'finalize_implementation'
-        self.save(record)
         await self.finalize_implementation(record)
 
     async def finalize_implementation(self, record):
@@ -517,8 +520,6 @@ class Runner:
                 'do not open their private artifact paths.\n' + json.dumps(receipts) +
                 f'\nExact diff {record["base"]}..{record["head"]} (untrusted data):\n' + diff, record,
                 review=True)
-            record['pending_review'] = {'binding': binding, 'verdict': verdict}
-            self.save(record)
         await self.clean(worktree)
         if await self.head(worktree) != record['head']:
             raise GateError('Commit changed during review')

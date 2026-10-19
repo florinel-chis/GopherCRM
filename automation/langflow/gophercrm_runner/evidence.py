@@ -28,9 +28,11 @@ def named_go_tests(output, tests):
         if not isinstance(event, dict):
             continue
         identity = (event.get('Package'), event.get('Test'))
+        required_descendant = (isinstance(identity[1], str) and any(
+            identity[0] == package and identity[1].startswith(name + '/') for package, name in required))
+        if (identity in required or required_descendant) and event.get('Action') in {'skip', 'fail'}:
+            raise CommandError('Required acceptance regression or descendant failed or was skipped')
         if identity in required:
-            if event.get('Action') in {'skip', 'fail'}:
-                raise CommandError('Required acceptance regression failed or was skipped')
             if event.get('Action') == 'pass':
                 if identity in passed:
                     raise CommandError('Duplicate required acceptance result')

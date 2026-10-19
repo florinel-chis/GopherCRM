@@ -37,7 +37,7 @@ and preserves all six application CI gates. The full comparison study remains de
 3. Implemented completion/recovery, readiness/environment isolation, contracts/evidence, then
    limits/reporting and verification parity in separate focused commits. Used real temporary Git
    worktrees with deterministic provider/GitHub boundaries and the real serialized LFX graph.
-4. The maintainer PR records final checks and whole-branch review. After delivery, install the
+4. Independent whole-branch review identified four material gaps: non-atomic completed model results, active terminal journals skipped by queue recovery, skipped subtests hidden by parent passes, and missing browser JWT readiness. Added reproductions before fixes, including the real serialized graph and a real Go/Testify suite. The maintainer PR records final checks and fix results. After delivery, install the
    reviewed version and use a new private state directory for one #96 canary, eight CLI calls,
    four elapsed hours, three repairs, and a PR-ready target. Any extension must be explicit.
 5. Record actual canary results in [tracker #94](https://github.com/florinel-chis/GopherCRM/issues/94).

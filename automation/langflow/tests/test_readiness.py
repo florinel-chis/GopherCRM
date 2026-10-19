@@ -55,7 +55,7 @@ class ReadinessTests(fixtures.EngineTests):
 
     async def test_database_checks_require_explicit_disposable_ack_browser_and_probe(self):
         config = replace(self.config, database_test_commands=DATABASE_CHECKS)
-        with patch.dict(os.environ, {'TEST_MYSQL_DSN': 'private-dsn'}):
+        with patch.dict(os.environ, {'TEST_MYSQL_DSN': 'private-dsn', 'JWT_SECRET': 'fixture-jwt-secret-with-at-least-32-bytes'}):
             with self.assertRaisesRegex(GateError, 'disposable'):
                 await Runner(config, self.commands).doctor()
             config = replace(config, disposable_database=True)
@@ -133,7 +133,7 @@ class ReadinessTests(fixtures.EngineTests):
             return await original(args, **kwargs)
 
         self.commands.run = missing_test
-        with patch.dict(os.environ, {'TEST_MYSQL_DSN': 'private-dsn'}):
+        with patch.dict(os.environ, {'TEST_MYSQL_DSN': 'private-dsn', 'JWT_SECRET': 'fixture-jwt-secret-with-at-least-32-bytes'}):
             with self.assertRaisesRegex(GateError, 'migration.*test'):
                 await Runner(config, self.commands).doctor()
 

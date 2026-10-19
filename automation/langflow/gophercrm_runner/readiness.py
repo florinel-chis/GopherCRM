@@ -28,7 +28,8 @@ def environment_failure(error):
     return bool(re.search(
         r'ENOSPC|no space left on device|EAI_AGAIN|ENETUNREACH|ECONNREFUSED|'
         r'ERR_MODULE_NOT_FOUND|Executable doesn.t exist|could not resolve host|'
-        r'connection refused|connect: connection timed out|Error 104[45].*Access denied', str(error), re.I))
+        r'connection refused|connect: connection timed out|Error 104[45].*Access denied|'
+        r'JWT_SECRET (?:is not set|environment variable must be set|must be at least|cannot be the default)', str(error), re.I))
 
 
 def check_disk(config):
@@ -95,6 +96,10 @@ async def doctor(config, commands):
         browser = Path(config.chromium_path)
         if not config.chromium_path or not browser.is_absolute() or not browser.is_file() or not os.access(browser, os.X_OK):
             raise EnvironmentError('environment readiness: configure an installed Playwright Chromium executable')
+        # Fresh validation checkouts contain no ignored application .env file.
+        # Match the backend's byte-length requirement; never print the value.
+        if len(os.environ.get('JWT_SECRET', '').encode()) < 32:
+            raise EnvironmentError('environment readiness: JWT_SECRET must be supplied with at least 32 bytes for browser tests')
         report['chromium'] = 'installed'
     if config.database_test_commands:
         report['versions']['mysql'] = (await probe(('mysql', '--version'), 'MySQL client')).splitlines()[0][:200]
