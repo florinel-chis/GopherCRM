@@ -19,6 +19,11 @@ def main():
     status.add_argument('--config', type=Path, required=True)
     doctor = sub.add_parser('doctor', help='Read-only readiness checks; no coding model or remote mutations')
     doctor.add_argument('--config', type=Path, required=True)
+    freeze = sub.add_parser('freeze', help='Freeze an operator-authored task manifest and explicit guidance')
+    freeze.add_argument('--config', type=Path, required=True)
+    freeze.add_argument('--issue', type=int, required=True)
+    freeze.add_argument('--manifest', type=Path, required=True)
+    freeze.add_argument('--refresh', action='store_true', help='Explicitly refresh inputs and invalidate prior evidence')
     for name, help_text in (
         ('stop-after-current', 'Finish the admitted ticket, then stop even a preloaded queue'),
         ('resume-queue', 'Explicitly allow admission of another configured ticket'),
@@ -44,12 +49,14 @@ def main():
             local.setup(args.checkout, args.directory)
         else:
             local.serve(args.directory, args.port)
-    elif args.command in {'revalidate', 'doctor'}:
+    elif args.command in {'revalidate', 'doctor', 'freeze'}:
         from .config import Config
         from .engine import Runner
         runner = Runner(Config.load(args.config))
         if args.command == 'doctor':
             print(json.dumps(asyncio.run(runner.doctor()), indent=2))
+        elif args.command == 'freeze':
+            print(json.dumps(asyncio.run(runner.freeze(args.issue, args.manifest, refresh=args.refresh)), indent=2))
         else:
             asyncio.run(runner.revalidate(args.issue))
     elif args.command in {'status', 'stop-after-current', 'resume-queue'}:

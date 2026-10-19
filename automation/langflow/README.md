@@ -51,6 +51,32 @@ The server binds to loopback, disables signup, and restricts custom component au
 
 ## Execute the queue
 
+Every new execution requires a frozen task contract. The operator owns its objective, boundaries, scope, dependencies and acceptance criteria; issue prose and model output cannot supply commands. Start with [task.example.json](task.example.json), expand it to cover the actual issue, and register its check IDs in the private policy. For example:
+
+```json
+{
+  "acceptance_checks": {
+    "dashboard-activity": {
+      "argv": ["go", "test", "-json", "-count=1", "./internal/integration", "-run", "^TestDashboardActivityVisibility(SQLite|MySQL)$"],
+      "tests": [
+        {"package": "github.com/florinel-chis/gophercrm/internal/integration", "name": "TestDashboardActivityVisibilitySQLite"},
+        {"package": "github.com/florinel-chis/gophercrm/internal/integration", "name": "TestDashboardActivityVisibilityMySQL"}
+      ]
+    }
+  }
+}
+```
+
+These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. Database profiles additionally require the complete SQLite/MySQL browser and migration matrix. The backend MVP rejects manual/UI profiles and frontend edits explicitly.
+
+```sh
+gophercrm-runner freeze --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 96 --manifest /absolute/path/to/task.json
+```
+
+Freeze records the current issue, base commit, selected check definitions, and bounded explicit guidance under `state_dir/tasks/<issue>/contract.json`. Include `AGENTS.md` in the trusted checkout: it may be operator-local and ignored by Git, in which case it is labelled and hashed as such. Other selected Markdown guidance must match the chosen Git base. The runner supplies this snapshot explicitly because Claude safe mode disables automatic guidance discovery. Context above 128 KiB is refused rather than truncated.
+
+Dependencies need a pinned merged PR associated with the prerequisite issue, whose merge commit is present in the selected base. A closed issue or PR-ready result is insufficient; cyclic local contracts are rejected. The example pins the completed #95 dependency. The task manifest cannot change protected runner/validation paths, agent permissions, repository identity or completion policy.
+
 First inspect `config.json`, authenticate `gh` and `claude`, install Playwright Chromium in the repository, and configure disposable test databases. For backend persistence changes, the runner requires:
 
 - `make verify`, always;
@@ -89,6 +115,8 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 State, private logs, and worktrees live under the configured `state_dir`. A process lock prevents simultaneous execution, and an active-issue journal prevents moving on from an unfinished ticket. A repeated run reconciles an already merged PR before doing more work. Published branches/PRs are reused. Worktrees and logs are retained for inspection; the runner does not reset or remove them.
 
+Each validation attempt records private output and digest-checked receipts under `artifacts/<execution>/<head>/<attempt>/`, binding policy, contract, guidance, base, head, command and result. Independent review must cover every criterion exactly once and cite its matching receipt. Its own verdict also receives a bound receipt, rechecked before publication/completion. Structured implementation reports remain claims, never acceptance. A no-change response stops for explicit operator disposition rather than creating an empty commit or rerunning the model on resume.
+
 Stop after the admitted ticket, including when Langflow has already loaded more tickets:
 
 ```sh
@@ -105,8 +133,11 @@ If main advances while a PR is waiting, the runner stops. Merge current main int
 
 ```sh
 gophercrm-runner revalidate --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 95
+gophercrm-runner freeze --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 95 --manifest /absolute/path/to/task.json --refresh
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
 ```
+
+Issue, guidance, check-registry or contract changes stop execution. Inspect them, update the operator manifest when needed, then use `freeze --refresh`. Refresh preserves old contract snapshots/history and spent work, invalidates prior tests/review/receipts, and requires fresh validation. It cannot silently adopt a changed executable policy or promote a completed PR-ready execution. If main changed, revalidate the candidate first and update the trusted checkout's guidance to that base before refreshing.
 
 Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and timeout changes are permitted during an active ticket; validation policy changes are not. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
 

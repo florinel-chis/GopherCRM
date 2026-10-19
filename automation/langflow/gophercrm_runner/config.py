@@ -1,6 +1,6 @@
 """Trusted, local execution policy. Issue text never supplies commands or paths."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
@@ -10,6 +10,10 @@ REQUIRED_CHECKS = (
     'Repository hygiene', 'Backend (build, vet, test)', 'Frontend (build, lint, test)',
     'E2E (Playwright on MySQL 8)', 'E2E (Playwright on MariaDB 10.11)',
     'E2E (Playwright on SQLite)',
+)
+DATABASE_CHECKS = (
+    ('make', 'e2e', 'E2E_DB_DRIVER=sqlite'), ('make', 'e2e', 'E2E_DB_DRIVER=mysql'),
+    ('go', 'test', '-json', '-count=1', './cmd/migrate'),
 )
 
 
@@ -46,6 +50,8 @@ class Config:
     min_free_disk_mb: int = 4096
     disposable_database: bool = False
     chromium_path: str = ''
+    acceptance_checks: dict = field(default_factory=dict)
+    agent_model: str = ''
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -73,6 +79,29 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if self.database_test_commands and not set(DATABASE_CHECKS).issubset(self.database_test_commands):
+            raise GateError('The database validation matrix requires SQLite, MySQL and uncached JSON migration checks')
+        if not isinstance(self.agent_model, str) or '\x00' in self.agent_model:
+            raise GateError('agent_model must be a string')
+        if not isinstance(self.acceptance_checks, dict):
+            raise GateError('acceptance_checks must be a trusted check registry')
+        for check_id, check in self.acceptance_checks.items():
+            if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', check_id):
+                raise GateError('Invalid acceptance check ID')
+            if not isinstance(check, dict) or set(check) != {'argv', 'tests'}:
+                raise GateError('Acceptance checks require argv and named tests')
+            argv, tests = check['argv'], check['tests']
+            if (not isinstance(argv, list) or any(not isinstance(a, str) or not a or '\x00' in a for a in argv)
+                    or argv[:2] != ['go', 'test'] or '-json' not in argv or '-count=1' not in argv):
+                raise GateError('MVP acceptance checks require uncached go test -json argument arrays')
+            if (not isinstance(tests, list) or not tests or any(
+                    not isinstance(t, dict) or set(t) != {'package', 'name'}
+                    or not isinstance(t['package'], str) or not t['package']
+                    or not isinstance(t['name'], str) or not re.fullmatch(r'Test[A-Za-z0-9_]+', t['name'])
+                    for t in tests)):
+                raise GateError('Acceptance checks require exact package/test identities')
+            if len({(t['package'], t['name']) for t in tests}) != len(tests):
+                raise GateError('Duplicate acceptance test identity')
         if type(self.disposable_database) is not bool or not isinstance(self.chromium_path, str):
             raise GateError('disposable_database must be boolean and chromium_path a string')
         if self.completion_target not in {'pr', 'merge'}:

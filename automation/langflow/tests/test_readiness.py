@@ -4,11 +4,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import test_runner as fixtures
-from gophercrm_runner.config import CommandError, GateError
+from gophercrm_runner.config import CommandError, DATABASE_CHECKS, GateError
 from gophercrm_runner.engine import Runner
 
 
 class ReadinessTests(fixtures.EngineTests):
+    async def test_partial_database_matrix_is_not_a_supported_profile(self):
+        config = replace(self.config, database_test_commands=(('go', 'test', './internal/repository'),))
+        with self.assertRaisesRegex(GateError, 'database.*matrix'):
+            config.validate()
+
     async def test_doctor_only_uses_readonly_probes_and_reports_unknown_protection(self):
         original = self.commands.run
 
@@ -48,7 +53,7 @@ class ReadinessTests(fixtures.EngineTests):
         self.assertFalse((self.config.state_dir / 'worktrees').exists())
 
     async def test_database_checks_require_explicit_disposable_ack_browser_and_probe(self):
-        config = replace(self.config, database_test_commands=(('make', 'e2e', 'E2E_DB_DRIVER=mysql'),))
+        config = replace(self.config, database_test_commands=DATABASE_CHECKS)
         with patch.dict(os.environ, {'TEST_MYSQL_DSN': 'private-dsn'}):
             with self.assertRaisesRegex(GateError, 'disposable'):
                 await Runner(config, self.commands).doctor()
@@ -107,7 +112,7 @@ class ReadinessTests(fixtures.EngineTests):
         browser = self.root / 'chromium'
         browser.write_text('fixture'); browser.chmod(0o700)
         config = replace(self.config, disposable_database=True, chromium_path=str(browser),
-                         database_test_commands=(('go', 'test', '-json', './cmd/migrate'),))
+                         database_test_commands=DATABASE_CHECKS)
         original = self.commands.run
 
         async def missing_test(args, **kwargs):
