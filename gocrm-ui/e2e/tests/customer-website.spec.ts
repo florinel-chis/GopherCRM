@@ -8,12 +8,17 @@ test.beforeEach(async ({ page }) => {
   await new AdminAuthHelper(page).ensureAdminLoggedIn();
 });
 
-test('customer website survives create, edit and clear after reload', async ({ page }) => {
+test('customer website survives creation and reload', async ({ page }) => {
   const customers = new CustomersPage(page);
   const data = { ...generateCustomerData(), website: 'https://example.com/original' };
-  await customers.goto();
-  await customers.clickNewCustomer();
-  await customers.fillCustomerForm(data);
+  await page.goto('/customers/new');
+  await customers.fillCustomerForm({
+    companyName: data.companyName,
+    contactName: data.contactName,
+    email: data.email,
+    phone: data.phone,
+    website: data.website,
+  });
   const created = await customers.saveAndWaitForResponse();
   expect(created.status()).toBe(201);
   const { data: customer } = await created.json();
@@ -24,9 +29,34 @@ test('customer website survives create, edit and clear after reload', async ({ p
     'href',
     data.website,
   );
-  for (const website of ['http://example.com/updated', '']) {
+  await page.goto(`/customers/${customer.id}/edit`);
+  await expect(customers.websiteInput).toHaveValue(data.website);
+});
+
+for (const { action, website } of [
+  { action: 'editing', website: 'http://example.com/updated' },
+  { action: 'clearing', website: '' },
+]) {
+  test(`customer website survives ${action} and reload`, async ({ page }) => {
+    const customers = new CustomersPage(page);
+    const data = generateCustomerData();
+    const originalWebsite = 'https://example.com/original';
+    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    const created = await page.request.post(`${API_BASE_URL}/customers`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        first_name: 'Website',
+        last_name: 'Persistence',
+        email: data.email,
+        company: data.companyName,
+        phone: data.phone,
+        website: originalWebsite,
+      },
+    });
+    expect(created.status()).toBe(201);
+    const { data: customer } = await created.json();
     await page.goto(`/customers/${customer.id}/edit`);
-    await expect(customers.websiteInput).toHaveValue(data.website);
+    await expect(customers.websiteInput).toHaveValue(originalWebsite);
     await customers.websiteInput.fill(website);
     const saved = page.waitForResponse(
       (response) =>
@@ -38,13 +68,21 @@ test('customer website survives create, edit and clear after reload', async ({ p
     await page.waitForURL('**/customers');
     await page.goto(`/customers/${customer.id}/edit`);
     await expect(customers.websiteInput).toHaveValue(website);
-    data.website = website;
-  }
-  await page.goto(`/customers/${customer.id}`);
-  await expect(
-    page.getByRole('link', { name: 'http://example.com/updated', exact: true }),
-  ).toHaveCount(0);
-});
+    await page.goto(`/customers/${customer.id}`);
+    if (website) {
+      await expect(page.getByRole('link', { name: website, exact: true })).toHaveAttribute(
+        'href',
+        website,
+      );
+    } else {
+      // Wait for this customer's details before checking that the old link is gone.
+      await expect(
+        page.getByRole('heading', { name: data.companyName, exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole('link', { name: originalWebsite, exact: true })).toHaveCount(0);
+    }
+  });
+}
 
 test('lead conversion saves its website and opens the created customer', async ({ page }) => {
   const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
