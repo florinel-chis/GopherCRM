@@ -84,6 +84,13 @@ class Runner:
         if await self.command('git', 'status', '--porcelain', '--untracked-files=all', cwd=worktree):
             raise GateError('Worktree changed outside the implementation stage')
 
+    async def contains_base(self, record):
+        code, _ = await self.commands.run(
+            ('git', 'merge-base', '--is-ancestor', record['base'], record['head']),
+            cwd=Path(record['worktree']), check=False)
+        if code != 0:
+            raise GateError('Candidate commit does not contain the recorded main base; revalidate it')
+
     async def changed_paths(self, worktree, base):
         tracked = await self.command('git', 'diff', '--name-only', '-z', base, cwd=worktree)
         untracked = await self.command('git', 'ls-files', '--others', '--exclude-standard', '-z',
@@ -215,6 +222,7 @@ class Runner:
         await self.clean(source)
         if await self.head(source) != record['head']:
             raise GateError('Commit changed before validation')
+        await self.contains_base(record)
         paths = await self.validate_agent_paths(record)
         commands = list(self.config.test_commands)
         if touches_database(paths):
@@ -274,6 +282,7 @@ class Runner:
     async def publish(self, issue, record):
         worktree = Path(record['worktree'])
         await self.clean(worktree)
+        await self.contains_base(record)
         if await self.head(worktree) != record['head'] or any(
                 record.get(k) != record['head'] for k in ('tested_head', 'reviewed_head')):
             raise GateError('Publish requires the current tested and reviewed commit')
@@ -352,7 +361,7 @@ class Runner:
                 raise GateError('Only the active issue can be revalidated')
             record = self.store.read(f'issue-{number}')
             if (not record or record.get('policy') != self.policy
-                    or record['stage'] not in {'validate', 'review', 'publish', 'ci', 'merging'}):
+                    or record['stage'] not in {'validate', 'review', 'publish', 'ci', 'merging', 'revalidating'}):
                 raise GateError('No matching unfinished journal to revalidate')
             worktree = Path(record['worktree'])
             await self.clean(worktree)
@@ -364,17 +373,30 @@ class Runner:
             await self.command('git', 'fetch', 'origin', 'main')
             base = await self.command('git', 'rev-parse', 'origin/main')
             # Merging preserves published commits; no force push or destructive reset.
-            record.update(tested_head=None, reviewed_head=None, base=base, stage='validate')
+            record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
             self.save(record)
+            await self.complete_revalidation(record)
+
+    async def complete_revalidation(self, record):
+        worktree = Path(record['worktree'])
+        current = await self.head(worktree)
+        target = record['pending_base']
+        if current != record['head']:
+            parents = (await self.command('git', 'show', '-s', '--format=%P', 'HEAD', cwd=worktree)).split()
+            if parents != [record['head'], target] and current != target:
+                raise GateError('Unexpected commit during interrupted main merge')
+            await self.clean(worktree)
+        else:
             try:
-                await self.command('git', 'merge', '--no-edit', 'origin/main', cwd=worktree)
+                await self.command('git', 'merge', '--no-edit', target, cwd=worktree)
             except CommandError:
-                record.update(stage='implement', feedback='Resolve the merge conflicts with current main. '
+                record.update(base=target, stage='implement', feedback='Resolve the merge conflicts with current main. '
                               'Preserve the issue fix and add any needed regression coverage.')
                 self.save(record)
                 raise GateError('Main has merge conflicts; resume execution to repair and retest them')
-            record['head'] = await self.head(worktree)
-            self.save(record)
+        record.update(head=await self.head(worktree), base=target, stage='validate')
+        await self.contains_base(record)
+        self.save(record)
 
     async def finish(self, record, pr):
         if pr.get('state') != 'MERGED' or not (pr.get('mergeCommit') or {}).get('oid'):
@@ -413,6 +435,8 @@ class Runner:
                     await self.implement(issue, record, record.get('feedback', '') + '\n' + record.get('last_error', ''))
                 if record['stage'] == 'committing':
                     await self.commit(record)
+                if record['stage'] == 'revalidating':
+                    await self.complete_revalidation(record)
                 while True:
                     if record['stage'] in {'validate', 'review'}:
                         try:
@@ -435,6 +459,7 @@ class Runner:
                 if await self.head(Path(record['worktree'])) != record['head']:
                     raise GateError('Local commit changed before merge')
                 pr = await self.pr(record['pr'])
+                await self.contains_base(record)
                 merge_gate(record, pr, self.config.required_checks)
                 live_main = await self.command('git', 'ls-remote', 'origin', 'refs/heads/main')
                 if not live_main or live_main.split()[0] != record['base']:

@@ -6,147 +6,6 @@
           "node": {
             "template": {
               "_type": "Component",
-              "code": {
-                "type": "code",
-                "required": true,
-                "placeholder": "",
-                "list": false,
-                "show": true,
-                "multiline": true,
-                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import DropdownInput, IntInput, StrInput\nfrom lfx.schema.dataframe import DataFrame\nfrom lfx.template.field.base import Output\n\n\nclass RemediationQueue(Component):\n    display_name = 'GitHub remediation queue'\n    description = 'Load explicitly configured issues. Preview is the default; execute changes GitHub.'\n    icon = 'ListOrdered'\n    inputs = [\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n        DropdownInput(name='mode', display_name='Mode', options=['preview', 'execute'], value='preview'),\n        IntInput(name='limit', display_name='Maximum tickets', value=1),\n    ]\n    outputs = [Output(name='tickets', display_name='Tickets', method='load_queue')]\n\n    async def load_queue(self) -> DataFrame:\n        import os\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        path = self.policy_path or os.environ.get('GOPHERCRM_RUNNER_CONFIG', '')\n        if not path or self.mode not in {'preview', 'execute'}:\n            raise GateError(f'Set a local configuration path and a valid mode (path set: {bool(path)}, mode: {self.mode!r})')\n        runner = Runner(Config.load(path))\n        tickets = await runner.queue(self.limit)\n        self.status = f'{len(tickets)} ticket(s), {self.mode}'\n        return DataFrame([dict(ticket, config_path=path, mode=self.mode) for ticket in tickets])\n",
-                "fileTypes": [],
-                "file_path": "",
-                "password": false,
-                "name": "code",
-                "advanced": true,
-                "api_editable": false,
-                "dynamic": true,
-                "info": "",
-                "load_from_db": false,
-                "title_case": false
-              },
-              "limit": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "override_skip": false,
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "limit",
-                "value": 1,
-                "display_name": "Maximum tickets",
-                "advanced": false,
-                "api_editable": false,
-                "dynamic": false,
-                "info": "",
-                "title_case": false,
-                "track_in_telemetry": true,
-                "type": "int",
-                "_input_type": "IntInput"
-              },
-              "mode": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "options": [
-                  "preview",
-                  "execute"
-                ],
-                "options_metadata": [],
-                "combobox": false,
-                "dialog_inputs": {},
-                "toggle": false,
-                "override_skip": false,
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "mode",
-                "value": "preview",
-                "display_name": "Mode",
-                "advanced": false,
-                "api_editable": false,
-                "dynamic": false,
-                "info": "",
-                "title_case": false,
-                "track_in_telemetry": true,
-                "external_options": {},
-                "type": "str",
-                "_input_type": "DropdownInput"
-              },
-              "policy_path": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "load_from_db": false,
-                "list": false,
-                "list_add_label": "Add More",
-                "override_skip": false,
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "policy_path",
-                "value": "",
-                "display_name": "Local configuration path",
-                "advanced": false,
-                "api_editable": false,
-                "dynamic": false,
-                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
-                "title_case": false,
-                "track_in_telemetry": false,
-                "type": "str",
-                "_input_type": "StrInput"
-              }
-            },
-            "description": "Load explicitly configured issues. Preview is the default; execute changes GitHub.",
-            "icon": "ListOrdered",
-            "base_classes": [
-              "Table"
-            ],
-            "display_name": "GitHub remediation queue",
-            "documentation": "",
-            "minimized": false,
-            "custom_fields": {},
-            "output_types": [],
-            "pinned": false,
-            "conditional_paths": [],
-            "frozen": false,
-            "outputs": [
-              {
-                "types": [
-                  "Table"
-                ],
-                "selected": "Table",
-                "name": "tickets",
-                "display_name": "Tickets",
-                "method": "load_queue",
-                "value": "__UNDEFINED__",
-                "cache": true,
-                "allows_loop": false,
-                "group_outputs": false,
-                "tool_mode": true
-              }
-            ],
-            "field_order": [],
-            "beta": false,
-            "legacy": false,
-            "edited": false,
-            "metadata": {},
-            "tool_mode": false
-          },
-          "type": "RemediationQueue",
-          "id": "RemediationQueue-main"
-        },
-        "id": "RemediationQueue-main",
-        "position": {
-          "x": 0,
-          "y": 100
-        }
-      },
-      {
-        "data": {
-          "node": {
-            "template": {
-              "_type": "Component",
               "data": {
                 "trace_as_metadata": true,
                 "list": false,
@@ -358,6 +217,147 @@
           "node": {
             "template": {
               "_type": "Component",
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import DropdownInput, IntInput, StrInput\nfrom lfx.schema.dataframe import DataFrame\nfrom lfx.template.field.base import Output\n\n\nclass RemediationQueue(Component):\n    display_name = 'GitHub remediation queue'\n    description = 'Load explicitly configured issues. Preview is the default; execute changes GitHub.'\n    icon = 'ListOrdered'\n    inputs = [\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n        DropdownInput(name='mode', display_name='Mode', options=['preview', 'execute'], value='preview'),\n        IntInput(name='limit', display_name='Maximum tickets', value=1),\n    ]\n    outputs = [Output(name='tickets', display_name='Tickets', method='load_queue')]\n\n    async def load_queue(self) -> DataFrame:\n        import os\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        path = self.policy_path or os.environ.get('GOPHERCRM_RUNNER_CONFIG', '')\n        if not path or self.mode not in {'preview', 'execute'}:\n            raise GateError(f'Set a local configuration path and a valid mode (path set: {bool(path)}, mode: {self.mode!r})')\n        runner = Runner(Config.load(path))\n        tickets = await runner.queue(self.limit)\n        self.status = f'{len(tickets)} ticket(s), {self.mode}'\n        return DataFrame([dict(ticket, config_path=path, mode=self.mode) for ticket in tickets])\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "limit": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "limit",
+                "value": 1,
+                "display_name": "Maximum tickets",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "type": "int",
+                "_input_type": "IntInput"
+              },
+              "mode": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": [
+                  "preview",
+                  "execute"
+                ],
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "toggle": false,
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "mode",
+                "value": "preview",
+                "display_name": "Mode",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "external_options": {},
+                "type": "str",
+                "_input_type": "DropdownInput"
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "Load explicitly configured issues. Preview is the default; execute changes GitHub.",
+            "icon": "ListOrdered",
+            "base_classes": [
+              "Table"
+            ],
+            "display_name": "GitHub remediation queue",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Table"
+                ],
+                "selected": "Table",
+                "name": "tickets",
+                "display_name": "Tickets",
+                "method": "load_queue",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "RemediationQueue",
+          "id": "RemediationQueue-main"
+        },
+        "id": "RemediationQueue-main",
+        "position": {
+          "x": 0,
+          "y": 100
+        }
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
               "results": {
                 "trace_as_metadata": true,
                 "list": false,
@@ -450,34 +450,6 @@
     ],
     "edges": [
       {
-        "source": "RemediationQueue-main",
-        "target": "Loop-main",
-        "data": {
-          "sourceHandle": {
-            "dataType": "RemediationQueue",
-            "id": "RemediationQueue-main",
-            "name": "tickets",
-            "output_types": [
-              "Table"
-            ]
-          },
-          "targetHandle": {
-            "fieldName": "data",
-            "id": "Loop-main",
-            "inputTypes": [
-              "DataFrame",
-              "Table",
-              "Data",
-              "Message"
-            ],
-            "type": "FieldTypes.OTHER"
-          }
-        },
-        "id": "remediation-edge-0",
-        "sourceHandle": "{\"dataType\": \"RemediationQueue\", \"id\": \"RemediationQueue-main\", \"name\": \"tickets\", \"output_types\": [\"Table\"]}",
-        "targetHandle": "{\"fieldName\": \"data\", \"id\": \"Loop-main\", \"inputTypes\": [\"DataFrame\", \"Table\", \"Data\", \"Message\"], \"type\": \"FieldTypes.OTHER\"}"
-      },
-      {
         "source": "Loop-main",
         "target": "RemediateTicket-main",
         "data": {
@@ -499,7 +471,7 @@
             "type": "FieldTypes.OTHER"
           }
         },
-        "id": "remediation-edge-1",
+        "id": "remediation-edge-0",
         "sourceHandle": "{\"dataType\": \"LoopComponent\", \"id\": \"Loop-main\", \"name\": \"item\", \"output_types\": [\"Data\", \"JSON\"]}",
         "targetHandle": "{\"fieldName\": \"ticket\", \"id\": \"RemediateTicket-main\", \"inputTypes\": [\"Data\"], \"type\": \"FieldTypes.OTHER\"}"
       },
@@ -526,7 +498,7 @@
             "type": "FieldTypes.OTHER"
           }
         },
-        "id": "remediation-edge-2",
+        "id": "remediation-edge-1",
         "sourceHandle": "{\"dataType\": \"LoopComponent\", \"id\": \"Loop-main\", \"name\": \"done\", \"output_types\": [\"DataFrame\", \"Table\"]}",
         "targetHandle": "{\"fieldName\": \"results\", \"id\": \"RemediationSummary-main\", \"inputTypes\": [\"DataFrame\", \"Table\"], \"type\": \"FieldTypes.OTHER\"}"
       },
@@ -551,9 +523,37 @@
             "type": "other"
           }
         },
-        "id": "remediation-edge-3",
+        "id": "remediation-edge-2",
         "sourceHandle": "{\"dataType\": \"RemediateTicket\", \"id\": \"RemediateTicket-main\", \"name\": \"result\", \"output_types\": [\"Message\"]}",
         "targetHandle": "{\"fieldName\": \"item\", \"id\": \"Loop-main\", \"inputTypes\": [\"Message\"], \"type\": \"other\"}"
+      },
+      {
+        "source": "RemediationQueue-main",
+        "target": "Loop-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "RemediationQueue",
+            "id": "RemediationQueue-main",
+            "name": "tickets",
+            "output_types": [
+              "Table"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "data",
+            "id": "Loop-main",
+            "inputTypes": [
+              "DataFrame",
+              "Table",
+              "Data",
+              "Message"
+            ],
+            "type": "FieldTypes.OTHER"
+          }
+        },
+        "id": "remediation-edge-3",
+        "sourceHandle": "{\"dataType\": \"RemediationQueue\", \"id\": \"RemediationQueue-main\", \"name\": \"tickets\", \"output_types\": [\"Table\"]}",
+        "targetHandle": "{\"fieldName\": \"data\", \"id\": \"Loop-main\", \"inputTypes\": [\"DataFrame\", \"Table\", \"Data\", \"Message\"], \"type\": \"FieldTypes.OTHER\"}"
       }
     ]
   },

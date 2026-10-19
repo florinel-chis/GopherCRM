@@ -25,8 +25,8 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    async def run_graph(self):
-        serialized = json.dumps(build_flow(str(self.policy), limit=2))
+    async def run_graph(self, mode='preview'):
+        serialized = json.dumps(build_flow(str(self.policy), limit=2, mode=mode))
         graph = Graph.from_payload(json.loads(serialized))
         return await graph.arun(inputs=[{}], outputs=['RemediationSummary-main'])
 
@@ -53,6 +53,14 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
              patch('gophercrm_runner.engine.Runner.run_issue', issue):
             await self.run_graph()
         issue.assert_not_awaited()
+
+    async def test_execute_mode_is_explicitly_passed_to_ticket_executor(self):
+        issue = AsyncMock(side_effect=lambda number, execute=False: dict(issue=number, status='merged'))
+        with patch('gophercrm_runner.engine.Runner.queue', AsyncMock(return_value=self.queue)), \
+             patch('gophercrm_runner.engine.Runner.run_issue', issue):
+            await self.run_graph(mode='execute')
+        self.assertEqual([call.args[0] for call in issue.await_args_list], [95, 96])
+        self.assertTrue(all(call.kwargs == {'execute': True} for call in issue.await_args_list))
 
 
 if __name__ == '__main__':

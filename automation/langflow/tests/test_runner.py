@@ -262,6 +262,54 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.run_issue(95, execute=True)
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (2, 2, 1))
 
+    async def test_interrupted_revalidation_cannot_validate_the_old_base_as_new(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.runner.run_issue(95, execute=True)
+        (self.checkout / 'other.txt').write_text('New main\n')
+        for args in [('add', '.'), ('commit', '-m', 'new main'),
+                     ('update-ref', 'refs/remotes/origin/main', 'HEAD')]:
+            subprocess.run(['git', *args], cwd=self.checkout, check=True, capture_output=True)
+        target = await self.runner.head(self.checkout)
+        self.commands.pr_data['baseRefOid'] = target
+        original = self.commands.run
+
+        async def cancel_merge(args, **kwargs):
+            if tuple(args[:2]) == ('git', 'merge'):
+                raise asyncio.CancelledError()
+            return await original(args, **kwargs)
+
+        self.commands.run = cancel_merge
+        with self.assertRaises(asyncio.CancelledError):
+            await self.runner.revalidate(95)
+        record = self.runner.store.read('issue-95')
+        self.assertEqual(record['stage'], 'revalidating')
+        self.assertNotEqual(record['base'], target)
+        self.assertIsNone(record['tested_head'])
+        self.commands.run = original
+        self.commands.fail_ci = False
+        await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.runner.store.read('issue-95')['base'], target)
+        self.assertEqual((self.commands.tests, self.commands.reviews), (2, 2))
+
+    async def test_aborted_conflict_cannot_merge_without_containing_main(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.runner.run_issue(95, execute=True)
+        (self.checkout / 'feature.txt').write_text('Conflicting main implementation\n')
+        for args in [('add', '.'), ('commit', '-m', 'conflicting main'),
+                     ('update-ref', 'refs/remotes/origin/main', 'HEAD')]:
+            subprocess.run(['git', *args], cwd=self.checkout, check=True, capture_output=True)
+        self.commands.pr_data['baseRefOid'] = await self.runner.head(self.checkout)
+        with self.assertRaisesRegex(GateError, 'merge conflicts'):
+            await self.runner.revalidate(95)
+        worktree = Path(self.runner.store.read('issue-95')['worktree'])
+        subprocess.run(['git', 'merge', '--abort'], cwd=worktree, check=True, capture_output=True)
+        self.commands.fail_ci = False
+        with self.assertRaisesRegex(GateError, 'does not contain'):
+            await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.merges, 0)
+
     async def test_database_changes_require_real_database_validation(self):
         original = self.commands.run
 
@@ -352,6 +400,13 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stderr_warning_does_not_corrupt_structured_stdout(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            code = 'import sys; print("warning", file=sys.stderr); print("{\\"is_error\\": false}")'
+            _, output = await Commands(root / 'logs').run([sys.executable, '-c', code], cwd=root)
+            self.assertEqual(agent_result(output), {'is_error': False})
+
     async def test_cancel_terminates_child_and_keeps_log_private(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

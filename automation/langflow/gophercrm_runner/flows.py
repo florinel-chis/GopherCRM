@@ -34,9 +34,15 @@ def build_flow(config_path='', *, mode='preview', limit=1):
                              'inputTypes': ['Message'], 'type': 'other'},
         },
     })
-    positions = [(0, 100), (430, 100), (900, 0), (900, 400)]
-    for node, (x, y) in zip(payload['data']['nodes'], positions):
+    positions = {'RemediationQueue-main': (0, 100), 'Loop-main': (430, 100),
+                 'RemediateTicket-main': (900, 0), 'RemediationSummary-main': (900, 400)}
+    payload['data']['nodes'].sort(key=lambda node: node['id'])
+    for node in payload['data']['nodes']:
+        x, y = positions[node['id']]
         node['position'] = {'x': x, 'y': y}
+    payload['data']['edges'].sort(key=lambda edge: (
+        edge['source'], edge['target'], edge['data']['sourceHandle']['name'],
+        edge['data']['targetHandle']['fieldName']))
     for index, edge in enumerate(payload['data']['edges']):
         edge['id'] = f'remediation-edge-{index}'
         edge['sourceHandle'] = json.dumps(edge['data']['sourceHandle'], sort_keys=True)
