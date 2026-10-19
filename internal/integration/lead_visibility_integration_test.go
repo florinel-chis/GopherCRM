@@ -2,16 +2,22 @@ package integration
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -35,6 +41,7 @@ type LeadVisibilityIntegrationTestSuite struct {
 	alice   *models.User // sales, owns alicesLead
 	bob     *models.User // sales, owns no lead at the start
 	support *models.User
+	mysql   bool
 
 	alicesLead *models.Lead
 }
@@ -47,8 +54,7 @@ func (s *LeadVisibilityIntegrationTestSuite) SetupTest() {
 	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
 	gin.SetMode(gin.TestMode)
 
-	db, err := gorm.Open(sqlite.Open("file:lead_visibility?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
-	s.Require().NoError(err)
+	db := openLeadVisibilityDB(s.T(), s.mysql)
 	all := []interface{}{&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{},
 		&models.Label{}, &models.Task{}, &models.Deal{}, &models.DealStageChange{}}
 	s.Require().NoError(db.Migrator().DropTable(append([]interface{}{"task_labels"}, all...)...))
@@ -105,6 +111,39 @@ func (s *LeadVisibilityIntegrationTestSuite) SetupTest() {
 	})
 	handler.SetupTaskRoutes(s.router.Group(""), handler.NewTaskHandler(taskService))
 	handler.SetupDealRoutes(s.router.Group(""), handler.NewDealHandler(dealService))
+}
+
+// MySQL is opt-in and uses a unique schema, never the caller's database. The
+// runner supplies TEST_MYSQL_DSN for its dedicated disposable test server.
+func openLeadVisibilityDB(t *testing.T, useMySQL bool) *gorm.DB {
+	t.Helper()
+	if !useMySQL {
+		db, err := gorm.Open(sqlite.Open("file:lead_visibility?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+		require.NoError(t, err)
+		return db
+	}
+	raw := os.Getenv("TEST_MYSQL_DSN")
+	if raw == "" {
+		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
+	}
+	cfg, err := mysqldriver.ParseDSN(raw)
+	require.NoError(t, err)
+	cfg.DBName = ""
+	cfg.ParseTime = true
+	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 10*time.Second, 10*time.Second
+	server, err := sql.Open("mysql", cfg.FormatDSN())
+	require.NoError(t, err)
+	name := fmt.Sprintf("gocrm_lead_visibility_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
+		_ = server.Close()
+	})
+	_, err = server.Exec("CREATE DATABASE `" + name + "`")
+	require.NoError(t, err)
+	cfg.DBName = name
+	db, err := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	return db
 }
 
 func (s *LeadVisibilityIntegrationTestSuite) call(as *models.User, method, path string, body interface{}) (int, map[string]interface{}, string) {
@@ -433,6 +472,77 @@ func (s *LeadVisibilityIntegrationTestSuite) TestDealUpdate_SendingTheHiddenStor
 	s.Equal("Alice's deal, edited", s.storedDeal(aliceDeal).Title)
 }
 
+// A customer-only update replaces the task's association. Its result must not
+// reveal whether an inaccessible lead used to occupy that association.
+func (s *LeadVisibilityIntegrationTestSuite) TestTaskUpdate_CustomerReplacementDoesNotRevealALead() {
+	oldCustomer := &models.Customer{FirstName: "Old", LastName: "Customer", Email: "old-customer@example.com"}
+	newCustomer := &models.Customer{FirstName: "New", LastName: "Customer", Email: "new-customer@example.com"}
+	s.Require().NoError(s.db.Create(oldCustomer).Error)
+	s.Require().NoError(s.db.Create(newCustomer).Error)
+	for _, actor := range []*models.User{s.bob, s.support, s.alice, s.admin} {
+		for _, existing := range []string{"none", "lead", "customer"} {
+			s.Run(string(actor.Role)+"-"+actor.Email+"-"+existing, func() {
+				request := map[string]interface{}{"title": "Customer switch", "assigned_to_id": actor.ID}
+				if existing == "lead" {
+					request["lead_id"] = s.alicesLead.ID
+				} else if existing == "customer" {
+					request["customer_id"] = oldCustomer.ID
+				}
+				status, envelope, body := s.call(s.admin, http.MethodPost, "/tasks", request)
+				s.Require().Equal(http.StatusCreated, status, body)
+				taskID := dataID(envelope)
+				status, _, body = s.call(actor, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID),
+					map[string]interface{}{"customer_id": newCustomer.ID})
+				s.Require().Equal(http.StatusOK, status, body)
+				s.assertNoLead(body, "customer replacement")
+				s.NotContains(body, oldCustomer.Email)
+				stored := s.storedTask(taskID)
+				s.Nil(stored.LeadID)
+				s.Require().NotNil(stored.CustomerID)
+				s.Equal(newCustomer.ID, *stored.CustomerID)
+			})
+		}
+	}
+}
+
+func (s *LeadVisibilityIntegrationTestSuite) TestTaskUpdate_InvalidCustomerPreservesHiddenLead() {
+	status, envelope, body := s.call(s.admin, http.MethodPost, "/tasks", map[string]interface{}{
+		"title": "Keep link", "assigned_to_id": s.support.ID, "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusCreated, status, body)
+	taskID := dataID(envelope)
+	status, _, body = s.call(s.support, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID),
+		map[string]interface{}{"customer_id": uint(999999), "title": "Must not persist"})
+	s.Equal(http.StatusNotFound, status, body)
+	s.assertNoLead(body, "invalid customer")
+	stored := s.storedTask(taskID)
+	s.Require().NotNil(stored.LeadID)
+	s.Equal(s.alicesLead.ID, *stored.LeadID)
+	s.Nil(stored.CustomerID)
+	s.Equal("Keep link", stored.Title)
+}
+
+func (s *LeadVisibilityIntegrationTestSuite) TestTaskUpdate_ExplicitLeadAndCustomerStillConflict() {
+	customer := &models.Customer{FirstName: "Target", LastName: "Customer", Email: "conflict-customer@example.com"}
+	s.Require().NoError(s.db.Create(customer).Error)
+	status, envelope, body := s.call(s.alice, http.MethodPost, "/tasks", map[string]interface{}{
+		"title": "Keep lead", "assigned_to_id": s.alice.ID, "lead_id": s.alicesLead.ID,
+	})
+	s.Require().Equal(http.StatusCreated, status, body)
+	taskID := dataID(envelope)
+	status, _, body = s.call(s.alice, http.MethodPut, fmt.Sprintf("/tasks/%d", taskID),
+		map[string]interface{}{"customer_id": customer.ID, "lead_id": s.alicesLead.ID})
+	s.Equal(http.StatusBadRequest, status, body)
+	stored := s.storedTask(taskID)
+	s.Require().NotNil(stored.LeadID)
+	s.Equal(s.alicesLead.ID, *stored.LeadID)
+	s.Nil(stored.CustomerID)
+}
+
 func TestLeadVisibilityIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(LeadVisibilityIntegrationTestSuite))
+}
+
+func TestLeadVisibilityIntegrationMySQLTestSuite(t *testing.T) {
+	suite.Run(t, &LeadVisibilityIntegrationTestSuite{mysql: true})
 }

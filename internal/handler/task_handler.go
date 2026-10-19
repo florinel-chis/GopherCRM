@@ -404,7 +404,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id that is sent must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when lead_id is absent, and is omitted from the response when the caller may not see it. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id that is sent must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent, and is omitted from the response when the caller may not see it. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link is set after validation, regardless of visibility of the old lead. Sending both link fields still rejects the request; an invalid customer leaves the task unchanged. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -489,6 +489,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 	if req.CustomerID != nil {
 		task.CustomerID = req.CustomerID
+		if req.LeadID == nil {
+			// A customer-only request replaces the association, regardless of
+			// whether the caller could see the previous lead. A conflict here
+			// would disclose the presence of a redacted lead link.
+			task.LeadID = nil
+		}
 	}
 
 	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, req.LeadID != nil, currentUserID); err != nil {

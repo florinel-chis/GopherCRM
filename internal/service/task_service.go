@@ -222,7 +222,8 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 	}
 
 	// Validate customer if being changed
-	if task.CustomerID != existingTask.CustomerID && task.CustomerID != nil {
+	customerChanged := linkChanged(task.CustomerID, existingTask.CustomerID)
+	if customerChanged && task.CustomerID != nil {
 		_, err := s.customerRepo.GetByID(*task.CustomerID)
 		if err != nil {
 			logger.WithError(utils.LogError(err)).Warn("Customer not found")
@@ -256,6 +257,9 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 	// key, which would silently undo a reassignment or a new lead_id.
 	if leadChanged || task.LeadID == nil {
 		task.Lead = nil
+	}
+	if customerChanged || task.CustomerID == nil {
+		task.Customer = nil
 	}
 	if newAssignee != nil {
 		task.AssignedTo = models.User{}
