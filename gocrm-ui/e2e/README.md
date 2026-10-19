@@ -24,7 +24,11 @@ MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on SQLite)")
 
 1. Drops and recreates the **`gocrm_e2e`** database (`E2E_DB_NAME`; it refuses any name not ending
    in `_e2e`), so every run starts empty and never touches the development database.
-2. Builds the backend and starts it on a free port (from 18091) with `DISABLE_RATE_LIMIT=true`.
+2. Builds a disposable backend with `-tags=gophercrm_e2e` and starts it on a free port (from 18091)
+   with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true`. This bypasses all live limiter tiers for functional
+   tests so one case cannot exhaust another case's tokens. Normal binaries ignore this switch;
+   `make verify-backend` verifies normal enforcement and the build-tag boundary. The existing
+   `DISABLE_RATE_LIMIT=true` strict-tier setting is also retained.
    Its log goes to `test-results/e2e-backend.log`.
 3. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
    backend, and runs Playwright with **no retries**, traces kept for failures, and the `line` + `html`
@@ -113,7 +117,9 @@ restart it with the exported value if necessary. The backend is **not** started 
 `DISABLE_RATE_LIMIT=true` is worth setting: it bypasses the strict 10 req/min limiter on
 `/auth/register` and `/auth/login`, which the login and registration specs would otherwise trip. It
 does not disable rate limiting elsewhere — authenticated routes keep their moderate tier — so it is
-not a way to run the suite faster, only a way to stop the login limiter from producing false failures.
+not a way to run the suite faster, only a way to stop the login limiter from producing false failures. For
+complete functional runs use `make e2e`, whose dedicated tagged binary isolates all live tiers;
+this manual normal-build path intentionally retains ordinary throttling behavior.
 
 `npm run test:e2e:admin:cleanup` runs `e2e/scripts/cleanup-admin-test-data.sh`, kept from the time
 the specs ran against the development database only. It connects with `mysql` as `DB_USER`

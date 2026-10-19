@@ -35,11 +35,10 @@ type visitor struct {
 type rateLimiter struct {
 	visitors map[string]*visitor
 	mu       sync.RWMutex
-	limit    rate.Limit  // requests per second
-	burst    int         // maximum burst size
+	limit    rate.Limit    // requests per second
+	burst    int           // maximum burst size
 	cleanup  time.Duration // cleanup interval for old visitors
 }
-
 
 // getVisitor retrieves or creates a visitor for the given IP
 func (rl *rateLimiter) getVisitor(ip string) *rate.Limiter {
@@ -81,6 +80,9 @@ func (rl *rateLimiter) cleanupVisitors() {
 // Each call creates its own independent rate limiter so that different tiers
 // (strict, moderate, generous) do not share state.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
+	if e2eRateLimitDisabled() {
+		return func(c *gin.Context) { c.Next() }
+	}
 	rl := &rateLimiter{
 		visitors: make(map[string]*visitor),
 		limit:    rate.Limit(rps),
@@ -145,9 +147,9 @@ func RateLimitGenerous() gin.HandlerFunc {
 
 // RateLimiter is a config-driven, role-aware rate limiter
 type RateLimiter struct {
-	cfg      *config.RateLimitConfig
-	buckets  map[string]*tokenBucket
-	mu       sync.RWMutex
+	cfg     *config.RateLimitConfig
+	buckets map[string]*tokenBucket
+	mu      sync.RWMutex
 }
 
 type tokenBucket struct {
