@@ -47,9 +47,9 @@ func (suite *TicketServiceTestSuite) TearDownTest() {
 
 func (suite *TicketServiceTestSuite) TestCreate_Success() {
 	ticket := &models.Ticket{
-		Title:       "Test Ticket",
-		Description: "Test Description",
-		CustomerID:  1,
+		Title:        "Test Ticket",
+		Description:  "Test Description",
+		CustomerID:   1,
 		AssignedToID: uintPtr(2),
 	}
 
@@ -363,7 +363,7 @@ func (suite *TicketServiceTestSuite) TestGetPriorityCounts_RepositoryError() {
 }
 
 func (suite *TicketServiceTestSuite) TestGetRecent_Success() {
-	suite.mockTicketRepo.On("ListRecent", 5).Return([]models.Ticket{{Title: "Newest"}}, nil)
+	suite.mockTicketRepo.On("ListRecent", (*uint)(nil), 5).Return([]models.Ticket{{Title: "Newest"}}, nil)
 
 	tickets, err := suite.service.GetRecent(5)
 
@@ -372,13 +372,35 @@ func (suite *TicketServiceTestSuite) TestGetRecent_Success() {
 	assert.Equal(suite.T(), "Newest", tickets[0].Title)
 }
 
+func (suite *TicketServiceTestSuite) TestGetRecentByAssignee_PassesAssigneeFilter() {
+	suite.mockTicketRepo.On("ListRecent", mock.MatchedBy(func(assigneeID *uint) bool {
+		return assigneeID != nil && *assigneeID == 14
+	}), 5).Return([]models.Ticket{}, nil)
+
+	tickets, err := suite.service.GetRecentByAssignee(14, 5)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), tickets)
+}
+
 func (suite *TicketServiceTestSuite) TestGetRecentlyResolved_Success() {
-	suite.mockTicketRepo.On("ListRecentlyResolved", 10).Return([]models.Ticket{{Title: "Resolved"}}, nil)
+	suite.mockTicketRepo.On("ListRecentlyResolved", (*uint)(nil), 10).Return([]models.Ticket{{Title: "Resolved"}}, nil)
 
 	tickets, err := suite.service.GetRecentlyResolved(10)
 
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), tickets, 1)
+}
+
+func (suite *TicketServiceTestSuite) TestGetRecentlyResolvedByAssignee_PassesAssigneeFilter() {
+	suite.mockTicketRepo.On("ListRecentlyResolved", mock.MatchedBy(func(assigneeID *uint) bool {
+		return assigneeID != nil && *assigneeID == 14
+	}), 10).Return([]models.Ticket{}, nil)
+
+	tickets, err := suite.service.GetRecentlyResolvedByAssignee(14, 10)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), tickets)
 }
 
 func TestTicketServiceTestSuite(t *testing.T) {

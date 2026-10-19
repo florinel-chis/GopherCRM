@@ -6531,20 +6531,26 @@ paths:
       - customers
   /dashboard/activities:
     get:
-      description: 'Recent activity across the CRM, newest first, as a bare array.
+      description: 'Recent activity the caller may see, newest first, as a bare array.
         There is no activity or audit table in this schema, so entries are synthesised
         from the rows themselves: leads created (lead_created) and converted (lead_converted),
         tickets created (ticket_created) and resolved or closed (ticket_resolved),
-        and tasks completed (task_completed). Each source contributes at most `limit`
-        candidates; they are merged, sorted by event time descending and truncated
-        to `limit`. Events with no dedicated timestamp column use updated_at as the
-        event time, so a later edit moves the entry. Each id is stable and of the
-        form "lead-42-created". The user is the lead''s owner or the ticket''s or
-        task''s assignee, with username carrying the account''s email address because
-        there is no username column; when the record has no assignee the user object
-        is present but zero-valued. The feed is system-wide and is not narrowed to
-        the caller''s own records. Restricted to the admin, sales and support roles;
-        customer-role callers receive 403.'
+        and tasks completed (task_completed). Each source is narrowed to the caller''s
+        visibility inside its query, before its limit: lead events cover every lead
+        for admin, only the caller''s own leads for sales and no lead at all for support;
+        ticket events cover every ticket for admin and sales and only the tickets
+        assigned to the caller for support; task events cover every task for admin
+        and only the tasks assigned to the caller for every other role. Hidden records
+        therefore never appear and never crowd out permitted ones. Each source contributes
+        at most `limit` candidates; they are merged, sorted by event time descending
+        (ties broken by type, then by record id descending) and truncated to `limit`.
+        Events with no dedicated timestamp column use updated_at as the event time,
+        so a later edit moves the entry. Each id is stable and of the form "lead-42-created".
+        The user is the lead''s owner or the ticket''s or task''s assignee, with username
+        carrying the account''s email address because there is no username column;
+        when the record has no assignee the user object is present but zero-valued.
+        Restricted to the admin, sales and support roles; customer-role callers receive
+        403.'
       parameters:
       - default: 10
         description: Maximum entries to return, capped at 50
@@ -6817,11 +6823,14 @@ paths:
       - dashboard
   /dashboard/recent-tickets:
     get:
-      description: 'The most recently created tickets, as a bare array ordered by
-        creation time descending. Visibility mirrors the ticket list: admin, sales
-        and support all see every ticket, with no narrowing to the caller''s own assignments.
-        Restricted to the admin, sales and support roles; customer-role callers receive
-        403, as they do on the ticket list.'
+      description: 'The most recently created tickets the caller may see, as a bare
+        array ordered by creation time descending, ties broken by id descending. Admin
+        and sales see every ticket; support sees only the tickets assigned to it,
+        so tickets assigned to someone else and unassigned tickets are excluded. The
+        narrowing is part of the query and applies before the limit, so hidden tickets
+        never crowd out permitted ones; a caller with no visible ticket gets an empty
+        array. Restricted to the admin, sales and support roles; customer-role callers
+        receive 403.'
       parameters:
       - default: 5
         description: Maximum tickets to return, capped at 50

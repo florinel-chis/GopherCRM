@@ -460,12 +460,23 @@ func (suite *LeadServiceTestSuite) TestGetRecentByOwner_PassesOwnerFilter() {
 }
 
 func (suite *LeadServiceTestSuite) TestGetRecentlyConverted_Success() {
-	suite.mockLeadRepo.On("ListRecentlyConverted", 10).Return([]models.Lead{{FirstName: "Converted"}}, nil)
+	suite.mockLeadRepo.On("ListRecentlyConverted", (*uint)(nil), 10).Return([]models.Lead{{FirstName: "Converted"}}, nil)
 
 	leads, err := suite.leadService.GetRecentlyConverted(10)
 
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), leads, 1)
+}
+
+func (suite *LeadServiceTestSuite) TestGetRecentlyConvertedByOwner_PassesOwnerFilter() {
+	suite.mockLeadRepo.On("ListRecentlyConverted", mock.MatchedBy(func(ownerID *uint) bool {
+		return ownerID != nil && *ownerID == 21
+	}), 10).Return([]models.Lead{}, nil)
+
+	leads, err := suite.leadService.GetRecentlyConvertedByOwner(21, 10)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), leads)
 }
 
 func (suite *LeadServiceTestSuite) TestGetConversionTimestamps_Success() {

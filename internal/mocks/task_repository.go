@@ -305,9 +305,9 @@ func (_m *TaskRepository) ListDueBetween(assignedToID *uint, from time.Time, to 
 	return r0, ret.Error(1)
 }
 
-// ListRecentlyCompleted provides a mock function with given fields: limit
-func (_m *TaskRepository) ListRecentlyCompleted(limit int) ([]models.Task, error) {
-	ret := _m.Called(limit)
+// ListRecentlyCompleted provides a mock function with given fields: assignedToID, limit
+func (_m *TaskRepository) ListRecentlyCompleted(assignedToID *uint, limit int) ([]models.Task, error) {
+	ret := _m.Called(assignedToID, limit)
 
 	var r0 []models.Task
 	if ret.Get(0) != nil {
