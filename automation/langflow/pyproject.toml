@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gophercrm-remediation-runner"
+version = "0.1.0"
+description = "Langflow workflows for the GopherCRM remediation queue"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+flows = ["lfx==1.12.6"]
+ui = ["langflow==1.12.6", "lfx==1.12.6", "langflow-base==1.12.6"]
+
+[project.scripts]
+gophercrm-runner = "gophercrm_runner.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gophercrm_runner*"]
+
+[tool.setuptools.package-data]
+gophercrm_runner = ["config.example.json"]
