@@ -170,12 +170,12 @@ fi
 # A built binary rather than `go run`: go run starts the server as a child
 # process that outlives a kill of the parent.
 echo "e2e: building backend"
-(cd "$repo_root" && go build -o "$work_dir/gophercrm-e2e" ./cmd)
+(cd "$repo_root" && go build -tags=gophercrm_e2e -o "$work_dir/gophercrm-e2e" ./cmd)
 
 echo "e2e: starting backend on :$api_port (log copied to gocrm-ui/test-results/e2e-backend.log on exit)"
 (
   cd "$repo_root"
-  export SERVER_PORT=$api_port DISABLE_RATE_LIMIT=true \
+  export SERVER_PORT=$api_port DISABLE_RATE_LIMIT=true GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true \
     CORS_ALLOWED_ORIGINS="http://localhost:$ui_port,http://127.0.0.1:$ui_port"
   exec "$work_dir/gophercrm-e2e"
 ) >"$backend_log" 2>&1 &

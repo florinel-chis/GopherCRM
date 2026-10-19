@@ -157,7 +157,15 @@ to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is k
 `middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, so the
 moderate tier on authenticated traffic stays active regardless — including on `/auth/logout` and
 `/auth/change-password`, which are authenticated and therefore never saw the strict tier to begin
-with. That is deliberate and is enough to keep the E2E suite from tripping the login limiter.
+with. That remains the behavior of ordinary builds.
+
+`make e2e` builds a separate disposable binary with the `gophercrm_e2e` build tag and sets
+`GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true`. Together these opt functional browser tests out of all
+three live tiers, avoiding cross-test token-bucket state and dashboard 429s. Ordinary binaries
+ignore this switch, even if it is set. The tagged binary also keeps every tier enabled unless the
+switch is exactly `true`. Do not deploy the tagged test binary. `make verify-backend` tests live-tier
+burst enforcement, the legacy strict-only switch, ordinary-build isolation, and the tagged opt-out;
+no browser assertion or retry setting is relaxed.
 
 ## Testing
 

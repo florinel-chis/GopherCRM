@@ -126,7 +126,10 @@ fail in ways that look like application bugs.
 6. **`DISABLE_RATE_LIMIT` lifts only the strict `/auth` tier.** The moderate tier — 120 req/min,
    burst 30, keyed per IP — still applies to every authenticated request. A fast suite hammering
    list endpoints from localhost can trip it; it also makes the 5-attempt account lockout
-   unobservable unless the env var is set (the limiter 429s the sixth attempt first).
+   unobservable unless the env var is set (the limiter 429s the sixth attempt first). `make e2e`
+   uses a separate tagged test binary and explicit E2E switch to isolate all live tiers. Ordinary
+   binaries ignore that E2E switch; rate-limit scenarios must use an ordinary build or leave the
+   E2E switch unset. Dedicated Go tests cover enforcement in both build modes.
 7. **Filters are client-side — except the task label filter.** Lead status, ticket status/priority,
    task status/priority and the user role filter narrow only the currently loaded page. A case
    asserting server-side filtered result sets asserts behaviour that does not exist. The one
