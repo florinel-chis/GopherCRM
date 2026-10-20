@@ -339,9 +339,9 @@ func (_m *TicketRepository) CountByPriority() (map[string]int64, error) {
 	return r0, ret.Error(1)
 }
 
-// ListRecent provides a mock function with given fields: limit
-func (_m *TicketRepository) ListRecent(limit int) ([]models.Ticket, error) {
-	ret := _m.Called(limit)
+// ListRecent provides a mock function with given fields: assignedToID, limit
+func (_m *TicketRepository) ListRecent(assignedToID *uint, limit int) ([]models.Ticket, error) {
+	ret := _m.Called(assignedToID, limit)
 
 	var r0 []models.Ticket
 	if ret.Get(0) != nil {
@@ -350,9 +350,9 @@ func (_m *TicketRepository) ListRecent(limit int) ([]models.Ticket, error) {
 	return r0, ret.Error(1)
 }
 
-// ListRecentlyResolved provides a mock function with given fields: limit
-func (_m *TicketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, error) {
-	ret := _m.Called(limit)
+// ListRecentlyResolved provides a mock function with given fields: assignedToID, limit
+func (_m *TicketRepository) ListRecentlyResolved(assignedToID *uint, limit int) ([]models.Ticket, error) {
+	ret := _m.Called(assignedToID, limit)
 
 	var r0 []models.Ticket
 	if ret.Get(0) != nil {

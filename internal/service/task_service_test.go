@@ -680,12 +680,23 @@ func (suite *TaskServiceTestSuite) TestGetDueWithinByAssignee_PassesWindowAndAss
 }
 
 func (suite *TaskServiceTestSuite) TestGetRecentlyCompleted_Success() {
-	suite.mockTaskRepo.On("ListRecentlyCompleted", 10).Return([]models.Task{{Title: "Done"}}, nil)
+	suite.mockTaskRepo.On("ListRecentlyCompleted", (*uint)(nil), 10).Return([]models.Task{{Title: "Done"}}, nil)
 
 	tasks, err := suite.service.GetRecentlyCompleted(10)
 
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), tasks, 1)
+}
+
+func (suite *TaskServiceTestSuite) TestGetRecentlyCompletedByAssignee_PassesAssigneeFilter() {
+	suite.mockTaskRepo.On("ListRecentlyCompleted", mock.MatchedBy(func(assigneeID *uint) bool {
+		return assigneeID != nil && *assigneeID == 12
+	}), 10).Return([]models.Task{}, nil)
+
+	tasks, err := suite.service.GetRecentlyCompletedByAssignee(12, 10)
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), tasks)
 }
 
 func TestTaskServiceTestSuite(t *testing.T) {

@@ -183,12 +183,16 @@ func (r *taskRepository) openDueQuery(assignedToID *uint) *gorm.DB {
 
 // ListRecentlyCompleted returns completed tasks, most recently touched first.
 // There is no completed_at column, so updated_at stands in for the completion
-// time.
-func (r *taskRepository) ListRecentlyCompleted(limit int) ([]models.Task, error) {
+// time. A nil assignedToID means every assignee; a non-nil one narrows to that
+// assignee before the limit.
+func (r *taskRepository) ListRecentlyCompleted(assignedToID *uint, limit int) ([]models.Task, error) {
 	tasks := []models.Task{}
-	err := r.db.Preload("AssignedTo").
-		Where("status = ?", models.TaskStatusCompleted).
-		Order("updated_at DESC, id DESC").
+	query := r.db.Preload("AssignedTo").
+		Where("status = ?", models.TaskStatusCompleted)
+	if assignedToID != nil {
+		query = query.Where("assigned_to_id = ?", *assignedToID)
+	}
+	err := query.Order("updated_at DESC, id DESC").
 		Limit(limit).
 		Find(&tasks).Error
 	return tasks, err

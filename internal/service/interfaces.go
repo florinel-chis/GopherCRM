@@ -64,11 +64,13 @@ type LeadService interface {
 	ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error)
 	GetCount() (int64, error)
 	GetCountByClassification(classification models.LeadClassification) (int64, error)
-	// Dashboard analytics.
+	// Dashboard analytics. The ByOwner variants narrow the query to one owner
+	// before the limit, which is how sales callers are scoped.
 	GetStatusCounts() (map[string]int64, error)
 	GetRecent(limit int) ([]models.Lead, error)
 	GetRecentByOwner(ownerID uint, limit int) ([]models.Lead, error)
 	GetRecentlyConverted(limit int) ([]models.Lead, error)
+	GetRecentlyConvertedByOwner(ownerID uint, limit int) ([]models.Lead, error)
 	// GetConversionTimestamps returns the conversion time of every lead
 	// converted at or after `since`. Callers bucket them in Go: no date function
 	// is spelled the same on MySQL 8 and SQLite.
@@ -104,10 +106,13 @@ type TicketService interface {
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	GetOpenCount() (int64, error)
-	// Dashboard analytics.
+	// Dashboard analytics. The ByAssignee variants narrow the query to one
+	// assignee before the limit, which is how support callers are scoped.
 	GetPriorityCounts() (map[string]int64, error)
 	GetRecent(limit int) ([]models.Ticket, error)
+	GetRecentByAssignee(assigneeID uint, limit int) ([]models.Ticket, error)
 	GetRecentlyResolved(limit int) ([]models.Ticket, error)
+	GetRecentlyResolvedByAssignee(assigneeID uint, limit int) ([]models.Ticket, error)
 	CreateComment(comment *models.TicketComment) error
 	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 }
@@ -131,6 +136,7 @@ type TaskService interface {
 	GetDueWithin(from, to time.Time, limit int) ([]models.Task, error)
 	GetDueWithinByAssignee(assigneeID uint, from, to time.Time, limit int) ([]models.Task, error)
 	GetRecentlyCompleted(limit int) ([]models.Task, error)
+	GetRecentlyCompletedByAssignee(assigneeID uint, limit int) ([]models.Task, error)
 	// Labels. CreateWithLabels attaches the referenced labels to the new task;
 	// an empty or nil slice creates it without any. UpdateWithLabels takes a
 	// POINTER so the caller can tell "no label_ids field was sent, leave the set

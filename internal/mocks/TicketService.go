@@ -34,9 +34,31 @@ func (_m *TicketService) GetRecent(limit int) ([]models.Ticket, error) {
 	return r0, ret.Error(1)
 }
 
+// GetRecentByAssignee provides a mock function with given fields: assigneeID, limit
+func (_m *TicketService) GetRecentByAssignee(assigneeID uint, limit int) ([]models.Ticket, error) {
+	ret := _m.Called(assigneeID, limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
 // GetRecentlyResolved provides a mock function with given fields: limit
 func (_m *TicketService) GetRecentlyResolved(limit int) ([]models.Ticket, error) {
 	ret := _m.Called(limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
+// GetRecentlyResolvedByAssignee provides a mock function with given fields: assigneeID, limit
+func (_m *TicketService) GetRecentlyResolvedByAssignee(assigneeID uint, limit int) ([]models.Ticket, error) {
+	ret := _m.Called(assigneeID, limit)
 
 	var r0 []models.Ticket
 	if ret.Get(0) != nil {

@@ -19,8 +19,10 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - `internal/handler/dashboard_handler.go`, `internal/handler/task_handler.go` (`GetUpcoming`),
   `internal/handler/routes.go` (`SetupDashboardRoutes`, `SetupTaskRoutes`), `cmd/main.go`
 - `internal/service/{lead,customer,ticket,task}_service.go` and the matching repositories
-  (`Count`, `CountOpen`, `CountPending`, `CountByStatus`, `ListRecent`, `ListUpcoming`,
-  `ConversionTimestampsSince`)
+  (`Count`, `CountOpen`, `CountPending`, `CountByStatus`, `ListRecent`, `ListRecentlyConverted`,
+  `ListRecentlyResolved`, `ListRecentlyCompleted`, `ListUpcoming`, `ConversionTimestampsSince`)
+- `internal/integration/dashboard_visibility_integration_test.go` (role/owner visibility of the
+  activity feed and recent-tickets widget on SQLite and MySQL)
 - `internal/middleware/auth.go` (`RequireRole`), `internal/utils/response.go` (`RespondForbidden`)
 - `gocrm-ui/e2e/tests/{login,registration,admin-entity-suite}.spec.ts`,
   `gocrm-ui/e2e/pages/dashboard.page.ts`, `gocrm-ui/e2e/helpers/admin-auth.ts`,
@@ -449,9 +451,11 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** at most 10 entries, each rendered as a primary title and a secondary
   `"<description> — <locale date>"`. The payload entries carry `type` in
   `lead_created | lead_converted | ticket_created | ticket_resolved | task_completed`, an `id` of
-  the form `lead-42-created`, and are sorted by `created_at` descending with an `id` tie-break. The
-  titles rendered are "New lead", "Lead converted", "New ticket", "Ticket resolved",
-  "Task completed".
+  the form `lead-42-created`, and are sorted by `created_at` descending; equal timestamps are
+  broken by `type` and then by record id descending, the same order each source query uses, so
+  the page is deterministic. The titles rendered are "New lead", "Lead converted", "New ticket",
+  "Ticket resolved", "Task completed". The admin sees every event; other roles see only the
+  records they may see (TC-DASH-043).
 - **Known issue:** there is no activity or audit table; entries are synthesised from row timestamps,
   and the resolved/converted/completed variants use `updated_at`, so a later edit re-dates the
   event.
@@ -494,9 +498,10 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `"username":"test-admin@gocrm.test"`). For a record with no resolvable owner or assignee the
   `user` object is present but zero-valued (`{"id":0,"username":"","first_name":"","last_name":""}`)
   rather than `null`.
-- **Known issue:** the feed exposes account email addresses to every admin, sales and support
-  caller. The dashboard UI does not render the actor, so nothing is displayed today, but the field
-  is in the payload.
+- **Known issue:** the feed carries the actor's account email address. Since 2026-10 (#96) only
+  for records the caller may see — a sales caller sees the assignees of all tickets, a support
+  caller only itself — but the field is still in the payload. The dashboard UI does not render the
+  actor, so nothing is displayed today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-028 — Empty activity feed shows the "Nothing yet" placeholder
@@ -509,6 +514,28 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** the Recent Activities paper shows the text "Nothing yet" in the secondary text
   colour and no list items (`Dashboard.tsx:300`). The same placeholder applies to Upcoming Tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
+
+### TC-DASH-043 — The activity feed is scoped to the caller before the limit
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** an admin, two sales users and two support users; leads owned by each sales
+  user (some converted), tickets assigned to each support user plus an unassigned one (some
+  resolved or closed), and a completed task for every user.
+- **Steps:**
+  1. As each role, `GET /dashboard/activities?limit=50`.
+  2. As a sales user that owns one old lead while another rep owns newer ones,
+     `GET /dashboard/activities?limit=1`; repeat for a support user with one old ticket under newer
+     tickets assigned to others or to nobody.
+- **Expected:** the admin gets every event. A sales user gets `lead_created`/`lead_converted` only
+  for leads it owns, every `ticket_created`/`ticket_resolved`, and `task_completed` only for its
+  own tasks. A support user gets no lead event at all, ticket events only for tickets assigned to
+  it, and only its own completed tasks. No hidden record's id, name, company, title or actor email
+  appears in the payload. Each source query is narrowed before its limit, so with `limit=1` the
+  old permitted record is returned rather than an empty feed: newer hidden records do not crowd it
+  out. The default (10) and the cap (50) are unchanged. Customer callers still get 403.
+- **Automation:** automated — `internal/integration/dashboard_visibility_integration_test.go`
+  `TestDashboardActivityVisibility{SQLite,MySQL}` and `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}`;
+  `dashboard_handler_test.go` `TestGetActivities_SalesScopedSources`, `TestGetActivities_SupportScopedSources`
 
 ---
 
@@ -608,12 +635,17 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Preconditions:** admin, sales and support tokens.
 - **Steps:**
   1. As each role, `GET /dashboard/recent-tickets?limit=5` and `GET /dashboard/new-leads?limit=5`.
-- **Expected:** `recent-tickets` returns the same system-wide newest-first list for admin, sales and
-  support — visibility mirrors the ticket list, with no narrowing to the caller's assignments.
+- **Expected:** `recent-tickets` returns every ticket, newest first (ties by id descending), for
+  admin and sales, and only the tickets assigned to the caller for support — tickets assigned to
+  another user and unassigned tickets are excluded, inside the query and before the limit, so
+  newer hidden tickets never crowd out an older assigned one (since 2026-10, #96; it used to be
+  system-wide for support too). A support user with no assigned ticket gets an **empty array**.
   `new-leads` returns every lead for admin, only the caller's own leads for sales
-  (`GetRecentByOwner`), and an **empty array with status 200** for support. Both endpoints cap
-  `limit` at 50 and never return `null`.
-- **Automation:** blocked — needs a role-login helper; no UI surface renders these widgets
+  (`GetRecentByOwner`), and an **empty array with status 200** for support. Both endpoints default
+  `limit` to 5, cap it at 50 and never return `null`.
+- **Automation:** blocked in the browser — needs a role-login helper; no UI surface renders these
+  widgets. Backend: `internal/integration/dashboard_visibility_integration_test.go`
+  `TestDashboardRecentTicketVisibility{SQLite,MySQL}` and `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}`
 
 ---
 
