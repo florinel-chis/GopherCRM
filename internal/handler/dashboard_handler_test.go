@@ -159,6 +159,16 @@ func TestDashboardHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(DashboardHandlerTestSuite))
 }
 
+// GetRecentlyCompletedByAssignee completes MockTaskService (task_handler_test.go)
+// for the assignee-scoped activity source.
+func (m *MockTaskService) GetRecentlyCompletedByAssignee(assigneeID uint, limit int) ([]models.Task, error) {
+	args := m.Called(assigneeID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
 // --- analytics endpoints -----------------------------------------------------
 
 // dashboardEnvelope is the outer utils.APIResponse with the payload left raw,
@@ -501,7 +511,7 @@ func (suite *DashboardHandlerTestSuite) TestGetActivities_MergedAndSortedDescend
 // Tickets need not be assigned to anyone; an unassigned one must still produce
 // an activity rather than panicking on the nil *User.
 func (suite *DashboardHandlerTestSuite) TestGetActivities_UnassignedTicketIsGraceful() {
-	router := suite.newAnalyticsRouter(models.RoleSupport, 1)
+	router := suite.newAnalyticsRouter(models.RoleAdmin, 1)
 
 	ticket := models.Ticket{Title: "Orphan"}
 	ticket.ID = 8
@@ -640,15 +650,108 @@ func (suite *DashboardHandlerTestSuite) TestGetUpcomingTasks_LimitIsCapped() {
 }
 
 func (suite *DashboardHandlerTestSuite) TestGetRecentTickets_Success() {
-	router := suite.newAnalyticsRouter(models.RoleSupport, 3)
-	ticket := models.Ticket{Title: "Latest"}
-	ticket.ID = 77
-	suite.mockTicketService.On("GetRecent", 5).Return([]models.Ticket{ticket}, nil)
+	for _, role := range []models.UserRole{models.RoleAdmin, models.RoleSales} {
+		suite.SetupTest()
+		router := suite.newAnalyticsRouter(role, 3)
+		ticket := models.Ticket{Title: "Latest"}
+		ticket.ID = 77
+		suite.mockTicketService.On("GetRecent", 5).Return([]models.Ticket{ticket}, nil).Once()
 
-	rec := suite.doGet(router, "/dashboard/recent-tickets")
+		rec := suite.doGet(router, "/dashboard/recent-tickets")
+
+		assert.Equal(suite.T(), http.StatusOK, rec.Code, role)
+		assert.Contains(suite.T(), rec.Body.String(), "Latest", role)
+		suite.mockTicketService.AssertExpectations(suite.T())
+	}
+}
+
+// Support is narrowed to its own assignments in the query, never by filtering
+// the unscoped list afterwards.
+func (suite *DashboardHandlerTestSuite) TestGetRecentTickets_SupportScopedToAssignee() {
+	router := suite.newAnalyticsRouter(models.RoleSupport, 3)
+	suite.mockTicketService.On("GetRecentByAssignee", uint(3), 7).Return([]models.Ticket(nil), nil)
+
+	rec := suite.doGet(router, "/dashboard/recent-tickets?limit=7")
 
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	assert.Contains(suite.T(), rec.Body.String(), "Latest")
+	suite.assertEmptyDataArray(rec)
+	suite.mockTicketService.AssertNotCalled(suite.T(), "GetRecent", mock.Anything)
+}
+
+// Sales gets its own leads and assignments for lead and task events, and every
+// ticket; the unscoped lead and task sources are never read.
+func (suite *DashboardHandlerTestSuite) TestGetActivities_SalesScopedSources() {
+	router := suite.newAnalyticsRouter(models.RoleSales, 21)
+	suite.mockLeadService.On("GetRecentByOwner", uint(21), 10).Return([]models.Lead{}, nil)
+	suite.mockLeadService.On("GetRecentlyConvertedByOwner", uint(21), 10).Return([]models.Lead{}, nil)
+	suite.mockTicketService.On("GetRecent", 10).Return([]models.Ticket{}, nil)
+	suite.mockTicketService.On("GetRecentlyResolved", 10).Return([]models.Ticket{}, nil)
+	suite.mockTaskService.On("GetRecentlyCompletedByAssignee", uint(21), 10).Return([]models.Task{}, nil)
+
+	rec := suite.doGet(router, "/dashboard/activities")
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	suite.assertEmptyDataArray(rec)
+}
+
+// Support reads no lead source at all, and only its own tickets and tasks.
+func (suite *DashboardHandlerTestSuite) TestGetActivities_SupportScopedSources() {
+	router := suite.newAnalyticsRouter(models.RoleSupport, 5)
+	assignee := models.User{Email: "support@example.com"}
+	assignee.ID = 5
+	ticket := models.Ticket{Title: "Mine", AssignedToID: &assignee.ID, AssignedTo: &assignee}
+	ticket.ID = 4
+	ticket.CreatedAt = time.Now()
+	suite.mockTicketService.On("GetRecentByAssignee", uint(5), 10).Return([]models.Ticket{ticket}, nil)
+	suite.mockTicketService.On("GetRecentlyResolvedByAssignee", uint(5), 10).Return([]models.Ticket{}, nil)
+	suite.mockTaskService.On("GetRecentlyCompletedByAssignee", uint(5), 10).Return([]models.Task{}, nil)
+
+	rec := suite.doGet(router, "/dashboard/activities")
+
+	require.Equal(suite.T(), http.StatusOK, rec.Code)
+	var env dashboardEnvelope
+	require.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &env))
+	var activities []activityJSON
+	require.NoError(suite.T(), json.Unmarshal(env.Data, &activities))
+	require.Len(suite.T(), activities, 1)
+	assert.Equal(suite.T(), "ticket-4-created", activities[0].ID)
+	// Mocks fail on any unexpected call, so no lead method was reached.
+}
+
+// Equal timestamps are broken by type and then by record id descending, the
+// same order each source query uses, so the result does not depend on the
+// order the sources were read in.
+func (suite *DashboardHandlerTestSuite) TestGetActivities_EqualTimestampsAreDeterministic() {
+	router := suite.newAnalyticsRouter(models.RoleAdmin, 1)
+	at := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	newTicket := func(id uint) models.Ticket {
+		ticket := models.Ticket{Title: fmt.Sprintf("T%d", id)}
+		ticket.ID = id
+		ticket.CreatedAt = at
+		return ticket
+	}
+	lead := models.Lead{FirstName: "Same"}
+	lead.ID = 2
+	lead.CreatedAt = at
+
+	suite.mockLeadService.On("GetRecent", 3).Return([]models.Lead{lead}, nil)
+	suite.mockLeadService.On("GetRecentlyConverted", 3).Return([]models.Lead{}, nil)
+	suite.mockTicketService.On("GetRecent", 3).Return([]models.Ticket{newTicket(10), newTicket(9), newTicket(3)}, nil)
+	suite.mockTicketService.On("GetRecentlyResolved", 3).Return([]models.Ticket{}, nil)
+	suite.mockTaskService.On("GetRecentlyCompleted", 3).Return([]models.Task{}, nil)
+
+	rec := suite.doGet(router, "/dashboard/activities?limit=3")
+
+	require.Equal(suite.T(), http.StatusOK, rec.Code)
+	var env dashboardEnvelope
+	require.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &env))
+	var activities []activityJSON
+	require.NoError(suite.T(), json.Unmarshal(env.Data, &activities))
+	ids := []string{}
+	for _, activity := range activities {
+		ids = append(ids, activity.ID)
+	}
+	assert.Equal(suite.T(), []string{"lead-2-created", "ticket-10-created", "ticket-9-created"}, ids)
 }
 
 func (suite *DashboardHandlerTestSuite) TestGetRecentTickets_CustomerForbidden() {

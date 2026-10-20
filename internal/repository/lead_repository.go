@@ -214,7 +214,7 @@ func (r *leadRepository) CountByOwnerID(ownerID uint) (int64, error) {
 func (r *leadRepository) ConvertToCustomer(leadID uint, customerID uint) error {
 	return r.db.Model(&models.Lead{}).Where("id = ?", leadID).
 		Updates(map[string]interface{}{
-			"status": models.LeadStatusConverted,
+			"status":      models.LeadStatusConverted,
 			"customer_id": customerID,
 		}).Error
 }
@@ -247,11 +247,18 @@ func (r *leadRepository) ListRecent(ownerID *uint, limit int) ([]models.Lead, er
 // A lead carries no dedicated converted_at column, so updated_at stands in for
 // the conversion time: conversion is the write that sets the status, and it is
 // the best available signal without a schema change.
-func (r *leadRepository) ListRecentlyConverted(limit int) ([]models.Lead, error) {
+//
+// A nil ownerID means every owner; a non-nil one narrows to that owner. The
+// filter is part of the query, so it applies before the limit and hidden rows
+// can never take a permitted row's place.
+func (r *leadRepository) ListRecentlyConverted(ownerID *uint, limit int) ([]models.Lead, error) {
 	leads := []models.Lead{}
-	err := r.db.Preload("Owner").
-		Where("status = ?", models.LeadStatusConverted).
-		Order("updated_at DESC, id DESC").
+	query := r.db.Preload("Owner").
+		Where("status = ?", models.LeadStatusConverted)
+	if ownerID != nil {
+		query = query.Where("owner_id = ?", *ownerID)
+	}
+	err := query.Order("updated_at DESC, id DESC").
 		Limit(limit).
 		Find(&leads).Error
 	return leads, err

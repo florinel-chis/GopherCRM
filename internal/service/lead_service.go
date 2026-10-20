@@ -413,10 +413,16 @@ func (s *leadService) GetRecentByOwner(ownerID uint, limit int) ([]models.Lead, 
 	return s.leadRepo.ListRecent(&ownerID, limit)
 }
 
-// GetRecentlyConverted returns the leads most recently marked converted, for
-// the activity feed.
+// GetRecentlyConverted returns the leads most recently marked converted across
+// every owner, for the admin activity feed.
 func (s *leadService) GetRecentlyConverted(limit int) ([]models.Lead, error) {
-	return s.leadRepo.ListRecentlyConverted(limit)
+	return s.leadRepo.ListRecentlyConverted(nil, limit)
+}
+
+// GetRecentlyConvertedByOwner returns the leads most recently marked converted
+// that one user owns. The sales activity feed narrows through here.
+func (s *leadService) GetRecentlyConvertedByOwner(ownerID uint, limit int) ([]models.Lead, error) {
+	return s.leadRepo.ListRecentlyConverted(&ownerID, limit)
 }
 
 // GetConversionTimestamps returns the conversion time of every lead converted

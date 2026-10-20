@@ -53,9 +53,11 @@ type LeadRepository interface {
 	// MySQL and SQLite handle identically; every time-based aggregation is a
 	// plain range scan whose results are bucketed in Go, because no date
 	// function is portable across the two drivers.
+	// A nil ownerID on the recent listings means every owner; a non-nil one
+	// narrows the query to that owner before the limit is applied.
 	CountByStatus() (map[string]int64, error)
 	ListRecent(ownerID *uint, limit int) ([]models.Lead, error)
-	ListRecentlyConverted(limit int) ([]models.Lead, error)
+	ListRecentlyConverted(ownerID *uint, limit int) ([]models.Lead, error)
 	ConversionTimestampsSince(since time.Time) ([]time.Time, error)
 	// GetLatestByEmail returns the most recently created live lead with this
 	// address, or gorm.ErrRecordNotFound when there is none. It backs the form
@@ -102,10 +104,11 @@ type TicketRepository interface {
 	CountByCustomerID(customerID uint) (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
 	CountOpen() (int64, error)
-	// Dashboard analytics.
+	// Dashboard analytics. A nil assignedToID means every ticket; a non-nil one
+	// narrows the query to that assignee before the limit is applied.
 	CountByPriority() (map[string]int64, error)
-	ListRecent(limit int) ([]models.Ticket, error)
-	ListRecentlyResolved(limit int) ([]models.Ticket, error)
+	ListRecent(assignedToID *uint, limit int) ([]models.Ticket, error)
+	ListRecentlyResolved(assignedToID *uint, limit int) ([]models.Ticket, error)
 	CreateComment(comment *models.TicketComment) error
 	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 	WithTx(tx *gorm.DB) TicketRepository
@@ -130,7 +133,7 @@ type TaskRepository interface {
 	CountByStatus() (map[string]int64, error)
 	ListUpcoming(assignedToID *uint, limit int) ([]models.Task, error)
 	ListDueBetween(assignedToID *uint, from, to time.Time, limit int) ([]models.Task, error)
-	ListRecentlyCompleted(limit int) ([]models.Task, error)
+	ListRecentlyCompleted(assignedToID *uint, limit int) ([]models.Task, error)
 	// CreateWithLabels and UpdateWithLabels write the task and its label set in
 	// one transaction. Update replaces the whole set — passing an empty slice
 	// clears it — so a caller that must leave the labels alone uses Update.
