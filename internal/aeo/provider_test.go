@@ -249,6 +249,8 @@ func TestProviderHTTPStatus(t *testing.T) {
 		{name: "anthropic error", err: anthropicErr, want: http.StatusInternalServerError},
 		{name: "wrapped openai error", err: fmt.Errorf("openai: %w", openaiErr), want: http.StatusTooManyRequests},
 		{name: "wrapped anthropic error", err: fmt.Errorf("anthropic: %w", anthropicErr), want: http.StatusInternalServerError},
+		{name: "sanitized provider error", err: SanitizeProviderError("openai", openaiErr), want: http.StatusTooManyRequests},
+		{name: "wrapped sanitized error", err: fmt.Errorf("run: %w", &ProviderError{Category: FailureHTTPStatus, StatusCode: 502}), want: 502},
 	}
 
 	for _, tc := range tests {
@@ -271,6 +273,14 @@ func TestLoadProvidersUsesConfiguredEndpointsAndModels(t *testing.T) {
 	cfg.KimiBaseURL = fake.server.URL + "/kimi/v1/"
 	cfg.PerplexityBaseURL = fake.server.URL + "/perplexity/"
 	cfg.GeminiModel = "configured-gemini-model"
+	// A loopback endpoint needs the operator's explicit local exception for
+	// each engine, exactly as in production.
+	local := make([]string, 0, 5)
+	for _, key := range []string{ProviderAnthropic, ProviderOpenAI, ProviderGemini, ProviderKimi, ProviderPerplexity} {
+		local = append(local, key+"="+fake.server.URL)
+	}
+	cfg.Egress = config.ParseAEOEgressPolicy("", strings.Join(local, ","))
+	require.NoError(t, cfg.Egress.Err)
 	providers := LoadProvidersFor(cfg)
 	require.Len(t, providers, 5)
 	for _, provider := range providers {

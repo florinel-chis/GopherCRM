@@ -18,7 +18,9 @@ func TestAEOConnectionSettings(t *testing.T) {
 		{"model", strings.Repeat("界", 121), "", true},
 		{"model", "   ", "", false},
 		{"base_url", " https://example.com/v1/ ", "https://example.com/v1/", false},
-		{"base_url", "http://localhost:1234/v1", "http://localhost:1234/v1", false},
+		// Remote settings are HTTPS only; local engines are an operator
+		// environment exception (AEO_EGRESS_LOCAL_ORIGINS).
+		{"base_url", "http://localhost:1234/v1", "", true},
 		{"base_url", "", "", false},
 		{"base_url", "ftp://example.com", "", true},
 		{"base_url", "/v1", "", true},

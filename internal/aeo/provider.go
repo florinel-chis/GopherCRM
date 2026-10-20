@@ -4,7 +4,9 @@
 //
 // Every engine other than Anthropic speaks the OpenAI chat-completions dialect,
 // so there is exactly one OpenAI-compatible wrapper (see openai_compat.go)
-// parameterized by base URL. No HTTP client is hand-rolled here.
+// parameterized by base URL. Both SDKs send through the shared egress guard
+// (see egress.go), and every failure leaves the package as a sanitized
+// *ProviderError (see errors.go).
 package aeo
 
 import (
@@ -12,9 +14,6 @@ import (
 	"errors"
 	"strings"
 	"unicode/utf8"
-
-	anthropic "github.com/anthropics/anthropic-sdk-go"
-	openai "github.com/openai/openai-go/v3"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -33,10 +32,11 @@ const (
 	ProviderPerplexity = "perplexity"
 )
 
-// Base URLs for the OpenAI-compatible engines. An empty base URL means "use the
-// SDK default", which is only correct for OpenAI itself.
+// Official base URLs. They are always explicit, so the egress guard knows the
+// origin every request targets; each lies on that engine's official origin.
 const (
-	OpenAIBaseURL     = ""
+	AnthropicBaseURL  = "https://api.anthropic.com/"
+	OpenAIBaseURL     = "https://api.openai.com/v1/"
 	GeminiBaseURL     = "https://generativelanguage.googleapis.com/v1beta/openai/"
 	KimiBaseURL       = "https://api.moonshot.ai/v1"
 	PerplexityBaseURL = "https://api.perplexity.ai"
@@ -91,6 +91,9 @@ func LoadProviders(cfg *config.Config) []Provider {
 	if cfg == nil {
 		return nil
 	}
+	if cfg.AEO.Egress.Err != nil {
+		logProvider().Error("AEO egress policy is malformed; every provider request is refused until AEO_EGRESS_ALLOWED_ORIGINS and AEO_EGRESS_LOCAL_ORIGINS are fixed")
+	}
 	providers := LoadProvidersFor(cfg.AEO)
 	logProvider().WithField("providers", providerNames(providers)).
 		Info("AEO providers loaded")
@@ -126,11 +129,26 @@ func withStorableIdentity(providers []Provider) []Provider {
 // This is the variant the service calls per run and per status read, once
 // administrator-stored keys are overlaid on the environment, so it logs at debug
 // level: at info it would narrate every poll of the settings page.
+//
+// Every engine is bound to a guard built from a.Egress, the environment-only
+// operator policy. An engine whose endpoint that policy does not trust stays in
+// the roster but fails every query with FailureEndpointNotPermitted before any
+// request is made, so a misconfiguration is visible instead of silent.
 func LoadProvidersFor(a config.AEOConfig) []Provider {
+	return LoadProvidersWithGuard(a, NewEgressGuard(a.Egress))
+}
+
+// LoadProvidersWithGuard is LoadProvidersFor with an explicit egress guard; the
+// guard's policy governs and a.Egress is ignored. Tests use it to inject a
+// resolver, dialer and certificate roots; a nil guard means the policy in a.
+func LoadProvidersWithGuard(a config.AEOConfig, guard *EgressGuard) []Provider {
+	if guard == nil {
+		guard = NewEgressGuard(a.Egress)
+	}
 	providers := make([]Provider, 0, 6)
 
 	if a.AnthropicAPIKey != "" {
-		providers = append(providers, NewAnthropicProvider(a.AnthropicAPIKey, a.AnthropicModel, a.AnthropicBaseURL))
+		providers = append(providers, NewAnthropicProvider(a.AnthropicAPIKey, a.AnthropicModel, a.AnthropicBaseURL, guard))
 	}
 	if a.OpenAIAPIKey != "" {
 		providers = append(providers, NewOpenAICompatProvider(OpenAICompatConfig{
@@ -138,6 +156,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Model:   a.OpenAIModel,
 			APIKey:  a.OpenAIAPIKey,
 			BaseURL: providerBaseURL(a.OpenAIBaseURL, OpenAIBaseURL),
+			Guard:   guard,
 		}))
 	}
 	if a.GeminiAPIKey != "" {
@@ -146,6 +165,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Model:   a.GeminiModel,
 			APIKey:  a.GeminiAPIKey,
 			BaseURL: providerBaseURL(a.GeminiBaseURL, GeminiBaseURL),
+			Guard:   guard,
 		}))
 	}
 	if a.MoonshotAPIKey != "" {
@@ -154,6 +174,7 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			Model:   a.KimiModel,
 			APIKey:  a.MoonshotAPIKey,
 			BaseURL: providerBaseURL(a.KimiBaseURL, KimiBaseURL),
+			Guard:   guard,
 		}))
 	}
 	if a.PerplexityAPIKey != "" {
@@ -163,16 +184,20 @@ func LoadProvidersFor(a config.AEOConfig) []Provider {
 			APIKey:          a.PerplexityAPIKey,
 			BaseURL:         providerBaseURL(a.PerplexityBaseURL, PerplexityBaseURL),
 			NativeCitations: true,
+			Guard:           guard,
 		}))
 	}
 	// The custom engine is keyed on its base URL: self-hosted servers (LM
-	// Studio, vLLM, Ollama, TGI) usually need no API key at all.
+	// Studio, vLLM, Ollama, TGI) usually need no API key at all. Its trust is
+	// always looked up under "custom", whatever display name it carries.
 	if a.CustomBaseURL != "" {
 		providers = append(providers, NewOpenAICompatProvider(OpenAICompatConfig{
-			Name:    customProviderName(a),
-			Model:   a.CustomModel,
-			APIKey:  a.CustomAPIKey,
-			BaseURL: a.CustomBaseURL,
+			Name:      customProviderName(a),
+			Model:     a.CustomModel,
+			APIKey:    a.CustomAPIKey,
+			BaseURL:   a.CustomBaseURL,
+			PolicyKey: config.AEOEgressCustom,
+			Guard:     guard,
 		}))
 	}
 
@@ -223,19 +248,43 @@ func providerNames(providers []Provider) []string {
 	return names
 }
 
-// ProviderHTTPStatus recovers the HTTP status code from a provider error. Both
-// SDKs surface API failures as a typed error carrying StatusCode; anything else
-// (transport failure, context deadline) reports 0.
+// ProviderHTTPStatus recovers the HTTP status code from a provider error: the
+// status kept on a sanitized *ProviderError, or the StatusCode both SDKs attach
+// to their typed errors. Anything else (transport failure, context deadline)
+// reports 0.
 func ProviderHTTPStatus(err error) int {
-	var openaiErr *openai.Error
-	if errors.As(err, &openaiErr) {
-		return openaiErr.StatusCode
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) && providerErr != nil {
+		return providerErr.StatusCode
 	}
-	var anthropicErr *anthropic.Error
-	if errors.As(err, &anthropicErr) {
-		return anthropicErr.StatusCode
+	return sdkHTTPStatus(err)
+}
+
+// SafeQuery calls provider.Query and guarantees a sanitized result: an error
+// is always a *ProviderError, and a panic becomes FailurePanic without its
+// value ever being logged or returned. Both the run engine and prompt
+// generation call providers only through it.
+func SafeQuery(ctx context.Context, provider Provider, prompt string) (answer ProviderAnswer, err error) {
+	name := "provider"
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			answer = ProviderAnswer{}
+			err = &ProviderError{Provider: name, Category: FailurePanic}
+			logProvider().WithFields(map[string]any{
+				"provider":         name,
+				"failure_category": FailurePanic,
+			}).Error("AEO provider panicked")
+		}
+	}()
+	if provider == nil {
+		return ProviderAnswer{}, &ProviderError{Provider: name, Category: FailureUnknown}
 	}
-	return 0
+	name = safeProviderName(provider.Name())
+	answer, err = provider.Query(ctx, prompt)
+	if err != nil {
+		return ProviderAnswer{}, SanitizeProviderError(name, err)
+	}
+	return answer, nil
 }
 
 // logProvider returns the configured application logger, or the logrus standard

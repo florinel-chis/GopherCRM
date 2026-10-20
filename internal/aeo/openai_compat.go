@@ -1,16 +1,13 @@
 package aeo
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"strings"
 
 	openai "github.com/openai/openai-go/v3"
 	openaiopt "github.com/openai/openai-go/v3/option"
+
+	"github.com/florinel-chis/gophercrm/internal/config"
 )
 
 // OpenAICompatConfig describes one engine that speaks the OpenAI
@@ -25,11 +22,17 @@ type OpenAICompatConfig struct {
 	// APIKey may be empty: self-hosted servers often need no credential, and
 	// the SDK omits the Authorization header entirely when it is blank.
 	APIKey string
-	// BaseURL empty selects the SDK default, which is only correct for OpenAI.
+	// BaseURL empty selects the official OpenAI endpoint.
 	BaseURL string
 	// NativeCitations is true only for Perplexity, which returns the sources it
 	// consulted as a non-standard top-level response field.
 	NativeCitations bool
+	// PolicyKey names the egress policy entry that governs this engine
+	// (config.AEOEgress*). Empty means Name; the custom engine sets "custom".
+	PolicyKey string
+	// Guard is the egress guard every request goes through. Nil means the
+	// default policy, which trusts only the engine's official origin.
+	Guard *EgressGuard
 }
 
 // OpenAICompatProvider is the single wrapper shared by every OpenAI-compatible
@@ -37,30 +40,49 @@ type OpenAICompatConfig struct {
 type OpenAICompatProvider struct {
 	client openai.Client
 	cfg    OpenAICompatConfig
+
+	// blocked is set when the egress policy refused the endpoint; the client
+	// was then never built and every query fails without a request.
+	blocked error
 }
 
 // NewOpenAICompatProvider builds a provider for the given engine.
 func NewOpenAICompatProvider(cfg OpenAICompatConfig) *OpenAICompatProvider {
-	opts := []openaiopt.RequestOption{
-		openaiopt.WithAPIKey(cfg.APIKey),
-		openaiopt.WithMaxRetries(providerMaxRetries),
+	if cfg.Guard == nil {
+		cfg.Guard = NewEgressGuard(config.AEOEgressPolicy{})
 	}
-	if cfg.BaseURL != "" {
-		opts = append(opts, openaiopt.WithBaseURL(cfg.BaseURL))
+	if cfg.PolicyKey == "" {
+		cfg.PolicyKey = cfg.Name
 	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = OpenAIBaseURL
+	}
+	provider := &OpenAICompatProvider{cfg: cfg}
 
-	// Never log the key itself, only whether one is present.
-	logProvider().WithFields(map[string]any{
+	// Never log the key or the endpoint itself: a rejected endpoint may carry
+	// a credential. Log only presence and the policy decision.
+	logger := logProvider().WithFields(map[string]any{
 		"provider":    cfg.Name,
 		"model":       cfg.Model,
-		"base_url":    cfg.BaseURL,
 		"key_present": cfg.APIKey != "",
-	}).Debug("AEO provider configured")
+	})
 
-	return &OpenAICompatProvider{
-		client: openai.NewClient(opts...),
-		cfg:    cfg,
+	httpClient, err := cfg.Guard.httpClient(cfg.PolicyKey, cfg.BaseURL)
+	if err != nil {
+		provider.blocked = err
+		logger.WithField("failure_category", FailureEndpointNotPermitted).
+			Warn("AEO provider endpoint is not permitted by the egress policy; its queries will fail")
+		return provider
 	}
+
+	provider.client = openai.NewClient(
+		openaiopt.WithAPIKey(cfg.APIKey),
+		openaiopt.WithMaxRetries(providerMaxRetries),
+		openaiopt.WithBaseURL(cfg.BaseURL),
+		openaiopt.WithHTTPClient(httpClient),
+	)
+	logger.Debug("AEO provider configured")
+	return provider
 }
 
 func (p *OpenAICompatProvider) Name() string { return p.cfg.Name }
@@ -69,8 +91,16 @@ func (p *OpenAICompatProvider) Model() string { return p.cfg.Model }
 
 // Query sends the prompt verbatim, with no system prompt, so the answer
 // approximates what a real user asking the same question would see.
+//
+// Every failure is returned as a sanitized *ProviderError carrying a category
+// and the numeric HTTP status only. Provider error bodies — including Gemini's
+// [{"error": {...}}] envelope — are deliberately not read back: they can
+// reflect the key, the prompt or arbitrary remote text.
 func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (ProviderAnswer, error) {
-	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+	if p.blocked != nil {
+		return ProviderAnswer{}, SanitizeProviderError(p.Name(), p.blocked)
+	}
+	resp, err := p.client.Chat.Completions.New(withEgressLatch(ctx), openai.ChatCompletionNewParams{
 		Model:     openai.ChatModel(p.cfg.Model),
 		MaxTokens: openai.Int(maxAnswerTokens),
 		Messages: []openai.ChatCompletionMessageParamUnion{
@@ -78,10 +108,10 @@ func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (Provid
 		},
 	})
 	if err != nil {
-		return ProviderAnswer{}, fmt.Errorf("%s: %w", p.Name(), p.withProviderMessage(err))
+		return ProviderAnswer{}, SanitizeProviderError(p.Name(), err)
 	}
 	if resp == nil {
-		return ProviderAnswer{}, fmt.Errorf("%s: empty response", p.Name())
+		return ProviderAnswer{}, SanitizeProviderError(p.Name(), errEmptyResponse)
 	}
 
 	answer := ProviderAnswer{}
@@ -95,40 +125,6 @@ func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (Provid
 	}
 
 	return answer, nil
-}
-
-// Gemini sometimes returns [{"error": {...}}] instead of the OpenAI error
-// object. The SDK retains the response body but loses the nested message.
-// Recover only that message, preserving the typed error for status handling.
-func (p *OpenAICompatProvider) withProviderMessage(err error) error {
-	var apiErr *openai.Error
-	if !errors.As(err, &apiErr) || apiErr.Message != "" || apiErr.Response == nil || apiErr.Response.Body == nil {
-		return err
-	}
-	body, readErr := io.ReadAll(io.LimitReader(apiErr.Response.Body, 64*1024))
-	apiErr.Response.Body = io.NopCloser(bytes.NewReader(body))
-	if readErr != nil {
-		return err
-	}
-	var envelopes []struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(body, &envelopes) != nil || len(envelopes) == 0 {
-		return err
-	}
-	message := strings.TrimSpace(envelopes[0].Error.Message)
-	if message == "" {
-		return err
-	}
-	if p.cfg.APIKey != "" {
-		message = strings.ReplaceAll(message, p.cfg.APIKey, "[REDACTED]")
-	}
-	if runes := []rune(message); len(runes) > 2000 {
-		message = string(runes[:2000]) + "…"
-	}
-	return fmt.Errorf("%w: %s", err, message)
 }
 
 // nativeCitationsPayload mirrors the two non-standard shapes Perplexity has
@@ -152,9 +148,11 @@ func (p *OpenAICompatProvider) nativeCitations(resp *openai.ChatCompletion) []st
 
 	var payload nativeCitationsPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		// The decoder's message can quote the provider's body; log the
+		// category only.
 		logProvider().WithFields(map[string]any{
-			"provider": p.Name(),
-			"error":    err.Error(),
+			"provider":         p.Name(),
+			"failure_category": FailureInvalidResponse,
 		}).Warn("could not decode native citations from provider response")
 		return nil
 	}

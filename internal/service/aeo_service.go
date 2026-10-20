@@ -491,9 +491,17 @@ func (s *aeoService) GeneratePrompts(ctx context.Context, count int) ([]string, 
 	callCtx, cancel := context.WithTimeout(ctx, aeoGenerationTimeout)
 	defer cancel()
 
-	answer, err := provider.Query(callCtx, buildAEOGenerationPrompt(profile, count))
+	// SafeQuery is the failure boundary: whatever the engine returns or panics
+	// with — SDK errors, custom Provider errors, reflected keys or prompts —
+	// leaves as a bounded *aeo.ProviderError carrying only a category and the
+	// numeric HTTP status the handler maps to its response.
+	answer, err := aeo.SafeQuery(callCtx, provider, buildAEOGenerationPrompt(profile, count))
 	if err != nil {
-		utils.LogServiceResponse(logger.WithField("http_status", aeo.ProviderHTTPStatus(err)), err)
+		utils.LogServiceResponse(logger.WithFields(map[string]interface{}{
+			"provider":         engine,
+			"http_status":      aeo.ProviderHTTPStatus(err),
+			"failure_category": aeo.ProviderFailureCategory(err),
+		}), err)
 		return nil, err
 	}
 

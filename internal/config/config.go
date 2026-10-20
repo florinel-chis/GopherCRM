@@ -148,6 +148,11 @@ type AEOConfig struct {
 	// hosted APIs; a single-GPU self-hosted server answering serially needs
 	// more headroom, because queued requests carry the wait in their latency.
 	QueryTimeoutSeconds int
+
+	// Egress is the operator's outbound trust policy, from
+	// AEO_EGRESS_ALLOWED_ORIGINS and AEO_EGRESS_LOCAL_ORIGINS. It is
+	// environment-only: administrator settings never read or widen it.
+	Egress AEOEgressPolicy
 }
 
 // FormsConfig holds the settings of the forms module. Every key is optional:
@@ -275,6 +280,7 @@ func Load() (*Config, error) {
 			ScheduleEnabled:     getEnvAsBool("AEO_SCHEDULE_ENABLED", true),
 			ScheduleHour:        clampHour(getEnvAsInt("AEO_SCHEDULE_HOUR", 6)),
 			QueryTimeoutSeconds: getEnvAsInt("AEO_QUERY_TIMEOUT_SECONDS", 60),
+			Egress:              ParseAEOEgressPolicy(getEnv("AEO_EGRESS_ALLOWED_ORIGINS", ""), getEnv("AEO_EGRESS_LOCAL_ORIGINS", "")),
 		},
 		Forms: FormsConfig{
 			PublicBaseURL:     strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
@@ -295,6 +301,13 @@ func Load() (*Config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("invalid DB_DRIVER %q: valid values are mysql, sqlite", config.Database.Driver)
+	}
+
+	// A malformed AEO egress policy fails closed rather than failing startup:
+	// the CRM keeps working and every AEO provider request is refused.
+	if config.AEO.Egress.Err != nil {
+		log.WithError(config.AEO.Egress.Err).
+			Error("AEO egress policy is malformed; every AEO provider request will be refused until it is fixed")
 	}
 
 	if config.Server.Mode == "production" && !config.JWT.CookieSecure {
