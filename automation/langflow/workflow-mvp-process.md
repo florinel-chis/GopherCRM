@@ -140,6 +140,11 @@ prevent an audited release.
 The shared repair engine now persists the reserved round and the `implement`
 stage together, before any awaited precondition. Deadline expiry or cancellation
 in those checks can therefore resume without charging a second repair round.
+The same reservation must survive the issue workflow's explicit main revalidation
+and contract refresh. Those operations now preserve pending implementation stages,
+including a reserved repair, while invalidating approval evidence. Regressions
+advance main during local tests, rejected review and CI, then resume through merge
+within the original single repair allowance.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

@@ -245,9 +245,11 @@ class Runner:
             if record:
                 record.setdefault('contract_history', []).append({'contract_hash': record['contract_hash'],
                                                                   'refreshed_at': time.time()})
+                next_stage = (record['stage'] if record['stage'] in {'implement', 'repair_pending'}
+                              else 'validate' if record['head'] != record['base'] else 'implement')
                 record.update(contract_hash=frozen['contract_hash'], context_hash=frozen['context_hash'],
                               tested_head=None, reviewed_head=None, receipts={}, review=None, review_receipt=None,
-                              stage='validate' if record['head'] != record['base'] else 'implement', last_error=None)
+                              stage=next_stage, last_error=None)
                 self.save(record)
             return {'issue': number, 'contract_hash': frozen['contract_hash'], 'base': base}
 
@@ -643,7 +645,8 @@ class Runner:
                 raise GateError('Only the active issue can be revalidated')
             record = self.store.read(f'issue-{number}')
             if (not record or record.get('policy') != self.policy
-                    or record['stage'] not in {'validate', 'review', 'publish', 'ci', 'merging', 'revalidating'}):
+                    or record['stage'] not in {'implement', 'repair_pending', 'validate', 'review',
+                                               'publish', 'ci', 'merging', 'revalidating'}):
                 raise GateError('No matching unfinished journal to revalidate')
             telemetry.remaining(record, self.clock())
             self._record = record
@@ -658,6 +661,9 @@ class Runner:
                 await self.command('git', 'fetch', 'origin', 'main')
                 base = await self.command('git', 'rev-parse', 'origin/main')
                 # Merging preserves published commits; no force push or destructive reset.
+                if record['stage'] != 'revalidating':
+                    record['after_revalidation'] = (record['stage']
+                        if record['stage'] in {'implement', 'repair_pending'} else 'validate')
                 record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
                 self.save(record)
                 await self.complete_revalidation(record)
@@ -681,7 +687,8 @@ class Runner:
                               'Preserve the issue fix and add any needed regression coverage.')
                 self.save(record)
                 raise GateError('Main has merge conflicts; resume execution to repair and retest them')
-        record.update(head=await self.head(worktree), base=target, stage='validate')
+        record.update(head=await self.head(worktree), base=target,
+                      stage=record.pop('after_revalidation', 'validate'))
         await self.contains_base(record)
         self.save(record)
 

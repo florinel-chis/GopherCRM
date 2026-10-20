@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import test_runner as fixtures
 from test_contracts import manifest
-from gophercrm_runner.config import GateError
-from gophercrm_runner.engine import Runner
+from gophercrm_runner.config import CommandError, GateError
+from gophercrm_runner.engine import CIFailure, Runner
 
 
 class ContractExecutionTests(fixtures.EngineTests):
@@ -32,6 +32,61 @@ class ContractExecutionTests(fixtures.EngineTests):
             await Runner(config, self.commands).run_issue(95, execute=True)
         self.assertEqual(self.commands.implementations, 0)
         self.assertFalse((config.state_dir / 'worktrees').exists())
+
+    async def assert_repair_recovers_main_advance(self, trigger):
+        self.config = replace(self.config, max_repair_rounds=1)
+        self.runner = Runner(self.config, self.commands)
+        original = getattr(self.runner, trigger)
+        advanced = False
+        if trigger == 'review':
+            self.commands.reject_reviews = 1
+
+        async def advance(*args):
+            nonlocal advanced
+            result = await original(*args)
+            if not advanced:
+                advanced = True
+                (self.checkout / 'other.txt').write_text('Independent main change\n')
+                for command in [('add', '.'), ('commit', '-m', 'advance main'),
+                                ('update-ref', 'refs/remotes/origin/main', 'HEAD')]:
+                    subprocess.run(['git', *command], cwd=self.checkout, check=True, capture_output=True)
+                self.commands.base = await self.runner.head(self.checkout)
+                if self.commands.pr_data:
+                    self.commands.pr_data['baseRefOid'] = self.commands.base
+                if trigger == 'validate':
+                    raise CommandError('Regression failed while main advanced')
+                if trigger == 'wait_ci':
+                    raise CIFailure('CI regression failed while main advanced')
+            return result
+
+        setattr(self.runner, trigger, advance)
+        with self.assertRaisesRegex(GateError, 'Live main advanced'):
+            await self.runner.run_issue(95, execute=True)
+        before = self.runner.store.read('issue-95')
+        self.assertEqual((before['stage'], before['repairs']), ('implement', 1))
+        self.assertEqual(self.commands.implementations, 1)
+        await self.runner.revalidate(95)
+        await self.runner.freeze(95, self.manifest_path, refresh=True)
+        refreshed = self.runner.store.read('issue-95')
+        self.assertEqual((refreshed['stage'], refreshed['repairs']), ('implement', 1))
+        self.assertEqual(refreshed['provider_calls'], before['provider_calls'])
+        self.assertEqual(refreshed['deadline'], before['deadline'])
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertEqual((final['repairs'], self.commands.implementations), (1, 2))
+        self.assertEqual(final['head'], final['tested_head'])
+        self.assertEqual(final['head'], final['reviewed_head'])
+        self.assertEqual(self.runner.store.read('active'), {})
+
+    async def test_validation_repair_can_revalidate_after_main_advances(self):
+        await self.assert_repair_recovers_main_advance('validate')
+
+    async def test_rejected_review_repair_can_revalidate_after_main_advances(self):
+        await self.assert_repair_recovers_main_advance('review')
+
+    async def test_ci_repair_can_revalidate_after_main_advances(self):
+        await self.assert_repair_recovers_main_advance('wait_ci')
 
     async def test_changed_issue_cannot_publish_old_acceptance(self):
         original = self.runner.issue
