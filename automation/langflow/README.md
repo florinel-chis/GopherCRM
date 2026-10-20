@@ -39,6 +39,15 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 Preview reads GitHub and writes private command logs. It does not call Claude, create branches or PRs, or change issues. The [example policy](gophercrm_runner/config.example.json) lists all 27 validated tickets explicitly. Queue limits default to one; closed tickets are skipped. An unfinished active ticket is resumed first.
 
+When updating an existing local installation from source, force reinstall the package even if its version has not changed:
+
+```sh
+uv pip install --python "$HOME/.local/share/gophercrm-langflow/venv/bin/python" \
+  --no-deps --reinstall-package gophercrm-remediation-runner ./automation/langflow
+```
+
+Verify the installed source against the reviewed checkout and restart Langflow only when no execution is active. A successful installer exit can otherwise leave an older build of the same version loaded.
+
 ## Use the visual workflow
 
 ```sh
@@ -182,6 +191,8 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 Issue, guidance, check-registry or contract changes stop execution. Inspect them, update the operator manifest when needed, then use `freeze --refresh`. Refresh preserves old contract snapshots/history and spent work, invalidates prior tests/review/receipts, and requires fresh validation. It cannot silently adopt a changed executable policy or promote a completed PR-ready execution. If main changed, revalidate the candidate first and update the trusted checkout's guidance to that base before refreshing.
 
 Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and per-command timeout changes are permitted during an active ticket; validation policy changes are not. Editing configured total limits never changes an admitted execution’s persisted limits. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
+
+An issue repair reserved before main advances can use `revalidate` followed by `freeze --refresh`; both preserve its reserved stage and spent budget. A conflicting main merge retains rejected-review findings and still enforces the repair limit. If that limit is exhausted, the worktree remains in conflict for maintainer inspection; automatic execution does not resolve it or grant another round. Revalidation also refuses an already dirty cancelled issue repair. These are explicit operator boundaries, not successful completion.
 
 ## Limits and operational reports
 

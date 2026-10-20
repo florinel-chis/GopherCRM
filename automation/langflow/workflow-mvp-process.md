@@ -161,3 +161,22 @@ Concurrent main changes still require server-side branch protection for atomic
 enforcement, plus fresh local validation after an explicit candidate refresh.
 Fork intake and automatic conflict resolution remain outside this increment.
 
+The reviewed package was installed and byte-compared with all 20 source modules
+and the example policy. The real local Langflow HTTP workflow then completed
+[PR #127](https://github.com/florinel-chis/GopherCRM/pull/127) as
+`493ca460756e36c2509c4ee1f01106f0052c822f`, after verifying the original exact-head
+test/review receipts and all six CI checks. Promotion consumed zero provider calls
+and updated the original #96 journal without a reconciliation error. Both queues
+remained stopped. The default local policy now targets merge; the UI remains in
+preview. Subsequent rollout outcomes belong in tracker #94.
+
+This assisted increment required repeated adversarial review and targeted
+reproductions; it is not evidence of unattended reliability or reduced effort.
+A useful next improvement is an explicit transition table and fault-injection
+matrix covering interruption before/after each journal save, main conflicts,
+and each exhausted budget. This would make the shared issue and PR recovery
+semantics easier to assess before implementation. Also verify installed file
+hashes after source upgrades: the installer initially retained an older build
+when the version stayed at 0.3.0. Forced reinstall plus server restart corrected
+that mismatch before execution.
+
