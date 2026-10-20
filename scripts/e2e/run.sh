@@ -15,6 +15,7 @@
 #                  end in _e2e)
 #   E2E_API_PORT   backend port (default: first free port from 18091)
 #   E2E_UI_PORT    Vite port    (default: first free port from 15173)
+#   E2E_AEO_PORT   TLS provider fixture port (default: first free port from 18191)
 #   E2E_PLAN_ONLY  1: print the resolved plan and exit before any tool, database
 #                  or server is used (the self-test relies on it); any other
 #                  value runs the suite
@@ -82,6 +83,12 @@ free_port() {
 api_port=${E2E_API_PORT:-$(free_port 18091)}
 ui_port=${E2E_UI_PORT:-$(free_port 15173)}
 [ "$ui_port" = "$api_port" ] && ui_port=$(free_port $((api_port + 1)))
+aeo_port=${E2E_AEO_PORT:-$(free_port 18191)}
+if ! [[ $aeo_port =~ ^[1-9][0-9]{0,4}$ ]] || [ "$aeo_port" -gt 65535 ] ||
+  [ "$aeo_port" = "$api_port" ] || [ "$aeo_port" = "$ui_port" ]; then
+  echo "e2e: E2E_AEO_PORT must be a valid port distinct from the API and UI ports" >&2
+  exit 2
+fi
 
 work_dir=$(mktemp -d)
 # Playwright empties test-results/ when it starts, so the backend logs into the
@@ -140,6 +147,16 @@ export API_PREFIX=/api/v1 SERVER_MODE=development \
   AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
   APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
+# The same fixed fixture port is reused by sequential tests. Replace inherited
+# trust settings with exact per-engine loopback origins; never allow a wildcard
+# host, port, network, or a developer's configured custom engine.
+export E2E_AEO_PORT="$aeo_port" AEO_EGRESS_ALLOWED_ORIGINS=
+aeo_local_origins=""
+for provider in anthropic openai gemini kimi perplexity; do
+  aeo_local_origins="${aeo_local_origins:+${aeo_local_origins},}${provider}=https://127.0.0.1:$aeo_port"
+done
+export AEO_EGRESS_LOCAL_ORIGINS="$aeo_local_origins"
+
 if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   echo "e2e plan: driver=$DB_DRIVER"
   if [ "$db_driver" = sqlite ]; then
@@ -151,6 +168,8 @@ if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   fi
   echo "e2e plan: tools=$tools"
   echo "e2e plan: api_port=$api_port ui_port=$ui_port"
+  echo "e2e plan: aeo_allowed_origins=$AEO_EGRESS_ALLOWED_ORIGINS"
+  echo "e2e plan: aeo_local_origins=$AEO_EGRESS_LOCAL_ORIGINS"
   exit 0
 fi
 
@@ -171,6 +190,14 @@ fi
 # process that outlives a kill of the parent.
 echo "e2e: building backend"
 (cd "$repo_root" && go build -tags=gophercrm_e2e -o "$work_dir/gophercrm-e2e" ./cmd)
+
+# Browser provider fixtures use real HTTPS and a per-run certificate. The
+# disposable build alone can install these fallback roots. The pure Go
+# verifier is required on macOS, where SSL_CERT_FILE does not override trust.
+(cd "$repo_root" && go run ./scripts/e2e/aeo-tls --directory "$work_dir/aeo-tls")
+export E2E_AEO_CERT="$work_dir/aeo-tls/certificate.pem" \
+  E2E_AEO_KEY="$work_dir/aeo-tls/private-key.pem" GOPHERCRM_E2E_AEO_TLS=1 \
+  GODEBUG="${GODEBUG:+${GODEBUG},}x509usefallbackroots=1"
 
 echo "e2e: starting backend on :$api_port (log copied to gocrm-ui/test-results/e2e-backend.log on exit)"
 (

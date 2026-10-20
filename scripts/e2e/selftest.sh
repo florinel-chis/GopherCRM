@@ -60,7 +60,7 @@ fi
 # so no port probing happens.
 plan() {
   env -u DB_PATH -u DB_NAME E2E_CAFFEINATED=1 E2E_PLAN_ONLY=1 JWT_SECRET=selftest-secret-selftest-secret-selftest \
-    E2E_API_PORT=1 E2E_UI_PORT=2 DB_HOST=192.0.2.1 "$@" "$tmp/scripts/e2e/run.sh" 2>&1
+    E2E_API_PORT=1 E2E_UI_PORT=2 E2E_AEO_PORT=3 DB_HOST=192.0.2.1 "$@" "$tmp/scripts/e2e/run.sh" 2>&1
 }
 
 for driver in postgres MYSQL "sqlite;rm" " "; do
@@ -107,6 +107,22 @@ for driver_env in "E2E_DB_DRIVER=mysql" "E2E_DB_DRIVER="; do
     [[ $output != *"e2e plan: tools=mysql go npx curl"* ]] ||
     [[ $output == *db_path* ]]; then
     fail "mysql plan ($driver_env) is wrong (exit $code): $output"
+  fi
+done
+
+# A developer's egress exceptions must not leak into the disposable run. The
+# browser fixture gets exactly five engine/origin pairs at its selected port.
+output=$(plan E2E_DB_DRIVER=sqlite AEO_EGRESS_ALLOWED_ORIGINS='openai=https://unexpected.example' \
+  AEO_EGRESS_LOCAL_ORIGINS='custom=http://10.0.0.1:80')
+expected_origins="anthropic=https://127.0.0.1:3,openai=https://127.0.0.1:3,gemini=https://127.0.0.1:3,kimi=https://127.0.0.1:3,perplexity=https://127.0.0.1:3"
+if [[ $output != *"e2e plan: aeo_local_origins=$expected_origins"* ]] ||
+  [[ $output == *"unexpected.example"* ]] || [[ $output == *"custom=http"* ]] ||
+  ! printf '%s\n' "$output" | grep -qx 'e2e plan: aeo_allowed_origins='; then
+  fail "e2e run did not isolate provider trust: $output"
+fi
+for invalid_port in 0 65536 bad 1 2; do
+  if plan E2E_DB_DRIVER=sqlite E2E_AEO_PORT="$invalid_port" >/dev/null 2>&1; then
+    fail "e2e run accepted invalid or conflicting provider port '$invalid_port'"
   fi
 done
 

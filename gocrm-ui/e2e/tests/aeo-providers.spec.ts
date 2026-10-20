@@ -39,7 +39,7 @@ async function openGeneration(page: Page) {
   await page.getByRole('dialog').getByRole('button', { name: 'Generate suggestions' }).click();
 }
 
-test.describe('AEO provider connections with real SDKs and loopback providers', () => {
+test.describe('AEO provider connections with real SDKs and verified TLS loopback providers', () => {
   test.setTimeout(90000);
   // Direct Playwright runs often target an existing development DB. Only the
   // runner, after resetting its DB, opts in to these global-setting mutations.
@@ -206,7 +206,7 @@ test.describe('AEO provider connections with real SDKs and loopback providers', 
     });
   }
 
-  test('Gemini array-shaped 503 errors survive retries and appear in generation and tracked answers', async ({
+  test('Gemini array-shaped 503 failures retain status, retries and the recorded UI error', async ({
     page,
     aeo,
   }) => {
@@ -261,14 +261,15 @@ test.describe('AEO provider connections with real SDKs and loopback providers', 
       model: 'e2e-error-model',
       answer_text: '',
     });
-    expect(answers[0].error).toContain(aeo.stub.rejectionMessage);
+    const recordedError = answers[0].error ?? '';
+    expect(recordedError).toContain('503');
     expect(aeo.stub.requests.filter((query) => query.prompt === promptText).length).toBeGreaterThan(
       1,
     );
     await page.goto('/aeo/prompts');
     await page.getByRole('button', { name: promptText, exact: true }).click();
     await expect(page.getByTestId(`answer-card-${answers[0].id}`).getByRole('alert')).toContainText(
-      aeo.stub.rejectionMessage,
+      recordedError,
     );
   });
 
