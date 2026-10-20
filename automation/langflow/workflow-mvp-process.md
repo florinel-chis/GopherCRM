@@ -105,6 +105,8 @@ explicitly pinned PR completion workflow, available both in Langflow and through
 `complete-pr`. It verifies reusable ticket evidence or runs fresh validation and
 independent review, repairs findings within durable limits, waits for CI, then
 merges the exact approved head. This does not restart the remediation issue queue.
+New configurations now target merge, with preview as the initial execution mode;
+existing configurations and the optional PR-ready stop are preserved.
 See the [operator instructions](README.md#complete-existing-prs-through-merge).
 
 The first independent review rejected the implementation for two concrete
@@ -112,6 +114,11 @@ recovery gaps: a repair interrupted by cancellation or a depleted provider budge
 could not resume, and an unsuccessful PR completion could permanently retain the
 queue slot. The fixes add charged repair resumption, an explicit no-change retry,
 audited abandonment, preflight slot cleanup, and a visible queue-blocking error.
+The next review extended the recovery cases to external merges at another head,
+orphaned provider calls and crashes before the first journal write. These now have
+explicit abandonment dispositions; an orphaned process requires an audited
+operator acknowledgement that it was inspected and stopped. External merges
+never become fabricated runner validation, and spent calls remain spent.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

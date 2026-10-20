@@ -41,6 +41,9 @@ def main():
         if name == 'extend-pr-budget':
             command.add_argument('--calls', type=int, default=0)
             command.add_argument('--seconds', type=int, default=0)
+        if name == 'abandon-pr':
+            command.add_argument('--processes-stopped', action='store_true',
+                                 help='Confirm all orphaned provider processes were inspected and stopped')
     run = sub.add_parser('run', help='Run the Langflow workflow (preview by default)')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--limit', type=int, default=1)
@@ -105,7 +108,8 @@ def main():
         elif args.command == 'extend-pr-budget':
             result = runner.extend_pr_budget(args.pr, calls=args.calls, seconds=args.seconds, reason=args.reason)
         elif args.command == 'abandon-pr':
-            result = run_async(runner.abandon_pr(args.pr, reason=args.reason))
+            result = run_async(runner.abandon_pr(args.pr, reason=args.reason,
+                                               processes_stopped=args.processes_stopped))
         else:
             result = runner.retry_pr_repair(args.pr, reason=args.reason)
         print(json.dumps(result, indent=2))

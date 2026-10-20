@@ -60,6 +60,19 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         return await self.runner.complete_pr(122, self.commands.pr_data['headRefOid'],
                                              execute=True, **kwargs)
 
+    def test_setup_defaults_to_full_cycle_without_overwriting_existing_pilot_policy(self):
+        from gophercrm_runner.local import setup
+        directory = self.root / 'installation'
+        setup(self.checkout, directory)
+        policy = directory / 'config.json'
+        value = json.loads(policy.read_text())
+        self.assertEqual(value['completion_target'], 'merge')
+        value['completion_target'] = 'pr'
+        policy.write_text(json.dumps(value))
+        before = policy.read_bytes()
+        setup(self.checkout, directory)
+        self.assertEqual(policy.read_bytes(), before)
+
     async def test_preview_is_read_only_and_does_not_admit_queue(self):
         result = await self.runner.complete_pr(122, self.head)
         self.assertEqual(result['completion_target'], 'merge')
@@ -340,6 +353,69 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         result = await self.runner.abandon_pr(122, reason='Inspect completed work')
         self.assertEqual(result['status'], 'merged')
         self.assertNotIn('abandon_reason', self.runner.store.read('completion-pr-122'))
+
+    async def test_external_merge_at_another_head_can_release_slot_without_claiming_validation(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        self.commands.pr_data.update(state='MERGED', headRefOid='f' * 40, mergeCommit={'oid': 'external-merge'})
+        with self.assertRaisesRegex(GateError, 'does not match'):
+            await self.complete()
+        result = await self.runner.abandon_pr(122, reason='Inspected maintainer merge at a different head')
+        self.assertEqual(result['status'], 'abandoned')
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual(after['head'], before['head'])
+        self.assertEqual(after['receipts'], before['receipts'])
+        self.assertFalse(after['remote_disposition']['validated_by_this_completion'])
+        self.assertEqual(after['remote_disposition']['merge_commit'], 'external-merge')
+        self.assertNotIn('merge_commit', after)
+        self.assertEqual(self.runner.store.read('active'), {})
+
+    async def test_orphaned_provider_requires_explicit_inspected_process_acknowledgement(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        record['provider_invocations'][0]['status'] = 'running'
+        self.runner.save(record)
+        with self.assertRaisesRegex(GateError, 'processes-stopped'):
+            await self.runner.abandon_pr(122, reason='Not yet inspected')
+        self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        await self.runner.abandon_pr(122, reason='Confirmed orphaned reviewer has stopped', processes_stopped=True)
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual(after['provider_calls'], record['provider_calls'])
+        self.assertEqual(after['provider_invocations'][0]['status'], 'operator-resolved')
+        self.assertIsNone(after['provider_invocations'][0]['ended_at'])
+        self.assertTrue(after['provider_dispositions'][0]['operator_confirmed_processes_stopped'])
+        self.assertEqual(self.runner.store.read('active'), {})
+
+    async def test_journalless_admission_after_hard_crash_can_be_abandoned_when_pr_closed(self):
+        self.runner.store.admit_pr(122)
+        self.commands.pr_data['state'] = 'CLOSED'
+        await self.runner.abandon_pr(122, reason='Recovered interrupted admission after worker crash')
+        record = self.runner.store.read('completion-pr-122')
+        self.assertTrue(record['interrupted_admission'])
+        self.assertNotIn('head', record)
+        self.assertNotIn('tested_head', record)
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertEqual(self.runner.report_pr(122)['status'], 'abandoned')
+
+    async def test_journalless_admission_external_merge_is_not_claimed_as_validated(self):
+        self.runner.store.admit_pr(122)
+        self.commands.pr_data.update(state='MERGED', mergeCommit={'oid': 'external-merge'})
+        await self.runner.abandon_pr(122, reason='External merge after interrupted admission')
+        record = self.runner.store.read('completion-pr-122')
+        self.assertFalse(record['remote_disposition']['validated_by_this_completion'])
+        self.assertEqual(self.runner.store.read('active'), {})
+        with self.assertRaisesRegex(GateError, 'explicitly abandoned'):
+            await self.complete()
+
+    async def test_journalless_abandonment_cannot_release_another_pr_slot(self):
+        self.runner.store.admit_pr(123)
+        with self.assertRaisesRegex(GateError, 'No matching'):
+            await self.runner.abandon_pr(122, reason='Wrong PR number')
+        self.assertEqual(self.runner.store.read('active'), {'pr': 123})
 
     async def test_contract_and_guidance_tampering_block_resume(self):
         self.commands.fail_ci = True

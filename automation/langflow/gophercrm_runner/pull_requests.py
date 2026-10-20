@@ -24,22 +24,45 @@ class PullRequestRunner(Runner):
         return evidence.sha(json.dumps({k: record.get(k) for k in
             ('pr_input', 'criteria', 'database_profile')}, sort_keys=True).encode())
 
-    async def abandon_pr(self, number, *, reason):
+    @staticmethod
+    def matching_merge(record, pr):
+        return (pr.get('state') == 'MERGED' and (pr.get('mergeCommit') or {}).get('oid')
+                and pr.get('headRefOid') == record.get('head')
+                and pr.get('headRefName') == record.get('branch')
+                and pr.get('baseRefName') == 'main')
+
+    async def abandon_pr(self, number, *, reason, processes_stopped=False):
         if not reason.strip() or len(reason) > 1000:
             raise GateError('Abandonment requires a short reason')
         with self.store.exclusive():
             record = self.store.read(f'completion-pr-{number}')
             if not record:
-                raise GateError('No PR completion to abandon')
+                if self.store.read('active') != {'pr': number}:
+                    raise GateError('No matching PR completion or interrupted admission to abandon')
+                # A hard crash may precede the initial journal save. Record this
+                # disposition without inventing a candidate, tests or review.
+                record = dict(schema_version=1, pr=number, policy=self.policy,
+                              stage='admission_pending', completion_target='merge',
+                              interrupted_admission=True, provider_calls=0, provider_invocations=[])
             if record.get('schema_version') != 1 or record.get('policy') != self.policy:
                 raise GateError('Use the matching PR completion version and policy to abandon')
-            if any(c['status'] == 'running' for c in record.get('provider_invocations', [])):
-                raise GateError('Inspect the unresolved provider process before abandonment')
+            unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
+            if unresolved and processes_stopped is not True:
+                raise GateError('Inspect and stop orphaned provider processes, then explicitly pass --processes-stopped')
             pr = await self.pr(number)
-            if pr['state'] == 'MERGED':
+            for call in unresolved:
+                record.setdefault('provider_dispositions', []).append(dict(
+                    id=call['id'], pid=call.get('pid'), previous_status='running',
+                    at=self.clock(), reason=redact(reason), operator_confirmed_processes_stopped=True))
+                call.update(status='operator-resolved', ended_at=None)
+            if self.matching_merge(record, pr):
                 return await self.finish(record, pr)
+            record.setdefault('abandonments', []).append(
+                dict(at=self.clock(), reason=redact(reason), remote_state=pr['state']))
             record.update(stage='abandoned', abandoned_at=self.clock(), completed_at=self.clock(),
                           abandon_reason=redact(reason))
+            record['remote_disposition'] = dict(state=pr['state'], head=pr['headRefOid'],
+                merge_commit=(pr.get('mergeCommit') or {}).get('oid'), validated_by_this_completion=False)
             self.save(record)
             self.store.release_pr(number)
             return {'pr': number, 'status': 'abandoned', 'remote_state': pr['state']}
@@ -271,9 +294,7 @@ class PullRequestRunner(Runner):
         self.save(record)
 
     async def finish(self, record, pr):
-        if (pr['state'] != 'MERGED' or not (pr.get('mergeCommit') or {}).get('oid')
-                or pr['headRefOid'] != record['head'] or pr['headRefName'] != record['branch']
-                or pr['baseRefName'] != 'main'):
+        if not self.matching_merge(record, pr):
             raise GateError('Remote merge does not match this PR completion')
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         record.setdefault('completed_at', self.clock())
@@ -361,14 +382,14 @@ class PullRequestRunner(Runner):
             existing = bool(record)
             if record and record.get('schema_version') != 1:
                 raise GateError('Unknown PR completion journal version')
+            if record and record['stage'] == 'abandoned':
+                raise GateError('This PR completion was explicitly abandoned; its evidence and history are retained')
             # A lost merge response must be recoverable even after budget expiry.
             if record and pr['state'] == 'MERGED':
                 return await self.finish(record, pr)
             self.check_pr(pr, expected_head)
             if record and record.get('policy') != self.policy:
                 raise GateError('PR completion policy changed')
-            if record and record['stage'] == 'abandoned':
-                raise GateError('This PR completion was explicitly abandoned; its evidence and history are retained')
             self.store.admit_pr(number)
             try:
                 if not record:
