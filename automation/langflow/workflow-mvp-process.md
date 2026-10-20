@@ -133,6 +133,10 @@ superseded by a main advance. Repair restart now retains the rejected worktree
 and retries from a clean checkout, while refresh retains superseded dirty trees.
 External merge reconciliation also waits for orphaned-process acknowledgement
 before releasing admission. These recoveries preserve spent budgets.
+Missing candidate or source-ticket directories during merge reconciliation now
+produce an unverified evidence error that explicit abandonment can dispose.
+Non-cancellation verification failures cannot bypass proof checks or indefinitely
+prevent an audited release.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

@@ -271,6 +271,9 @@ class PullRequestRunner(Runner):
         return checks
 
     async def verify_approval(self, record, *, remote_result=False):
+        if (record['contract_hash'] != self.contract_digest(record)
+                or record['context_hash'] != contracts.context_hash(record['documents'])):
+            raise GateError('Approval contract or guidance changed after admission')
         if record.get('reuse_ticket'):
             source = record['source_snapshot'] if remote_result else self.store.journal(record['source_issue'])
             if evidence.sha(json.dumps(source, sort_keys=True).encode()) != record['source_digest']:
@@ -404,6 +407,13 @@ class PullRequestRunner(Runner):
         active_record, self._record = self._record, None
         try:
             await self.verify_approval(record, remote_result=True)
+        except GateError:
+            raise
+        except Exception as exc:
+            # Missing directories, malformed private data and I/O failures must
+            # remain unverified results that explicit abandonment can dispose.
+            # Cancellation (BaseException) is deliberately not converted.
+            raise GateError('Merged-candidate evidence is unavailable: ' + redact(str(exc))) from exc
         finally:
             self._record = active_record
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])

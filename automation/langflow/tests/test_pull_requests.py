@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -506,6 +507,49 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'abandoned')
         self.assertFalse(self.runner.store.read('completion-pr-122')['remote_disposition']['validated_by_this_completion'])
         self.assertEqual(self.runner.store.read('active'), {})
+
+    async def lost_merge_response(self):
+        original = self.commands.run
+
+        async def lost(args, **kwargs):
+            result = await original(args, **kwargs)
+            if tuple(args[:3]) == ('gh', 'pr', 'merge'):
+                raise asyncio.CancelledError()
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=lost):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.complete()
+        return self.runner.store.read('completion-pr-122')
+
+    async def test_missing_merged_candidate_worktree_can_be_disposed_without_claiming_validation(self):
+        record = await self.lost_merge_response()
+        shutil.rmtree(record['worktree'])
+        with self.assertRaisesRegex(GateError, 'evidence is unavailable'):
+            await self.complete()
+        result = await self.runner.abandon_pr(122, reason='Missing candidate directory prevents proof verification')
+        self.assertEqual(result['status'], 'abandoned')
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertFalse(self.runner.store.read('completion-pr-122')['remote_disposition']['validated_by_this_completion'])
+
+    async def test_missing_reused_ticket_worktree_does_not_hold_pr_slot_forever(self):
+        ticket, source = await self.prepare_ticket()
+        await self.lost_merge_response()
+        shutil.rmtree(source['worktree'])
+        with self.assertRaisesRegex(GateError, 'evidence is unavailable'):
+            await self.complete()
+        await self.runner.abandon_pr(122, reason='Source ticket checkout was removed; retained proof is unverified')
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertEqual(ticket.store.read('issue-95')['stage'], 'pr_ready')
+        self.assertNotIn('completion_result', ticket.store.read('issue-95'))
+
+    async def test_remote_merge_cannot_verify_changed_frozen_approval_inputs(self):
+        record = await self.lost_merge_response()
+        record['pr_input']['body'] = 'Changed acceptance objective'
+        self.runner.save(record)
+        with self.assertRaisesRegex(GateError, 'Approval contract'):
+            await self.complete()
+        self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], 'merging')
 
     async def test_orphaned_provider_requires_explicit_inspected_process_acknowledgement(self):
         self.commands.fail_ci = True
