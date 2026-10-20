@@ -82,9 +82,18 @@ AEO_EGRESS_LOCAL_ORIGINS=custom=http://10.0.1.21:1234,custom=http://localhost:11
   fall inside it.
 - The address or range must lie inside one of `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `100.64.0.0/10`, `::1/128` or `fc00::/7`.
-- Link-local addresses (`169.254.0.0/16`, `fe80::/10`) and cloud metadata addresses
-  (`169.254.169.254`, `169.254.170.2`, `fd00:ec2::254`, `100.100.100.200`, `168.63.129.16`) can
-  never be authorized. A range that contains one is rejected.
+- Link-local addresses (`169.254.0.0/16`, `fe80::/10`) and cloud metadata or credential
+  addresses (`169.254.169.254`, `169.254.170.2`, `169.254.170.23`, `fd00:ec2::254`,
+  `fd00:ec2::23`, `fd20:ce::254`, `100.100.100.200`, `168.63.129.16`) can never be authorized,
+  neither as a literal, as a DNS answer, nor inside an `@CIDR` range; a range that contains one
+  is rejected. The IPv6 entries lie inside `fc00::/7`, so they are listed explicitly:
+  `fd20:ce::254` is the Google Cloud IPv6 metadata server
+  ([source](https://docs.cloud.google.com/compute/docs/metadata/overview)) and
+  `fd00:ec2::23` / `169.254.170.23` are the AWS EKS Pod Identity credential endpoints
+  ([agent setup](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html),
+  [credential provider](https://docs.aws.amazon.com/aws-sdk-php/v3/api/class-Aws.Credentials.EcsCredentialProvider.html)).
+  Other addresses in the same `/64` remain authorizable, for example
+  `custom=http://internal.example@fd00:ec2::10/124`.
 - An exception covers one engine. `custom=http://10.0.1.21:1234` does not let `openai` reach
   that address.
 
@@ -186,10 +195,10 @@ policy. Production defaults are not weakened, and no `localhost` or `.test` spec
 | Test | Package | Covers |
 |---|---|---|
 | `TestAEOEndpointSyntax` | `internal/models` | Settings validation: HTTPS, host, no userinfo/query (bare `?` included)/fragment/opaque form/zone/malformed port; blank keeps precedence |
-| `TestAEOOperatorEgressConfig` | `internal/config` | Policy parsing, defaults, exact origins, local scoping, metadata/link-local refusal, fail-closed errors without values |
+| `TestAEOOperatorEgressConfig` | `internal/config` | Policy parsing, defaults, exact origins, local scoping, metadata/link-local refusal (hard-coded GCP and EKS IPv6 credential endpoints as literals and inside ranges), fail-closed errors without values |
 | `TestAEOConfigTrustBoundary` | `internal/service` | Stored and legacy-invalid overrides cannot widen trust, for every engine; key/model/base URL precedence preserved |
 | `TestAEOEndpointTrust` | `internal/aeo` | Every wiring path reaches its trusted origin; cross-provider, suffix, port and downgrade refused before any lookup, dial or request; malformed policy fails closed; ambient proxies ignored |
-| `TestAEODialPolicy` | `internal/aeo` | Dials only validated literals; private, mapped, zoned, mixed and rebinding answers refused; local exceptions scoped; TLS verification and cancellation intact |
+| `TestAEODialPolicy` | `internal/aeo` | Dials only validated literals; private, mapped, zoned, mixed and rebinding answers refused; local exceptions scoped and, even when built by hand, never dial `fd20:ce::254` or `fd00:ec2::23`; TLS verification and cancellation intact |
 | `TestAEORedirectPolicy` | `internal/aeo` | 3xx responses never produce a second request, for any target |
 | `TestAEOFailureSanitization` | `internal/aeo` | All providers: SDK errors, Gemini envelopes, non-JSON/oversized bodies, transport/TLS/DNS, cancellation, redirects; reflected fake keys and logger capture |
 | `TestAEOFailurePersistence` | `internal/aeo` | Engine repository boundary: bounded `AEOAnswer.Error`, counts, status, hostile errors and panics, success path |

@@ -41,11 +41,16 @@ var AEOLocalNetworks = []netip.Prefix{
 
 // AEOMetadataAddresses are cloud instance-metadata and platform endpoints. They
 // are never reachable, not even through a local exception, because they hand
-// out the host's own credentials.
+// out the host's own credentials. The IPv6 entries sit inside fc00::/7, so a
+// local exception range could otherwise open them; see docs/AEO_SECURITY.md for
+// the primary sources.
 var AEOMetadataAddresses = []netip.Addr{
 	netip.MustParseAddr("169.254.169.254"), // AWS, GCP, Azure, OpenStack
 	netip.MustParseAddr("169.254.170.2"),   // AWS ECS task metadata
+	netip.MustParseAddr("169.254.170.23"),  // AWS EKS Pod Identity credentials
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS IMDS over IPv6
+	netip.MustParseAddr("fd00:ec2::23"),    // AWS EKS Pod Identity credentials over IPv6
+	netip.MustParseAddr("fd20:ce::254"),    // Google Cloud metadata over IPv6
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud
 	netip.MustParseAddr("168.63.129.16"),   // Azure WireServer
 }

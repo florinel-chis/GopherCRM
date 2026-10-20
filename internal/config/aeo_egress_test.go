@@ -77,6 +77,11 @@ func TestAEOOperatorEgressConfig(t *testing.T) {
 		{name: "local metadata range", local: "custom=http://imds:80@169.254.0.0/16"},
 		{name: "local range containing IPv6 metadata", local: "custom=http://imds:80@fd00:ec2::/32"},
 		{name: "local range containing Alibaba metadata", local: "custom=http://imds:80@100.64.0.0/10"},
+		{name: "local GCP IPv6 metadata address", local: "custom=http://[fd20:ce::254]"},
+		{name: "local range containing GCP IPv6 metadata", local: "custom=http://internal.example@fd20:ce::/64"},
+		{name: "local EKS Pod Identity IPv6 address", local: "custom=http://[fd00:ec2::23]"},
+		{name: "local range containing EKS Pod Identity IPv6", local: "custom=http://internal.example@fd00:ec2::20/124"},
+		{name: "local EKS Pod Identity IPv4 address", local: "custom=http://169.254.170.23"},
 		{name: "local range wider than a private block", local: "custom=http://llm:80@0.0.0.0/0"},
 		{name: "local range spanning private blocks", local: "custom=http://llm:80@172.0.0.0/8"},
 		{name: "local host name without addresses", local: "custom=http://ollama:11434"},
@@ -142,7 +147,43 @@ func TestAEOOperatorEgressConfig(t *testing.T) {
 		assert.True(t, AEOLocalAddress(netip.MustParseAddr("fd12::1")))
 		assert.False(t, AEOLocalAddress(netip.MustParseAddr("100.100.100.200")))
 		assert.False(t, AEOLocalAddress(netip.MustParseAddr("fd00:ec2::254")))
+		assert.False(t, AEOLocalAddress(netip.MustParseAddr("fd00:ec2::23")))
+		assert.False(t, AEOLocalAddress(netip.MustParseAddr("fd20:ce::254")))
 		assert.False(t, AEOLocalAddress(netip.MustParseAddr("169.254.169.254")))
+		assert.False(t, AEOLocalAddress(netip.MustParseAddr("169.254.170.23")))
 		assert.False(t, AEOLocalAddress(netip.MustParseAddr("8.8.8.8")))
+	})
+
+	// Hard-coded, not derived from AEOMetadataAddresses, so an omission from
+	// that list fails here. Sources: Google Cloud metadata overview and AWS EKS
+	// Pod Identity agent setup (see docs/AEO_SECURITY.md).
+	t.Run("IPv6 credential endpoints inside ULA space stay refused", func(t *testing.T) {
+		for _, entry := range []string{
+			"custom=http://[fd20:ce::254]",
+			"custom=http://[fd20:ce::254]:80",
+			"custom=http://internal.example@fd20:ce::/64",
+			"custom=http://internal.example@fd20:ce::254",
+			"custom=http://[fd00:ec2::23]",
+			"custom=http://[fd00:ec2::23]:80",
+			"custom=http://internal.example@fd00:ec2::20/124",
+			"custom=http://internal.example@fd00:ec2::23",
+		} {
+			policy := ParseAEOEgressPolicy("", entry)
+			assert.Error(t, policy.Err, entry)
+			assert.Empty(t, policy.LocalOrigins, entry)
+		}
+
+		// Neighbouring ULA endpoints remain authorizable.
+		for _, entry := range []string{
+			"custom=http://[fd20:ce::253]",
+			"custom=http://internal.example@fd20:ce::100/120",
+			"custom=http://[fd00:ec2::22]",
+			"custom=http://internal.example@fd00:ec2::10/124",
+			"custom=http://internal.example@fd12:3456::/64",
+		} {
+			policy := ParseAEOEgressPolicy("", entry)
+			assert.NoError(t, policy.Err, entry)
+			assert.Len(t, policy.LocalOrigins, 1, entry)
+		}
 	})
 }

@@ -520,7 +520,7 @@ Anthropic call).
 - **Priority:** P0
 - **Type:** security / regression
 - **Steps:** With fake keys, point each engine's base URL (environment or Settings) at a non-official host, another engine's origin, a suffix/subdomain look-alike, an alternate port, an `http://` downgrade, a private or metadata address, and a host whose DNS answer is private, mixed or rebinding. Repeat with a stub that answers 3xx, and with `HTTPS_PROXY` set.
-- **Expected:** No request carries a key to any of them. Untrusted origins fail before any DNS lookup or dial. Non-public answers fail at connection time. Redirects end the query after one request. The proxy is not used. Official origins, `AEO_EGRESS_ALLOWED_ORIGINS` entries and engine-scoped `AEO_EGRESS_LOCAL_ORIGINS` entries keep working with TLS verification on. Link-local and metadata addresses can never be authorized. A malformed policy refuses every AEO request.
+- **Expected:** No request carries a key to any of them. Untrusted origins fail before any DNS lookup or dial. Non-public answers fail at connection time. Redirects end the query after one request. The proxy is not used. Official origins, `AEO_EGRESS_ALLOWED_ORIGINS` entries and engine-scoped `AEO_EGRESS_LOCAL_ORIGINS` entries keep working with TLS verification on. Link-local and metadata/credential addresses, including the IPv6 `fd00:ec2::254`, `fd00:ec2::23` (EKS Pod Identity) and `fd20:ce::254` (Google Cloud), can never be authorized, not even by a local exception range. A malformed policy refuses every AEO request.
 - **Automation:** `TestAEOOperatorEgressConfig`, `TestAEOEndpointTrust`, `TestAEODialPolicy`, `TestAEORedirectPolicy`; no real network.
 
 ### TC-AEO-046 — Failure persistence and generation errors are sanitized

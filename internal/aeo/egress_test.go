@@ -549,7 +549,8 @@ func dialThrough(t *testing.T, guard *EgressGuard, engine, baseURL, address stri
 func TestAEODialPolicy(t *testing.T) {
 	blocked := []string{
 		"10.0.0.1", "172.16.5.4", "192.168.1.1", "127.0.0.1", "127.255.255.254", "::1",
-		"169.254.169.254", "169.254.170.2", "169.254.1.1", "fe80::1", "fd00:ec2::254", "fc00::1", "fd12::1",
+		"169.254.169.254", "169.254.170.2", "169.254.170.23", "169.254.1.1", "fe80::1",
+		"fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254", "fc00::1", "fd12::1",
 		"100.100.100.200", "168.63.129.16", "100.64.0.1", "0.0.0.0", "0.1.2.3", "::",
 		"224.0.0.1", "239.255.255.250", "ff02::1", "ff05::2", "255.255.255.255", "240.0.0.1",
 		"::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::a00:1",
@@ -681,6 +682,57 @@ func TestAEODialPolicy(t *testing.T) {
 		assert.ErrorIs(t, err, ErrEndpointNotPermitted, "nor to another port")
 		_, err = guard.ruleFor(config.AEOEgressCustom, "https://127.0.0.1:1234/v1")
 		assert.ErrorIs(t, err, ErrEndpointNotPermitted, "nor to another scheme")
+	})
+
+	// The addresses are hard-coded rather than read from the production
+	// metadata list, so an omission from that list fails here. The policy is
+	// built by hand, bypassing the parser, to prove the dial guard refuses the
+	// endpoints on its own.
+	t.Run("a local exception never reaches IPv6 credential endpoints", func(t *testing.T) {
+		endpoints := map[string]netip.Prefix{
+			"fd20:ce::254": netip.MustParsePrefix("fd20:ce::/64"),     // Google Cloud metadata
+			"fd00:ec2::23": netip.MustParsePrefix("fd00:ec2::20/124"), // AWS EKS Pod Identity
+		}
+		for value, prefix := range endpoints {
+			addr := netip.MustParseAddr(value)
+			named := config.AEOEgressOrigin{
+				Provider:    config.AEOEgressCustom,
+				AEOEndpoint: config.AEOEndpoint{Scheme: "http", Host: "internal.example", Port: "80"},
+				Prefixes:    []netip.Prefix{prefix},
+			}
+			literal := config.AEOEgressOrigin{
+				Provider:    config.AEOEgressCustom,
+				AEOEndpoint: config.AEOEndpoint{Scheme: "http", Host: value, Port: "80"},
+				Prefixes:    []netip.Prefix{netip.PrefixFrom(addr, 128)},
+			}
+			policy := config.AEOEgressPolicy{LocalOrigins: []config.AEOEgressOrigin{named, literal}}
+
+			resolver := &scriptedResolver{answers: [][]netip.Addr{{addr}, {addr, prefix.Addr().Next()}}}
+			dialer := &recordingDialer{}
+			guard := NewEgressGuard(policy, WithEgressResolver(resolver), WithEgressDialer(dialer.dial))
+
+			_, err := dialThrough(t, guard, config.AEOEgressCustom, "http://internal.example/v1", "internal.example:80")
+			assert.ErrorIs(t, err, ErrDestinationNotPermitted, "DNS answer %s", value)
+			_, err = dialThrough(t, guard, config.AEOEgressCustom, "http://internal.example/v1", "internal.example:80")
+			assert.ErrorIs(t, err, ErrDestinationNotPermitted, "mixed DNS answer with %s", value)
+			_, err = dialThrough(t, guard, config.AEOEgressCustom, "http://["+value+"]/v1", "["+value+"]:80")
+			assert.ErrorIs(t, err, ErrDestinationNotPermitted, "literal %s", value)
+			assert.Equal(t, 2, resolver.lookups())
+			assert.Empty(t, dialer.dialed(), "%s is never dialed", value)
+		}
+
+		// Positive control: an ordinary ULA address in the same exception is dialed.
+		policy := config.AEOEgressPolicy{LocalOrigins: []config.AEOEgressOrigin{{
+			Provider:    config.AEOEgressCustom,
+			AEOEndpoint: config.AEOEndpoint{Scheme: "http", Host: "internal.example", Port: "80"},
+			Prefixes:    []netip.Prefix{netip.MustParsePrefix("fd20:ce::/64")},
+		}}}
+		resolver := &scriptedResolver{answers: [][]netip.Addr{parseAddrs("fd20:ce::10")}}
+		dialer := &recordingDialer{}
+		guard := NewEgressGuard(policy, WithEgressResolver(resolver), WithEgressDialer(dialer.dial))
+		_, err := dialThrough(t, guard, config.AEOEgressCustom, "http://internal.example/v1", "internal.example:80")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"[fd20:ce::10]:80"}, dialer.dialed())
 	})
 
 	t.Run("an official origin resolving to a private address is refused end to end", func(t *testing.T) {
