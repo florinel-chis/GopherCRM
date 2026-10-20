@@ -137,6 +137,9 @@ Missing candidate or source-ticket directories during merge reconciliation now
 produce an unverified evidence error that explicit abandonment can dispose.
 Non-cancellation verification failures cannot bypass proof checks or indefinitely
 prevent an audited release.
+The shared repair engine now persists the reserved round and the `implement`
+stage together, before any awaited precondition. Deadline expiry or cancellation
+in those checks can therefore resume without charging a second repair round.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

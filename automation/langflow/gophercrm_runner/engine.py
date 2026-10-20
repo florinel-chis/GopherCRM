@@ -629,6 +629,9 @@ class Runner:
             raise GateError('Repair budget exhausted; issue remains open for inspection')
         record['repairs'] += 1
         record['feedback'] = feedback
+        # Reserve the round and its resumable stage atomically, before any
+        # awaited precondition can fail, expire or be cancelled.
+        record['stage'] = 'implement'
         self.save(record)
         await self.perform(record, 'repair', self.implement, issue, record, feedback)
 

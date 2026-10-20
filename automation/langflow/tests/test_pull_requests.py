@@ -294,6 +294,52 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after['provider_calls'], 3)
         self.assertEqual(self.commands.merges, 1)
 
+    async def test_deadline_expiry_in_repair_preconditions_keeps_the_last_reserved_round(self):
+        self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=1), self.commands)
+        self.commands.reject_reviews = 1
+        original = self.runner.check_inputs
+        triggered = False
+
+        async def expire(record):
+            nonlocal triggered
+            if record['stage'] == 'implement' and record['repairs'] == 1 and not triggered:
+                triggered = True
+                record['deadline'] = self.runner.clock() - 1
+            return await original(record)
+
+        with patch.object(self.runner, 'check_inputs', side_effect=expire):
+            with self.assertRaisesRegex(GateError, 'deadline exhausted'):
+                await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        self.assertEqual(before['stage'], 'implement')
+        self.assertEqual((before['repairs'], before['provider_calls']), (1, 1))
+        self.assertEqual(self.commands.implementations, 0)
+        self.runner.extend_pr_budget(122, seconds=3600, reason='Inspected expiry before the repair started')
+        await self.complete()
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual((after['repairs'], after['provider_calls']), (1, 3))
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_cancellation_in_repair_preconditions_does_not_reserve_another_round(self):
+        self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=1), self.commands)
+        self.commands.reject_reviews = 1
+        original = self.runner.check_inputs
+
+        async def cancel(record):
+            if record['stage'] == 'implement' and record['repairs'] == 1:
+                raise asyncio.CancelledError()
+            return await original(record)
+
+        with patch.object(self.runner, 'check_inputs', side_effect=cancel):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        self.assertEqual((before['repairs'], before['provider_calls']), (1, 1))
+        self.assertEqual(self.commands.implementations, 0)
+        await self.complete()
+        self.assertEqual(self.runner.store.read('completion-pr-122')['repairs'], 1)
+        self.assertEqual(self.commands.merges, 1)
+
     async def test_cancelled_repair_resumes_with_spent_invocation_retained(self):
         self.commands.reject_reviews = 1
         original = self.commands.run
