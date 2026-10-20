@@ -360,8 +360,7 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
             await self.complete()
         before = self.runner.store.read('completion-pr-122')
         self.commands.pr_data.update(state='MERGED', headRefOid='f' * 40, mergeCommit={'oid': 'external-merge'})
-        with self.assertRaisesRegex(GateError, 'does not match'):
-            await self.complete()
+        self.assertEqual((await self.complete())['status'], 'external_merge')
         result = await self.runner.abandon_pr(122, reason='Inspected maintainer merge at a different head')
         self.assertEqual(result['status'], 'abandoned')
         after = self.runner.store.read('completion-pr-122')
@@ -370,6 +369,44 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(after['remote_disposition']['validated_by_this_completion'])
         self.assertEqual(after['remote_disposition']['merge_commit'], 'external-merge')
         self.assertNotIn('merge_commit', after)
+        self.assertEqual(self.runner.store.read('active'), {})
+
+    async def test_external_merge_of_matching_unvalidated_head_does_not_complete_source_ticket(self):
+        from unittest.mock import AsyncMock
+        ticket, source = await self.prepare_ticket()
+        worktree = Path(source['worktree'])
+        (worktree / 'feature.txt').write_text('Untested external change\n')
+        self.git('add', '.', cwd=worktree)
+        self.git('commit', '-m', 'unvalidated', cwd=worktree)
+        self.commands.pr_data['headRefOid'] = self.git('rev-parse', 'HEAD', cwd=worktree)
+        self.commands.pushed_head = self.commands.pr_data['headRefOid']
+        with patch.object(self.runner, 'validate', AsyncMock(side_effect=GateError('Validation blocked'))):
+            with self.assertRaisesRegex(GateError, 'Validation blocked'):
+                await self.complete()
+        self.commands.pr_data.update(state='MERGED', mergeCommit={'oid': 'external-merge'})
+        result = await self.complete()
+        self.assertEqual(result['status'], 'external_merge')
+        self.assertFalse(result['validated_by_this_completion'])
+        self.assertNotIn('completion_result', ticket.store.read('issue-95'))
+        self.assertEqual(ticket.store.read('issue-95')['stage'], 'pr_ready')
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertNotIn('merge_commit', self.runner.store.read('completion-pr-122'))
+
+    async def test_matching_remote_merge_rechecks_approval_receipts(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        record['stage'] = 'merging'
+        self.runner.save(record)
+        (self.config.state_dir / record['review_receipt']['path']).write_text('{}')
+        self.commands.pr_data.update(state='MERGED', mergeCommit={'oid': 'external-merge'})
+        with self.assertRaisesRegex(GateError, 'digest'):
+            await self.complete()
+        self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], 'merging')
+        result = await self.runner.abandon_pr(122, reason='Merged externally; retained approval proof is corrupt')
+        self.assertEqual(result['status'], 'abandoned')
+        self.assertFalse(self.runner.store.read('completion-pr-122')['remote_disposition']['validated_by_this_completion'])
         self.assertEqual(self.runner.store.read('active'), {})
 
     async def test_orphaned_provider_requires_explicit_inspected_process_acknowledgement(self):
@@ -535,6 +572,8 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ticket.store.read('issue-95')['provider_calls'], source['provider_calls'])
         self.assertTrue(ticket.store.read('control')['stopped'])
         self.assertTrue(self.runner.store.read('completion-pr-122')['reuse_ticket'])
+        self.assertEqual((await self.complete())['status'], 'merged')
+        self.assertEqual((self.commands.tests, self.commands.reviews), counts)
 
     async def test_changed_pr_ready_candidate_revalidates_and_reconciles_original_ticket(self):
         ticket, source = await self.prepare_ticket()
@@ -552,6 +591,29 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await ticket.run_issue(95, execute=True))['status'], 'merged')
         self.assertEqual(ticket.report(95)['status'], 'merged')
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (2, 2, 1))
+
+    async def test_queue_edit_cannot_drop_linked_ticket_acceptance_criteria(self):
+        await self.prepare_ticket()
+        counts = self.commands.tests, self.commands.reviews
+        self.runner = PullRequestRunner(replace(self.config, issues=(96,)), self.commands)
+        with self.assertRaisesRegex(GateError, 'Restore the linked ticket'):
+            await self.complete()
+        self.assertEqual((self.commands.tests, self.commands.reviews), counts)
+        self.assertEqual(self.commands.merges, 0)
+        self.assertEqual(self.runner.store.read('active'), {})
+
+    async def test_source_ticket_update_failure_does_not_hold_merged_pr_slot(self):
+        from unittest.mock import AsyncMock
+        ticket, _ = await self.prepare_ticket()
+        with patch('gophercrm_runner.engine.Runner.finish', AsyncMock(side_effect=GateError('Source journal changed'))):
+            result = await self.complete()
+        self.assertEqual(result['status'], 'merged')
+        self.assertIn('Source journal changed', result['source_reconciliation_error'])
+        self.assertEqual(self.runner.store.read('active'), {})
+        result = await self.complete()
+        self.assertIsNone(result['source_reconciliation_error'])
+        self.assertEqual(ticket.store.read('issue-95')['stage'], 'merged')
+        self.assertEqual(self.commands.merges, 1)
 
     async def test_serialized_pr_graph_dispatches_explicit_parameters(self):
         from gophercrm_runner.flows import run_pr_flow

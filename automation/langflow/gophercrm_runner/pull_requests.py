@@ -27,6 +27,9 @@ class PullRequestRunner(Runner):
     @staticmethod
     def matching_merge(record, pr):
         return (pr.get('state') == 'MERGED' and (pr.get('mergeCommit') or {}).get('oid')
+                and record.get('stage') in {'merging', 'merged'} and record.get('head')
+                and record.get('tested_head') == record['head']
+                and record.get('reviewed_head') == record['head']
                 and pr.get('headRefOid') == record.get('head')
                 and pr.get('headRefName') == record.get('branch')
                 and pr.get('baseRefName') == 'main')
@@ -49,7 +52,7 @@ class PullRequestRunner(Runner):
                 self.store.release_pr(number)
                 return {'pr': number, 'status': 'admission_released'}
             if (record.get('schema_version') != 1 or record.get('policy') != self.policy
-                    or record['stage'] in {'merged', 'abandoned'}):
+                    or record['stage'] in {'merged', 'abandoned', 'external_merge'}):
                 raise GateError('Recovery requires a matching unfinished PR completion')
             unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
             if not unresolved:
@@ -87,7 +90,12 @@ class PullRequestRunner(Runner):
                     at=self.clock(), reason=redact(reason), operator_confirmed_processes_stopped=True))
                 call.update(status='operator-resolved', ended_at=None)
             if self.matching_merge(record, pr):
-                return await self.finish(record, pr)
+                try:
+                    return await self.finish(record, pr)
+                except GateError as exc:
+                    # Explicit abandonment can release even a merged candidate
+                    # whose retained proof can no longer be verified.
+                    record['merge_verification_error'] = redact(str(exc))[-12000:]
             record.setdefault('abandonments', []).append(
                 dict(at=self.clock(), reason=redact(reason), remote_state=pr['state']))
             record.update(stage='abandoned', abandoned_at=self.clock(), completed_at=self.clock(),
@@ -124,7 +132,7 @@ class PullRequestRunner(Runner):
             raise GateError('Specify a positive budget increment and a short reason')
         with self.store.exclusive():
             record = self.store.read(f'completion-pr-{number}')
-            if not record or record['stage'] in {'merged', 'abandoned'} or record['policy'] != self.policy:
+            if not record or record['stage'] in {'merged', 'abandoned', 'external_merge'} or record['policy'] != self.policy:
                 raise GateError('Only a matching unfinished PR completion can receive an extension')
             before = {k: record[k] for k in ('deadline', 'max_provider_calls')}
             record['deadline'] += seconds
@@ -154,13 +162,17 @@ class PullRequestRunner(Runner):
             raise GateError('The PR source must not be main')
 
     async def source_ticket(self, number):
-        matches = [self.store.journal(n) for n in self.config.issues
+        numbers = [int(match[1]) for path in self.config.state_dir.glob('issue-*.json')
+                   if (match := re.fullmatch(r'issue-([1-9][0-9]*)', path.stem))]
+        matches = [self.store.journal(n) for n in numbers
                    if self.store.read(f'issue-{n}').get('pr') == number]
         if len(matches) > 1:
             raise GateError('Multiple ticket journals claim this PR')
         if not matches:
             return None
         record = matches[0]
+        if record['issue'] not in self.config.issues:
+            raise GateError('Restore the linked ticket to the configured queue to preserve its frozen acceptance checks')
         if record.get('legacy') or record['stage'] != 'pr_ready' or record['policy'] != self.policy:
             raise GateError('Only a matching current PR-ready ticket can be promoted')
         return record
@@ -203,15 +215,16 @@ class PullRequestRunner(Runner):
             checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
         return checks
 
-    async def verify_approval(self, record):
+    async def verify_approval(self, record, *, remote_result=False):
         if record.get('reuse_ticket'):
-            source = self.store.journal(record['source_issue'])
+            source = record['source_snapshot'] if remote_result else self.store.journal(record['source_issue'])
             if evidence.sha(json.dumps(source, sort_keys=True).encode()) != record['source_digest']:
                 raise GateError('Original PR-ready evidence changed after promotion admission')
             if source['head'] != record['head'] or source['base'] != record['base']:
                 raise GateError('PR-ready evidence belongs to another candidate')
             runner = Runner(self.config, self.commands, clock=self.clock)
-            await runner.check_inputs(source)
+            if not remote_result:
+                await runner.check_inputs(source)
             await runner.verify_approval(source)
             return
         await self.verify_evidence(record)
@@ -327,22 +340,48 @@ class PullRequestRunner(Runner):
     async def finish(self, record, pr):
         if not self.matching_merge(record, pr):
             raise GateError('Remote merge does not match this PR completion')
+        if record['policy'] != self.policy:
+            raise GateError('Use the original completion policy to verify the merged candidate evidence')
+        # Confirm persisted evidence after a lost response, without letting a
+        # spent execution deadline prevent read-only remote reconciliation.
+        active_record, self._record = self._record, None
+        try:
+            await self.verify_approval(record, remote_result=True)
+        finally:
+            self._record = active_record
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         record.setdefault('completed_at', self.clock())
         self.save(record)
         # Preserve the original execution and append its actual remote result.
-        if record.get('source_issue'):
-            source = self.store.journal(record['source_issue'])
-            if source.get('head') == record['head']:
-                await Runner(self.config, self.commands, clock=self.clock).finish(source, pr)
-            else:
-                # The original evidence remains bound to its old candidate.
-                source['completion_result'] = {'pr': record['pr'], 'head': record['head'],
-                    'merge_commit': record['merge_commit'], 'url': pr['url']}
-                self.store.write(f'issue-{record["source_issue"]}', source)
+        try:
+            if record.get('source_issue'):
+                source = self.store.journal(record['source_issue'])
+                if source.get('head') == record['head']:
+                    await Runner(self.config, self.commands, clock=self.clock).finish(source, pr)
+                else:
+                    # The original evidence remains bound to its old candidate.
+                    source['completion_result'] = {'pr': record['pr'], 'head': record['head'],
+                        'merge_commit': record['merge_commit'], 'url': pr['url']}
+                    self.store.write(f'issue-{record["source_issue"]}', source)
+            record.pop('source_reconciliation_error', None)
+        except Exception as exc:
+            record['source_reconciliation_error'] = redact(str(exc))[-12000:]
+        self.save(record)
         self.store.release_pr(record['pr'])
         return {'pr': record['pr'], 'status': 'merged', 'url': pr['url'],
-                'merge_commit': record['merge_commit']}
+                'merge_commit': record['merge_commit'],
+                'source_reconciliation_error': record.get('source_reconciliation_error')}
+
+    def external_merge(self, record, pr):
+        record.update(stage='external_merge', remote_disposition=dict(
+            state=pr['state'], head=pr['headRefOid'],
+            merge_commit=(pr.get('mergeCommit') or {}).get('oid'),
+            validated_by_this_completion=False))
+        record.setdefault('completed_at', self.clock())
+        self.save(record)
+        self.store.release_pr(record['pr'])
+        return {'pr': record['pr'], 'status': 'external_merge', 'url': pr['url'],
+                'validated_by_this_completion': False}
 
     async def prepare_pr(self, pr):
         ref = f'refs/remotes/origin/completion-pr-{pr["number"]}'
@@ -369,6 +408,7 @@ class PullRequestRunner(Runner):
             record.update(source_issue=source['issue'], criteria=frozen['acceptance'],
                           database_profile=frozen['validation_profile'] == 'backend-database',
                           source_digest=evidence.sha(json.dumps(source, sort_keys=True).encode()),
+                          source_snapshot=source,
                           reuse_ticket=source['head'] == fetched and source['base'] == base)
         record['contract_hash'] = self.contract_digest(record)
         return record
@@ -418,7 +458,9 @@ class PullRequestRunner(Runner):
                 raise GateError('This PR completion was explicitly abandoned; its evidence and history are retained')
             # A lost merge response must be recoverable even after budget expiry.
             if record and pr['state'] == 'MERGED':
-                return await self.finish(record, pr)
+                if self.matching_merge(record, pr):
+                    return await self.finish(record, pr)
+                return self.external_merge(record, pr)
             self.check_pr(pr, expected_head)
             if record and record.get('policy') != self.policy:
                 raise GateError('PR completion policy changed')
