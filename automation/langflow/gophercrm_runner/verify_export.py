@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from .flows import build_flow
+from .flows import build_flow, build_pr_flow
 
 
 def main():
@@ -11,6 +11,8 @@ def main():
     expected = json.dumps(build_flow(), indent=2) + '\n'
     if (root / 'flows/remediation.json').read_text() != expected:
         raise SystemExit('Workflow export differs; regenerate with gophercrm-runner export automation/langflow/flows/remediation.json')
+    if (root / 'flows/pr-completion.json').read_text() != json.dumps(build_pr_flow(), indent=2) + '\n':
+        raise SystemExit('PR workflow export differs; regenerate with gophercrm-runner export --pr automation/langflow/flows/pr-completion.json')
     print('Workflow export matches its components')
 
 

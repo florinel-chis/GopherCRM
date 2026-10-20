@@ -125,7 +125,35 @@ gophercrm-runner stop-after-current --config "$HOME/.local/share/gophercrm-runne
 gophercrm-runner resume-queue --config "$HOME/.local/share/gophercrm-runner/config.json"
 ```
 
-With no active ticket, a stop request blocks all new admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Changed or closed PRs require investigation.
+With no active ticket, a stop request blocks new issue admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Use the explicit PR completion workflow below to promote it.
+
+## Complete existing PRs through merge
+
+Import [pr-completion.json](flows/pr-completion.json) into Langflow for the **Review → test → merge existing PR** component. Enter the local policy path, PR number and full current head SHA. Preview is the default. Execute authorizes completion of that specific PR through merge, independently of the issue policy's `completion_target`. The CLI runs this same serialized graph:
+
+```sh
+gh pr view 127 --repo florinel-chis/GopherCRM --json headRefOid
+gophercrm-runner complete-pr --config /absolute/path/to/config.json --pr 127 --head FULL_HEAD_SHA
+gophercrm-runner complete-pr --config /absolute/path/to/config.json --pr 127 --head FULL_HEAD_SHA --execute
+gophercrm-runner report-pr --config /absolute/path/to/config.json --pr 127
+```
+
+The workflow accepts open, non-draft PRs from the same repository targeting main. It uses a separate private completion journal and shares the execution/admission locks with the issue workflow. It never resumes a stopped issue queue or admits another issue. Select each PR explicitly; it does not merge every open PR merely because CI is green.
+
+For an unchanged PR-ready ticket, the workflow verifies its original contract, named-test receipts and independent review before reusing them. The original ticket's call counts, limits and artifacts remain intact. Its eventual merge result is recorded alongside the separate completion execution. Existing PRs without reusable evidence receive fresh `make verify`, applicable database checks, and a fresh independent read-only Claude review. Runner/workflow changes also require local `make verify-runner` and the **Langflow runner tests** CI check. Criteria from a linked local ticket remain required during fresh validation.
+
+Review or test failures enter the bounded repair → test → review cycle. Repair agents cannot modify runner code or validation gates; blockers in those paths require a maintainer fix. Missing/failed CI, stale evidence, unresolved GitHub review requirements, changed PR inputs, forks, draft PRs and changed head/base commits block merging. The final merge uses `--squash --match-head-commit`, with no admin bypass. A lost push or merge response is reconciled before repeating work.
+
+The candidate must contain current main. If main or the remote head changes, inspect the changes and incorporate main into the source branch, then run `complete-pr` with its new full SHA and **`--execute --refresh`**. Refresh retains the old candidate/evidence and all spent calls, repairs and elapsed time; it invalidates tests and review. Refreshing an unchanged head/base cannot reroll a rejected review. Conflicts and external changes are never silently adopted. As with the ticket workflow, GitHub branch protection or a merge queue must enforce atomic protection against main advancing concurrently with the final merge request.
+
+An unfinished completion can receive an explicit, recorded budget extension:
+
+```sh
+gophercrm-runner extend-pr-budget --config /absolute/path/to/config.json --pr 127 \
+  --calls 1 --seconds 3600 --reason 'Inspected the blocked completion and authorized another attempt'
+```
+
+`status` includes PR completion journals. `report-pr` includes attempts and provider calls. Cancellation preserves the journal and worktrees; repeat `complete-pr` with the current head to resume. Authentication, environment and exhausted-budget failures remain stops, never merge approval.
 
 Journals use schema version 2. Reading a legacy journal preserves its exact bytes in an immutable, private backup before conversion. A matching completed remote merge can be reconciled, but unfinished legacy work must use its matching old runner and saved journal; automatic adoption is unsupported. Unknown newer schemas are refused. Never restore a backup without checking for later remote actions.
 

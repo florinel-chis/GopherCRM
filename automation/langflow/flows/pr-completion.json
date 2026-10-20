@@ -1,0 +1,196 @@
+{
+  "data": {
+    "nodes": [
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import BoolInput, DropdownInput, IntInput, StrInput\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass CompletePullRequest(Component):\n    display_name = 'Review \u2192 test \u2192 merge existing PR'\n    description = 'Explicit pinned PR admission. Independent review, bounded repairs, exact-head merge.'\n    icon = 'GitMerge'\n    inputs = [\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG. The issue queue remains unchanged.'),\n        IntInput(name='pr_number', display_name='PR number', value=0),\n        StrInput(name='expected_head', display_name='Expected head (full SHA)', value=''),\n        DropdownInput(name='mode', display_name='Mode', options=['preview', 'execute'], value='preview'),\n        BoolInput(name='refresh', display_name='Refresh changed candidate', value=False,\n                  info='Invalidate previous checks after an inspected head/base change; retain spent budgets.'),\n    ]\n    outputs = [Output(name='result', display_name='Result', method='complete')]\n\n    async def complete(self) -> Message:\n        import json\n        import os\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.pull_requests import PullRequestRunner\n\n        path = self.policy_path or os.environ.get('GOPHERCRM_RUNNER_CONFIG', '')\n        if not path or self.mode not in {'preview', 'execute'}:\n            raise GateError('Supply a local policy and a valid mode')\n        runner = PullRequestRunner(Config.load(path))\n        result = await runner.complete_pr(self.pr_number, self.expected_head,\n                                          execute=self.mode == 'execute', refresh=self.refresh)\n        self.status = result['status']\n        return Message(text=json.dumps(result))\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "expected_head": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "expected_head",
+                "value": "",
+                "display_name": "Expected head (full SHA)",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "mode": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": [
+                  "preview",
+                  "execute"
+                ],
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "toggle": false,
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "mode",
+                "value": "preview",
+                "display_name": "Mode",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "external_options": {},
+                "type": "str",
+                "_input_type": "DropdownInput"
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG. The issue queue remains unchanged.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "pr_number": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "pr_number",
+                "value": 0,
+                "display_name": "PR number",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "type": "int",
+                "_input_type": "IntInput"
+              },
+              "refresh": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "refresh",
+                "value": false,
+                "display_name": "Refresh changed candidate",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Invalidate previous checks after an inspected head/base change; retain spent budgets.",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "type": "bool",
+                "_input_type": "BoolInput"
+              }
+            },
+            "description": "Explicit pinned PR admission. Independent review, bounded repairs, exact-head merge.",
+            "icon": "GitMerge",
+            "base_classes": [
+              "Message"
+            ],
+            "display_name": "Review \u2192 test \u2192 merge existing PR",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Message"
+                ],
+                "selected": "Message",
+                "name": "result",
+                "display_name": "Result",
+                "method": "complete",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "CompletePullRequest",
+          "id": "CompletePullRequest-main",
+          "selected_output": "result"
+        },
+        "id": "CompletePullRequest-main",
+        "type": "genericNode",
+        "position": {
+          "x": 100,
+          "y": 100
+        }
+      }
+    ],
+    "edges": []
+  },
+  "is_component": true,
+  "name": "GopherCRM existing PR completion",
+  "description": "Explicit PR \u2192 validation \u2192 independent review \u2192 repair/retest \u2192 CI \u2192 exact-head merge."
+}

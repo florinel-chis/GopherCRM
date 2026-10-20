@@ -95,8 +95,11 @@ class Runner:
     def report(self, number):
         self.config.allows(number)
         record = self.store.read(f'issue-{number}') or {'issue': number}
-        return telemetry.report(record, self.store.read(f'preflight-{number}'),
-                                self.store.read(f'operator-{number}'), self.clock())
+        result = telemetry.report(record, self.store.read(f'preflight-{number}'),
+                                  self.store.read(f'operator-{number}'), self.clock())
+        if record.get('completion_result'):
+            result.update(status='merged', completion_result=record['completion_result'])
+        return result
 
     async def command(self, *args, cwd=None, **kwargs):
         _, output = await self.run_command(args, cwd=cwd or self.config.checkout, **kwargs)
@@ -113,6 +116,8 @@ class Runner:
     async def queue(self, limit: int = 1) -> list[dict]:
         if type(limit) is not int or limit <= 0 or limit > len(self.config.issues):
             raise GateError('Limit must be between 1 and the configured queue length')
+        if self.store.read('active').get('pr') is not None:
+            return []
         active = self.store.read('active').get('issue')
         numbers = list(self.config.issues)
         if active is not None:
@@ -597,7 +602,8 @@ class Runner:
                 raise GateError('PR head changed outside the runner')
             if pr['baseRefOid'] != record['base']:
                 raise GateError('PR changed while waiting for CI; resume after revalidation')
-            state = check_state(pr.get('statusCheckRollup', []), self.config.required_checks)
+            state = check_state(pr.get('statusCheckRollup', []),
+                                tuple(record.get('required_checks', self.config.required_checks)))
             if state == 'failed':
                 runs = set()
                 prefix = f'https://github.com/{self.config.repository}/actions/runs/'
@@ -710,6 +716,18 @@ class Runner:
         if pr.get('headRefName') != record['branch'] or pr.get('baseRefName') != 'main':
             raise GateError('Recorded PR branch changed; inspect recovery')
         if pr['state'] == 'MERGED':
+            completion = record.get('completion_result')
+            if completion:
+                journal = self.store.read(f'completion-pr-{record["pr"]}')
+                if (journal.get('stage') != 'merged' or journal.get('source_issue') != record['issue']
+                        or completion.get('head') != pr.get('headRefOid')
+                        or journal.get('head') != pr.get('headRefOid')
+                        or completion.get('merge_commit') != (pr.get('mergeCommit') or {}).get('oid')
+                        or journal.get('merge_commit') != completion['merge_commit']):
+                    raise GateError('PR completion evidence does not match the observed merge')
+                self.store.release(record['issue'])
+                return dict(issue=record['issue'], status='merged', url=pr['url'],
+                            merge_commit=completion['merge_commit'])
             return await self.finish(record, pr)
         if record['stage'] == 'merged':
             raise GateError('Recorded merge no longer matches GitHub; inspect recovery')
