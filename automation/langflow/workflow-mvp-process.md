@@ -119,6 +119,10 @@ orphaned provider calls and crashes before the first journal write. These now ha
 explicit abandonment dispositions; an orphaned process requires an audited
 operator acknowledgement that it was inspected and stopped. External merges
 never become fabricated runner validation, and spent calls remain spent.
+A further review distinguished recovering a crashed execution from intentionally
+abandoning it. `recover-pr` now resolves inspected orphaned calls for a normal
+resume, or releases a journal-less admission for a later fresh start. Abandonment
+remains a separate, deliberate terminal disposition.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

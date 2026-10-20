@@ -131,6 +131,8 @@ With no active ticket, a stop request blocks new issue admission. A separate sho
 
 Import [pr-completion.json](flows/pr-completion.json) into Langflow for the **Review → test → merge existing PR** component. Enter the local policy path, PR number and full current head SHA. Preview is the default. Execute authorizes completion of that specific PR through merge, independently of the issue policy's `completion_target`. The CLI runs this same serialized graph:
 
+![Existing PR completion imported into the local Langflow editor in preview mode](screenshots/pr-completion.png)
+
 ```sh
 gh pr view 127 --repo florinel-chis/GopherCRM --json headRefOid
 gophercrm-runner complete-pr --config /absolute/path/to/config.json --pr 127 --head FULL_HEAD_SHA
@@ -159,7 +161,9 @@ gophercrm-runner extend-pr-budget --config /absolute/path/to/config.json --pr 12
 
 A repair that makes no changes stops for inspection. `retry-pr-repair --config ... --pr NUMBER --reason '...'` records an explicit retry; the next execution consumes a new repair round and provider call. If a PR is closed, unwanted, or cannot be completed, `abandon-pr --config ... --pr NUMBER --reason '...'` records abandonment and releases its admission slot without closing or modifying GitHub. It preserves all artifacts and the stopped-queue setting. Abandoned completions cannot silently restart. A matching confirmed remote merge is reconciled; a merge at another head is recorded as an external disposition, never as this runner's validated result.
 
-After a hard crash, inspect and stop any orphaned provider processes before adding **`--processes-stopped`** to `abandon-pr`. This explicit operator acknowledgement is recorded against every unresolved invocation, with no call refund or invented end time. The command never kills an arbitrary recorded PID. If a crash left an admission slot without a journal, `abandon-pr` can verify that matching slot and the remote PR and retain an interrupted-admission disposition before releasing it. Preflight failures that unwind normally release their slot automatically. A held PR slot is reported as a blocked issue queue, never an empty one.
+After a hard crash, inspect and stop orphaned processes from that execution (including provider and test processes), then use **`recover-pr --config ... --pr NUMBER --processes-stopped --reason '...'`** to resume the same completion. The operator acknowledgement resolves unknown running invocations without refunding calls, changing the deadline, discarding receipts or inventing an end time. Run `complete-pr` again; normal tests, review and budgets still apply. If admission crashed before its first journal save, recovery records the interrupted admission separately and releases its slot, allowing the same PR to be admitted later.
+
+Use `abandon-pr --processes-stopped` instead only when deliberately ending the completion after inspecting orphaned processes. Abandonment also supports an interrupted admission without a journal, and remains terminal. Neither command kills an arbitrary recorded PID. Preflight failures that unwind normally release their slot automatically. A held PR slot is reported as a blocked issue queue, never an empty one.
 
 Journals use schema version 2. Reading a legacy journal preserves its exact bytes in an immutable, private backup before conversion. A matching completed remote merge can be reconciled, but unfinished legacy work must use its matching old runner and saved journal; automatic adoption is unsupported. Unknown newer schemas are refused. Never restore a backup without checking for later remote actions.
 

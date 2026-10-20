@@ -31,6 +31,37 @@ class PullRequestRunner(Runner):
                 and pr.get('headRefName') == record.get('branch')
                 and pr.get('baseRefName') == 'main')
 
+    async def recover_pr(self, number, *, reason, processes_stopped=False):
+        """Record inspected hard-crash recovery without abandoning or refunding work."""
+        if not reason.strip() or len(reason) > 1000 or processes_stopped is not True:
+            raise GateError('Recovery requires a reason and --processes-stopped after inspecting orphaned processes')
+        with self.store.exclusive():
+            record = self.store.read(f'completion-pr-{number}')
+            if not record:
+                if self.store.read('active') != {'pr': number}:
+                    raise GateError('No matching interrupted PR admission')
+                pr = await self.pr(number)
+                history = self.store.read(f'pr-admission-recovery-{number}')
+                history.setdefault('entries', []).append(dict(
+                    at=self.clock(), reason=redact(reason), remote_state=pr['state'],
+                    operator_confirmed_processes_stopped=True, policy=self.policy))
+                self.store.write(f'pr-admission-recovery-{number}', history)
+                self.store.release_pr(number)
+                return {'pr': number, 'status': 'admission_released'}
+            if (record.get('schema_version') != 1 or record.get('policy') != self.policy
+                    or record['stage'] in {'merged', 'abandoned'}):
+                raise GateError('Recovery requires a matching unfinished PR completion')
+            unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
+            if not unresolved:
+                raise GateError('No unresolved provider invocation; resume normal execution')
+            record.setdefault('operator_recoveries', []).append(dict(
+                at=self.clock(), reason=redact(reason), invocation_ids=[c['id'] for c in unresolved],
+                operator_confirmed_processes_stopped=True))
+            for call in unresolved:
+                call.update(status='operator-resolved', ended_at=None)
+            self.save(record)
+            return {'pr': number, 'status': 'recovered', 'stage': record['stage']}
+
     async def abandon_pr(self, number, *, reason, processes_stopped=False):
         if not reason.strip() or len(reason) > 1000:
             raise GateError('Abandonment requires a short reason')
@@ -371,13 +402,14 @@ class PullRequestRunner(Runner):
         if refresh and not execute:
             raise GateError('Refresh requires explicit execution')
         await self.check_remote()
-        pr = await self.pr(number)
         if not execute:
+            pr = await self.pr(number)
             self.check_pr(pr, expected_head)
             return {'pr': number, 'head': expected_head, 'base': pr['baseRefOid'], 'status': 'planned',
                     'completion_target': 'merge', 'stages': ['validate', 'independent review',
                         'repair/retest', 'CI', 'exact-head merge']}
         with self.store.exclusive():
+            pr = await self.pr(number)
             record = self.store.read(f'completion-pr-{number}')
             existing = bool(record)
             if record and record.get('schema_version') != 1:
@@ -412,6 +444,7 @@ class PullRequestRunner(Runner):
                         {k: v for k, v in record.items() if k != 'history'}]
                     replacement['budget_extensions'] = record.get('budget_extensions', [])
                     replacement['repair_retry_history'] = record.get('repair_retry_history', [])
+                    replacement['operator_recoveries'] = record.get('operator_recoveries', [])
                     record = replacement
                     self.save(record)
                 elif expected_head not in {record['input_head'], record['remote_head'], record['head']}:

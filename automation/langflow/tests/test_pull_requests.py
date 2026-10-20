@@ -390,6 +390,50 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(after['provider_dispositions'][0]['operator_confirmed_processes_stopped'])
         self.assertEqual(self.runner.store.read('active'), {})
 
+    async def test_orphaned_review_can_recover_and_resume_without_refunding_spent_call(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        record.update(stage='review', reviewed_head=None, review=None, review_receipt=None)
+        record['provider_invocations'][0]['status'] = 'running'
+        self.runner.save(record)
+        with self.assertRaisesRegex(GateError, 'processes-stopped'):
+            await self.runner.recover_pr(122, reason='No acknowledgement yet')
+        await self.runner.recover_pr(122, reason='Verified crashed reviewer stopped', processes_stopped=True)
+        recovered = self.runner.store.read('completion-pr-122')
+        self.assertEqual(recovered['provider_calls'], record['provider_calls'])
+        self.assertEqual(recovered['deadline'], record['deadline'])
+        self.assertEqual(recovered['receipts'], record['receipts'])
+        self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        self.commands.fail_ci = False
+        await self.complete()
+        final = self.runner.store.read('completion-pr-122')
+        self.assertEqual(final['provider_calls'], 2)
+        self.assertEqual(final['provider_invocations'][0]['status'], 'operator-resolved')
+        self.assertEqual(len(final['operator_recoveries']), 1)
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_journalless_admission_can_recover_then_complete_same_pr(self):
+        self.runner.store.admit_pr(122)
+        await self.runner.recover_pr(122, reason='Inspected stopped worker before candidate admission',
+                                     processes_stopped=True)
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertFalse(self.runner.store.read('completion-pr-122'))
+        self.assertEqual(len(self.runner.store.read('pr-admission-recovery-122')['entries']), 1)
+        await self.complete()
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_recovery_cannot_refund_or_reroll_a_recorded_rejection(self):
+        self.commands.reject_reviews = 100
+        with self.assertRaises(GateError):
+            await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        with self.assertRaisesRegex(GateError, 'No unresolved'):
+            await self.runner.recover_pr(122, reason='Attempt to reroll rejection', processes_stopped=True)
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual(after, before)
+
     async def test_journalless_admission_after_hard_crash_can_be_abandoned_when_pr_closed(self):
         self.runner.store.admit_pr(122)
         self.commands.pr_data['state'] = 'CLOSED'

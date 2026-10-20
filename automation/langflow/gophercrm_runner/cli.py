@@ -32,7 +32,7 @@ def main():
     complete.add_argument('--head', required=True, help='Full current PR head SHA')
     complete.add_argument('--execute', action='store_true', help='Run to merge; defaults to preview')
     complete.add_argument('--refresh', action='store_true', help='Invalidate gates after an inspected candidate/base change')
-    for name in ('report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair'):
+    for name in ('report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr'):
         command = sub.add_parser(name)
         command.add_argument('--config', type=Path, required=True)
         command.add_argument('--pr', type=int, required=True)
@@ -41,7 +41,7 @@ def main():
         if name == 'extend-pr-budget':
             command.add_argument('--calls', type=int, default=0)
             command.add_argument('--seconds', type=int, default=0)
-        if name == 'abandon-pr':
+        if name in {'abandon-pr', 'recover-pr'}:
             command.add_argument('--processes-stopped', action='store_true',
                                  help='Confirm all orphaned provider processes were inspected and stopped')
     run = sub.add_parser('run', help='Run the Langflow workflow (preview by default)')
@@ -99,7 +99,7 @@ def main():
         result = run_async(run_pr_flow(args.config, number=args.pr, head=args.head,
                                       execute=args.execute, refresh=args.refresh))
         print(json.dumps([item.model_dump(mode='json') for item in result], indent=2))
-    elif args.command in {'report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair'}:
+    elif args.command in {'report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr'}:
         from .config import Config
         from .pull_requests import PullRequestRunner
         runner = PullRequestRunner(Config.load(args.config))
@@ -109,6 +109,9 @@ def main():
             result = runner.extend_pr_budget(args.pr, calls=args.calls, seconds=args.seconds, reason=args.reason)
         elif args.command == 'abandon-pr':
             result = run_async(runner.abandon_pr(args.pr, reason=args.reason,
+                                               processes_stopped=args.processes_stopped))
+        elif args.command == 'recover-pr':
+            result = run_async(runner.recover_pr(args.pr, reason=args.reason,
                                                processes_stopped=args.processes_stopped))
         else:
             result = runner.retry_pr_repair(args.pr, reason=args.reason)
