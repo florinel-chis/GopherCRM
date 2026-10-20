@@ -2,9 +2,10 @@ package models
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/florinel-chis/gophercrm/internal/config"
 )
 
 var aeoConfigProviders = []string{"anthropic", "openai", "gemini", "kimi", "perplexity"}
@@ -23,8 +24,11 @@ func defaultAEOProviderConfigurations() []Configuration {
 	return configs
 }
 
-// These settings are visible to administrators and endpoints are logged by
-// the SDK. Credentials belong in the encrypted API-key settings, never URLs.
+// These settings are visible to administrators. Credentials belong in the
+// encrypted API-key settings, never URLs. A stored base URL must be HTTPS: an
+// override can only select an origin the operator's environment egress policy
+// already trusts for that engine (see docs/AEO_SECURITY.md), so passing this
+// syntax check never widens where credentials may be sent.
 func validateAEOProviderSetting(key, value string) (string, error) {
 	for _, provider := range aeoConfigProviders {
 		prefix := "integration.aeo." + provider + "_"
@@ -41,10 +45,8 @@ func validateAEOProviderSetting(key, value string) (string, error) {
 			}
 			return value, nil
 		}
-		endpoint, err := url.Parse(value)
-		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" ||
-			endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" {
-			return "", fmt.Errorf("base URL must be an absolute HTTP(S) URL without credentials, query parameters or a fragment")
+		if _, err := config.ParseAEOEndpoint(value, false); err != nil {
+			return "", fmt.Errorf("base URL must be an absolute HTTPS URL with a valid host and port, without credentials, query parameters, a fragment or a zone identifier")
 		}
 		return value, nil
 	}

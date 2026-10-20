@@ -612,7 +612,9 @@ func (suite *AEOServiceTestSuite) TestGeneratePrompts_ProviderError() {
 	prompts, err := suite.withGenerator(generator).GeneratePrompts(context.Background(), 10)
 
 	assert.Nil(suite.T(), prompts)
-	assert.EqualError(suite.T(), err, "upstream is down")
+	// A custom provider's error text is replaced by its safe category.
+	assert.EqualError(suite.T(), err, "anthropic: provider request failed")
+	assert.Equal(suite.T(), aeo.FailureUnknown, aeo.ProviderFailureCategory(err))
 }
 
 func (suite *AEOServiceTestSuite) TestGeneratePrompts_UnusableReply() {

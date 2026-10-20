@@ -338,7 +338,8 @@ variables below when no key is stored, so a key entered in the UI takes effect f
 without restarting the process. An engine with no key from either source is simply skipped.
 Admins can also override each hosted engine's **model and base URL** in **Models and endpoints**;
 blank values restore environment/default behavior. These settings apply to both tracking runs and
-prompt generation. The custom engine and schedule remain environment-only.
+prompt generation. The custom engine, schedule and egress policy remain environment-only, so a
+stored base URL selects an endpoint but cannot make an untrusted one reachable.
 
 **Where your data goes.** CRM records and stored prompt sets are kept on your server. Each tracking
 run sends every active prompt to every configured engine. Queries stay on your network only when
@@ -360,7 +361,17 @@ Each hosted engine also accepts `AEO_<PROVIDER>_BASE_URL` (for example,
 `AEO_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`). Use the
 OpenAI-compatible base for Gemini/OpenAI/Kimi/Perplexity, and the Messages API root for Anthropic.
 Do not include credentials, query parameters, or the final `/chat/completions` or `/v1/messages`
-path. A provider's 503 may mean temporary overload; the prompt transcript retains its explanation.
+path. A provider's 503 may mean temporary overload.
+
+**Egress policy.** Each engine may send its key only to its official HTTPS origin. Any other
+endpoint must be trusted explicitly in the environment. This applies to a gateway or regional
+host, a stored Settings override, and every custom engine. Use `AEO_EGRESS_ALLOWED_ORIGINS` for
+public HTTPS origins and `AEO_EGRESS_LOCAL_ORIGINS` for narrowly scoped loopback/LAN servers, for
+example `AEO_EGRESS_LOCAL_ORIGINS=custom=http://10.0.1.21:1234`. An untrusted endpoint fails with
+`endpoint_not_permitted` before any request. Destinations are checked again at connection time;
+redirects are never followed and `HTTP(S)_PROXY` is ignored. Failed answers record only a bounded
+category and the numeric HTTP status, never the provider's response text. See
+[docs/AEO_SECURITY.md](docs/AEO_SECURITY.md) for the syntax and the migration checklist.
 
 `AEO_SCHEDULE_ENABLED` (default `true`) and `AEO_SCHEDULE_HOUR` (default `6`, server local time)
 control the daily run. With no key set at all the module still boots; starting a run then returns

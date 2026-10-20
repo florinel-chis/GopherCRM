@@ -35,6 +35,9 @@ type fakeProvider struct {
 	calls   atomic.Int32
 	inFlght atomic.Int32
 	peak    atomic.Int32
+
+	// panicValue, when set, is what a panicking provider panics with.
+	panicValue any
 }
 
 func (p *fakeProvider) Name() string  { return p.name }
@@ -51,6 +54,9 @@ func (p *fakeProvider) Query(ctx context.Context, prompt string) (ProviderAnswer
 	}
 	defer p.inFlght.Add(-1)
 
+	if p.panicValue != nil {
+		panic(p.panicValue)
+	}
 	if p.panics {
 		panic("provider exploded")
 	}
@@ -401,7 +407,8 @@ func TestEngineRecordsFailedQueryAsAnAnswerRow(t *testing.T) {
 
 	answers, citations := repo.snapshot()
 	require.Len(t, answers, 1, "a failed provider call is recorded, never dropped")
-	assert.Equal(t, "alpha: 503 unavailable", answers[0].Error)
+	// An arbitrary provider error is recorded by category, not by its text.
+	assert.Equal(t, "alpha: provider request failed", answers[0].Error)
 	assert.Empty(t, answers[0].AnswerText)
 	assert.False(t, answers[0].BrandMentioned)
 	assert.Equal(t, -1, answers[0].FirstMentionPos)
@@ -465,7 +472,7 @@ func TestEngineAppliesPerQueryTimeout(t *testing.T) {
 
 	answers, _ := repo.snapshot()
 	require.Len(t, answers, 1)
-	assert.Contains(t, answers[0].Error, context.DeadlineExceeded.Error())
+	assert.Equal(t, "slow: request timed out", answers[0].Error)
 	assert.Equal(t, RunStatusFailed, run.Status)
 }
 
@@ -482,7 +489,7 @@ func TestEngineHonoursACancelledParentContext(t *testing.T) {
 
 	answers, _ := repo.snapshot()
 	require.Len(t, answers, 1)
-	assert.Contains(t, answers[0].Error, context.Canceled.Error())
+	assert.Equal(t, "slow: request canceled", answers[0].Error)
 }
 
 func TestEngineBoundsConcurrency(t *testing.T) {

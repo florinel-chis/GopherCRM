@@ -6,12 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/florinel-chis/gophercrm/internal/config"
 )
 
 // capturedRequest is one request the fake answer engine received.
@@ -71,6 +74,20 @@ func newFakeEngine(t *testing.T, script ...engineResponse) *fakeEngine {
 	return fake
 }
 
+// guard authorizes this loopback server for the named engines through an
+// explicit operator local exception — the same opt-in a self-hosted engine
+// needs in production. Nothing is special-cased for tests.
+func (f *fakeEngine) guard(t *testing.T, policyKeys ...string) *EgressGuard {
+	t.Helper()
+	entries := make([]string, 0, len(policyKeys))
+	for _, key := range policyKeys {
+		entries = append(entries, key+"="+f.server.URL)
+	}
+	policy := config.ParseAEOEgressPolicy("", strings.Join(entries, ","))
+	require.NoError(t, policy.Err)
+	return NewEgressGuard(policy)
+}
+
 func (f *fakeEngine) calls() []capturedRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -108,6 +125,7 @@ func TestOpenAICompatProviderQuerySuccess(t *testing.T) {
 		Model:   "gpt-4o-mini",
 		APIKey:  "test-key",
 		BaseURL: fake.server.URL,
+		Guard:   fake.guard(t, ProviderOpenAI),
 	})
 
 	answer, err := provider.Query(context.Background(), "Which CRM would you recommend?")
@@ -158,7 +176,7 @@ func TestOpenAICompatProviderResolvesBaseURLShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeEngine(t, engineResponse{status: http.StatusOK, body: chatCompletionBody("hi")})
 			provider := NewOpenAICompatProvider(OpenAICompatConfig{
-				Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL + tc.suffix,
+				Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL + tc.suffix, Guard: fake.guard(t, ProviderOpenAI),
 			})
 
 			_, err := provider.Query(context.Background(), "prompt")
@@ -178,7 +196,7 @@ func TestOpenAICompatProviderEmptyChoices(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	answer, err := provider.Query(context.Background(), "prompt")
@@ -193,7 +211,7 @@ func TestOpenAICompatProviderEmptyContent(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	answer, err := provider.Query(context.Background(), "prompt")
@@ -212,7 +230,7 @@ func TestOpenAICompatProviderRetriesRateLimitThenSucceeds(t *testing.T) {
 	)
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	answer, err := provider.Query(context.Background(), "prompt")
@@ -229,7 +247,7 @@ func TestOpenAICompatProviderRateLimitExhausted(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderPerplexity, Model: "sonar", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderPerplexity, Model: "sonar", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderPerplexity),
 	})
 
 	_, err := provider.Query(context.Background(), "prompt")
@@ -247,7 +265,7 @@ func TestOpenAICompatProviderServerError(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	_, err := provider.Query(context.Background(), "prompt")
@@ -262,7 +280,7 @@ func TestOpenAICompatProviderMalformedJSON(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	_, err := provider.Query(context.Background(), "prompt")
@@ -316,6 +334,7 @@ func TestOpenAICompatProviderNativeCitations(t *testing.T) {
 				APIKey:          "k",
 				BaseURL:         fake.server.URL,
 				NativeCitations: true,
+				Guard:           fake.guard(t, ProviderPerplexity),
 			})
 
 			answer, err := provider.Query(context.Background(), "prompt")
@@ -335,7 +354,7 @@ func TestOpenAICompatProviderIgnoresCitationsWhenNotNative(t *testing.T) {
 	})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	answer, err := provider.Query(context.Background(), "prompt")
@@ -349,7 +368,7 @@ func TestOpenAICompatProviderOmitsAuthorizationWithoutKey(t *testing.T) {
 	fake := newFakeEngine(t, engineResponse{status: http.StatusOK, body: chatCompletionBody("hi")})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: "custom", Model: "openai/gpt-oss-20b", APIKey: "", BaseURL: fake.server.URL,
+		Name: "custom", Model: "openai/gpt-oss-20b", APIKey: "", BaseURL: fake.server.URL, Guard: fake.guard(t, config.AEOEgressCustom),
 	})
 
 	_, err := provider.Query(context.Background(), "prompt")
@@ -364,7 +383,7 @@ func TestOpenAICompatProviderHonoursContextCancellation(t *testing.T) {
 	fake := newFakeEngine(t, engineResponse{status: http.StatusOK, body: chatCompletionBody("hi")})
 
 	provider := NewOpenAICompatProvider(OpenAICompatConfig{
-		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL,
+		Name: ProviderOpenAI, Model: "m", APIKey: "k", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderOpenAI),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
@@ -375,17 +394,24 @@ func TestOpenAICompatProviderHonoursContextCancellation(t *testing.T) {
 	assert.Contains(t, err.Error(), ProviderOpenAI)
 }
 
-func TestOpenAICompatProviderPreservesGeminiErrorDetails(t *testing.T) {
+// Gemini's array envelope used to be read back into the error. Under the safe
+// contract the remote message is dropped entirely; the status and category
+// carry the diagnosis, and the SDK retry is unchanged.
+func TestOpenAICompatProviderReportsGeminiErrorsByStatus(t *testing.T) {
 	fake := newFakeEngine(t, engineResponse{
 		status: http.StatusServiceUnavailable,
 		body:   `[{"error":{"code":503,"message":"High demand; retry later. Credential: test-key","status":"UNAVAILABLE"}}]`,
 		header: rateLimitedNow,
 	})
-	provider := NewOpenAICompatProvider(OpenAICompatConfig{Name: ProviderGemini, Model: "test-model", APIKey: "test-key", BaseURL: fake.server.URL})
+	provider := NewOpenAICompatProvider(OpenAICompatConfig{
+		Name: ProviderGemini, Model: "test-model", APIKey: "test-key", BaseURL: fake.server.URL, Guard: fake.guard(t, ProviderGemini),
+	})
 	_, err := provider.Query(context.Background(), "What is GopherCRM?")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "High demand; retry later.")
+	assert.Equal(t, "gemini: provider unavailable (HTTP 503)", err.Error())
+	assert.NotContains(t, err.Error(), "High demand")
 	assert.NotContains(t, err.Error(), "test-key")
 	assert.Equal(t, 503, ProviderHTTPStatus(err))
+	assert.Equal(t, FailureHTTPStatus, ProviderFailureCategory(err))
 	assert.Len(t, fake.calls(), 2, "keep the existing single SDK retry")
 }

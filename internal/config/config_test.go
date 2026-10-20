@@ -26,6 +26,7 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"PERPLEXITY_API_KEY", "AEO_PERPLEXITY_MODEL", "AEO_PERPLEXITY_BASE_URL",
 		"AEO_CUSTOM_NAME", "AEO_CUSTOM_BASE_URL", "AEO_CUSTOM_MODEL", "AEO_CUSTOM_API_KEY",
 		"AEO_SCHEDULE_ENABLED", "AEO_SCHEDULE_HOUR",
+		"AEO_EGRESS_ALLOWED_ORIGINS", "AEO_EGRESS_LOCAL_ORIGINS",
 		// Forms keys, for the same reason as the AEO ones.
 		"PUBLIC_BASE_URL", "RECAPTCHA_SITE_KEY", "RECAPTCHA_SECRET_KEY", "RECAPTCHA_MIN_SCORE",
 		// Database driver selection, so a developer shell pointing at SQLite

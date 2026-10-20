@@ -24,7 +24,7 @@ func TestAnthropicProviderQuerySuccess(t *testing.T) {
 		body:   messageBody(`{"type":"text","text":"Acme is a good fit."}`),
 	})
 
-	provider := NewAnthropicProvider("test-key", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("test-key", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	answer, err := provider.Query(context.Background(), "Which CRM would you recommend?")
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestAnthropicProviderConcatenatesTextBlocksAndSkipsOthers(t *testing.T) {
 		),
 	})
 
-	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	answer, err := provider.Query(context.Background(), "prompt")
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestAnthropicProviderEmptyContent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeEngine(t, engineResponse{status: http.StatusOK, body: tc.body})
-			provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+			provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 			answer, err := provider.Query(context.Background(), "prompt")
 			require.NoError(t, err, "an empty answer is not a failure")
@@ -102,7 +102,7 @@ func TestAnthropicProviderRetriesRateLimitThenSucceeds(t *testing.T) {
 		engineResponse{status: http.StatusOK, body: messageBody(`{"type":"text","text":"Acme."}`)},
 	)
 
-	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	answer, err := provider.Query(context.Background(), "prompt")
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestAnthropicProviderRateLimitExhausted(t *testing.T) {
 		header: rateLimitedNow,
 	})
 
-	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	_, err := provider.Query(context.Background(), "prompt")
 	require.Error(t, err)
@@ -133,7 +133,7 @@ func TestAnthropicProviderServerError(t *testing.T) {
 		header: rateLimitedNow,
 	})
 
-	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	_, err := provider.Query(context.Background(), "prompt")
 	require.Error(t, err)
@@ -146,7 +146,7 @@ func TestAnthropicProviderMalformedJSON(t *testing.T) {
 		body:   `{"content": [ this is not json`,
 	})
 
-	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL)
+	provider := NewAnthropicProvider("k", "claude-opus-5", fake.server.URL, fake.guard(t, ProviderAnthropic))
 
 	_, err := provider.Query(context.Background(), "prompt")
 	require.Error(t, err)

@@ -11,9 +11,10 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - `internal/handler/aeo_handler.go`, `internal/handler/aeo_routes.go`, `cmd/main.go`
 - `internal/service/aeo_service.go`, `internal/service/interfaces.go`
 - `internal/repository/aeo_repository.go`, `internal/repository/interfaces.go`
-- `internal/aeo/` — `provider.go`, `anthropic.go`, `openai_compat.go`, `analysis.go`,
-  `engine.go`, `scheduler.go`
-- `internal/errors/errors.go`, `internal/config/config.go`
+- `internal/aeo/` — `provider.go`, `anthropic.go`, `openai_compat.go`, `egress.go`, `errors.go`,
+  `analysis.go`, `engine.go`, `scheduler.go`
+- `internal/errors/errors.go`, `internal/config/config.go`, `internal/config/aeo_egress.go`
+- [AEO_SECURITY.md](../AEO_SECURITY.md) — egress policy and sanitized failure contract
 - `gocrm-ui/src/pages/aeo/AEODashboard.tsx`, `AEOPrompts.tsx`, `AEOCitations.tsx`,
   `AEOSettings.tsx`
 - `gocrm-ui/src/api/endpoints/aeo.ts`, `gocrm-ui/src/routes/index.tsx`,
@@ -29,7 +30,10 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Runs cost money.** A run is `active prompts × configured providers` external calls. No E2E case
   may trigger `POST /aeo/runs` against a deployment whose environment carries real provider keys.
   The intended E2E setup runs the backend with `AEO_CUSTOM_BASE_URL` pointed at a local stub (or at
-  LM Studio) and every hosted key unset, which is also what makes the run deterministic.
+  LM Studio) and every hosted key unset, which is also what makes the run deterministic. The stub
+  needs an explicit operator exception, for example
+  `AEO_EGRESS_LOCAL_ORIGINS=custom=http://127.0.0.1:<port>`; without it every answer records
+  `endpoint_not_permitted` (see [AEO_SECURITY.md](../AEO_SECURITY.md)).
 - **`/aeo` is closed to `customer`.** `SetupAEORoutes` guards the whole group with
   `RequireRole(admin, sales, support)`; writes (profile, prompts, generate, run) additionally
   require admin or sales, and prompt deletion requires admin. The SPA mirrors this: one pathless
@@ -501,12 +505,27 @@ Anthropic call).
 - **Priority:** P1
 - **Type:** configuration / regression
 - **Steps:** As an admin, open AEO Settings and save a provider model and base URL. Run one prompt, then generate suggestions with that provider selected. Clear the overrides and repeat.
-- **Expected:** Both operations use the saved model and endpoint immediately; clearing restores environment/default behavior. Sales and support cannot edit these settings. Reject non-HTTP URLs, credentials or query parameters in URLs, and model identifiers longer than 120 characters.
-- **Automation:** `AEOSettings.test.tsx`, `aeo_credentials_test.go`, `aeo_configuration_test.go`, and `provider_test.go` exercise validation, permissions, fallback and actual SDK request paths.
+- **Expected:** Both operations use the saved model and endpoint immediately; clearing restores environment/default behavior. Sales and support cannot edit these settings. Reject non-HTTPS URLs, credentials, query parameters (including a bare `?`), fragments, zone identifiers or malformed ports in URLs, and model identifiers longer than 120 characters. A saved endpoint on an origin the environment egress policy does not trust is accepted by Settings but fails every query with `endpoint_not_permitted` before any request.
+- **Automation:** `AEOSettings.test.tsx`, `aeo_credentials_test.go`, `aeo_configuration_test.go`, `provider_test.go`, `TestAEOEndpointSyntax` and `TestAEOConfigTrustBoundary` exercise validation, permissions, fallback, trust and actual SDK request paths.
 
-### TC-AEO-044 — Gemini error details survive an array response
+### TC-AEO-044 — Gemini error envelopes are reported by status only
 - **Priority:** P1
-- **Type:** regression
-- **Steps:** Return HTTP 503 with `[{"error":{"message":"High demand; retry later."}}]` from a stub OpenAI-compatible provider. Run a prompt and inspect its failed answer.
-- **Expected:** The error includes both HTTP 503 and the provider message. API keys are redacted. The existing one-retry behavior and run failure accounting are preserved.
-- **Automation:** `TestOpenAICompatProviderPreservesGeminiErrorDetails`.
+- **Type:** regression / security
+- **Steps:** Return HTTP 503 with `[{"error":{"message":"High demand; retry later. Credential: <key>"}}]` from a stub OpenAI-compatible provider. Run a prompt and inspect its failed answer and the logs.
+- **Expected:** The answer error is `gemini: provider unavailable (HTTP 503)`. Neither the remote message nor the key appears in the answer, the logs or any API response. The existing one-retry behavior and run failure accounting are preserved.
+- **Automation:** `TestOpenAICompatProviderReportsGeminiErrorsByStatus`, `TestAEOFailureSanitization`.
+- **Known issue:** Changed 2026-10 (#98). The provider's explanation used to be copied into the answer, with an exact-key redaction that did not cover reflected prompts, other headers or arbitrary remote text.
+
+### TC-AEO-045 — Provider credentials reach only trusted origins
+- **Priority:** P0
+- **Type:** security / regression
+- **Steps:** With fake keys, point each engine's base URL (environment or Settings) at a non-official host, another engine's origin, a suffix/subdomain look-alike, an alternate port, an `http://` downgrade, a private or metadata address, and a host whose DNS answer is private, mixed or rebinding. Repeat with a stub that answers 3xx, and with `HTTPS_PROXY` set.
+- **Expected:** No request carries a key to any of them. Untrusted origins fail before any DNS lookup or dial. Non-public answers fail at connection time. Redirects end the query after one request. The proxy is not used. Official origins, `AEO_EGRESS_ALLOWED_ORIGINS` entries and engine-scoped `AEO_EGRESS_LOCAL_ORIGINS` entries keep working with TLS verification on. Link-local and metadata addresses can never be authorized. A malformed policy refuses every AEO request.
+- **Automation:** `TestAEOOperatorEgressConfig`, `TestAEOEndpointTrust`, `TestAEODialPolicy`, `TestAEORedirectPolicy`; no real network.
+
+### TC-AEO-046 — Failure persistence and generation errors are sanitized
+- **Priority:** P0
+- **Type:** security / regression
+- **Steps:** Run prompts and prompt generation against providers that fail with reflected keys, headers, prompts, raw bodies, transport/TLS/DNS errors, timeouts and panics, and capture the logs.
+- **Expected:** `AEOAnswer.Error`, logs and the generation API response contain only the engine name, a fixed category and the numeric HTTP status, at most 160 characters. Panic values are never logged. Failed answers are still persisted and counted; successful answers and native citations are unchanged.
+- **Automation:** `TestAEOFailureSanitization`, `TestAEOFailurePersistence`, `TestAEOGenerationFailureSanitization`.

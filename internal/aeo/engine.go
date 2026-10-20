@@ -98,11 +98,13 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 	}
 
 	defer func() {
+		// The panic value may be provider-controlled, so it is neither
+		// returned nor logged.
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("aeo: run %d panicked: %v", run.ID, recovered)
+			err = fmt.Errorf("aeo: run %d panicked", run.ID)
 			logProvider().WithFields(map[string]any{
-				"run_id": run.ID,
-				"panic":  recovered,
+				"run_id":           run.ID,
+				"failure_category": FailurePanic,
 			}).Error("AEO run panicked")
 			total := len(prompts) * len(e.providers)
 			e.finalize(run, total, total)
@@ -178,24 +180,27 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 // whether the call succeeded or not. It returns a non-nil error when the query
 // failed, which the caller counts towards FailedQueries.
 func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTask, profile *models.AEOProfile) (taskErr error) {
-	// Last-resort guard. safeQuery already contains a panicking provider; this
+	// Last-resort guard. SafeQuery already contains a panicking provider; this
 	// covers anything else in the task so one bad answer cannot abort the run.
+	// The panic value is never logged: it may be provider-controlled.
+	providerName := "provider"
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			taskErr = fmt.Errorf("%s: panicked: %v", task.provider.Name(), recovered)
+			taskErr = &ProviderError{Provider: providerName, Category: FailurePanic}
 			logProvider().WithFields(map[string]any{
-				"run_id":   run.ID,
-				"provider": task.provider.Name(),
-				"panic":    recovered,
+				"run_id":           run.ID,
+				"provider":         providerName,
+				"failure_category": FailurePanic,
 			}).Error("AEO task panicked")
 		}
 	}()
+	providerName = safeProviderName(task.provider.Name())
 
 	queryCtx, cancel := context.WithTimeout(ctx, e.opts.QueryTimeout)
 	defer cancel()
 
 	startedAt := time.Now()
-	answer, queryErr := safeQuery(queryCtx, task.provider, task.prompt.Text)
+	answer, queryErr := SafeQuery(queryCtx, task.provider, task.prompt.Text)
 	latency := int(time.Since(startedAt).Milliseconds())
 
 	row := models.AEOAnswer{
@@ -213,14 +218,18 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 	if queryErr != nil {
 		// A failed call is recorded, never dropped: the citations and
 		// visibility views need to know a query was attempted and lost.
-		row.Error = queryErr.Error()
-		taskErr = queryErr
+		// SafeQuery has already reduced it to a bounded category and status;
+		// sanitizing again keeps this boundary safe on its own.
+		safeErr := SanitizeProviderError(providerName, queryErr)
+		row.Error = safeErr.Error()
+		taskErr = safeErr
 		logProvider().WithFields(map[string]any{
-			"run_id":      run.ID,
-			"prompt_id":   task.prompt.ID,
-			"provider":    task.provider.Name(),
-			"http_status": ProviderHTTPStatus(queryErr),
-			"error":       queryErr.Error(),
+			"run_id":           run.ID,
+			"prompt_id":        task.prompt.ID,
+			"provider":         providerName,
+			"http_status":      ProviderHTTPStatus(safeErr),
+			"failure_category": ProviderFailureCategory(safeErr),
+			"error":            safeErr.Error(),
 		}).Warn("AEO provider query failed")
 	} else {
 		mentions := DetectMentions(answer.Text, profile)
@@ -250,23 +259,6 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 	}
 
 	return taskErr
-}
-
-// safeQuery calls the provider and converts a panic into an ordinary error, so
-// the task still writes its answer row (with the error recorded) instead of
-// silently vanishing from the run.
-func safeQuery(ctx context.Context, provider Provider, prompt string) (answer ProviderAnswer, err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			answer = ProviderAnswer{}
-			err = fmt.Errorf("%s: panicked: %v", provider.Name(), recovered)
-			logProvider().WithFields(map[string]any{
-				"provider": provider.Name(),
-				"panic":    recovered,
-			}).Error("AEO provider panicked")
-		}
-	}()
-	return provider.Query(ctx, prompt)
 }
 
 // finalize writes the terminal status and counters on the run row.

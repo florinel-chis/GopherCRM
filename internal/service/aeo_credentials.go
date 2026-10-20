@@ -27,7 +27,12 @@ const (
 // A stored key wins over the environment; an entry that was never set, has been
 // cleared, or cannot be read falls back to whatever the environment provided.
 // Models and base URLs follow the same precedence using non-sensitive settings.
-// The custom engine and the schedule stay environment-only.
+// The custom engine, the schedule and the egress policy stay environment-only.
+//
+// The overlay can change which endpoint an engine asks for, never which
+// endpoints are trusted: base.Egress is returned untouched, and the egress
+// guard refuses any stored base URL outside it before a request carries the
+// key. That covers rows stored before HTTPS-only validation existed, too.
 //
 // It is called on every run creation and every provider-status read, so a key
 // entered in the UI takes effect without a restart. A configuration lookup that
