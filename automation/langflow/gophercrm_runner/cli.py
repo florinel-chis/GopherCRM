@@ -32,7 +32,7 @@ def main():
     complete.add_argument('--head', required=True, help='Full current PR head SHA')
     complete.add_argument('--execute', action='store_true', help='Run to merge; defaults to preview')
     complete.add_argument('--refresh', action='store_true', help='Invalidate gates after an inspected candidate/base change')
-    for name in ('report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr'):
+    for name in ('report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr', 'restart-pr-repair'):
         command = sub.add_parser(name)
         command.add_argument('--config', type=Path, required=True)
         command.add_argument('--pr', type=int, required=True)
@@ -99,7 +99,7 @@ def main():
         result = run_async(run_pr_flow(args.config, number=args.pr, head=args.head,
                                       execute=args.execute, refresh=args.refresh))
         print(json.dumps([item.model_dump(mode='json') for item in result], indent=2))
-    elif args.command in {'report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr'}:
+    elif args.command in {'report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr', 'restart-pr-repair'}:
         from .config import Config
         from .pull_requests import PullRequestRunner
         runner = PullRequestRunner(Config.load(args.config))
@@ -113,6 +113,8 @@ def main():
         elif args.command == 'recover-pr':
             result = run_async(runner.recover_pr(args.pr, reason=args.reason,
                                                processes_stopped=args.processes_stopped))
+        elif args.command == 'restart-pr-repair':
+            result = run_async(runner.restart_pr_repair(args.pr, reason=args.reason))
         else:
             result = runner.retry_pr_repair(args.pr, reason=args.reason)
         print(json.dumps(result, indent=2))

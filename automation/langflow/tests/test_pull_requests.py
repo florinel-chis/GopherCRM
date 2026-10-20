@@ -182,6 +182,7 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after['deadline'], before['deadline'])
         self.assertEqual(after['provider_calls'], before['provider_calls'] + 1)
         self.assertEqual(len(after['history']), 1)
+        self.assertEqual(len(after['history'][0]['provider_invocations']), before['provider_calls'])
 
     async def test_review_receipt_tampering_blocks_merge(self):
         original = self.runner.review
@@ -223,6 +224,18 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(GateError, 'validation gate'):
                 await self.complete()
         self.assertEqual((self.commands.tests, self.commands.merges), (1, 0))
+        rejected = self.runner.store.read('completion-pr-122')
+        original_path = Path(rejected['worktree'])
+        await self.runner.restart_pr_repair(122, reason='Retain and reject the unauthorized Makefile change')
+        restarted = self.runner.store.read('completion-pr-122')
+        self.assertNotEqual(restarted['worktree'], rejected['worktree'])
+        self.assertEqual((original_path / 'Makefile').read_text(), 'verify:\n\ttrue\n')
+        self.assertFalse((Path(restarted['worktree']) / 'Makefile').exists())
+        await self.complete()
+        final = self.runner.store.read('completion-pr-122')
+        self.assertEqual(final['repairs'], 1)
+        self.assertEqual(final['provider_calls'], 4)
+        self.assertEqual(self.commands.merges, 1)
 
     async def test_runner_changes_require_local_and_remote_runner_checks(self):
         path = self.source / '.github/workflows/remediation-runner.yml'
@@ -300,6 +313,66 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record['provider_invocations'][1]['status'], 'cancelled')
         self.assertEqual(self.commands.merges, 1)
 
+    async def test_dirty_cancelled_repair_can_refresh_after_main_advance_without_losing_work(self):
+        self.commands.reject_reviews = 1
+        original = self.commands.run
+
+        async def cancel(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                raise asyncio.CancelledError()
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=cancel):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        old_file = Path(before['worktree']) / 'feature.txt'
+        old_bytes = old_file.read_bytes()
+        (self.checkout / 'advanced.txt').write_text('new base\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'advance main')
+        base = self.git('rev-parse', 'HEAD')
+        self.git('update-ref', 'refs/remotes/origin/main', base)
+        self.git('merge', '--no-edit', base, cwd=self.source)
+        self.commands.pr_data.update(baseRefOid=base, headRefOid=self.git('rev-parse', 'HEAD', cwd=self.source))
+        self.commands.pushed_head = self.commands.pr_data['headRefOid']
+        await self.complete(refresh=True)
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual(old_file.read_bytes(), old_bytes)
+        self.assertEqual(after['deadline'], before['deadline'])
+        self.assertEqual(after['repairs'], before['repairs'])
+        self.assertEqual(after['history'][-1]['worktree'], before['worktree'])
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_restart_worktree_response_loss_resumes_without_losing_repair_round(self):
+        self.commands.reject_reviews = 1
+        original = self.commands.run
+
+        async def cancel_agent(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                raise asyncio.CancelledError()
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=cancel_agent):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.complete()
+
+        async def lose_worktree_response(args, **kwargs):
+            result = await original(args, **kwargs)
+            if tuple(args[:3]) == ('git', 'worktree', 'add'):
+                raise asyncio.CancelledError()
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=lose_worktree_response):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.runner.restart_pr_repair(122, reason='Retain interrupted repair and restart cleanly')
+        self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], 'preparing_repair')
+        await self.complete()
+        self.assertEqual(self.runner.store.read('completion-pr-122')['repairs'], 1)
+        self.assertEqual(self.commands.merges, 1)
+
     async def test_no_change_repair_requires_audited_retry_and_spends_new_round(self):
         self.commands.reject_reviews = 1
         original = self.commands.run
@@ -353,6 +426,31 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         result = await self.runner.abandon_pr(122, reason='Inspect completed work')
         self.assertEqual(result['status'], 'merged')
         self.assertNotIn('abandon_reason', self.runner.store.read('completion-pr-122'))
+
+    async def test_abandon_cannot_downgrade_a_completed_merge_when_receipts_become_unavailable(self):
+        await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        (self.config.state_dir / record['review_receipt']['path']).unlink()
+        result = await self.runner.abandon_pr(122, reason='Already completed; release any remaining admission')
+        self.assertTrue(result['previously_completed'])
+        self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], 'merged')
+        self.assertNotIn('abandon_reason', self.runner.store.read('completion-pr-122'))
+
+    async def test_external_merge_does_not_release_an_unresolved_orphaned_provider(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        record['provider_invocations'][0]['status'] = 'running'
+        self.runner.save(record)
+        self.commands.pr_data.update(state='MERGED', mergeCommit={'oid': 'external-merge'})
+        with self.assertRaisesRegex(GateError, 'orphaned provider'):
+            await self.complete()
+        self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], record['stage'])
+        await self.runner.recover_pr(122, reason='Inspected and stopped the orphan', processes_stopped=True)
+        self.assertEqual((await self.complete())['status'], 'external_merge')
+        self.assertEqual(self.runner.store.read('active'), {})
 
     async def test_external_merge_at_another_head_can_release_slot_without_claiming_validation(self):
         self.commands.fail_ci = True
@@ -574,6 +672,16 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.runner.store.read('completion-pr-122')['reuse_ticket'])
         self.assertEqual((await self.complete())['status'], 'merged')
         self.assertEqual((self.commands.tests, self.commands.reviews), counts)
+
+    async def test_explicit_promotion_allows_only_the_ticket_stop_target_to_change(self):
+        ticket, source = await self.prepare_ticket()
+        counts = self.commands.tests, self.commands.reviews
+        self.runner = PullRequestRunner(replace(self.config, completion_target='merge'), self.commands)
+        await self.complete()
+        self.assertEqual((self.commands.tests, self.commands.reviews), counts)
+        self.assertEqual(ticket.store.read('issue-95')['completion_target'], 'pr')
+        self.assertEqual(ticket.store.read('issue-95')['policy'], source['policy'])
+        self.assertEqual(self.commands.merges, 1)
 
     async def test_changed_pr_ready_candidate_revalidates_and_reconciles_original_ticket(self):
         ticket, source = await self.prepare_ticket()

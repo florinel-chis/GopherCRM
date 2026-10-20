@@ -5,6 +5,8 @@ ticket evidence and never changes the configured completion policy or queue stop
 """
 
 import asyncio
+from copy import deepcopy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -89,6 +91,15 @@ class PullRequestRunner(Runner):
                     id=call['id'], pid=call.get('pid'), previous_status='running',
                     at=self.clock(), reason=redact(reason), operator_confirmed_processes_stopped=True))
                 call.update(status='operator-resolved', ended_at=None)
+            if record['stage'] == 'merged':
+                if not self.matching_merge(record, pr):
+                    raise GateError('Recorded completed merge no longer matches GitHub')
+                record.setdefault('completion_release_requests', []).append(
+                    dict(at=self.clock(), reason=redact(reason)))
+                self.save(record)
+                self.store.release_pr(number)
+                return {'pr': number, 'status': 'merged', 'previously_completed': True,
+                        'source_reconciliation_error': record.get('source_reconciliation_error')}
             if self.matching_merge(record, pr):
                 try:
                     return await self.finish(record, pr)
@@ -105,6 +116,44 @@ class PullRequestRunner(Runner):
             self.save(record)
             self.store.release_pr(number)
             return {'pr': number, 'status': 'abandoned', 'remote_state': pr['state']}
+
+    async def restart_pr_repair(self, number, *, reason):
+        if not reason.strip() or len(reason) > 1000:
+            raise GateError('Repair restart requires a short reason')
+        with self.store.exclusive():
+            record = self.store.read(f'completion-pr-{number}')
+            if (not record or record.get('schema_version') != 1 or record['policy'] != self.policy
+                    or record['stage'] not in {'implement', 'finalize_implementation', 'committing'}):
+                raise GateError('Restart applies only to an interrupted or rejected repair')
+            telemetry.remaining(record, self.clock())
+            self.store.admit_pr(number)
+            record.setdefault('retained_repair_worktrees', []).append(dict(
+                path=record['worktree'], head=record['head'], stage=record['stage'],
+                at=self.clock(), reason=redact(reason)))
+            record.update(worktree=str(self.config.state_dir / 'pr-worktrees' /
+                                       f'{number}-repair-{uuid.uuid4().hex[:12]}'),
+                          stage='preparing_repair', tested_head=None, reviewed_head=None,
+                          receipts={}, review=None, review_receipt=None, pending_review=None,
+                          reuse_ticket=False, feedback=record.get('feedback', '') +
+                          '\nOperator repair restart: ' + redact(reason))
+            self.save(record)
+            self._record = record
+            try:
+                await self.prepare_repair_worktree(record)
+            finally:
+                self._record = None
+            return {'pr': number, 'status': 'implement', 'retained_worktree': record['retained_repair_worktrees'][-1]['path']}
+
+    async def prepare_repair_worktree(self, record):
+        worktree = Path(record['worktree'])
+        if not worktree.exists():
+            worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            await self.command('git', 'worktree', 'add', '--detach', str(worktree), record['head'])
+        await self.clean(worktree)
+        if await self.head(worktree) != record['head']:
+            raise GateError('Restarted repair checkout does not match the recorded commit')
+        record['stage'] = 'implement'
+        self.save(record)
 
     def retry_pr_repair(self, number, *, reason):
         if not reason.strip() or len(reason) > 1000:
@@ -173,8 +222,14 @@ class PullRequestRunner(Runner):
         record = matches[0]
         if record['issue'] not in self.config.issues:
             raise GateError('Restore the linked ticket to the configured queue to preserve its frozen acceptance checks')
-        if record.get('legacy') or record['stage'] != 'pr_ready' or record['policy'] != self.policy:
+        if record.get('legacy') or record['stage'] != 'pr_ready':
             raise GateError('Only a matching current PR-ready ticket can be promoted')
+        # This explicit command authorizes merge regardless of the ticket's old
+        # stop target. Every other executable policy field must still match.
+        source_policy = Runner(replace(self.config, completion_target=record['completion_target']),
+                               self.commands, clock=self.clock).policy
+        if record['policy'] != source_policy:
+            raise GateError('PR-ready ticket validation policy changed')
         return record
 
     async def check_inputs(self, record):
@@ -338,6 +393,8 @@ class PullRequestRunner(Runner):
         self.save(record)
 
     async def finish(self, record, pr):
+        if any(c['status'] == 'running' for c in record.get('provider_invocations', [])):
+            raise GateError('Resolve orphaned provider processes with recover-pr before releasing this completion')
         if not self.matching_merge(record, pr):
             raise GateError('Remote merge does not match this PR completion')
         if record['policy'] != self.policy:
@@ -373,6 +430,8 @@ class PullRequestRunner(Runner):
                 'source_reconciliation_error': record.get('source_reconciliation_error')}
 
     def external_merge(self, record, pr):
+        if any(c['status'] == 'running' for c in record.get('provider_invocations', [])):
+            raise GateError('Resolve orphaned provider processes with recover-pr before releasing this completion')
         record.update(stage='external_merge', remote_disposition=dict(
             state=pr['state'], head=pr['headRefOid'],
             merge_commit=(pr.get('mergeCommit') or {}).get('oid'),
@@ -474,7 +533,6 @@ class PullRequestRunner(Runner):
                     telemetry.remaining(record, self.clock())
                     if expected_head == record['remote_head'] and pr['baseRefOid'] == record['base']:
                         raise GateError('Refresh requires a changed head or base; rejected reviews cannot be rerolled')
-                    await self.clean(Path(record['worktree']))
                     # Keep prior candidate and all evidence. Never reset a worktree.
                     replacement = await self.prepare_pr(pr)
                     replacement.update(worktree=str(self.config.state_dir / 'pr-worktrees' /
@@ -482,11 +540,12 @@ class PullRequestRunner(Runner):
                     for key in ('started_at', 'deadline', 'provider_calls', 'max_provider_calls',
                                 'provider_invocations', 'repairs', 'attempts'):
                         replacement[key] = record[key]
-                    replacement['history'] = record.get('history', []) + [
-                        {k: v for k, v in record.items() if k != 'history'}]
+                    replacement['history'] = deepcopy(record.get('history', []) + [
+                        {k: v for k, v in record.items() if k != 'history'}])
                     replacement['budget_extensions'] = record.get('budget_extensions', [])
                     replacement['repair_retry_history'] = record.get('repair_retry_history', [])
                     replacement['operator_recoveries'] = record.get('operator_recoveries', [])
+                    replacement['retained_repair_worktrees'] = record.get('retained_repair_worktrees', [])
                     record = replacement
                     self.save(record)
                 elif expected_head not in {record['input_head'], record['remote_head'], record['head']}:
@@ -503,6 +562,8 @@ class PullRequestRunner(Runner):
                 await self.check_inputs(record)
                 if record['stage'] == 'preparing':
                     await self.prepare_worktree(record)
+                if record['stage'] == 'preparing_repair':
+                    await self.prepare_repair_worktree(record)
                 if record['stage'] == 'finalize_implementation':
                     await self.finalize_implementation(record)
                 if record['stage'] == 'committing':
