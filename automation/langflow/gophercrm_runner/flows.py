@@ -70,6 +70,31 @@ def export_flow(path: Path):
     path.write_text(json.dumps(build_flow(), indent=2) + '\n')
 
 
+def build_pr_flow(config_path='', *, number=0, head='', mode='preview', refresh=False):
+    from lfx.graph import Graph
+    from .pr_component import CompletePullRequest
+
+    graph = Graph()
+    graph.add_component(CompletePullRequest(policy_path=config_path, pr_number=number,
+                        expected_head=head, mode=mode, refresh=refresh), 'CompletePullRequest-main')
+    graph.initialize()
+    payload = graph.dump(name='GopherCRM existing PR completion',
+        description='Explicit PR → validation → independent review → repair/retest → CI → exact-head merge.')
+    for node in payload['data']['nodes']:
+        node.update(type='genericNode', position={'x': 100, 'y': 100})
+        node['data']['selected_output'] = 'result'
+        node['data']['node']['outputs'][0]['selected'] = 'Message'
+    return payload
+
+
+async def run_pr_flow(config_path, *, number, head, execute=False, refresh=False):
+    from lfx.graph import Graph
+
+    graph = Graph.from_payload(build_pr_flow(str(config_path), number=number, head=head,
+        mode='execute' if execute else 'preview', refresh=refresh))
+    return await graph.arun(inputs=[{}], outputs=['CompletePullRequest-main'])
+
+
 async def run_flow(config_path, *, execute=False, limit=1):
     from lfx.graph import Graph
 

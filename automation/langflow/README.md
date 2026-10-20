@@ -1,6 +1,6 @@
 # GopherCRM Langflow remediation runner
 
-This workflow processes the validated tickets in [tracking issue #94](https://github.com/florinel-chis/GopherCRM/issues/94). It defaults to **preview**. Execution implements one ticket at a time, tests it, asks an independent Claude process for an adversarial review, repairs findings, retests, opens a PR, and waits for CI. Newly generated configurations explicitly select `completion_target: "pr"` and stop at **PR-ready**. A trusted `"merge"` target additionally merges the reviewed commit. Older configurations without this field retain their merge target; preview and status display the effective target. No ticket execution is scheduled automatically.
+This workflow processes the validated tickets in [tracking issue #94](https://github.com/florinel-chis/GopherCRM/issues/94). It defaults to **preview**. Execution implements one ticket at a time, tests it, asks an independent Claude process for an adversarial review, repairs findings, retests, opens a PR, waits for CI, and merges the reviewed commit. Newly generated configurations explicitly select `completion_target: "merge"`. Select `"pr"` for an optional **PR-ready** stop. Setup preserves existing configurations, including the original PR-ready pilot; preview and status display the effective target. No ticket execution is scheduled automatically.
 
 ```mermaid
 flowchart LR
@@ -38,6 +38,15 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 ```
 
 Preview reads GitHub and writes private command logs. It does not call Claude, create branches or PRs, or change issues. The [example policy](gophercrm_runner/config.example.json) lists all 27 validated tickets explicitly. Queue limits default to one; closed tickets are skipped. An unfinished active ticket is resumed first.
+
+When updating an existing local installation from source, force reinstall the package even if its version has not changed:
+
+```sh
+uv pip install --python "$HOME/.local/share/gophercrm-langflow/venv/bin/python" \
+  --no-deps --reinstall-package gophercrm-remediation-runner ./automation/langflow
+```
+
+Verify the installed source against the reviewed checkout and restart Langflow only when no execution is active. A successful installer exit can otherwise leave an older build of the same version loaded.
 
 ## Use the visual workflow
 
@@ -125,7 +134,49 @@ gophercrm-runner stop-after-current --config "$HOME/.local/share/gophercrm-runne
 gophercrm-runner resume-queue --config "$HOME/.local/share/gophercrm-runner/config.json"
 ```
 
-With no active ticket, a stop request blocks all new admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Changed or closed PRs require investigation.
+With no active ticket, a stop request blocks new issue admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Use the explicit PR completion workflow below to promote it.
+
+## Complete existing PRs through merge
+
+Import [pr-completion.json](flows/pr-completion.json) into Langflow for the **Review → test → merge existing PR** component. Enter the local policy path, PR number and full current head SHA. Preview is the default. Execute authorizes completion of that specific PR through merge, independently of the issue policy's `completion_target`. The CLI runs this same serialized graph:
+
+![Existing PR completion imported into the local Langflow editor in preview mode](screenshots/pr-completion.png)
+
+```sh
+gh pr view 127 --repo florinel-chis/GopherCRM --json headRefOid
+gophercrm-runner complete-pr --config /absolute/path/to/config.json --pr 127 --head FULL_HEAD_SHA
+gophercrm-runner complete-pr --config /absolute/path/to/config.json --pr 127 --head FULL_HEAD_SHA --execute
+gophercrm-runner report-pr --config /absolute/path/to/config.json --pr 127
+```
+
+The workflow accepts open, non-draft PRs from the same repository targeting main. It uses a separate private completion journal and shares the execution/admission locks with the issue workflow. It never resumes a stopped issue queue or admits another issue. Select each PR explicitly; it does not merge every open PR merely because CI is green.
+
+Inspect the pinned external contribution before execution: its code, build scripts and validation definitions execute locally with the host's filesystem access. This workflow is not a sandbox. External runner or validation changes can be reviewed, but repair agents cannot modify those protected paths.
+
+For an unchanged PR-ready ticket, the workflow verifies its original contract, named-test receipts and independent review before reusing them. The original ticket's call counts, limits and artifacts remain intact. Its eventual merge result is recorded alongside the separate completion execution. Existing PRs without reusable evidence receive fresh `make verify`, applicable database checks, and a fresh independent read-only Claude review. Runner/workflow changes also require local `make verify-runner` and the **Langflow runner tests** CI check. Criteria from a linked local ticket remain required during fresh validation.
+
+Review or test failures enter the bounded repair → test → review cycle. Repair agents cannot modify runner code or validation gates; blockers in those paths require a maintainer fix. Missing/failed CI, stale evidence, unresolved GitHub review requirements, changed PR inputs, forks, draft PRs and changed head/base commits block merging. The final merge uses `--squash --match-head-commit`, with no admin bypass. A lost push or merge response is reconciled before repeating work. Merge reconciliation requires the recorded merge stage and rechecks the exact candidate's test/review receipts. Other remote merges are reported as `external_merge`, release the slot, and never satisfy a linked ticket's acceptance criteria. Failure to update a linked ticket after a verified merge is reported separately and can be retried without holding the PR slot.
+
+The candidate must contain current main. If main or the remote head changes, inspect the changes and incorporate main into the source branch, then run `complete-pr` with its new full SHA and **`--execute --refresh`**. Refresh retains the old candidate/evidence and all spent calls, repairs and elapsed time; it invalidates tests and review. Refreshing an unchanged head/base cannot reroll a rejected review. Conflicts and external changes are never silently adopted. As with the ticket workflow, GitHub branch protection or a merge queue must enforce atomic protection against main advancing concurrently with the final merge request.
+
+An unfinished completion can receive an explicit, recorded budget extension:
+
+```sh
+gophercrm-runner extend-pr-budget --config /absolute/path/to/config.json --pr 127 \
+  --calls 1 --seconds 3600 --reason 'Inspected the blocked completion and authorized another attempt'
+```
+
+`status` includes PR completion journals. `report-pr` includes attempts and provider calls. Cancellation preserves the journal and worktrees; repeat `complete-pr` with the current head to resume an interrupted repair, spending another provider call within the same repair round. Authentication, environment and exhausted-budget failures remain stops, never merge approval.
+
+A repair that makes no changes stops for inspection. `retry-pr-repair --config ... --pr NUMBER --reason '...'` records an explicit retry; the next execution consumes a new repair round and provider call. If a PR is closed, unwanted, or cannot be completed, `abandon-pr --config ... --pr NUMBER --reason '...'` records abandonment and releases its admission slot without closing or modifying GitHub. It preserves all artifacts and the stopped-queue setting. Abandoned completions cannot silently restart. A matching confirmed remote merge is reconciled; a merge at another head is recorded as an external disposition, never as this runner's validated result.
+
+If a repair edits protected paths or leaves an unusable dirty checkout, use `restart-pr-repair --config ... --pr NUMBER --reason '...'` after inspection. It retains the rejected checkout and creates a clean one at the recorded commit. The next execution charges another provider call in the same already-spent repair round. Tests and review are invalidated, never bypassed. A refresh after an inspected remote head/base change also retains dirty superseded worktrees, rather than requiring manual cleanup. Neither operation refunds calls, repairs or elapsed time.
+
+After a hard crash, inspect and stop orphaned processes from that execution (including provider and test processes), then use **`recover-pr --config ... --pr NUMBER --processes-stopped --reason '...'`** to resume the same completion. The operator acknowledgement resolves unknown running invocations without refunding calls, changing the deadline, discarding receipts or inventing an end time. Run `complete-pr` again; normal tests, review and budgets still apply. If admission crashed before its first journal save, recovery records the interrupted admission separately and releases its slot, allowing the same PR to be admitted later.
+
+Use `abandon-pr --processes-stopped` instead only when deliberately ending the completion after inspecting orphaned processes. Abandonment also supports an interrupted admission without a journal, and remains terminal. Neither command kills an arbitrary recorded PID. Preflight failures that unwind normally release their slot automatically. A held PR slot is reported as a blocked issue queue, never an empty one.
+
+An external merge never bypasses the orphaned-process acknowledgement. Already completed merges retain their historical result; an abandonment request cannot relabel them as failed or erase the linked ticket outcome.
 
 Journals use schema version 2. Reading a legacy journal preserves its exact bytes in an immutable, private backup before conversion. A matching completed remote merge can be reconciled, but unfinished legacy work must use its matching old runner and saved journal; automatic adoption is unsupported. Unknown newer schemas are refused. Never restore a backup without checking for later remote actions.
 
@@ -140,6 +191,8 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 Issue, guidance, check-registry or contract changes stop execution. Inspect them, update the operator manifest when needed, then use `freeze --refresh`. Refresh preserves old contract snapshots/history and spent work, invalidates prior tests/review/receipts, and requires fresh validation. It cannot silently adopt a changed executable policy or promote a completed PR-ready execution. If main changed, revalidate the candidate first and update the trusted checkout's guidance to that base before refreshing.
 
 Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and per-command timeout changes are permitted during an active ticket; validation policy changes are not. Editing configured total limits never changes an admitted execution’s persisted limits. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
+
+An issue repair reserved before main advances can use `revalidate` followed by `freeze --refresh`; both preserve its reserved stage and spent budget. A conflicting main merge retains rejected-review findings and still enforces the repair limit. If that limit is exhausted, the worktree remains in conflict for maintainer inspection; automatic execution does not resolve it or grant another round. Revalidation also refuses an already dirty cancelled issue repair. These are explicit operator boundaries, not successful completion.
 
 ## Limits and operational reports
 
