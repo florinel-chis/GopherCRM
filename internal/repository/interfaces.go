@@ -89,6 +89,17 @@ type CustomerRepository interface {
 	WithTx(tx *gorm.DB) CustomerRepository
 }
 
+// TicketAssigneeScope narrows a ticket collection to the tickets assigned to
+// one user, optionally intersected with one customer and a free-text search.
+// It is how support callers are scoped: the predicate is part of the query, so
+// it applies before offset and limit, and the matching count uses the same
+// predicate. An AssignedToID of zero matches no ticket.
+type TicketAssigneeScope struct {
+	AssignedToID uint
+	CustomerID   *uint
+	Search       string
+}
+
 type TicketRepository interface {
 	Create(ticket *models.Ticket) error
 	GetByID(id uint) (*models.Ticket, error)
@@ -104,6 +115,10 @@ type TicketRepository interface {
 	CountByCustomerID(customerID uint) (int64, error)
 	CountByAssignedToID(assignedToID uint) (int64, error)
 	CountOpen() (int64, error)
+	// Assignee-scoped collections. Rows are ordered by the validated sort
+	// column, or by id when none is given, with id as the tie-break.
+	ListByAssigneeScope(scope TicketAssigneeScope, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error)
+	CountByAssigneeScope(scope TicketAssigneeScope) (int64, error)
 	// Dashboard analytics. A nil assignedToID means every ticket; a non-nil one
 	// narrows the query to that assignee before the limit is applied.
 	CountByPriority() (map[string]int64, error)

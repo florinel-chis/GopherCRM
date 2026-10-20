@@ -105,6 +105,11 @@ type TicketService interface {
 	List(offset, limit int) ([]models.Ticket, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
+	// Assignee-scoped collections, which is how support callers are listed.
+	// Rows and total share one predicate, applied before offset and limit; an
+	// empty search lists every assigned ticket.
+	ListAssigned(assigneeID uint, search string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
+	GetByCustomerAndAssignee(customerID, assigneeID uint, offset, limit int) ([]models.Ticket, int64, error)
 	GetOpenCount() (int64, error)
 	// Dashboard analytics. The ByAssignee variants narrow the query to one
 	// assignee before the limit, which is how support callers are scoped.

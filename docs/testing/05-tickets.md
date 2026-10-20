@@ -134,21 +134,29 @@ gating); where the two disagree, that disagreement gets its own case.
   survives.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
-### TC-TICK-006 — Support user's list is not scoped to their assignments
+### TC-TICK-006 — Support user's list is scoped to their assignments
 - **Priority:** P0
 - **Type:** rbac
-- **Preconditions:** A support user logged in; at least one ticket assigned to that support user and
-  at least one assigned to somebody else (both created by the test as admin beforehand).
+- **Preconditions:** A support user logged in; at least one ticket assigned to that support user,
+  one assigned to somebody else and one unassigned (all created by the test as admin beforehand).
 - **Steps:**
   1. Navigate to `/tickets`.
-  2. Compare the visible ticket IDs against the two seeded tickets.
-- **Expected:** Both tickets are listed — `GET /tickets` applies no assignee scoping for support
-  (`ticket_handler.go` List only bars `customer`). The "Create Ticket" button **is** visible
-  (support may create) and every row offers Edit, but not Delete.
+  2. Compare the visible ticket IDs and the total against the seeded tickets.
+  3. Repeat with a search term, a sort column and a later page.
+- **Expected:** Only the ticket assigned to the caller is listed, and the total counts only the
+  caller's assignments. `TicketHandler.List` routes a support caller to
+  `TicketService.ListAssigned`, which filters on `assigned_to_id` in the query — together with the
+  parenthesised title/description/resolution search — before offset and limit, and counts with the
+  same predicate. Search, sort, `page`/`offset` and any ignored parameter such as `customer_id` can
+  only narrow or reorder that set. Admin and sales keep the global list; customers get **403**. The
+  "Create Ticket" button **is** visible (support may create) and every row offers Edit, but not
+  Delete.
 - **Known issue:** The row-level Edit affordance is granted to all support users
   (`TicketList.tsx:90` sets `canEdit = canCreate`), while the API only permits editing one's own
   assignments — see TC-TICK-023.
-- **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
+- **Automation:** API half automated — `TestTicketListVisibility{SQLite,MySQL}` in
+  `internal/integration/ticket_visibility_integration_test.go`; UI half planned —
+  `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
 ---
 
@@ -760,19 +768,24 @@ gating); where the two disagree, that disagreement gets its own case.
   TC-CUST-041); once that exists the case is API-level via `request.newContext()` in
   `gocrm-ui/e2e/tests/tickets-rbac.spec.ts`
 
-### TC-TICK-042 — Staff roles may read any customer's tickets
+### TC-TICK-042 — Staff roles read a customer's tickets within their ticket scope
 - **Priority:** P1
 - **Type:** rbac
-- **Preconditions:** Admin, sales and support users; a customer with at least one ticket.
+- **Preconditions:** Admin, sales and two support users; a customer with tickets assigned to each
+  support user and one unassigned, plus a second customer with a ticket assigned to the first
+  support user.
 - **Steps:**
-  1. Call `GET /api/v1/customers/<id>/tickets` as admin, then as sales, then as support.
-- **Expected:** **200** for all three — the ownership branch in `ListByCustomer` applies only to the
-  `customer` role, and there is no `RequireRole` on the route (`routes.go:61`). Support in particular
-  can read tickets that are not assigned to it through this route, even though
-  `GET /tickets/:id` would 403 for the same rows.
-- **Known issue:** The per-assignment scoping on `GET /tickets/:id` is not mirrored on
-  `GET /customers/:id/tickets`; the two read paths disagree for the support role.
-- **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
+  1. Call `GET /api/v1/customers/<id>/tickets` as admin, then as sales, then as each support user.
+  2. Repeat with an offset past the end of the result.
+- **Expected:** **200** for every staff role — the ownership branch in `ListByCustomer` applies only
+  to the `customer` role. Admin and sales get every ticket of the selected customer. A support user
+  gets only that customer's tickets assigned to it: `TicketService.GetByCustomerAndAssignee`
+  intersects `customer_id` with `assigned_to_id` in the query, before offset and limit, and counts
+  with the same predicate, so `total` and the pagination metadata never count another agent's or an
+  unassigned ticket. A customer with no such ticket, or a page past the end, is an empty array with
+  the scoped total. This matches `GET /tickets/:id`, which returns 403 for the same hidden rows.
+- **Automation:** API half automated — `TestTicketCustomerVisibility{SQLite,MySQL}` in
+  `internal/integration/ticket_visibility_integration_test.go`
 
 ### TC-TICK-043 — The customer detail "Tickets" tab lists every ticket, not the customer's
 - **Priority:** P0

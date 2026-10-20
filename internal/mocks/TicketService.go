@@ -364,6 +364,28 @@ func (_m *TicketService) Search(query string, offset int, limit int, sortBy stri
 	return r0, r1, r2
 }
 
+// ListAssigned provides a mock function with given fields: assigneeID, search, offset, limit, sortBy, sortOrder
+func (_m *TicketService) ListAssigned(assigneeID uint, search string, offset int, limit int, sortBy string, sortOrder string) ([]models.Ticket, int64, error) {
+	ret := _m.Called(assigneeID, search, offset, limit, sortBy, sortOrder)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Get(1).(int64), ret.Error(2)
+}
+
+// GetByCustomerAndAssignee provides a mock function with given fields: customerID, assigneeID, offset, limit
+func (_m *TicketService) GetByCustomerAndAssignee(customerID uint, assigneeID uint, offset int, limit int) ([]models.Ticket, int64, error) {
+	ret := _m.Called(customerID, assigneeID, offset, limit)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Get(1).(int64), ret.Error(2)
+}
+
 // CreateComment provides a mock function with given fields: comment
 func (_m *TicketService) CreateComment(comment *models.TicketComment) error {
 	ret := _m.Called(comment)
