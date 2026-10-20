@@ -54,7 +54,7 @@ verify-backend:
 	go build $(GO_BUILD_PKGS)
 	go vet $(GO_PKGS)
 	go test -race $(GO_PKGS)
-	go test -race -tags=gophercrm_e2e ./internal/middleware
+	go test -race -tags=gophercrm_e2e ./internal/middleware ./internal/aeo
 
 verify-frontend:
 	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run

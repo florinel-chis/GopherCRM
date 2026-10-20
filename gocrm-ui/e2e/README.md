@@ -68,11 +68,28 @@ steps act only on records the test created.
 
 `aeo-providers.spec.ts` runs in the standard suite on every database engine. It saves and clears
 all five provider connections through the UI and checks persistence after reload. Anthropic and
-Gemini generation and single-prompt tracking use the real Go SDKs against a per-test HTTP server
-bound to an ephemeral `127.0.0.1` port, with dummy stored keys. Changing a model and endpoint
+Gemini generation and single-prompt tracking use the real Go SDKs against a per-test HTTPS server
+bound to the run's selected `127.0.0.1` port, with dummy stored keys. Changing a model and endpoint
 between generation and tracking must take effect immediately. Gemini's array-shaped 503 response
 also exercises SDK retries, the generation message, and the stored error displayed in prompt
 details. Staff/customer checks cover the UI restrictions and server-side configuration permissions.
+
+Each `make e2e` invocation generates a short-lived certificate and private key in its temporary
+directory. The disposable `gophercrm_e2e` build accepts that certificate only with the explicit
+`GOPHERCRM_E2E_AEO_TLS=1` opt-in. The runner sets `GODEBUG=x509usefallbackroots=1` so Go uses this
+temporary trust pool on macOS as well as Linux; certificate and hostname verification remain
+enabled. Ordinary production builds ignore these fixture variables. No certificate is installed
+in the system trust store, and cleanup removes the generated TLS files. Regression tests exercise
+both build modes, the opt-in, verified TLS, and rejection of a wrong hostname.
+
+`E2E_AEO_PORT` selects that fixture port (by default, the first free port from 18191).
+Tests run sequentially and reuse it. The runner replaces inherited AEO egress settings with
+exact per-engine HTTPS origins at that port; it grants no wildcard or custom-engine exception.
+These environment settings prepare the harness for #98's operator-controlled destination policy.
+
+Failure coverage requires HTTP status, SDK retries, and the UI rendering the recorded error.
+It does not require retaining a provider's raw response message; #98 separately hardens that
+failure payload and the allowed credential destinations.
 
 The runner enables these global-setting mutations with `E2E_AEO_STUBS=1` only after creating its
 fresh database and disabling live keys and scheduling. Direct Playwright runs skip this spec.
