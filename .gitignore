@@ -146,3 +146,9 @@ docs/local/
 # Design documents are working papers, not product content.
 docs/specs/
 docs/plans/
+
+# Python workflow helpers and local release builds
+__pycache__/
+*.py[cod]
+/release/
+/release-artifacts/

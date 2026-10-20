@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Prepared stable version without v; optional for an Unreleased rehearsal
+        type: string
+        default: ''
+      publish:
+        description: Publish the validated version and enable production deployment
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release request
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check version, changelog and tag availability
+        env:
+          VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          if [ "$PUBLISH" = true ]; then args+=(--publish); fi
+          python3 scripts/release/release.py check --version "$VERSION" "${args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-request
+          path: release-artifacts/
+          if-no-files-found: error
+
+  full-validation:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      revision: ${{ github.sha }}
+      full: true
+
+  runner-validation:
+    needs: prepare
+    uses: ./.github/workflows/remediation-runner.yml
+    with:
+      revision: ${{ github.sha }}
+
+  sql-validation:
+    name: Release migrations and integration (${{ matrix.db.name }})
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        db:
+          - name: MySQL 8
+            image: mysql:8.0
+            health: mysqladmin ping -h 127.0.0.1 -prelease-test-password
+          - name: MariaDB 10.11
+            image: mariadb:10.11
+            health: healthcheck.sh --connect --innodb_initialized
+    services:
+      db:
+        image: ${{ matrix.db.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: release-test-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="${{ matrix.db.health }}"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      TEST_MYSQL_DSN: root:release-test-password@tcp(127.0.0.1:3306)/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Fresh, upgrade, rollback and real SQL integration tests
+        run: |
+          set -o pipefail
+          go test -json -race -count=1 ./cmd/migrate ./internal/integration | tee sql-tests.jsonl
+          python3 scripts/release/check-sql-tests.py sql-tests.jsonl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-sql-${{ strategy.job-index }}
+          path: sql-tests.jsonl
+          if-no-files-found: error
+
+  build:
+    name: Build tested release artifact
+    needs: [prepare, full-validation, runner-validation, sql-validation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-request
+          path: release-artifacts
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gocrm-ui/package-lock.json
+      - name: Build portable Linux AMD64 release
+        env:
+          REVISION: ${{ github.sha }}
+        run: bash scripts/release/build.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-build
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Rehearsal result
+        if: ${{ !inputs.publish }}
+        run: echo 'Full validation and artifact build passed. Rehearsal did not create a tag or release.' >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Tag and publish verified release
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-build
+          path: release-artifacts
+      - name: Tag exact tested commit, verify draft assets, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 scripts/release/release.py publish
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-publication
+          path: release-artifacts/publication.json
+          if-no-files-found: error

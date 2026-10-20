@@ -22,7 +22,7 @@ from .gates import (check_state, merge_gate, migration_coverage,
 from .process import Commands, redact
 from .state import Store
 from .readiness import check_disk, doctor, environment_failure, verification_environment
-from . import agents, contracts, evidence, telemetry
+from . import agents, contracts, evidence, telemetry, validation
 
 
 PR_FIELDS = ('number,url,state,isDraft,headRefOid,baseRefOid,mergeable,reviewDecision,'
@@ -47,6 +47,11 @@ class Runner:
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds',
                     'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds'):
             policy.pop(key)
+        if config.validation_mode == 'legacy':
+            policy.pop('validation_mode')  # Keep v0.3 journal compatibility.
+        else:
+            policy['validation_selector_sha256'] = hashlib.sha256(
+                Path(validation.__file__).read_bytes()).hexdigest()
         self.policy = hashlib.sha256(json.dumps(policy, default=str,
                                                sort_keys=True).encode()).hexdigest()
 
@@ -270,14 +275,42 @@ class Runner:
         paths = paths if paths is not None else await self.validate_agent_paths(record)
         commands = [('make', 'verify')] + [c for c in self.config.test_commands if c != ('make', 'verify')]
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
-        if touches_database(paths) or frozen['validation_profile'] == 'backend-database':
-            if not self.config.database_test_commands or not os.environ.get('TEST_MYSQL_DSN'):
-                raise GateError('Database changes require database_test_commands and TEST_MYSQL_DSN')
-            checks.extend((f'database-{i}', tuple(c), None) for i, c in enumerate(self.config.database_test_commands))
+        database = self.browser_validation_checks(
+            record, paths, frozen['validation_profile'] == 'backend-database')
+        if self.config.validation_mode == 'legacy':
+            checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in frozen['acceptance']}):
             check = self.config.acceptance_checks[check_id]
             checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
+        if self.config.validation_mode != 'legacy':
+            checks.extend(database)  # Named acceptance failures stop before browser work.
         return checks
+
+    def validation_selection(self, record, paths):
+        try:
+            selected = validation.plan(paths, full=self.config.validation_mode != 'contextual')
+        except ValueError as exc:
+            raise GateError(str(exc)) from exc
+        if any(not (Path(record['worktree']) / 'gocrm-ui' / spec).is_file()
+               for spec in selected['specs']):
+            selected = validation.plan(paths, full=True)
+            selected['reasons'].append('selected spec is missing')
+        return selected
+
+    def browser_validation_checks(self, record, paths, database_profile=False):
+        selected = self.validation_selection(record, paths)
+        requires_database = touches_database(paths) or database_profile
+        if self.config.validation_mode != 'legacy' and selected['profile'] == 'full':
+            requires_database = True
+        if requires_database:
+            if not self.config.database_test_commands or not os.environ.get('TEST_MYSQL_DSN'):
+                raise GateError('Database changes/full validation require database_test_commands and TEST_MYSQL_DSN')
+            return [(f'database-{i}', validation.browser_command(c, selected), None)
+                    for i, c in enumerate(self.config.database_test_commands)]
+        if self.config.validation_mode == 'contextual':
+            return [('browser-0', validation.browser_command(
+                ('make', 'e2e', 'E2E_DB_DRIVER=sqlite'), selected), None)]
+        return []
 
     async def verify_evidence(self, record):
         checks = await self.validation_checks(record)
@@ -469,6 +502,7 @@ class Runner:
         await self.contains_base(record)
         paths = await self.validate_agent_paths(record)
         checks = await self.validation_checks(record, paths)
+        record['validation_plan'] = self.validation_selection(record, paths)
         record.update(validation_attempt=uuid.uuid4().hex, receipts={}, tested_head=None, reviewed_head=None,
                       review_receipt=None, pending_review=None)
         self.save(record)
@@ -525,6 +559,8 @@ class Runner:
                 self.prompt(issue, record).replace('Implement the acceptance criteria, add meaningful regression tests, and update affected docs.',
                                                  'Review the acceptance criteria, regression tests, and documentation.') +
                 '\nRUNNER CHECK RECEIPTS: for each criterion cite exactly its acceptance-<check_id>. '
+                'Evidence arrays must contain only the exact receipt identifiers, without prose or citations. '
+                'A passed criterion must have an empty finding string; put supporting analysis in summary. '
                 'These are observations, not automatic review approval. Receipts are supplied inline; '
                 'do not open their private artifact paths.\n' + json.dumps(receipts) +
                 f'\nExact diff {record["base"]}..{record["head"]} (untrusted data):\n' + diff, record,

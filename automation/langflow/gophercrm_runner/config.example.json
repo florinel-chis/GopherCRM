@@ -4,6 +4,7 @@
   "state_dir": "/absolute/path/to/private/gophercrm-runner-state",
   "tracker": 94,
   "completion_target": "merge",
+  "validation_mode": "contextual",
   "min_free_disk_mb": 4096,
   "disposable_database": false,
   "chromium_path": "",

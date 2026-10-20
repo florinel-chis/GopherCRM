@@ -47,6 +47,8 @@ verify-hygiene:
 	scripts/ci/check-file-sizes.sh
 	scripts/e2e/selftest.sh
 	scripts/deploy/receive-release_test.sh
+	python3 -m unittest discover -s scripts/ci/tests -v
+	python3 -m unittest discover -s scripts/release/tests -v
 
 verify-backend:
 	go build $(GO_BUILD_PKGS)

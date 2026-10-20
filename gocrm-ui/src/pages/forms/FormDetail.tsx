@@ -71,13 +71,12 @@ const submissionStatusOptions = [
   { value: 'spam', label: 'Spam' },
 ];
 
-// The embed script and the hosted page are served by the backend, so both links
-// are built from the API base the UI already talks to.
-const apiBaseUrl = (
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
-).replace(/\/+$/, '');
-
 export const Component: React.FC = () => {
+  // Copied embeds must remain absolute when a portable build uses /api/v1.
+  const apiBaseUrl = new URL(
+    import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1',
+    window.location.origin,
+  ).href.replace(/\/+$/, '');
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -93,7 +92,11 @@ export const Component: React.FC = () => {
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [selected, setSelected] = useState<FormSubmission | null>(null);
 
-  const { data: form, isLoading, isError } = useQuery({
+  const {
+    data: form,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['form', id],
     queryFn: () => formsApi.get(Number(id)),
     enabled: Boolean(id),
@@ -182,12 +185,7 @@ export const Component: React.FC = () => {
         <Typography variant="h6" gutterBottom>
           Summary
         </Typography>
-        <Box
-          display="grid"
-          gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }}
-          gap={2}
-          mt={1}
-        >
+        <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2} mt={1}>
           <Box display="flex" alignItems="center" gap={1}>
             <Typography variant="body2" color="text.secondary">
               Status
@@ -276,7 +274,10 @@ export const Component: React.FC = () => {
             {hostedUrl}
           </Link>
           <Tooltip title="Copy hosted link">
-            <IconButton aria-label="Copy hosted link" onClick={() => copy(hostedUrl, 'Hosted link')}>
+            <IconButton
+              aria-label="Copy hosted link"
+              onClick={() => copy(hostedUrl, 'Hosted link')}
+            >
               <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>

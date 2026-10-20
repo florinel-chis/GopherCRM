@@ -76,7 +76,8 @@ class GateTests(unittest.TestCase):
     def test_private_and_runner_paths_are_rejected(self):
         validate_paths(['internal/service/test.go', '.env.example'])
         for name in ['../outside', '/outside', '.git/config', '.env', 'sub/.env.production',
-                     'local.db', 'key.pem', 'automation/langflow/gophercrm_runner/engine.py']:
+                     'local.db', 'key.pem', 'automation/langflow/gophercrm_runner/engine.py',
+                     '.github/release.yml', 'scripts/release/release.py', 'scripts/deploy/bootstrap.sh']:
             with self.subTest(name=name), self.assertRaises(GateError):
                 validate_paths([name])
 

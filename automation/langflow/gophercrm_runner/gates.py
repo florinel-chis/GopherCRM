@@ -87,8 +87,8 @@ def validate_paths(paths: list[str], *, new_workflows: set[str] | None = None) -
                 or path.suffix.lower() in {'.pem', '.key', '.sqlite', '.sqlite3', '.db'}):
             raise GateError(f'Agent changed a protected or private path: {name}')
         if (path.name == '.gitattributes'
-                or name in {'Makefile', '.gitignore', 'gocrm-ui/package.json', 'gocrm-ui/package-lock.json'}
-                or name.startswith(('scripts/ci/', 'scripts/e2e/', 'gocrm-ui/tsconfig',
+                or name in {'Makefile', '.gitignore', '.github/release.yml', 'gocrm-ui/package.json', 'gocrm-ui/package-lock.json'}
+                or name.startswith(('scripts/ci/', 'scripts/release/', 'scripts/deploy/', 'scripts/e2e/', 'gocrm-ui/tsconfig',
                                     'gocrm-ui/vite.config', 'gocrm-ui/eslint.config'))
                 or (name.startswith('.github/workflows/') and name not in new_workflows)):
             raise GateError(f'Agent changed an existing validation gate: {name}')

@@ -58,6 +58,9 @@ class Config:
     agent_model: str = ''
     max_provider_calls: int = 8
     issue_timeout_seconds: int = 14400
+    # An omitted mode retains v0.3 behavior and evidence hashes. Explicit full
+    # runs the complete browser/database matrix even for UI-only changes.
+    validation_mode: str = 'legacy'
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -85,6 +88,10 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if self.validation_mode not in {'legacy', 'full', 'contextual'}:
+            raise GateError('validation_mode must be legacy, full or contextual')
+        if self.validation_mode == 'full' and not self.database_test_commands:
+            raise GateError('Explicit full validation requires database_test_commands')
         if self.database_test_commands and not set(DATABASE_CHECKS).issubset(self.database_test_commands):
             raise GateError('The database validation matrix requires SQLite, MySQL and uncached JSON migration checks')
         if not isinstance(self.agent_model, str) or '\x00' in self.agent_model:
