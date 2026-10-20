@@ -252,6 +252,7 @@ New configurations select `validation_mode: "contextual"`: full core verificatio
 frozen acceptance checks, then health smoke plus affected browser suites. Shared/unknown
 changes fall back to full browser coverage. Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
-without this field retain the original full policy. Finish admitted runs before migrating
+without this field use `legacy` and retain the original v0.3 behavior and policy hashes.
+Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs before migrating
 to a fresh contextual configuration/state directory. See the [policy, release runbook and
 lessons](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.

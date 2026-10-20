@@ -262,12 +262,12 @@ class PullRequestRunner(Runner):
                 commands.append(('make', 'verify-runner'))
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
         database = self.browser_validation_checks(record, paths, record.get('database_profile'))
-        if self.config.validation_mode == 'full':
+        if self.config.validation_mode == 'legacy':
             checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in record['criteria']}):
             check = self.config.acceptance_checks[check_id]
             checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
-        if self.config.validation_mode == 'contextual':
+        if self.config.validation_mode != 'legacy':
             checks.extend(database)
         return checks
 

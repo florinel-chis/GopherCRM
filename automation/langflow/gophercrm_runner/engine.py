@@ -47,8 +47,8 @@ class Runner:
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds',
                     'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds'):
             policy.pop(key)
-        if config.validation_mode == 'full':
-            policy.pop('validation_mode')  # Keep v0.3 full-policy journal compatibility.
+        if config.validation_mode == 'legacy':
+            policy.pop('validation_mode')  # Keep v0.3 journal compatibility.
         else:
             policy['validation_selector_sha256'] = hashlib.sha256(
                 Path(validation.__file__).read_bytes()).hexdigest()
@@ -277,18 +277,18 @@ class Runner:
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
         database = self.browser_validation_checks(
             record, paths, frozen['validation_profile'] == 'backend-database')
-        if self.config.validation_mode == 'full':
+        if self.config.validation_mode == 'legacy':
             checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in frozen['acceptance']}):
             check = self.config.acceptance_checks[check_id]
             checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
-        if self.config.validation_mode == 'contextual':
+        if self.config.validation_mode != 'legacy':
             checks.extend(database)  # Named acceptance failures stop before browser work.
         return checks
 
     def validation_selection(self, record, paths):
         try:
-            selected = validation.plan(paths, full=self.config.validation_mode == 'full')
+            selected = validation.plan(paths, full=self.config.validation_mode != 'contextual')
         except ValueError as exc:
             raise GateError(str(exc)) from exc
         if any(not (Path(record['worktree']) / 'gocrm-ui' / spec).is_file()
@@ -300,7 +300,7 @@ class Runner:
     def browser_validation_checks(self, record, paths, database_profile=False):
         selected = self.validation_selection(record, paths)
         requires_database = touches_database(paths) or database_profile
-        if self.config.validation_mode == 'contextual' and selected['profile'] == 'full':
+        if self.config.validation_mode != 'legacy' and selected['profile'] == 'full':
             requires_database = True
         if requires_database:
             if not self.config.database_test_commands or not os.environ.get('TEST_MYSQL_DSN'):

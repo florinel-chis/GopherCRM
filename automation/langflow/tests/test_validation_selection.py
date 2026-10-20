@@ -60,7 +60,31 @@ class ValidationSelectionTests(fixtures.EngineTests):
         self.assertIn('E2E_DB_DRIVER=sqlite', checks[0][1])
         self.assertIn(SMOKE, checks[0][1][-1])
 
-    async def test_full_policy_hash_remains_compatible_and_mode_change_invalidates(self):
+    async def test_explicit_full_runs_complete_matrix_for_ui_and_docs(self):
+        selected, record = self.selected_runner()
+        runner = Runner(replace(selected.config, validation_mode='full'), self.commands)
+        for path in ('gocrm-ui/src/pages/tickets/TicketList.tsx', 'README.md'):
+            with self.subTest(path=path), patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+                checks = await runner.validation_checks(record, [path])
+                self.assertEqual([c[1] for c in checks if c[0].startswith('database-')],
+                                 list(DATABASE_CHECKS))
+                ids = [c[0] for c in checks]
+                self.assertLess(ids.index('acceptance-regression'), ids.index('database-0'))
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
+            await runner.validation_checks(record, ['README.md'])
+
+    async def test_full_mode_requires_database_matrix_and_pr_uses_it_too(self):
+        with self.assertRaisesRegex(GateError, 'requires database_test_commands'):
+            Runner(replace(self.config, validation_mode='full'), self.commands)
+        selected, record = self.selected_runner()
+        config = replace(selected.config, validation_mode='full')
+        runner = PullRequestRunner(config, self.commands)
+        record['criteria'] = []
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await runner.validation_checks(record, ['README.md'])
+        self.assertEqual([c[1] for c in checks if c[0].startswith('database-')], list(DATABASE_CHECKS))
+
+    async def test_legacy_policy_hash_remains_compatible_and_mode_change_invalidates(self):
         policy = asdict(self.config)
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
                     'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds', 'validation_mode'):
@@ -69,6 +93,9 @@ class ValidationSelectionTests(fixtures.EngineTests):
         self.assertEqual(self.runner.policy, old)
         runner, _ = self.selected_runner()
         self.assertNotEqual(runner.policy, old)
+        full = Runner(replace(runner.config, validation_mode='full'), self.commands)
+        self.assertNotEqual(full.policy, old)
+        self.assertNotEqual(full.policy, runner.policy)
 
 
 for _name in list(fixtures.EngineTests.__dict__):

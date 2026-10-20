@@ -62,10 +62,13 @@ runner requires the candidate to contain current main before merge.
 ## Local Langflow rollout
 
 New example configurations use `"validation_mode": "contextual"`. Existing configurations
-that omit the field retain `"full"` behavior and their existing policy hashes. Do not edit
+that omit the field use `"legacy"`: the original v0.3 behavior and policy hashes. Legacy
+mode retains its original conditional local browser coverage. Explicit `"full"` always
+requires the complete SQLite/MySQL browser and migration matrix, including UI-only and
+documentation changes, and therefore requires disposable SQL configuration. Do not edit
 an admitted execution's policy. Finish it, install the reviewed runner, and create a new
 configuration/state directory for contextual runs. The installed selector's content hash
-is part of contextual validation policy, so upgrading it invalidates unfinished evidence.
+is part of contextual and explicit-full validation policy, so upgrading it invalidates unfinished evidence.
 Both ticket and existing-PR workflows use the same selection helper. Receipts still bind
 commands, output, head, base and contract; review, CI and merge do not accept stale evidence.
 
@@ -135,6 +138,12 @@ missing reverse dependencies in the path map. The DSN now uses a bare server pre
 against the real MySQL driver. Mappings include the known consuming features and multi-entity
 journeys; unknown/shared paths still go full. A path map is a maintained heuristic, not a
 complete dependency analysis.
+
+A final override check caught a distinction that compatibility alone could not cover:
+legacy v0.3 behavior skipped local browsers for UI-only changes. A regression reproduced
+that omission when selecting explicit full validation. The modes are now separate:
+omitted/legacy preserves old evidence; explicit full always requires the complete matrix.
+Both ticket and PR paths have regressions for this case.
 
 A second review found an incompatible `gh api` flag combination in receipt lookup and two
 remaining lead consumers. Receipt lookup now parses paginated JSON in Python and was checked
