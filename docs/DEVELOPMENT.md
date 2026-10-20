@@ -185,8 +185,11 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
-ESLint is a required, passing gate. Browser validation runs separately with `make e2e`
-(MySQL by default) and `make e2e E2E_DB_DRIVER=sqlite`; CI also covers MariaDB.
+ESLint is a required, passing gate. CI selects health smoke and affected browser suites,
+with full coverage for shared or unknown changes, on MySQL, MariaDB and SQLite. Local
+`make e2e` still defaults to the full suite. See [validation and releases](VALIDATION_RELEASE.md)
+for selection, full-suite overrides, version preparation, rehearsals and publication.
+Production deployment follows a published full-validation release, rather than every main push.
 
 Runner changes additionally require `make verify-runner`. Install `automation/langflow[flows]`
 in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpreter is not

@@ -18,7 +18,8 @@
 #      only, and stores the key, the server's host key, host and user there as
 #      secrets (so they never show in the public Actions logs) and the URL as a
 #      variable;
-#   4. checks that the key works, then starts the first deploy.
+#   4. checks that the key works, then reports production status. Publish a
+#      validated release to deploy through the Release workflow.
 #
 # Re-running it replaces the key (the old one stops working) and reinstalls the
 # script, so it doubles as key rotation.
@@ -131,6 +132,6 @@ gh variable set PRODUCTION_URL --env production --repo "$repo" --body "$url"
 gh variable delete PRODUCTION_HOST --env production --repo "$repo" 2>/dev/null || true
 gh variable delete PRODUCTION_SSH_USER --env production --repo "$repo" 2>/dev/null || true
 
-echo "bootstrap: starting the first deploy"
-gh workflow run Deploy --repo "$repo" -f action=deploy
-echo "bootstrap: done. Every merge to main now deploys itself once CI passes."
+echo "bootstrap: checking the configured production workflow"
+gh workflow run Deploy --repo "$repo" -f action=status
+echo "bootstrap: done. Publish a validated stable release to deploy; see docs/VALIDATION_RELEASE.md."

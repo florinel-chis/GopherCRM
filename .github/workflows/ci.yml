@@ -1,6 +1,20 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+      full:
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the complete browser matrix
+        type: boolean
+        default: true
   pull_request:
   # The merge queue runs the suite on its temporary branch before merging, so
   # a pull request that went green on a stale base still has to pass on top
@@ -16,23 +30,64 @@ permissions:
 # runs always finish so every commit on main keeps a completed status and the
 # queue gets the result it is waiting for.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: Validation selection
+    runs-on: ubuntu-24.04
+    outputs:
+      specs: ${{ steps.plan.outputs.specs }}
+      profile: ${{ steps.plan.outputs.profile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          FORCE_FULL: ${{ inputs.full || false }}
+        run: python3 scripts/ci/plan-validation.py
+      - name: Retain the selected profile and reasons
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validation-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/validation-plan.json
+          if-no-files-found: error
+
   hygiene:
     name: Repository hygiene
+    needs: plan
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Require a valid selection
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
       - name: Size guard and e2e runner self-test
         run: make verify-hygiene
 
   backend:
     name: Backend (build, vet, test)
+    needs: plan
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Require a valid selection
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -43,9 +98,18 @@ jobs:
 
   frontend:
     name: Frontend (build, lint, test)
+    needs: plan
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Require a valid selection
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -58,9 +122,11 @@ jobs:
   e2e:
     # One leg per database engine: MySQL 8; MariaDB 10.11, which is what
     # production runs; and SQLite, a supported production backend since 1.2.0.
-    # The MySQL and MariaDB legs are required checks, so nothing reaches main
-    # (and the automated deploy) without passing on production's own engine.
+    # Required jobs always run the selected smoke/feature specs on all engines.
+    # Release calls force the complete browser suite before publication.
     name: E2E (Playwright on ${{ matrix.db.name }})
+    needs: plan
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -108,6 +174,13 @@ jobs:
       DB_PASSWORD: e2e-password
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Require a valid selection
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -127,7 +200,12 @@ jobs:
       # sqlite leg, use a new SQLite file), start the backend on a free port,
       # run Playwright with no retries, always stop the backend.
       - name: Run e2e
-        run: make e2e
+        env:
+          SELECTED_SPECS: ${{ needs.plan.outputs.specs }}
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          echo "Browser profile: $VALIDATION_PROFILE"
+          make e2e SPECS="$SELECTED_SPECS"
       - name: Upload Playwright report and backend log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

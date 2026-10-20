@@ -1,28 +1,27 @@
 name: Deploy
 
-# Production deploys run themselves: once CI passes on main (after a merge),
-# the tested commit is built, shipped and activated. The server side is
-# scripts/deploy/receive-release.sh, the only command the deploy key may run:
-#   - it backs up the database first;
-#   - it switches releases atomically;
-#   - it waits for /health to report the new revision;
-#   - it rolls back to the previous release if that fails.
-# The manual trigger redeploys main, rolls back, or shows the server's status.
+# Deploy the artifact from a successful, published full Release workflow.
+# Rehearsals do not deploy. Rollback and status retain the existing server protocol.
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [Release]
     types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
       action:
-        description: deploy main, roll back to the previous release, or show the server's status
+        description: deploy the latest validated release, roll back, or report status
         type: choice
         options: [deploy, rollback, status]
-        default: deploy
+        default: status
+      release_tag:
+        description: Published stable tag required for manual deploy, for example v1.3.0
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 # One production change at a time, never cancelled half-way.
 concurrency:
@@ -33,8 +32,8 @@ jobs:
   deploy:
     name: Production
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
@@ -42,7 +41,6 @@ jobs:
       url: ${{ vars.PRODUCTION_URL }}
     env:
       ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'deploy' }}
-      REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
     # The server's address and SSH user are secrets, read only by the steps
     # that need them: job-level env is printed in every step's log header, and
@@ -66,47 +64,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.configured.outputs.ready == 'true'
         with:
-          ref: ${{ env.REVISION }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      # CI runs for several merges can finish out of order; only the commit that
-      # is still main's head is deployed, so an older build never overwrites a
-      # newer one. If main's head then fails CI, production stays on the last
-      # deployed commit until main is green again.
-      - name: Skip superseded commits
+      - name: Resolve published release artifact
         id: current
         if: steps.configured.outputs.ready == 'true' && env.ACTION == 'deploy'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN: ${{ github.event.workflow_run.id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          head=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "$head" != "$REVISION" ]; then
-            echo "::notice::$REVISION is no longer the head of main ($head); skipping."
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          args=()
+          if [ -n "$RELEASE_RUN" ]; then
+            count=$(python3 scripts/release/release.py publication-status --run-id "$RELEASE_RUN")
+            if [ "$count" = 0 ]; then
+              echo "No publication receipt: rehearsal completed; no deployment."
+              echo 'deploy=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            args+=(--run-id "$RELEASE_RUN")
           else
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            args+=(--tag "$RELEASE_TAG")
           fi
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.current.outputs.deploy == 'true'
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: steps.current.outputs.deploy == 'true'
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: gocrm-ui/package-lock.json
-
-      - name: Build the release
-        if: steps.current.outputs.deploy == 'true'
-        run: |
-          mkdir -p release/bin
-          export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
-          go build -ldflags "-s -w -X main.revision=$REVISION" -o release/bin/gophercrm ./cmd
-          go build -ldflags "-s -w" -o release/bin/create-admin ./cmd/create-admin
-          (cd gocrm-ui && npm ci && VITE_API_BASE_URL="$PRODUCTION_URL/api/v1" npm run build)
-          cp -R gocrm-ui/dist release/www
-          echo "$REVISION" > release/REVISION
-          tar --owner=0 --group=0 --numeric-owner -czf release.tgz -C release .
-          ls -l release.tgz
+          python3 scripts/release/release.py download "${args[@]}"
+          echo 'deploy=true' >> "$GITHUB_OUTPUT"
 
       - name: Configure SSH
         if: steps.configured.outputs.ready == 'true'
@@ -126,7 +108,7 @@ jobs:
           PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
         run: >-
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
-          "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "deploy $REVISION" < release.tgz
+          "$PRODUCTION_SSH_USER@$PRODUCTION_HOST" "deploy $REVISION" < release-artifacts/gophercrm-linux-amd64.tgz
 
       # Through Cloudflare, as visitors reach it: the public /health must report
       # the commit that was just deployed. The server already verified it

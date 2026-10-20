@@ -85,7 +85,7 @@ async def doctor(config, commands):
     if not isinstance(auth, dict) or auth.get('loggedIn') is not True:
         raise EnvironmentError('environment readiness: Claude is not authenticated')
 
-    needs_browser = any(c[:2] == ('make', 'e2e') for c in
+    needs_browser = config.validation_mode == 'contextual' or any(c[:2] == ('make', 'e2e') for c in
                         (*config.test_commands, *config.database_test_commands))
     if config.database_test_commands:
         if not config.disposable_database:

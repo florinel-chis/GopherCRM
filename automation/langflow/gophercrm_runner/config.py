@@ -58,6 +58,9 @@ class Config:
     agent_model: str = ''
     max_provider_calls: int = 8
     issue_timeout_seconds: int = 14400
+    # Older policies retain the original full browser matrix. New policies
+    # explicitly opt in; changing mode invalidates existing execution proof.
+    validation_mode: str = 'full'
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -85,6 +88,8 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if self.validation_mode not in {'full', 'contextual'}:
+            raise GateError('validation_mode must be full or contextual')
         if self.database_test_commands and not set(DATABASE_CHECKS).issubset(self.database_test_commands):
             raise GateError('The database validation matrix requires SQLite, MySQL and uncached JSON migration checks')
         if not isinstance(self.agent_model, str) or '\x00' in self.agent_model:

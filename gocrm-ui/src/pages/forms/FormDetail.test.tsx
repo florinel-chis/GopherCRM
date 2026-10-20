@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@/test/test-utils';
 import { Component as FormDetail } from './FormDetail';
 import { formsApi } from '@/api/endpoints/forms';
@@ -6,29 +6,92 @@ import { createMockUser } from '@/test/factories';
 
 const mockUseAuth = vi.fn();
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => mockUseAuth() }));
-vi.mock('@/hooks/useSnackbar', () => ({ useSnackbar: () => ({ showSuccess: vi.fn(), showError: vi.fn(), showWarning: vi.fn(), showInfo: vi.fn() }) }));
+vi.mock('@/hooks/useSnackbar', () => ({
+  useSnackbar: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
+  }),
+}));
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return { ...actual, useNavigate: () => vi.fn(), useParams: () => ({ id: '1' }) };
 });
-vi.mock('@/api/endpoints/forms', () => ({ formsApi: { get: vi.fn(), listSubmissions: vi.fn(), delete: vi.fn() } }));
+vi.mock('@/api/endpoints/forms', () => ({
+  formsApi: { get: vi.fn(), listSubmissions: vi.fn(), delete: vi.fn() },
+}));
 
 describe('FormDetail', () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseAuth.mockReturnValue({ user: createMockUser({ id: 1, role: 'admin' }), isLoading: false, isAuthenticated: true, login: vi.fn(), register: vi.fn(), logout: vi.fn(), refreshUser: vi.fn() });
+    mockUseAuth.mockReturnValue({
+      user: createMockUser({ id: 1, role: 'admin' }),
+      isLoading: false,
+      isAuthenticated: true,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+    });
     vi.mocked(formsApi.get).mockResolvedValue({
-      id: 1, name: 'Contact us', description: 'desc', public_id: 'pub123', status: 'published',
+      id: 1,
+      name: 'Contact us',
+      description: 'desc',
+      public_id: 'pub123',
+      status: 'published',
       fields: [{ name: 'email', label: 'Email', type: 'email', required: true }],
-      submit_action: 'message', thank_you_message: '', redirect_url: '', consent_text: '',
-      notify_emails: ['sales@example.com'], double_opt_in: true, confirmation_subject: '', confirmation_body: '',
-      follow_up_subject: '', follow_up_body: '', content_url: '', captcha_enabled: false, create_lead: true,
-      default_owner_id: 1, allowed_domains: [], created_at: '2026-08-01T10:00:00Z', updated_at: '2026-08-01T10:00:00Z',
+      submit_action: 'message',
+      thank_you_message: '',
+      redirect_url: '',
+      consent_text: '',
+      notify_emails: ['sales@example.com'],
+      double_opt_in: true,
+      confirmation_subject: '',
+      confirmation_body: '',
+      follow_up_subject: '',
+      follow_up_body: '',
+      content_url: '',
+      captcha_enabled: false,
+      create_lead: true,
+      default_owner_id: 1,
+      allowed_domains: [],
+      created_at: '2026-08-01T10:00:00Z',
+      updated_at: '2026-08-01T10:00:00Z',
     });
     vi.mocked(formsApi.listSubmissions).mockResolvedValue({
-      submissions: [{ id: 5, form_id: 1, data: { email: 'a@b.com', message: 'hi' }, email: 'a@b.com', status: 'confirmed', spam_reason: '', lead_id: 9, ip_address: '1.2.3.4', user_agent: 'ua', referrer: 'https://site', confirmed_at: '2026-08-02T10:00:00Z', created_at: '2026-08-02T09:00:00Z' }],
+      submissions: [
+        {
+          id: 5,
+          form_id: 1,
+          data: { email: 'a@b.com', message: 'hi' },
+          email: 'a@b.com',
+          status: 'confirmed',
+          spam_reason: '',
+          lead_id: 9,
+          ip_address: '1.2.3.4',
+          user_agent: 'ua',
+          referrer: 'https://site',
+          confirmed_at: '2026-08-02T10:00:00Z',
+          created_at: '2026-08-02T09:00:00Z',
+        },
+      ],
       total: 1,
     });
+  });
+
+  it.each([
+    ['/api/v1', window.location.origin + '/api/v1'],
+    ['https://api.example.test/api/v1/', 'https://api.example.test/api/v1'],
+  ])('keeps copied public links absolute for API base %s', async (base, expected) => {
+    vi.stubEnv('VITE_API_BASE_URL', base);
+    render(<FormDetail />);
+    await screen.findByText('Contact us');
+    expect(screen.getByTestId('embed-snippet').textContent).toContain(
+      `src="${expected}/forms/public/embed.js"`,
+    );
+    expect(screen.getByText(`${expected}/forms/public/pub123/view`)).toBeInTheDocument();
   });
 
   // The snippet is what an admin pastes into a foreign site: its shape and the

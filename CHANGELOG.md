@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Contextual browser validation for PRs and the local Langflow runner: health smoke plus
+  affected feature specs, with full fallback for shared or unknown changes. Core verification,
+  named issue regressions, independent review and exact-commit merge checks remain required.
+- A manual full-validation Release workflow with rehearsal mode, version/changelog preparation,
+  verified artifacts, annotated tags and draft-first publication. Production deploys now consume
+  published release artifacts after checking their full-validation run and commit identity.
+
 - **`SERVER_HOST`.** Optional listen interface for the API server. Empty, the default, keeps
   the previous behaviour of binding every interface; `127.0.0.1` restricts the server to the
   local machine behind a reverse proxy. The startup log now names the full listen address.

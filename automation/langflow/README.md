@@ -245,3 +245,13 @@ gophercrm-runner export automation/langflow/flows/remediation.json
 Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
+
+## Contextual validation (0.4)
+
+New configurations select `validation_mode: "contextual"`: full core verification and all
+frozen acceptance checks, then health smoke plus affected browser suites. Shared/unknown
+changes fall back to full browser coverage. Both ticket and existing-PR workflows use the
+same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
+without this field retain the original full policy. Finish admitted runs before migrating
+to a fresh contextual configuration/state directory. See the [policy, release runbook and
+lessons](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.

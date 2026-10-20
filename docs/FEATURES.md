@@ -28,8 +28,12 @@ Historical totals from the baseline audit:
 
 [CI](../.github/workflows/ci.yml) runs on pull requests, merge-queue groups and pushes to `main`.
 It checks repository hygiene; Go build, vet and race tests; frontend build, lint and unit tests;
-and Playwright on MySQL 8, MariaDB 10.11 and SQLite. `make verify` runs the non-browser
-checks locally; `make e2e` runs the browser suite.
+and Playwright on MySQL 8, MariaDB 10.11 and SQLite. PRs select health smoke and affected
+feature specs, with full coverage for shared or unmapped changes. `make verify` runs the
+non-browser checks locally; unfiltered `make e2e` runs the full browser suite. The manual
+[Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
+and publishing verified artifacts. Production deploys consume those published artifacts.
+See the [validation and release runbook](VALIDATION_RELEASE.md).
 
 ## How to Read This Document
 

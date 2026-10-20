@@ -261,13 +261,14 @@ class PullRequestRunner(Runner):
             if ('make', 'verify-runner') not in commands:
                 commands.append(('make', 'verify-runner'))
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
-        if touches_database(paths) or record.get('database_profile'):
-            if not self.config.database_test_commands or not os.environ.get('TEST_MYSQL_DSN'):
-                raise GateError('Database changes require the complete disposable database validation matrix')
-            checks.extend((f'database-{i}', tuple(c), None) for i, c in enumerate(self.config.database_test_commands))
+        database = self.browser_validation_checks(record, paths, record.get('database_profile'))
+        if self.config.validation_mode == 'full':
+            checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in record['criteria']}):
             check = self.config.acceptance_checks[check_id]
             checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
+        if self.config.validation_mode == 'contextual':
+            checks.extend(database)
         return checks
 
     async def verify_approval(self, record, *, remote_result=False):
