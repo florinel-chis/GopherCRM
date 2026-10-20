@@ -265,15 +265,28 @@ func (s *ticketService) GetPriorityCounts() (map[string]int64, error) {
 	return s.ticketRepo.CountByPriority()
 }
 
-// GetRecent returns the newest tickets, for the dashboard widget.
+// GetRecent returns the newest tickets across every assignee, for the dashboard
+// widget and activity feed of the roles that see every ticket.
 func (s *ticketService) GetRecent(limit int) ([]models.Ticket, error) {
-	return s.ticketRepo.ListRecent(limit)
+	return s.ticketRepo.ListRecent(nil, limit)
 }
 
-// GetRecentlyResolved returns the tickets most recently resolved or closed, for
-// the activity feed.
+// GetRecentByAssignee returns the newest tickets assigned to one user. The
+// support role is narrowed through here.
+func (s *ticketService) GetRecentByAssignee(assigneeID uint, limit int) ([]models.Ticket, error) {
+	return s.ticketRepo.ListRecent(&assigneeID, limit)
+}
+
+// GetRecentlyResolved returns the tickets most recently resolved or closed
+// across every assignee, for the activity feed.
 func (s *ticketService) GetRecentlyResolved(limit int) ([]models.Ticket, error) {
-	return s.ticketRepo.ListRecentlyResolved(limit)
+	return s.ticketRepo.ListRecentlyResolved(nil, limit)
+}
+
+// GetRecentlyResolvedByAssignee returns the tickets most recently resolved or
+// closed that are assigned to one user.
+func (s *ticketService) GetRecentlyResolvedByAssignee(assigneeID uint, limit int) ([]models.Ticket, error) {
+	return s.ticketRepo.ListRecentlyResolved(&assigneeID, limit)
 }
 
 func (s *ticketService) CreateComment(comment *models.TicketComment) error {

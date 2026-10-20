@@ -95,8 +95,11 @@ class Runner:
     def report(self, number):
         self.config.allows(number)
         record = self.store.read(f'issue-{number}') or {'issue': number}
-        return telemetry.report(record, self.store.read(f'preflight-{number}'),
-                                self.store.read(f'operator-{number}'), self.clock())
+        result = telemetry.report(record, self.store.read(f'preflight-{number}'),
+                                  self.store.read(f'operator-{number}'), self.clock())
+        if record.get('completion_result'):
+            result.update(status='merged', completion_result=record['completion_result'])
+        return result
 
     async def command(self, *args, cwd=None, **kwargs):
         _, output = await self.run_command(args, cwd=cwd or self.config.checkout, **kwargs)
@@ -113,6 +116,9 @@ class Runner:
     async def queue(self, limit: int = 1) -> list[dict]:
         if type(limit) is not int or limit <= 0 or limit > len(self.config.issues):
             raise GateError('Limit must be between 1 and the configured queue length')
+        if self.store.read('active').get('pr') is not None:
+            raise GateError(f'PR #{self.store.read("active")["pr"]} completion blocks the issue queue; '
+                            'resume it or use abandon-pr after inspection')
         active = self.store.read('active').get('issue')
         numbers = list(self.config.issues)
         if active is not None:
@@ -239,9 +245,11 @@ class Runner:
             if record:
                 record.setdefault('contract_history', []).append({'contract_hash': record['contract_hash'],
                                                                   'refreshed_at': time.time()})
+                next_stage = (record['stage'] if record['stage'] in {'implement', 'repair_pending'}
+                              else 'validate' if record['head'] != record['base'] else 'implement')
                 record.update(contract_hash=frozen['contract_hash'], context_hash=frozen['context_hash'],
                               tested_head=None, reviewed_head=None, receipts={}, review=None, review_receipt=None,
-                              stage='validate' if record['head'] != record['base'] else 'implement', last_error=None)
+                              stage=next_stage, last_error=None)
                 self.save(record)
             return {'issue': number, 'contract_hash': frozen['contract_hash'], 'base': base}
 
@@ -445,7 +453,8 @@ class Runner:
             if await self.command('git', 'diff', '--name-only', cwd=worktree):
                 raise GateError('Unstaged changes during interrupted commit recovery')
             await self.validate_agent_paths(record)
-            await self.command('git', 'commit', '-m', f'fix: address remediation issue #{record["issue"]}',
+            await self.command('git', 'commit', '-m', record.get('commit_message') or
+                               f'fix: address remediation issue #{record["issue"]}',
                                cwd=worktree)
         record.update(head=await self.head(worktree), stage='validate')
         self.save(record)
@@ -597,7 +606,8 @@ class Runner:
                 raise GateError('PR head changed outside the runner')
             if pr['baseRefOid'] != record['base']:
                 raise GateError('PR changed while waiting for CI; resume after revalidation')
-            state = check_state(pr.get('statusCheckRollup', []), self.config.required_checks)
+            state = check_state(pr.get('statusCheckRollup', []),
+                                tuple(record.get('required_checks', self.config.required_checks)))
             if state == 'failed':
                 runs = set()
                 prefix = f'https://github.com/{self.config.repository}/actions/runs/'
@@ -621,6 +631,9 @@ class Runner:
             raise GateError('Repair budget exhausted; issue remains open for inspection')
         record['repairs'] += 1
         record['feedback'] = feedback
+        # Reserve the round and its resumable stage atomically, before any
+        # awaited precondition can fail, expire or be cancelled.
+        record['stage'] = 'implement'
         self.save(record)
         await self.perform(record, 'repair', self.implement, issue, record, feedback)
 
@@ -632,7 +645,8 @@ class Runner:
                 raise GateError('Only the active issue can be revalidated')
             record = self.store.read(f'issue-{number}')
             if (not record or record.get('policy') != self.policy
-                    or record['stage'] not in {'validate', 'review', 'publish', 'ci', 'merging', 'revalidating'}):
+                    or record['stage'] not in {'implement', 'repair_pending', 'validate', 'review',
+                                               'publish', 'ci', 'merging', 'revalidating'}):
                 raise GateError('No matching unfinished journal to revalidate')
             telemetry.remaining(record, self.clock())
             self._record = record
@@ -647,6 +661,9 @@ class Runner:
                 await self.command('git', 'fetch', 'origin', 'main')
                 base = await self.command('git', 'rev-parse', 'origin/main')
                 # Merging preserves published commits; no force push or destructive reset.
+                if record['stage'] != 'revalidating':
+                    record['after_revalidation'] = (record['stage']
+                        if record['stage'] in {'implement', 'repair_pending'} else 'validate')
                 record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
                 self.save(record)
                 await self.complete_revalidation(record)
@@ -666,11 +683,16 @@ class Runner:
             try:
                 await self.command('git', 'merge', '--no-edit', target, cwd=worktree)
             except CommandError:
-                record.update(base=target, stage='implement', feedback='Resolve the merge conflicts with current main. '
+                pending = record.pop('after_revalidation', 'validate')
+                record.update(base=target,
+                              stage='repair_pending' if pending == 'repair_pending' else 'implement',
+                              feedback=(record.get('feedback') or '') +
+                              '\nResolve the merge conflicts with current main. '
                               'Preserve the issue fix and add any needed regression coverage.')
                 self.save(record)
                 raise GateError('Main has merge conflicts; resume execution to repair and retest them')
-        record.update(head=await self.head(worktree), base=target, stage='validate')
+        record.update(head=await self.head(worktree), base=target,
+                      stage=record.pop('after_revalidation', 'validate'))
         await self.contains_base(record)
         self.save(record)
 
@@ -710,6 +732,18 @@ class Runner:
         if pr.get('headRefName') != record['branch'] or pr.get('baseRefName') != 'main':
             raise GateError('Recorded PR branch changed; inspect recovery')
         if pr['state'] == 'MERGED':
+            completion = record.get('completion_result')
+            if completion:
+                journal = self.store.read(f'completion-pr-{record["pr"]}')
+                if (journal.get('stage') != 'merged' or journal.get('source_issue') != record['issue']
+                        or completion.get('head') != pr.get('headRefOid')
+                        or journal.get('head') != pr.get('headRefOid')
+                        or completion.get('merge_commit') != (pr.get('mergeCommit') or {}).get('oid')
+                        or journal.get('merge_commit') != completion['merge_commit']):
+                    raise GateError('PR completion evidence does not match the observed merge')
+                self.store.release(record['issue'])
+                return dict(issue=record['issue'], status='merged', url=pr['url'],
+                            merge_commit=completion['merge_commit'])
             return await self.finish(record, pr)
         if record['stage'] == 'merged':
             raise GateError('Recorded merge no longer matches GitHub; inspect recovery')

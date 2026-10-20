@@ -98,3 +98,85 @@ Next priorities: complete and inspect the one canary; reconcile remote protectio
 runner's gates; add safe evidence/dependency retention; then implement manual/UI evidence and
 broader task examples only when needed. Decide whether to fund the paired study before changing
 providers, introducing more orchestration, or claiming broad adoption.
+# Existing-PR completion follow-up (2026-10-20)
+
+The original pilot stopped at PR-ready. The next increment adds a separate,
+explicitly pinned PR completion workflow, available both in Langflow and through
+`complete-pr`. It verifies reusable ticket evidence or runs fresh validation and
+independent review, repairs findings within durable limits, waits for CI, then
+merges the exact approved head. This does not restart the remediation issue queue.
+New configurations now target merge, with preview as the initial execution mode;
+existing configurations and the optional PR-ready stop are preserved.
+See the [operator instructions](README.md#complete-existing-prs-through-merge).
+
+The first independent review rejected the implementation for two concrete
+recovery gaps: a repair interrupted by cancellation or a depleted provider budget
+could not resume, and an unsuccessful PR completion could permanently retain the
+queue slot. The fixes add charged repair resumption, an explicit no-change retry,
+audited abandonment, preflight slot cleanup, and a visible queue-blocking error.
+The next review extended the recovery cases to external merges at another head,
+orphaned provider calls and crashes before the first journal write. These now have
+explicit abandonment dispositions; an orphaned process requires an audited
+operator acknowledgement that it was inspected and stopped. External merges
+never become fabricated runner validation, and spent calls remain spent.
+A further review distinguished recovering a crashed execution from intentionally
+abandoning it. `recover-pr` now resolves inspected orphaned calls for a normal
+resume, or releases a journal-less admission for a later fresh start. Abandonment
+remains a separate, deliberate terminal disposition.
+Review also exposed a distinction between observing a remote merge and proving
+workflow completion: even an identical head is an external result if the runner
+never reached its approved merge transition. Reconciliation now verifies the
+recorded transition and receipts before completing a linked ticket. Other merges
+are recorded without crediting acceptance, while releasing the queue slot.
+Additional fault cases covered rejected protected-file edits and dirty repairs
+superseded by a main advance. Repair restart now retains the rejected worktree
+and retries from a clean checkout, while refresh retains superseded dirty trees.
+External merge reconciliation also waits for orphaned-process acknowledgement
+before releasing admission. These recoveries preserve spent budgets.
+Missing candidate or source-ticket directories during merge reconciliation now
+produce an unverified evidence error that explicit abandonment can dispose.
+Non-cancellation verification failures cannot bypass proof checks or indefinitely
+prevent an audited release.
+The shared repair engine now persists the reserved round and the `implement`
+stage together, before any awaited precondition. Deadline expiry or cancellation
+in those checks can therefore resume without charging a second repair round.
+The same reservation must survive the issue workflow's explicit main revalidation
+and contract refresh. Those operations now preserve pending implementation stages,
+including a reserved repair, while invalidating approval evidence. Regressions
+advance main during local tests, rejected review and CI, then resume through merge
+within the original single repair allowance.
+Conflicting main changes retain pending-review findings and pending-repair budget
+checks; conflict recovery cannot turn an exhausted repair into an uncharged
+implementation. Both an exhausted and an available repair allowance are covered.
+Regression tests exercise these failure sequences, in addition to stale inputs,
+evidence tampering, receipt reuse, protected repair paths and lost push/merge
+responses. The initial full repository verification passed Go build/vet/race,
+frontend build/lint and 653 frontend tests (one existing TODO).
+
+Lessons: terminal and failure transitions need explicit operator recovery paths;
+an empty queue must not hide blocked work; reuse must verify immutable evidence,
+not just a previous green status. New PRs are pinned by an operator, but their
+build scripts still execute locally: worktrees do not supply OS isolation.
+Concurrent main changes still require server-side branch protection for atomic
+enforcement, plus fresh local validation after an explicit candidate refresh.
+Fork intake and automatic conflict resolution remain outside this increment.
+
+The reviewed package was installed and byte-compared with all 20 source modules
+and the example policy. The real local Langflow HTTP workflow then completed
+[PR #127](https://github.com/florinel-chis/GopherCRM/pull/127) as
+`493ca460756e36c2509c4ee1f01106f0052c822f`, after verifying the original exact-head
+test/review receipts and all six CI checks. Promotion consumed zero provider calls
+and updated the original #96 journal without a reconciliation error. Both queues
+remained stopped. The default local policy now targets merge; the UI remains in
+preview. Subsequent rollout outcomes belong in tracker #94.
+
+This assisted increment required repeated adversarial review and targeted
+reproductions; it is not evidence of unattended reliability or reduced effort.
+A useful next improvement is an explicit transition table and fault-injection
+matrix covering interruption before/after each journal save, main conflicts,
+and each exhausted budget. This would make the shared issue and PR recovery
+semantics easier to assess before implementation. Also verify installed file
+hashes after source upgrades: the installer initially retained an older build
+when the version stayed at 0.3.0. Forced reinstall plus server restart corrected
+that mismatch before execution.
+

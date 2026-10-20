@@ -164,12 +164,35 @@ func TestLeadRepository_ListRecentlyConverted(t *testing.T) {
 	stampTimes(t, db, &older, base, base)
 	stampTimes(t, db, &newer, base, base.Add(time.Hour))
 
-	leads, err := repo.ListRecentlyConverted(10)
+	leads, err := repo.ListRecentlyConverted(nil, 10)
 
 	require.NoError(t, err)
 	require.Len(t, leads, 2)
 	assert.Equal(t, "Newer", leads[0].FirstName)
 	assert.Equal(t, "Older", leads[1].FirstName)
+}
+
+// The owner filter is applied before the limit: a newer conversion of another
+// owner must not take the only slot of an older one the caller owns.
+func TestLeadRepository_ListRecentlyConverted_ScopedToOwnerBeforeLimit(t *testing.T) {
+	db := setupAnalyticsTestDB(t)
+	repo := NewLeadRepository(db)
+	mine := makeUser(t, db, "mine@example.com")
+	theirs := makeUser(t, db, "theirs@example.com")
+	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	own := models.Lead{FirstName: "Mine", Email: "m@example.com", Status: models.LeadStatusConverted, OwnerID: mine.ID}
+	other := models.Lead{FirstName: "Theirs", Email: "t@example.com", Status: models.LeadStatusConverted, OwnerID: theirs.ID}
+	require.NoError(t, db.Create(&own).Error)
+	require.NoError(t, db.Create(&other).Error)
+	stampTimes(t, db, &own, base, base)
+	stampTimes(t, db, &other, base, base.Add(time.Hour))
+
+	leads, err := repo.ListRecentlyConverted(&mine.ID, 1)
+
+	require.NoError(t, err)
+	require.Len(t, leads, 1)
+	assert.Equal(t, "Mine", leads[0].FirstName)
 }
 
 func TestLeadRepository_ConversionTimestampsSince(t *testing.T) {
@@ -249,12 +272,38 @@ func TestTicketRepository_ListRecent_NewestFirst(t *testing.T) {
 	stampTimes(t, db, &first, base, base)
 	stampTimes(t, db, &second, base.Add(time.Hour), base.Add(time.Hour))
 
-	tickets, err := repo.ListRecent(10)
+	tickets, err := repo.ListRecent(nil, 10)
 
 	require.NoError(t, err)
 	require.Len(t, tickets, 2)
 	assert.Equal(t, "Second", tickets[0].Title)
 	assert.Equal(t, "First", tickets[1].Title)
+}
+
+// The assignee filter excludes other assignees and unassigned tickets, and is
+// applied before the limit.
+func TestTicketRepository_ListRecent_ScopedToAssigneeBeforeLimit(t *testing.T) {
+	db := setupAnalyticsTestDB(t)
+	repo := NewTicketRepository(db)
+	mine := makeUser(t, db, "mine@example.com")
+	theirs := makeUser(t, db, "theirs@example.com")
+	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+
+	own := models.Ticket{Title: "Mine", Description: "d", Status: models.TicketStatusOpen, AssignedToID: &mine.ID}
+	other := models.Ticket{Title: "Theirs", Description: "d", Status: models.TicketStatusOpen, AssignedToID: &theirs.ID}
+	unassigned := models.Ticket{Title: "Nobody", Description: "d", Status: models.TicketStatusOpen}
+	for _, ticket := range []*models.Ticket{&own, &other, &unassigned} {
+		require.NoError(t, db.Create(ticket).Error)
+	}
+	stampTimes(t, db, &own, base, base)
+	stampTimes(t, db, &other, base.Add(time.Hour), base.Add(time.Hour))
+	stampTimes(t, db, &unassigned, base.Add(2*time.Hour), base.Add(2*time.Hour))
+
+	tickets, err := repo.ListRecent(&mine.ID, 1)
+
+	require.NoError(t, err)
+	require.Len(t, tickets, 1)
+	assert.Equal(t, "Mine", tickets[0].Title)
 }
 
 // Both resolved and closed are resolutions, mirroring CountOpen's split; open
@@ -276,12 +325,33 @@ func TestTicketRepository_ListRecentlyResolved(t *testing.T) {
 	stampTimes(t, db, &open, base, base.Add(3*time.Hour))
 	stampTimes(t, db, &inProgress, base, base.Add(4*time.Hour))
 
-	tickets, err := repo.ListRecentlyResolved(10)
+	tickets, err := repo.ListRecentlyResolved(nil, 10)
 
 	require.NoError(t, err)
 	require.Len(t, tickets, 2)
 	assert.Equal(t, "Resolved", tickets[0].Title)
 	assert.Equal(t, "Closed", tickets[1].Title)
+}
+
+func TestTicketRepository_ListRecentlyResolved_ScopedToAssigneeBeforeLimit(t *testing.T) {
+	db := setupAnalyticsTestDB(t)
+	repo := NewTicketRepository(db)
+	mine := makeUser(t, db, "mine@example.com")
+	theirs := makeUser(t, db, "theirs@example.com")
+	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+
+	own := models.Ticket{Title: "Mine", Description: "d", Status: models.TicketStatusClosed, AssignedToID: &mine.ID}
+	other := models.Ticket{Title: "Theirs", Description: "d", Status: models.TicketStatusResolved, AssignedToID: &theirs.ID}
+	require.NoError(t, db.Create(&own).Error)
+	require.NoError(t, db.Create(&other).Error)
+	stampTimes(t, db, &own, base, base)
+	stampTimes(t, db, &other, base, base.Add(time.Hour))
+
+	tickets, err := repo.ListRecentlyResolved(&mine.ID, 1)
+
+	require.NoError(t, err)
+	require.Len(t, tickets, 1)
+	assert.Equal(t, "Mine", tickets[0].Title)
 }
 
 // --- tasks -------------------------------------------------------------------
@@ -464,11 +534,32 @@ func TestTaskRepository_ListRecentlyCompleted(t *testing.T) {
 	stampTimes(t, db, &newer, base, base.Add(time.Hour))
 	stampTimes(t, db, &pending, base, base.Add(2*time.Hour))
 
-	tasks, err := repo.ListRecentlyCompleted(10)
+	tasks, err := repo.ListRecentlyCompleted(nil, 10)
 
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	assert.Equal(t, "Newer", tasks[0].Title)
 	assert.Equal(t, "Older", tasks[1].Title)
 	assert.Equal(t, "assignee@example.com", tasks[0].AssignedTo.Email)
+}
+
+func TestTaskRepository_ListRecentlyCompleted_ScopedToAssigneeBeforeLimit(t *testing.T) {
+	db := setupAnalyticsTestDB(t)
+	repo := NewTaskRepository(db)
+	mine := makeUser(t, db, "mine@example.com")
+	theirs := makeUser(t, db, "theirs@example.com")
+	base := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+
+	own := models.Task{Title: "Mine", Status: models.TaskStatusCompleted, AssignedToID: mine.ID}
+	other := models.Task{Title: "Theirs", Status: models.TaskStatusCompleted, AssignedToID: theirs.ID}
+	require.NoError(t, db.Create(&own).Error)
+	require.NoError(t, db.Create(&other).Error)
+	stampTimes(t, db, &own, base, base)
+	stampTimes(t, db, &other, base, base.Add(time.Hour))
+
+	tasks, err := repo.ListRecentlyCompleted(&mine.ID, 1)
+
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "Mine", tasks[0].Title)
 }

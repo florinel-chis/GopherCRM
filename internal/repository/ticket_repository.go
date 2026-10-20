@@ -138,11 +138,17 @@ func (r *ticketRepository) CountByPriority() (map[string]int64, error) {
 	return countGroupedByColumn(r.db.Model(&models.Ticket{}), "priority")
 }
 
-// ListRecent returns the newest tickets first, for the dashboard widget.
-func (r *ticketRepository) ListRecent(limit int) ([]models.Ticket, error) {
+// ListRecent returns the newest tickets first, for the dashboard widget. A nil
+// assignedToID means every ticket, assigned or not; a non-nil one narrows to
+// the tickets assigned to that user, which is what the support role gets. The
+// filter is part of the query, so it applies before the limit.
+func (r *ticketRepository) ListRecent(assignedToID *uint, limit int) ([]models.Ticket, error) {
 	tickets := []models.Ticket{}
-	err := r.db.Preload("Customer").Preload("AssignedTo").
-		Order("created_at DESC, id DESC").
+	query := r.db.Preload("Customer").Preload("AssignedTo")
+	if assignedToID != nil {
+		query = query.Where("assigned_to_id = ?", *assignedToID)
+	}
+	err := query.Order("created_at DESC, id DESC").
 		Limit(limit).
 		Find(&tickets).Error
 	return tickets, err
@@ -153,12 +159,16 @@ func (r *ticketRepository) ListRecent(limit int) ([]models.Ticket, error) {
 //
 // Both "resolved" and "closed" count as resolutions, mirroring CountOpen, which
 // treats open and in_progress as the open half. There is no resolved_at column,
-// so updated_at stands in for the moment of resolution.
-func (r *ticketRepository) ListRecentlyResolved(limit int) ([]models.Ticket, error) {
+// so updated_at stands in for the moment of resolution. A nil assignedToID
+// means every ticket; a non-nil one narrows to that assignee before the limit.
+func (r *ticketRepository) ListRecentlyResolved(assignedToID *uint, limit int) ([]models.Ticket, error) {
 	tickets := []models.Ticket{}
-	err := r.db.Preload("Customer").Preload("AssignedTo").
-		Where("status IN ?", []string{string(models.TicketStatusResolved), string(models.TicketStatusClosed)}).
-		Order("updated_at DESC, id DESC").
+	query := r.db.Preload("Customer").Preload("AssignedTo").
+		Where("status IN ?", []string{string(models.TicketStatusResolved), string(models.TicketStatusClosed)})
+	if assignedToID != nil {
+		query = query.Where("assigned_to_id = ?", *assignedToID)
+	}
+	err := query.Order("updated_at DESC, id DESC").
 		Limit(limit).
 		Find(&tickets).Error
 	return tickets, err

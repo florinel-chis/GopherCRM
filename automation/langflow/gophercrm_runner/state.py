@@ -92,11 +92,26 @@ class Store:
         with self.control_lock():
             if self.stopped(issue):
                 return False
+            if self.read('active').get('pr') is not None:
+                raise GateError('An existing PR completion must finish before another ticket can start')
             active = self.read('active').get('issue')
             if active is not None and active != issue:
                 raise GateError(f'Issue #{active} must finish before another ticket can start')
             self.write('active', {'issue': issue})
             return True
+
+    def admit_pr(self, number: int):
+        """An explicit PR completion does not resume or drain the issue queue."""
+        with self.control_lock():
+            active = self.read('active')
+            if active and active != {'pr': number}:
+                raise GateError('Another ticket or PR completion must finish first')
+            self.write('active', {'pr': number})
+
+    def release_pr(self, number: int):
+        with self.control_lock():
+            if self.read('active') == {'pr': number}:
+                self.write('active', {})
 
     def release(self, issue: int):
         with self.control_lock():

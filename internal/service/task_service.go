@@ -488,8 +488,14 @@ func (s *taskService) GetDueWithinByAssignee(assigneeID uint, from, to time.Time
 	return s.taskRepo.ListDueBetween(&assigneeID, from, to, limit)
 }
 
-// GetRecentlyCompleted returns the most recently completed tasks, for the
-// activity feed.
+// GetRecentlyCompleted returns the most recently completed tasks across every
+// assignee, for the admin activity feed.
 func (s *taskService) GetRecentlyCompleted(limit int) ([]models.Task, error) {
-	return s.taskRepo.ListRecentlyCompleted(limit)
+	return s.taskRepo.ListRecentlyCompleted(nil, limit)
+}
+
+// GetRecentlyCompletedByAssignee returns the most recently completed tasks of
+// one user. Every role but admin is narrowed through here.
+func (s *taskService) GetRecentlyCompletedByAssignee(assigneeID uint, limit int) ([]models.Task, error) {
+	return s.taskRepo.ListRecentlyCompleted(&assigneeID, limit)
 }

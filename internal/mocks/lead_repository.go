@@ -440,9 +440,9 @@ func (_m *LeadRepository) ListRecent(ownerID *uint, limit int) ([]models.Lead, e
 	return r0, ret.Error(1)
 }
 
-// ListRecentlyConverted provides a mock function with given fields: limit
-func (_m *LeadRepository) ListRecentlyConverted(limit int) ([]models.Lead, error) {
-	ret := _m.Called(limit)
+// ListRecentlyConverted provides a mock function with given fields: ownerID, limit
+func (_m *LeadRepository) ListRecentlyConverted(ownerID *uint, limit int) ([]models.Lead, error) {
+	ret := _m.Called(ownerID, limit)
 
 	var r0 []models.Lead
 	if ret.Get(0) != nil {

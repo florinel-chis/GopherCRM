@@ -25,6 +25,25 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     export = sub.add_parser('export', help='Generate the importable Langflow workflow')
     export.add_argument('path', type=Path)
+    export.add_argument('--pr', action='store_true', help='Export the existing-PR completion workflow')
+    complete = sub.add_parser('complete-pr', help='Review, validate and merge one explicitly pinned existing PR')
+    complete.add_argument('--config', type=Path, required=True)
+    complete.add_argument('--pr', type=int, required=True)
+    complete.add_argument('--head', required=True, help='Full current PR head SHA')
+    complete.add_argument('--execute', action='store_true', help='Run to merge; defaults to preview')
+    complete.add_argument('--refresh', action='store_true', help='Invalidate gates after an inspected candidate/base change')
+    for name in ('report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr', 'restart-pr-repair'):
+        command = sub.add_parser(name)
+        command.add_argument('--config', type=Path, required=True)
+        command.add_argument('--pr', type=int, required=True)
+        if name != 'report-pr':
+            command.add_argument('--reason', required=True)
+        if name == 'extend-pr-budget':
+            command.add_argument('--calls', type=int, default=0)
+            command.add_argument('--seconds', type=int, default=0)
+        if name in {'abandon-pr', 'recover-pr'}:
+            command.add_argument('--processes-stopped', action='store_true',
+                                 help='Confirm all orphaned provider processes were inspected and stopped')
     run = sub.add_parser('run', help='Run the Langflow workflow (preview by default)')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--limit', type=int, default=1)
@@ -69,8 +88,36 @@ def main():
     serve.add_argument('--port', type=int, default=7860)
     args = parser.parse_args()
     if args.command == 'export':
-        from .flows import export_flow
-        export_flow(args.path)
+        from .flows import export_flow, build_pr_flow
+        if args.pr:
+            args.path.parent.mkdir(parents=True, exist_ok=True)
+            args.path.write_text(json.dumps(build_pr_flow(), indent=2) + '\n')
+        else:
+            export_flow(args.path)
+    elif args.command == 'complete-pr':
+        from .flows import run_pr_flow
+        result = run_async(run_pr_flow(args.config, number=args.pr, head=args.head,
+                                      execute=args.execute, refresh=args.refresh))
+        print(json.dumps([item.model_dump(mode='json') for item in result], indent=2))
+    elif args.command in {'report-pr', 'extend-pr-budget', 'abandon-pr', 'retry-pr-repair', 'recover-pr', 'restart-pr-repair'}:
+        from .config import Config
+        from .pull_requests import PullRequestRunner
+        runner = PullRequestRunner(Config.load(args.config))
+        if args.command == 'report-pr':
+            result = runner.report_pr(args.pr)
+        elif args.command == 'extend-pr-budget':
+            result = runner.extend_pr_budget(args.pr, calls=args.calls, seconds=args.seconds, reason=args.reason)
+        elif args.command == 'abandon-pr':
+            result = run_async(runner.abandon_pr(args.pr, reason=args.reason,
+                                               processes_stopped=args.processes_stopped))
+        elif args.command == 'recover-pr':
+            result = run_async(runner.recover_pr(args.pr, reason=args.reason,
+                                               processes_stopped=args.processes_stopped))
+        elif args.command == 'restart-pr-repair':
+            result = run_async(runner.restart_pr_repair(args.pr, reason=args.reason))
+        else:
+            result = runner.retry_pr_repair(args.pr, reason=args.reason)
+        print(json.dumps(result, indent=2))
     elif args.command in {'setup', 'serve'}:
         from . import local
         if args.command == 'setup':
@@ -111,7 +158,7 @@ def main():
                          'control': store.read('control'), 'active': store.read('active'),
                          'last_error': store.read('last_error'), 'tickets': [
             store.read(f'issue-{n}') for n in config.issues if store.read(f'issue-{n}')
-        ]}, indent=2))
+        ], 'pr_completions': [store.read(p.stem) for p in sorted(config.state_dir.glob('completion-pr-*.json'))]}, indent=2))
     else:
         from .flows import run_flow
         result = run_async(run_flow(args.config, execute=args.execute, limit=args.limit))

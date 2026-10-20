@@ -58,6 +58,17 @@ func (_m *LeadService) GetRecentlyConverted(limit int) ([]models.Lead, error) {
 	return r0, ret.Error(1)
 }
 
+// GetRecentlyConvertedByOwner provides a mock function with given fields: ownerID, limit
+func (_m *LeadService) GetRecentlyConvertedByOwner(ownerID uint, limit int) ([]models.Lead, error) {
+	ret := _m.Called(ownerID, limit)
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
 // GetConversionTimestamps provides a mock function with given fields: since
 func (_m *LeadService) GetConversionTimestamps(since time.Time) ([]time.Time, error) {
 	ret := _m.Called(since)

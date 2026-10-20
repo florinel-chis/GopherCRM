@@ -153,6 +153,10 @@ type Activity struct {
 	Description string       `json:"description"`
 	User        ActivityUser `json:"user"`
 	CreatedAt   time.Time    `json:"created_at"`
+
+	// sourceID is the numeric id of the underlying record, kept for the merge
+	// tie-break only and never serialised.
+	sourceID uint
 }
 
 const (
@@ -449,7 +453,7 @@ func (h *DashboardHandler) GetSalesPerformance(c *gin.Context) {
 
 // GetActivities godoc
 // @Summary Recent activity feed
-// @Description Recent activity across the CRM, newest first, as a bare array. There is no activity or audit table in this schema, so entries are synthesised from the rows themselves: leads created (lead_created) and converted (lead_converted), tickets created (ticket_created) and resolved or closed (ticket_resolved), and tasks completed (task_completed). Each source contributes at most `limit` candidates; they are merged, sorted by event time descending and truncated to `limit`. Events with no dedicated timestamp column use updated_at as the event time, so a later edit moves the entry. Each id is stable and of the form "lead-42-created". The user is the lead's owner or the ticket's or task's assignee, with username carrying the account's email address because there is no username column; when the record has no assignee the user object is present but zero-valued. The feed is system-wide and is not narrowed to the caller's own records. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Recent activity the caller may see, newest first, as a bare array. There is no activity or audit table in this schema, so entries are synthesised from the rows themselves: leads created (lead_created) and converted (lead_converted), tickets created (ticket_created) and resolved or closed (ticket_resolved), and tasks completed (task_completed). Each source is narrowed to the caller's visibility inside its query, before its limit: lead events cover every lead for admin, only the caller's own leads for sales and no lead at all for support; ticket events cover every ticket for admin and sales and only the tickets assigned to the caller for support; task events cover every task for admin and only the tasks assigned to the caller for every other role. Hidden records therefore never appear and never crowd out permitted ones. Each source contributes at most `limit` candidates; they are merged, sorted by event time descending (ties broken by type, then by record id descending) and truncated to `limit`. Events with no dedicated timestamp column use updated_at as the event time, so a later edit moves the entry. Each id is stable and of the form "lead-42-created". The user is the lead's owner or the ticket's or task's assignee, with username carrying the account's email address because there is no username column; when the record has no assignee the user object is present but zero-valued. Restricted to the admin, sales and support roles; customer-role callers receive 403.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -465,11 +469,26 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetActivities")
 
 	limit := parseDashboardLimit(c, defaultActivityLimit)
+	role := c.GetString("user_role")
+	userID := c.GetUint("user_id")
 	activities := make([]Activity, 0, limit)
 
 	// Each source is asked for `limit` rows: any one of them could supply the
-	// whole page, and none of them can supply more than it.
-	createdLeads, err := h.leadService.GetRecent(limit)
+	// whole page, and none of them can supply more than it. Every source is
+	// narrowed to the caller inside its query, so the limit counts only rows
+	// the caller may see.
+	//
+	// Lead events mirror GetNewLeads: admin sees every lead, sales only the
+	// leads it owns, and support, which has no lead visibility anywhere in this
+	// API, reads no lead at all.
+	var createdLeads, convertedLeads []models.Lead
+	var err error
+	switch role {
+	case string(models.RoleAdmin):
+		createdLeads, err = h.leadService.GetRecent(limit)
+	case string(models.RoleSales):
+		createdLeads, err = h.leadService.GetRecentByOwner(userID, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recent leads")
 		utils.RespondInternalError(c)
@@ -483,10 +502,16 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 			Description: describePerson(lead.FirstName, lead.LastName, lead.Company) + " was added as a lead",
 			User:        activityUserFrom(&lead.Owner),
 			CreatedAt:   lead.CreatedAt,
+			sourceID:    lead.ID,
 		})
 	}
 
-	convertedLeads, err := h.leadService.GetRecentlyConverted(limit)
+	switch role {
+	case string(models.RoleAdmin):
+		convertedLeads, err = h.leadService.GetRecentlyConverted(limit)
+	case string(models.RoleSales):
+		convertedLeads, err = h.leadService.GetRecentlyConvertedByOwner(userID, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recently converted leads")
 		utils.RespondInternalError(c)
@@ -500,10 +525,17 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 			Description: describePerson(lead.FirstName, lead.LastName, lead.Company) + " was converted to a customer",
 			User:        activityUserFrom(&lead.Owner),
 			CreatedAt:   lead.UpdatedAt,
+			sourceID:    lead.ID,
 		})
 	}
 
-	createdTickets, err := h.ticketService.GetRecent(limit)
+	allTickets := seesEveryTicket(role)
+	var createdTickets []models.Ticket
+	if allTickets {
+		createdTickets, err = h.ticketService.GetRecent(limit)
+	} else {
+		createdTickets, err = h.ticketService.GetRecentByAssignee(userID, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recent tickets")
 		utils.RespondInternalError(c)
@@ -517,10 +549,16 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 			Description: ticket.Title,
 			User:        activityUserFrom(ticket.AssignedTo),
 			CreatedAt:   ticket.CreatedAt,
+			sourceID:    ticket.ID,
 		})
 	}
 
-	resolvedTickets, err := h.ticketService.GetRecentlyResolved(limit)
+	var resolvedTickets []models.Ticket
+	if allTickets {
+		resolvedTickets, err = h.ticketService.GetRecentlyResolved(limit)
+	} else {
+		resolvedTickets, err = h.ticketService.GetRecentlyResolvedByAssignee(userID, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recently resolved tickets")
 		utils.RespondInternalError(c)
@@ -534,10 +572,18 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 			Description: ticket.Title,
 			User:        activityUserFrom(ticket.AssignedTo),
 			CreatedAt:   ticket.UpdatedAt,
+			sourceID:    ticket.ID,
 		})
 	}
 
-	completedTasks, err := h.taskService.GetRecentlyCompleted(limit)
+	// Task events follow GetUpcomingTasks: admin sees every assignee, every
+	// other role only its own assignments.
+	var completedTasks []models.Task
+	if role == string(models.RoleAdmin) {
+		completedTasks, err = h.taskService.GetRecentlyCompleted(limit)
+	} else {
+		completedTasks, err = h.taskService.GetRecentlyCompletedByAssignee(userID, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recently completed tasks")
 		utils.RespondInternalError(c)
@@ -551,17 +597,11 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 			Description: task.Title,
 			User:        activityUserFrom(&task.AssignedTo),
 			CreatedAt:   task.UpdatedAt,
+			sourceID:    task.ID,
 		})
 	}
 
-	// Newest first. The tie-break on ID keeps the order stable when two events
-	// share a timestamp, which they routinely do on second-granularity columns.
-	sort.SliceStable(activities, func(i, j int) bool {
-		if activities[i].CreatedAt.Equal(activities[j].CreatedAt) {
-			return activities[i].ID < activities[j].ID
-		}
-		return activities[i].CreatedAt.After(activities[j].CreatedAt)
-	})
+	sortActivities(activities)
 
 	if len(activities) > limit {
 		activities = activities[:limit]
@@ -569,6 +609,31 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, activities)
 	utils.RespondSuccess(c, http.StatusOK, activities)
+}
+
+// seesEveryTicket reports whether a role sees every ticket on the dashboard.
+// Admin and sales do, mirroring the ticket list; support, and any role this
+// code does not know, sees only the tickets assigned to it.
+func seesEveryTicket(role string) bool {
+	return role == string(models.RoleAdmin) || role == string(models.RoleSales)
+}
+
+// sortActivities orders the merged feed newest first. Equal timestamps, which
+// second-granularity columns produce routinely, are broken by type and then by
+// record id descending. Within one source that is exactly the order of its
+// query (event time DESC, id DESC), so truncating the merge to the limit keeps
+// the same rows the sources would have returned for the whole feed.
+func sortActivities(activities []Activity) {
+	sort.SliceStable(activities, func(i, j int) bool {
+		a, b := activities[i], activities[j]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		if a.Type != b.Type {
+			return a.Type < b.Type
+		}
+		return a.sourceID > b.sourceID
+	})
 }
 
 // describePerson renders a lead as "First Last (Company)", degrading gracefully
@@ -647,7 +712,7 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 
 // GetRecentTickets godoc
 // @Summary Newest tickets
-// @Description The most recently created tickets, as a bare array ordered by creation time descending. Visibility mirrors the ticket list: admin, sales and support all see every ticket, with no narrowing to the caller's own assignments. Restricted to the admin, sales and support roles; customer-role callers receive 403, as they do on the ticket list.
+// @Description The most recently created tickets the caller may see, as a bare array ordered by creation time descending, ties broken by id descending. Admin and sales see every ticket; support sees only the tickets assigned to it, so tickets assigned to someone else and unassigned tickets are excluded. The narrowing is part of the query and applies before the limit, so hidden tickets never crowd out permitted ones; a caller with no visible ticket gets an empty array. Restricted to the admin, sales and support roles; customer-role callers receive 403.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -662,7 +727,15 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 func (h *DashboardHandler) GetRecentTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetRecentTickets")
 
-	tickets, err := h.ticketService.GetRecent(parseDashboardLimit(c, defaultWidgetLimit))
+	limit := parseDashboardLimit(c, defaultWidgetLimit)
+
+	var tickets []models.Ticket
+	var err error
+	if seesEveryTicket(c.GetString("user_role")) {
+		tickets, err = h.ticketService.GetRecent(limit)
+	} else {
+		tickets, err = h.ticketService.GetRecentByAssignee(c.GetUint("user_id"), limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get recent tickets")
 		utils.RespondInternalError(c)
