@@ -117,7 +117,8 @@ class Runner:
         if type(limit) is not int or limit <= 0 or limit > len(self.config.issues):
             raise GateError('Limit must be between 1 and the configured queue length')
         if self.store.read('active').get('pr') is not None:
-            return []
+            raise GateError(f'PR #{self.store.read("active")["pr"]} completion blocks the issue queue; '
+                            'resume it or use abandon-pr after inspection')
         active = self.store.read('active').get('issue')
         numbers = list(self.config.issues)
         if active is not None:
@@ -450,7 +451,8 @@ class Runner:
             if await self.command('git', 'diff', '--name-only', cwd=worktree):
                 raise GateError('Unstaged changes during interrupted commit recovery')
             await self.validate_agent_paths(record)
-            await self.command('git', 'commit', '-m', f'fix: address remediation issue #{record["issue"]}',
+            await self.command('git', 'commit', '-m', record.get('commit_message') or
+                               f'fix: address remediation issue #{record["issue"]}',
                                cwd=worktree)
         record.update(head=await self.head(worktree), stage='validate')
         self.save(record)

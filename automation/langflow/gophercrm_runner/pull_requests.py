@@ -19,6 +19,47 @@ from .process import redact
 
 
 class PullRequestRunner(Runner):
+    @staticmethod
+    def contract_digest(record):
+        return evidence.sha(json.dumps({k: record.get(k) for k in
+            ('pr_input', 'criteria', 'database_profile')}, sort_keys=True).encode())
+
+    async def abandon_pr(self, number, *, reason):
+        if not reason.strip() or len(reason) > 1000:
+            raise GateError('Abandonment requires a short reason')
+        with self.store.exclusive():
+            record = self.store.read(f'completion-pr-{number}')
+            if not record:
+                raise GateError('No PR completion to abandon')
+            if record.get('schema_version') != 1 or record.get('policy') != self.policy:
+                raise GateError('Use the matching PR completion version and policy to abandon')
+            if any(c['status'] == 'running' for c in record.get('provider_invocations', [])):
+                raise GateError('Inspect the unresolved provider process before abandonment')
+            pr = await self.pr(number)
+            if pr['state'] == 'MERGED':
+                return await self.finish(record, pr)
+            record.update(stage='abandoned', abandoned_at=self.clock(), completed_at=self.clock(),
+                          abandon_reason=redact(reason))
+            self.save(record)
+            self.store.release_pr(number)
+            return {'pr': number, 'status': 'abandoned', 'remote_state': pr['state']}
+
+    def retry_pr_repair(self, number, *, reason):
+        if not reason.strip() or len(reason) > 1000:
+            raise GateError('Repair retry requires a short reason')
+        with self.store.exclusive():
+            record = self.store.read(f'completion-pr-{number}')
+            if not record or record['stage'] != 'no_change' or record['policy'] != self.policy:
+                raise GateError('Explicit retry applies only to a matching no-change repair')
+            telemetry.remaining(record, self.clock())
+            if record['repairs'] >= self.config.max_repair_rounds:
+                raise GateError('Repair budget exhausted; inspect or abandon this completion')
+            record.setdefault('repair_retry_history', []).append(dict(at=self.clock(), reason=redact(reason)))
+            record.update(stage='repair_pending', feedback=record.get('feedback', '') +
+                          '\nOperator retry context: ' + redact(reason))
+            self.save(record)
+            return {'pr': number, 'status': 'repair_pending'}
+
     def report_pr(self, number):
         record = self.store.read(f'completion-pr-{number}')
         return dict(telemetry.report(record, {}, {}, self.clock()), pr=number)
@@ -29,7 +70,7 @@ class PullRequestRunner(Runner):
             raise GateError('Specify a positive budget increment and a short reason')
         with self.store.exclusive():
             record = self.store.read(f'completion-pr-{number}')
-            if not record or record['stage'] == 'merged' or record['policy'] != self.policy:
+            if not record or record['stage'] in {'merged', 'abandoned'} or record['policy'] != self.policy:
                 raise GateError('Only a matching unfinished PR completion can receive an extension')
             before = {k: record[k] for k in ('deadline', 'max_provider_calls')}
             record['deadline'] += seconds
@@ -73,6 +114,9 @@ class PullRequestRunner(Runner):
     async def check_inputs(self, record):
         if record['policy'] != self.policy:
             raise GateError('PR completion policy changed; resume with the original configuration')
+        if (record['contract_hash'] != self.contract_digest(record)
+                or record['context_hash'] != contracts.context_hash(record['documents'])):
+            raise GateError('PR completion contract or guidance changed after admission')
         pr = await self.pr(record['pr'])
         self.check_pr(pr, record['remote_head'])
         if self.identity(pr) != record['pr_input']:
@@ -157,6 +201,9 @@ class PullRequestRunner(Runner):
                                         input_text=prompt, on_start=started,
                                         timeout=self.config.agent_timeout_seconds)
             report, metadata = agents.parse(output, review=review, criteria=record['criteria'])
+            metadata.update(configured_model=self.config.agent_model or None, role=call['role'],
+                            head=record['head'], context_hash=record['context_hash'],
+                            contract_hash=record['contract_hash'])
             call.update(status='completed', metadata=metadata)
             if review:
                 record['pending_review'] = {'binding': {k: record[k] for k in evidence.BINDING_KEYS},
@@ -215,7 +262,7 @@ class PullRequestRunner(Runner):
         await self.clean(Path(record['worktree']))
         if await self.head(Path(record['worktree'])) != record['head']:
             raise GateError('Candidate changed before publication')
-        record['stage'] = 'publishing'
+        record.update(stage='publishing', previous_remote_head=record['remote_head'])
         self.save(record)
         if record['head'] != record['remote_head']:
             await self.command('git', 'push', 'origin', f'HEAD:refs/heads/{record["branch"]}',
@@ -259,7 +306,7 @@ class PullRequestRunner(Runner):
                       pr_input=self.identity(pr), base=base, head=fetched, remote_head=fetched,
                       input_head=fetched, branch=pr['headRefName'], documents=documents,
                       context_hash=contracts.context_hash(documents),
-                      contract_hash=evidence.sha(json.dumps(self.identity(pr), sort_keys=True).encode()),
+                      commit_message=f'fix: address review findings for PR #{pr["number"]}',
                       stage='preparing', receipts={}, repairs=0, criteria=[], required_checks=list(self.config.required_checks),
                       started_at=self.clock(), deadline=self.clock() + self.config.issue_timeout_seconds,
                       provider_calls=0, max_provider_calls=self.config.max_provider_calls,
@@ -271,6 +318,7 @@ class PullRequestRunner(Runner):
                           database_profile=frozen['validation_profile'] == 'backend-database',
                           source_digest=evidence.sha(json.dumps(source, sort_keys=True).encode()),
                           reuse_ticket=source['head'] == fetched and source['base'] == base)
+        record['contract_hash'] = self.contract_digest(record)
         return record
 
     async def prepare_worktree(self, record):
@@ -310,6 +358,7 @@ class PullRequestRunner(Runner):
                         'repair/retest', 'CI', 'exact-head merge']}
         with self.store.exclusive():
             record = self.store.read(f'completion-pr-{number}')
+            existing = bool(record)
             if record and record.get('schema_version') != 1:
                 raise GateError('Unknown PR completion journal version')
             # A lost merge response must be recoverable even after budget expiry.
@@ -318,6 +367,8 @@ class PullRequestRunner(Runner):
             self.check_pr(pr, expected_head)
             if record and record.get('policy') != self.policy:
                 raise GateError('PR completion policy changed')
+            if record and record['stage'] == 'abandoned':
+                raise GateError('This PR completion was explicitly abandoned; its evidence and history are retained')
             self.store.admit_pr(number)
             try:
                 if not record:
@@ -339,6 +390,7 @@ class PullRequestRunner(Runner):
                     replacement['history'] = record.get('history', []) + [
                         {k: v for k, v in record.items() if k != 'history'}]
                     replacement['budget_extensions'] = record.get('budget_extensions', [])
+                    replacement['repair_retry_history'] = record.get('repair_retry_history', [])
                     record = replacement
                     self.save(record)
                 elif expected_head not in {record['input_head'], record['remote_head'], record['head']}:
@@ -346,6 +398,8 @@ class PullRequestRunner(Runner):
                 telemetry.remaining(record, self.clock())
                 telemetry.interrupted_attempts(record)
                 self._record = record
+                if existing:
+                    await self.doctor()
                 # Recover a push completed before journal persistence.
                 if record['stage'] == 'publishing' and pr['headRefOid'] == record['head']:
                     record.update(remote_head=record['head'], stage='ci')
@@ -357,8 +411,13 @@ class PullRequestRunner(Runner):
                     await self.finalize_implementation(record)
                 if record['stage'] == 'committing':
                     await self.commit(record)
-                if record['stage'] in {'implement', 'no_change'}:
-                    raise GateError('Interrupted/no-change repair requires operator inspection')
+                if record['stage'] == 'implement':
+                    # The repair round was already reserved. A new provider call
+                    # is charged, but cancellation never spends a second round.
+                    await self.perform(record, 'repair', self.implement, record['pr_input'], record,
+                                       record.get('feedback', '') + '\n' + record.get('last_error', ''))
+                if record['stage'] == 'no_change':
+                    raise GateError('No-change repair: inspect, then retry-pr-repair or abandon-pr explicitly')
                 while True:
                     if record['stage'] == 'repair_pending':
                         record['reuse_ticket'] = False
@@ -401,6 +460,8 @@ class PullRequestRunner(Runner):
                 if record:
                     record['last_error'] = redact(str(exc))[-12000:]
                     self.save(record)
+                else:
+                    self.store.release_pr(number)
                 raise
             finally:
                 self._record = None

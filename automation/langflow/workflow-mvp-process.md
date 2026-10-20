@@ -98,3 +98,30 @@ Next priorities: complete and inspect the one canary; reconcile remote protectio
 runner's gates; add safe evidence/dependency retention; then implement manual/UI evidence and
 broader task examples only when needed. Decide whether to fund the paired study before changing
 providers, introducing more orchestration, or claiming broad adoption.
+# Existing-PR completion follow-up (2026-10-20)
+
+The original pilot stopped at PR-ready. The next increment adds a separate,
+explicitly pinned PR completion workflow, available both in Langflow and through
+`complete-pr`. It verifies reusable ticket evidence or runs fresh validation and
+independent review, repairs findings within durable limits, waits for CI, then
+merges the exact approved head. This does not restart the remediation issue queue.
+See the [operator instructions](README.md#complete-existing-prs-through-merge).
+
+The first independent review rejected the implementation for two concrete
+recovery gaps: a repair interrupted by cancellation or a depleted provider budget
+could not resume, and an unsuccessful PR completion could permanently retain the
+queue slot. The fixes add charged repair resumption, an explicit no-change retry,
+audited abandonment, preflight slot cleanup, and a visible queue-blocking error.
+Regression tests exercise these failure sequences, in addition to stale inputs,
+evidence tampering, receipt reuse, protected repair paths and lost push/merge
+responses. The initial full repository verification passed Go build/vet/race,
+frontend build/lint and 653 frontend tests (one existing TODO).
+
+Lessons: terminal and failure transitions need explicit operator recovery paths;
+an empty queue must not hide blocked work; reuse must verify immutable evidence,
+not just a previous green status. New PRs are pinned by an operator, but their
+build scripts still execute locally: worktrees do not supply OS isolation.
+Concurrent main changes still require server-side branch protection for atomic
+enforcement, plus fresh local validation after an explicit candidate refresh.
+Fork intake and automatic conflict resolution remain outside this increment.
+

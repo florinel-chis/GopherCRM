@@ -116,7 +116,8 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ticket_admission_is_blocked_while_pr_active(self):
         self.runner.store.write('active', {'pr': 122})
-        self.assertEqual(await self.runner.queue(2), [])
+        with self.assertRaisesRegex(GateError, 'blocks the issue queue'):
+            await self.runner.queue(2)
         with self.assertRaisesRegex(GateError, 'PR completion'):
             self.runner.store.admit(95)
 
@@ -251,6 +252,106 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after['max_provider_calls'], before['max_provider_calls'] + 1)
         self.assertEqual(len(after['budget_extensions']), 1)
         self.assertEqual(self.runner.report_pr(122)['pr'], 122)
+
+    async def test_budget_exhausted_repair_resumes_after_extension_without_extra_round(self):
+        self.runner = PullRequestRunner(replace(self.config, max_provider_calls=1), self.commands)
+        self.commands.reject_reviews = 1
+        with self.assertRaisesRegex(GateError, 'call budget exhausted'):
+            await self.complete()
+        before = self.runner.store.read('completion-pr-122')
+        self.assertEqual(before['stage'], 'implement')
+        self.runner.extend_pr_budget(122, calls=2, reason='Reviewed rejection; authorize repair and review')
+        await self.complete()
+        after = self.runner.store.read('completion-pr-122')
+        self.assertEqual(after['repairs'], 1)
+        self.assertEqual(after['provider_calls'], 3)
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_cancelled_repair_resumes_with_spent_invocation_retained(self):
+        self.commands.reject_reviews = 1
+        original = self.commands.run
+
+        async def cancel(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                raise asyncio.CancelledError()
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=cancel):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.complete()
+        await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual(record['repairs'], 1)
+        self.assertEqual(record['provider_calls'], 4)
+        self.assertEqual(record['provider_invocations'][1]['status'], 'cancelled')
+        self.assertEqual(self.commands.merges, 1)
+
+    async def test_no_change_repair_requires_audited_retry_and_spends_new_round(self):
+        self.commands.reject_reviews = 1
+        original = self.commands.run
+
+        async def no_change(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                (kwargs['cwd'] / 'feature.txt').write_text('External contribution\n')
+            return result
+
+        with patch.object(self.commands, 'run', side_effect=no_change):
+            with self.assertRaisesRegex(GateError, 'no changes'):
+                await self.complete()
+        with self.assertRaisesRegex(GateError, 'retry-pr-repair'):
+            await self.complete()
+        self.runner.retry_pr_repair(122, reason='Reviewed missing edge case; try a concrete fix')
+        await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual(record['repairs'], 2)
+        self.assertEqual(len(record['repair_retry_history']), 1)
+
+    async def test_preflight_failure_releases_slot_without_a_completion_journal(self):
+        from unittest.mock import AsyncMock
+        with patch.object(self.runner, 'doctor', AsyncMock(side_effect=GateError('Unavailable tool'))):
+            with self.assertRaisesRegex(GateError, 'Unavailable'):
+                await self.complete()
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertFalse(self.runner.store.read('completion-pr-122'))
+
+    async def test_closed_pr_can_be_abandoned_without_modifying_github_or_queue_control(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        self.runner.store.stop_after_current()
+        control = self.runner.store.read('control')
+        self.commands.pr_data['state'] = 'CLOSED'
+        result = await self.runner.abandon_pr(122, reason='Maintainer closed the superseded PR')
+        self.assertEqual(result['status'], 'abandoned')
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertEqual(self.runner.store.read('control'), control)
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual(record['provider_calls'], 1)
+        self.assertTrue(record['receipts'])
+        self.commands.pr_data['state'] = 'OPEN'
+        with self.assertRaisesRegex(GateError, 'explicitly abandoned'):
+            await self.complete()
+        self.assertEqual(self.commands.merges, 0)
+
+    async def test_abandon_reconciles_a_confirmed_merge_instead(self):
+        await self.complete()
+        result = await self.runner.abandon_pr(122, reason='Inspect completed work')
+        self.assertEqual(result['status'], 'merged')
+        self.assertNotIn('abandon_reason', self.runner.store.read('completion-pr-122'))
+
+    async def test_contract_and_guidance_tampering_block_resume(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.complete()
+        record = self.runner.store.read('completion-pr-122')
+        record['documents'][0]['content'] = 'Changed instructions'
+        self.runner.save(record)
+        self.commands.fail_ci = False
+        with self.assertRaisesRegex(GateError, 'guidance changed'):
+            await self.complete()
+        self.assertEqual(self.commands.merges, 0)
 
     async def test_lost_merge_response_reconciles_after_deadline_without_another_merge(self):
         original = self.commands.run

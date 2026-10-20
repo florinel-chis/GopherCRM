@@ -140,6 +140,8 @@ gophercrm-runner report-pr --config /absolute/path/to/config.json --pr 127
 
 The workflow accepts open, non-draft PRs from the same repository targeting main. It uses a separate private completion journal and shares the execution/admission locks with the issue workflow. It never resumes a stopped issue queue or admits another issue. Select each PR explicitly; it does not merge every open PR merely because CI is green.
 
+Inspect the pinned external contribution before execution: its code, build scripts and validation definitions execute locally with the host's filesystem access. This workflow is not a sandbox. External runner or validation changes can be reviewed, but repair agents cannot modify those protected paths.
+
 For an unchanged PR-ready ticket, the workflow verifies its original contract, named-test receipts and independent review before reusing them. The original ticket's call counts, limits and artifacts remain intact. Its eventual merge result is recorded alongside the separate completion execution. Existing PRs without reusable evidence receive fresh `make verify`, applicable database checks, and a fresh independent read-only Claude review. Runner/workflow changes also require local `make verify-runner` and the **Langflow runner tests** CI check. Criteria from a linked local ticket remain required during fresh validation.
 
 Review or test failures enter the bounded repair → test → review cycle. Repair agents cannot modify runner code or validation gates; blockers in those paths require a maintainer fix. Missing/failed CI, stale evidence, unresolved GitHub review requirements, changed PR inputs, forks, draft PRs and changed head/base commits block merging. The final merge uses `--squash --match-head-commit`, with no admin bypass. A lost push or merge response is reconciled before repeating work.
@@ -153,7 +155,9 @@ gophercrm-runner extend-pr-budget --config /absolute/path/to/config.json --pr 12
   --calls 1 --seconds 3600 --reason 'Inspected the blocked completion and authorized another attempt'
 ```
 
-`status` includes PR completion journals. `report-pr` includes attempts and provider calls. Cancellation preserves the journal and worktrees; repeat `complete-pr` with the current head to resume. Authentication, environment and exhausted-budget failures remain stops, never merge approval.
+`status` includes PR completion journals. `report-pr` includes attempts and provider calls. Cancellation preserves the journal and worktrees; repeat `complete-pr` with the current head to resume an interrupted repair, spending another provider call within the same repair round. Authentication, environment and exhausted-budget failures remain stops, never merge approval.
+
+A repair that makes no changes stops for inspection. `retry-pr-repair --config ... --pr NUMBER --reason '...'` records an explicit retry; the next execution consumes a new repair round and provider call. If a PR is closed, unwanted, or cannot be completed, `abandon-pr --config ... --pr NUMBER --reason '...'` records abandonment and releases its admission slot without closing or modifying GitHub. It preserves all artifacts and the stopped-queue setting. Abandoned completions cannot silently restart. A confirmed remote merge is reconciled instead of abandoned, and an unresolved running provider process must be inspected first. Preflight failures before a completion journal exists release their slot automatically. A held PR slot is reported as a blocked issue queue, never an empty one.
 
 Journals use schema version 2. Reading a legacy journal preserves its exact bytes in an immutable, private backup before conversion. A matching completed remote merge can be reconciled, but unfinished legacy work must use its matching old runner and saved journal; automatic adoption is unsupported. Unknown newer schemas are refused. Never restore a backup without checking for later remote actions.
 
