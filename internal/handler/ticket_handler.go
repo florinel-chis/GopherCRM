@@ -127,7 +127,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List tickets
-// @Description List all tickets with pagination, optional free-text search and sorting. Admin, sales and support users all see every ticket; customer users are rejected. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Description List tickets with pagination, optional free-text search and sorting. Admin and sales users see every ticket; support users see only tickets assigned to them, so unassigned tickets and tickets assigned to anyone else are never listed; customer users are rejected. The support scope is applied in the query before offset and limit, so the "tickets" array, the "total" count and the pagination metadata all reflect it, and no search, sort or pagination parameter can widen it. Soft-deleted tickets are never listed. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
@@ -137,7 +137,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 // @Param limit query int false "Page size, capped at 100" default(20)
 // @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, title, status, priority)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search across ticket fields; takes precedence over the plain sorted listing"
+// @Param search query string false "Free-text search matching title, description or resolution; takes precedence over the plain sorted listing and, for support users, only narrows their assigned tickets"
 // @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot list all tickets"
@@ -189,7 +189,12 @@ func (h *TicketHandler) List(c *gin.Context) {
 	var total int64
 	var err error
 
-	if search != "" {
+	// Support users only ever see tickets assigned to them, as on the detail
+	// route. The scope is part of the query, so the rows and the total both
+	// reflect it before pagination, and no query parameter can widen it.
+	if currentUserRole == string(models.RoleSupport) {
+		tickets, total, err = h.ticketService.ListAssigned(c.GetUint("user_id"), search, offset, limit, sortBy, sortOrder)
+	} else if search != "" {
 		tickets, total, err = h.ticketService.Search(search, offset, limit, sortBy, sortOrder)
 	} else if sortBy != "" {
 		tickets, total, err = h.ticketService.ListSorted(offset, limit, sortBy, sortOrder)
@@ -218,7 +223,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 
 // ListByCustomer godoc
 // @Summary List tickets for a customer
-// @Description List the tickets belonging to one customer. Admin, sales and support users may query any customer; a customer user may only query the customer record linked to their own account. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Description List the tickets belonging to one customer. Admin and sales users may query any customer and get all of its tickets; support users may query any customer but get only that customer's tickets assigned to them, an intersection applied in the query before offset and limit, so the "tickets" array, the "total" count and the pagination metadata all reflect it; a customer user may only query the customer record linked to their own account. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
@@ -258,7 +263,15 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 
 	offset, limit := utils.ParseOffsetLimit(c)
 
-	tickets, total, err := h.ticketService.GetByCustomer(uint(customerID), offset, limit)
+	var tickets []models.Ticket
+	var total int64
+	// Support users get the customer's tickets that are assigned to them: the
+	// intersection drives both the rows and the total.
+	if c.GetString("user_role") == string(models.RoleSupport) {
+		tickets, total, err = h.ticketService.GetByCustomerAndAssignee(uint(customerID), currentUserID, offset, limit)
+	} else {
+		tickets, total, err = h.ticketService.GetByCustomer(uint(customerID), offset, limit)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to list tickets by customer")
 		utils.RespondInternalError(c)

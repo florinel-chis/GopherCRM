@@ -254,6 +254,60 @@ func (s *ticketService) Search(query string, offset, limit int, sortBy, sortOrde
 	return tickets, total, nil
 }
 
+// ListAssigned lists the tickets assigned to one user, optionally narrowed by a
+// free-text search, for GET /tickets as a support caller. The search, sort and
+// pagination parameters can only narrow or reorder that set, never widen it.
+func (s *ticketService) ListAssigned(assigneeID uint, search string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"assignee_id": assigneeID,
+		"offset":      offset,
+		"limit":       limit,
+	}), "TicketService", "ListAssigned")
+
+	scope := repository.TicketAssigneeScope{AssignedToID: assigneeID, Search: search}
+	tickets, err := s.ticketRepo.ListByAssigneeScope(scope, offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list assigned tickets")
+		return nil, 0, err
+	}
+
+	total, err := s.ticketRepo.CountByAssigneeScope(scope)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to count assigned tickets")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Assigned tickets listed successfully")
+	return tickets, total, nil
+}
+
+// GetByCustomerAndAssignee lists one customer's tickets that are assigned to
+// one user, for GET /customers/:id/tickets as a support caller.
+func (s *ticketService) GetByCustomerAndAssignee(customerID, assigneeID uint, offset, limit int) ([]models.Ticket, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"customer_id": customerID,
+		"assignee_id": assigneeID,
+		"offset":      offset,
+		"limit":       limit,
+	}), "TicketService", "GetByCustomerAndAssignee")
+
+	scope := repository.TicketAssigneeScope{AssignedToID: assigneeID, CustomerID: &customerID}
+	tickets, err := s.ticketRepo.ListByAssigneeScope(scope, offset, limit, "", "")
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to get assigned tickets by customer")
+		return nil, 0, err
+	}
+
+	total, err := s.ticketRepo.CountByAssigneeScope(scope)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to count assigned tickets by customer")
+		return nil, 0, err
+	}
+
+	logger.WithField("count", len(tickets)).Info("Assigned tickets retrieved by customer")
+	return tickets, total, nil
+}
+
 func (s *ticketService) GetOpenCount() (int64, error) {
 	return s.ticketRepo.CountOpen()
 }

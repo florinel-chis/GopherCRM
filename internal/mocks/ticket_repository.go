@@ -328,6 +328,23 @@ func (_m *TicketRepository) CountSearch(query string) (int64, error) {
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+// ListByAssigneeScope provides a mock function with given fields: scope, offset, limit, sortBy, sortOrder, preloads
+func (_m *TicketRepository) ListByAssigneeScope(scope repository.TicketAssigneeScope, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Ticket, error) {
+	ret := _m.Called(scope, offset, limit, sortBy, sortOrder, preloads)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
+// CountByAssigneeScope provides a mock function with given fields: scope
+func (_m *TicketRepository) CountByAssigneeScope(scope repository.TicketAssigneeScope) (int64, error) {
+	ret := _m.Called(scope)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 // CountByPriority provides a mock function with no fields
 func (_m *TicketRepository) CountByPriority() (map[string]int64, error) {
 	ret := _m.Called()

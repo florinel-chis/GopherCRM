@@ -294,6 +294,31 @@ func (suite *TicketHandlerTestSuite) TestList_CustomerRole_Forbidden() {
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
 }
 
+// A support caller's listing is scoped to its own assignments in the service
+// call itself, whatever search, sort and pagination it sends.
+func (suite *TicketHandlerTestSuite) TestList_Support_ScopedToAssignee() {
+	suite.router.GET("/tickets", func(c *gin.Context) {
+		suite.setAuthContext(c, 2, string(models.RoleSupport))
+		suite.handler.List(c)
+	})
+
+	expectedTickets := []models.Ticket{{BaseModel: models.BaseModel{ID: 1}, Title: "Mine"}}
+	suite.mockService.On("ListAssigned", uint(2), "printer", 10, 5, "priority", "desc").Return(expectedTickets, int64(11), nil)
+
+	req := httptest.NewRequest("GET", "/tickets?page=3&limit=5&search=printer&sort_by=priority&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Equal(suite.T(), int64(11), response.Meta.Total)
+	suite.mockService.AssertNotCalled(suite.T(), "Search", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "ListSorted", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "List", mock.Anything, mock.Anything)
+}
+
 // Test ListByCustomer
 func (suite *TicketHandlerTestSuite) TestListByCustomer_Success() {
 	suite.router.GET("/customers/:id/tickets", func(c *gin.Context) {
@@ -306,7 +331,8 @@ func (suite *TicketHandlerTestSuite) TestListByCustomer_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, Title: "Ticket 2", CustomerID: 1},
 	}
 
-	suite.mockService.On("GetByCustomer", uint(1), 0, 10).Return(expectedTickets, int64(2), nil)
+	// Support sees the customer's tickets assigned to it, never the rest.
+	suite.mockService.On("GetByCustomerAndAssignee", uint(1), uint(1), 0, 10).Return(expectedTickets, int64(2), nil)
 
 	req := httptest.NewRequest("GET", "/customers/1/tickets?offset=0&limit=10", nil)
 	w := httptest.NewRecorder()

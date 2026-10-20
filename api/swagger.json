@@ -7479,7 +7479,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "List the tickets belonging to one customer. Admin, sales and support users may query any customer; a customer user may only query the customer record linked to their own account. The response data is an object with a \"tickets\" array and a \"total\" count, alongside pagination metadata.",
+                "description": "List the tickets belonging to one customer. Admin and sales users may query any customer and get all of its tickets; support users may query any customer but get only that customer's tickets assigned to them, an intersection applied in the query before offset and limit, so the \"tickets\" array, the \"total\" count and the pagination metadata all reflect it; a customer user may only query the customer record linked to their own account. The response data is an object with a \"tickets\" array and a \"total\" count, alongside pagination metadata.",
                 "produces": [
                     "application/json"
                 ],
@@ -14403,7 +14403,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "List all tickets with pagination, optional free-text search and sorting. Admin, sales and support users all see every ticket; customer users are rejected. The response data is an object with a \"tickets\" array and a \"total\" count, alongside pagination metadata.",
+                "description": "List tickets with pagination, optional free-text search and sorting. Admin and sales users see every ticket; support users see only tickets assigned to them, so unassigned tickets and tickets assigned to anyone else are never listed; customer users are rejected. The support scope is applied in the query before offset and limit, so the \"tickets\" array, the \"total\" count and the pagination metadata all reflect it, and no search, sort or pagination parameter can widen it. Soft-deleted tickets are never listed. The response data is an object with a \"tickets\" array and a \"total\" count, alongside pagination metadata.",
                 "produces": [
                     "application/json"
                 ],
@@ -14458,7 +14458,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Free-text search across ticket fields; takes precedence over the plain sorted listing",
+                        "description": "Free-text search matching title, description or resolution; takes precedence over the plain sorted listing and, for support users, only narrows their assigned tickets",
                         "name": "search",
                         "in": "query"
                     }

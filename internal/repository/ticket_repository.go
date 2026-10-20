@@ -132,6 +132,52 @@ func (r *ticketRepository) CountSearch(query string) (int64, error) {
 	return count, err
 }
 
+// whereAssigneeScope applies the scope predicate. The search alternatives are
+// parenthesised so the OR can never escape the assignee and customer filters.
+func whereAssigneeScope(db *gorm.DB, scope TicketAssigneeScope) *gorm.DB {
+	db = db.Where("assigned_to_id = ?", scope.AssignedToID)
+	if scope.CustomerID != nil {
+		db = db.Where("customer_id = ?", *scope.CustomerID)
+	}
+	if scope.Search != "" {
+		searchPattern := "%" + scope.Search + "%"
+		db = db.Where(
+			"(title LIKE ? OR description LIKE ? OR resolution LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
+		)
+	}
+	return db
+}
+
+// ListByAssigneeScope returns one page of the tickets matching scope. The
+// filter is part of the query, so it applies before offset and limit; id breaks
+// ties so that consecutive pages neither repeat nor skip a row.
+func (r *ticketRepository) ListByAssigneeScope(scope TicketAssigneeScope, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error) {
+	tickets := []models.Ticket{}
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	query = whereAssigneeScope(query, scope)
+	orderClause, err := utils.SafeOrderClause("tickets", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	if orderClause != "" {
+		query = query.Order(orderClause)
+	}
+	err = query.Order("id ASC").Offset(offset).Limit(limit).Find(&tickets).Error
+	return tickets, err
+}
+
+// CountByAssigneeScope counts every ticket matching scope, with the same
+// predicate as ListByAssigneeScope and before any pagination.
+func (r *ticketRepository) CountByAssigneeScope(scope TicketAssigneeScope) (int64, error) {
+	var count int64
+	err := whereAssigneeScope(r.db.Model(&models.Ticket{}), scope).Count(&count).Error
+	return count, err
+}
+
 // CountByPriority returns the number of live tickets per priority. Priorities
 // with no rows are absent from the map; the caller supplies the full label set.
 func (r *ticketRepository) CountByPriority() (map[string]int64, error) {
