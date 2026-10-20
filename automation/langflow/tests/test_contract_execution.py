@@ -1,4 +1,5 @@
 from dataclasses import replace
+import asyncio
 import json
 from pathlib import Path
 import subprocess
@@ -87,6 +88,50 @@ class ContractExecutionTests(fixtures.EngineTests):
 
     async def test_ci_repair_can_revalidate_after_main_advances(self):
         await self.assert_repair_recovers_main_advance('wait_ci')
+
+    async def assert_pending_repair_conflict_keeps_its_budget(self, exhausted):
+        self.commands.reject_reviews = 2 if exhausted else 1
+        self.config = replace(self.config, max_repair_rounds=1)
+        self.runner = Runner(self.config, self.commands)
+        if exhausted:
+            with self.assertRaisesRegex(GateError, 'Repair budget exhausted'):
+                await self.runner.run_issue(95, execute=True)
+        else:
+            with patch.object(self.runner, 'repair', AsyncMock(side_effect=asyncio.CancelledError())):
+                with self.assertRaises(asyncio.CancelledError):
+                    await self.runner.run_issue(95, execute=True)
+        before = self.runner.store.read('issue-95')
+        self.assertEqual(before['stage'], 'repair_pending')
+        (self.checkout / 'feature.txt').write_text('Conflicting change on main\n')
+        for command in [('add', '.'), ('commit', '-m', 'conflicting main change'),
+                        ('update-ref', 'refs/remotes/origin/main', 'HEAD')]:
+            subprocess.run(['git', *command], cwd=self.checkout, check=True, capture_output=True)
+        self.commands.base = await self.runner.head(self.checkout)
+        with self.assertRaisesRegex(GateError, 'merge conflicts'):
+            await self.runner.revalidate(95)
+        await self.runner.freeze(95, self.manifest_path, refresh=True)
+        refreshed = self.runner.store.read('issue-95')
+        self.assertEqual(refreshed['stage'], 'repair_pending')
+        self.assertNotIn('after_revalidation', refreshed)
+        self.assertIn('Concrete missing edge case', refreshed['feedback'])
+        self.assertIn('merge conflicts', refreshed['feedback'])
+        if exhausted:
+            with self.assertRaisesRegex(GateError, 'Repair budget exhausted'):
+                await self.runner.run_issue(95, execute=True)
+            final = self.runner.store.read('issue-95')
+            self.assertEqual(final['provider_calls'], before['provider_calls'])
+            self.assertEqual(final['repairs'], 1)
+            self.assertEqual(self.commands.merges, 0)
+        else:
+            self.assertEqual((await self.runner.run_issue(95, execute=True))['status'], 'merged')
+            self.assertEqual(self.runner.store.read('issue-95')['repairs'], 1)
+            self.assertEqual(self.commands.implementations, 2)
+
+    async def test_conflicting_main_cannot_bypass_exhausted_review_repair_budget(self):
+        await self.assert_pending_repair_conflict_keeps_its_budget(True)
+
+    async def test_conflicting_main_preserves_findings_and_charges_pending_repair(self):
+        await self.assert_pending_repair_conflict_keeps_its_budget(False)
 
     async def test_changed_issue_cannot_publish_old_acceptance(self):
         original = self.runner.issue

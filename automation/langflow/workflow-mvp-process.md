@@ -145,6 +145,9 @@ and contract refresh. Those operations now preserve pending implementation stage
 including a reserved repair, while invalidating approval evidence. Regressions
 advance main during local tests, rejected review and CI, then resume through merge
 within the original single repair allowance.
+Conflicting main changes retain pending-review findings and pending-repair budget
+checks; conflict recovery cannot turn an exhausted repair into an uncharged
+implementation. Both an exhausted and an available repair allowance are covered.
 Regression tests exercise these failure sequences, in addition to stale inputs,
 evidence tampering, receipt reuse, protected repair paths and lost push/merge
 responses. The initial full repository verification passed Go build/vet/race,

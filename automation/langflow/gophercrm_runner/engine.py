@@ -683,7 +683,11 @@ class Runner:
             try:
                 await self.command('git', 'merge', '--no-edit', target, cwd=worktree)
             except CommandError:
-                record.update(base=target, stage='implement', feedback='Resolve the merge conflicts with current main. '
+                pending = record.pop('after_revalidation', 'validate')
+                record.update(base=target,
+                              stage='repair_pending' if pending == 'repair_pending' else 'implement',
+                              feedback=(record.get('feedback') or '') +
+                              '\nResolve the merge conflicts with current main. '
                               'Preserve the issue fix and add any needed regression coverage.')
                 self.save(record)
                 raise GateError('Main has merge conflicts; resume execution to repair and retest them')
