@@ -12,12 +12,16 @@ on:
       - 'automation/langflow/**'
       - 'Makefile'
       - '.github/workflows/remediation-runner.yml'
+      - '.github/workflows/ci.yml'
+      - 'scripts/ci/**'
   push:
     branches: [main]
     paths:
       - 'automation/langflow/**'
       - 'Makefile'
       - '.github/workflows/remediation-runner.yml'
+      - '.github/workflows/ci.yml'
+      - 'scripts/ci/**'
 
 permissions:
   contents: read

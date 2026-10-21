@@ -278,7 +278,7 @@ class Runner:
     async def validation_checks(self, record, paths=None):
         frozen = contracts.load_contract(self.config, record['issue'])
         paths = paths if paths is not None else await self.validate_agent_paths(record)
-        commands = [('make', 'verify')] + [c for c in self.config.test_commands if c != ('make', 'verify')]
+        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths))
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
         database = self.browser_validation_checks(
             record, paths, frozen['validation_profile'] == 'backend-database')
@@ -523,7 +523,8 @@ class Runner:
         for check_id, command, named_tests in checks:
             try:
                 output = await self.command(*command, cwd=worktree,
-                    env=verification_environment() if command == ('make', 'verify') else None,
+                    env=verification_environment() if command in {
+                        ('make', 'verify'), ('make', 'verify-hygiene')} else None,
                     timeout=self.config.test_timeout_seconds)
             except CommandError as exc:
                 if environment_failure(exc):

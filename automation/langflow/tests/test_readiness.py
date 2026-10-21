@@ -77,6 +77,8 @@ class ReadinessTests(fixtures.EngineTests):
         self.assertEqual(self.commands.implementations, 0)
 
     async def test_verification_isolated_from_application_db_environment(self):
+        self.runner = Runner(replace(self.config, test_commands=(
+            ('make', 'verify'), ('make', 'verify-hygiene'))), self.commands)
         # A real tracked lockfile makes this the same fresh-checkout path used by the app.
         frontend = self.checkout / 'gocrm-ui'
         frontend.mkdir()
@@ -90,20 +92,23 @@ class ReadinessTests(fixtures.EngineTests):
         captured = []
 
         async def capture(args, **kwargs):
-            if tuple(args) == ('make', 'verify'):
+            if tuple(args) in {('make', 'verify'), ('make', 'verify-hygiene')}:
                 self.assertTrue((kwargs['cwd'] / 'gocrm-ui/package-lock.json').is_file())
                 captured.append(kwargs.get('env'))
+                if tuple(args) == ('make', 'verify-hygiene'):
+                    return 0, 'Hygiene passed'
             return await original(args, **kwargs)
 
         self.commands.run = capture
         with patch.dict(os.environ, {'DB_HOST': 'wrong.example', 'DB_PORT': '13308',
                                      'TEST_MYSQL_DSN': 'private-dsn'}):
             await self.runner.run_issue(95, execute=True)
-        self.assertEqual(len(captured), 1)
-        self.assertIsNotNone(captured[0])
-        self.assertNotIn('DB_HOST', captured[0])
-        self.assertNotIn('DB_PORT', captured[0])
-        self.assertEqual(captured[0]['TEST_MYSQL_DSN'], 'private-dsn')
+        self.assertEqual(len(captured), 2)
+        for environment in captured:
+            self.assertIsNotNone(environment)
+            self.assertNotIn('DB_HOST', environment)
+            self.assertNotIn('DB_PORT', environment)
+            self.assertEqual(environment['TEST_MYSQL_DSN'], 'private-dsn')
         self.assertFalse(any(c[:2] == ('npm', 'ci') for c in self.commands.calls))
 
     async def test_environment_failure_does_not_spend_a_code_repair(self):

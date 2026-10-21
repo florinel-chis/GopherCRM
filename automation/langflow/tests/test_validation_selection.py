@@ -44,6 +44,23 @@ class ValidationSelectionTests(fixtures.EngineTests):
         self.assertEqual([c for c in ticket if c[0].startswith('database-')],
                          [c for c in external if c[0].startswith('database-')])
 
+    async def test_runner_only_keeps_acceptance_and_runner_checks_without_full_matrix(self):
+        runner, record = self.selected_runner()
+        pr = PullRequestRunner(runner.config, self.commands)
+        record['criteria'] = []
+        paths = ['automation/langflow/gophercrm_runner/batches.py', '.github/workflows/ci.yml']
+        with patch.dict(os.environ, {}, clear=True):
+            checks = await pr.validation_checks(record, paths)
+        self.assertEqual([c[1] for c in checks], [
+            ('make', 'verify-hygiene'), ('make', 'verify-runner'),
+            ('npm', 'ci', '--prefix', 'gocrm-ui'),
+            ('make', 'e2e', 'E2E_DB_DRIVER=sqlite', 'SPECS=' + SMOKE)])
+        # Direct check assembly still retains every frozen acceptance root.
+        with patch.dict(os.environ, {}, clear=True):
+            checks = await runner.validation_checks(record, paths)
+        self.assertIn('acceptance-regression', [c[0] for c in checks])
+        self.assertFalse(any(c[0].startswith('database-') for c in checks))
+
     async def test_missing_selected_spec_requires_full_matrix(self):
         runner, record = self.selected_runner()
         (self.checkout / 'gocrm-ui' / SMOKE).unlink()

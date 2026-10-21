@@ -49,6 +49,7 @@ jobs:
       - id: plan
         env:
           FORCE_FULL: ${{ inputs.full || false }}
+          REVIEWED_VALIDATION_POLICY_SHA: ${{ vars.REVIEWED_VALIDATION_POLICY_SHA }}
         run: python3 scripts/ci/plan-validation.py
       - name: Retain the selected profile and reasons
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -94,7 +95,14 @@ jobs:
       # The Makefile owns the package lists and the exact commands, so a
       # local `make verify` and CI cannot drift apart.
       - name: Build, vet, test
+        if: needs.plan.outputs.profile != 'runner'
         run: make verify-backend
+      - name: Runner-only API build and affected Go probe checks
+        if: needs.plan.outputs.profile == 'runner'
+        run: |
+          go build ./cmd/...
+          go vet ./automation/langflow/probes/mysql
+          go test ./automation/langflow/probes/mysql
 
   frontend:
     name: Frontend (build, lint, test)
@@ -117,7 +125,12 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
+        if: needs.plan.outputs.profile != 'runner'
         run: make verify-frontend
+      - name: Runner-only frontend build health check
+        if: needs.plan.outputs.profile == 'runner'
+        working-directory: gocrm-ui
+        run: npm ci && npm run build
 
   e2e:
     # One leg per database engine: MySQL 8; MariaDB 10.11, which is what

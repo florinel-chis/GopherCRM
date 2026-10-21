@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the selector from the trusted base, never the PR's proposed selector."""
+"""Use main's policy, or an operator-reviewed policy pinned to this exact PR head."""
 
 import json
 import os
@@ -28,7 +28,25 @@ def main():
     available = (isinstance(base, str) and re.fullmatch("[0-9a-f]{40}", base)
                  and base != "0" * 40
                  and git("merge-base", "--is-ancestor", base, head, check=False).returncode == 0)
-    source = git("show", f"{base}:automation/langflow/gophercrm_runner/validation.py",
+    # A policy rollout must not require the obsolete policy's full suite merely
+    # to correct it. This repository-admin variable authorizes ONE reviewed SHA;
+    # PR text, branch names and candidate files cannot grant this exception.
+    approved = os.environ.get('REVIEWED_VALIDATION_POLICY_SHA', '')
+    policy_ref = base
+    policy_origin = 'base'
+    approved_candidate = available and approved == head
+    if available and kind == 'pull_request' and approved:
+        # Actions tests a synthetic merge commit, not the PR branch tip. Bind
+        # the pin to that tip and require the exact base/tip parent pair.
+        candidate = event.get('pull_request', {}).get('head', {}).get('sha')
+        parents = git('rev-list', '--parents', '-n', '1', head).stdout.split()
+        approved_candidate = approved == candidate and (
+            head == candidate or parents == [head, base, candidate])
+    if approved_candidate and re.fullmatch('[0-9a-f]{40}', approved):
+        policy_ref, policy_origin = approved, 'operator-reviewed exact head'
+    elif available and kind == 'push' and event.get('ref') == 'refs/heads/main':
+        policy_ref, policy_origin = head, 'reviewed main'
+    source = git("show", f"{policy_ref}:automation/langflow/gophercrm_runner/validation.py",
                  check=False) if available else None
     if source is None or source.returncode != 0:
         selected = {
@@ -48,6 +66,8 @@ def main():
                 args.append("--full")
             subprocess.run(args, check=True)
     selected = json.loads(plan_file.read_text())
+    selected.update(policy_commit=policy_ref, policy_origin=policy_origin)
+    plan_file.write_text(json.dumps(selected, indent=2) + '\n')
     print(json.dumps(selected, indent=2))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

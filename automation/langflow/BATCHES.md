@@ -172,6 +172,10 @@ Lessons from implementation:
   stop tokens change atomically, and a later stop takes precedence over resume.
 - Source guards deliberately trade throughput for inspectable assumptions. Tasks
   that depend on earlier changes should be prepared after those changes merge.
+- The first #135 completion run exposed an overbroad full-suite fallback for
+  automation-only edits. The user stopped that approach. The runner-only profile
+  now selects workflow tests and health smoke locally and in CI; application and
+  full-release coverage remain separately defined in the validation runbook.
 
 Potential follow-ups, after a separately selected live canary: add a worker
 heartbeat/process-identity display; measure time per phase before overlapping CI;
