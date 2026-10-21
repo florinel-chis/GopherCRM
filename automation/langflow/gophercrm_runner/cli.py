@@ -26,6 +26,26 @@ def main():
     export = sub.add_parser('export', help='Generate the importable Langflow workflow')
     export.add_argument('path', type=Path)
     export.add_argument('--pr', action='store_true', help='Export the existing-PR completion workflow')
+    export.add_argument('--batch', action='store_true', help='Export the prepared-batch workflow')
+    for name in ('prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', '_batch-worker'):
+        command = sub.add_parser(name)
+        command.add_argument('--config', type=Path, required=True)
+        if name == 'prepare-batch':
+            command.add_argument('--spec', type=Path, required=True)
+        else:
+            command.add_argument('--batch', required=True)
+        if name in {'run-batch', 'start-batch', '_batch-worker'}:
+            command.add_argument('--resume', action='store_true')
+        if name == 'run-batch':
+            command.add_argument('--execute', action='store_true', help='Preview is the default')
+        if name in {'abandon-batch', 'recover-batch'}:
+            command.add_argument('--reason', required=True)
+        if name == 'recover-batch':
+            command.add_argument('--processes-stopped', action='store_true')
+        if name == '_batch-worker':
+            command.add_argument('--lock-fd', type=int, required=True)
+            command.add_argument('--ready-fd', type=int, required=True)
+            command.add_argument('--token', required=True)
     complete = sub.add_parser('complete-pr', help='Review, validate and merge one explicitly pinned existing PR')
     complete.add_argument('--config', type=Path, required=True)
     complete.add_argument('--pr', type=int, required=True)
@@ -88,12 +108,39 @@ def main():
     serve.add_argument('--port', type=int, default=7860)
     args = parser.parse_args()
     if args.command == 'export':
-        from .flows import export_flow, build_pr_flow
-        if args.pr:
+        from .flows import export_flow, build_pr_flow, build_batch_flow
+        if args.pr and args.batch:
+            parser.error('Choose one workflow export')
+        if args.pr or args.batch:
             args.path.parent.mkdir(parents=True, exist_ok=True)
-            args.path.write_text(json.dumps(build_pr_flow(), indent=2) + '\n')
+            args.path.write_text(json.dumps(build_batch_flow() if args.batch else build_pr_flow(), indent=2) + '\n')
         else:
             export_flow(args.path)
+    elif args.command in {'prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', '_batch-worker'}:
+        from .batches import BatchRunner
+        from .config import Config
+        runner = BatchRunner(Config.load(args.config), config_path=args.config)
+        if args.command == 'prepare-batch':
+            result = run_async(runner.prepare(args.spec))
+        elif args.command == 'run-batch':
+            from .flows import run_batch_flow
+            result = run_async(run_batch_flow(args.config, name=args.batch, execute=args.execute, resume=args.resume))
+            result = [item.model_dump(mode='json') for item in result]
+        elif args.command == 'start-batch':
+            from .batch_worker import start
+            result = start(args.config, args.batch, resume=args.resume)
+        elif args.command == '_batch-worker':
+            from .batch_worker import work
+            raise SystemExit(work(args.config, args.batch, args.lock_fd, args.token, args.ready_fd, resume=args.resume))
+        elif args.command == 'status-batch':
+            result = runner.status(args.batch)
+        elif args.command == 'stop-batch':
+            result = runner.stop(args.batch)
+        elif args.command == 'recover-batch':
+            result = runner.recover(args.batch, args.reason, processes_stopped=args.processes_stopped)
+        else:
+            result = runner.abandon(args.batch, args.reason)
+        print(json.dumps(result, indent=2))
     elif args.command == 'complete-pr':
         from .flows import run_pr_flow
         result = run_async(run_pr_flow(args.config, number=args.pr, head=args.head,

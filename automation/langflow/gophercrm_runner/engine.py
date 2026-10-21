@@ -39,6 +39,7 @@ class Runner:
         self.clock = clock
         self._record = None
         self._call_id = None
+        self.batch_context = None
         self.config = config
         self.store = Store(config.state_dir)
         self.commands = commands or Commands(config.state_dir / 'logs')
@@ -57,6 +58,8 @@ class Runner:
 
     async def run_command(self, args, **kwargs):
         if self._record is not None:
+            if self.batch_context is not None:
+                self.batch_context.check_record(self._record)
             seconds = telemetry.remaining(self._record, self.clock(), active_call=self._call_id)
             kwargs['timeout'] = min(kwargs.get('timeout', 120), seconds)
         try:
@@ -147,6 +150,8 @@ class Runner:
 
     def save(self, record):
         self.store.write(f'issue-{record["issue"]}', record)
+        if self.batch_context is not None:
+            self.batch_context.progress(record)
 
     async def head(self, worktree):
         return await self.command('git', 'rev-parse', 'HEAD', cwd=worktree)
@@ -380,6 +385,8 @@ class Runner:
                   'started_at': self.clock(), 'deadline': self.clock() + self.config.issue_timeout_seconds,
                   'provider_calls': 0, 'max_provider_calls': self.config.max_provider_calls,
                   'provider_invocations': [], 'attempts': []}
+        if self.batch_context is not None:
+            self.batch_context.bind(record)
         if not self.store.admit(issue['number']):
             return None
         self.save(record)

@@ -197,6 +197,8 @@ class PullRequestRunner(Runner):
 
     def save(self, record):
         self.store.write(f'completion-pr-{record["pr"]}', record)
+        if self.batch_context is not None:
+            self.batch_context.progress(record)
 
     @staticmethod
     def identity(pr):
@@ -481,6 +483,8 @@ class PullRequestRunner(Runner):
                           source_snapshot=source,
                           reuse_ticket=source['head'] == fetched and source['base'] == base)
         record['contract_hash'] = self.contract_digest(record)
+        if self.batch_context is not None:
+            self.batch_context.bind(record)
         return record
 
     async def prepare_worktree(self, record):

@@ -101,3 +101,32 @@ async def run_flow(config_path, *, execute=False, limit=1):
     payload = build_flow(str(config_path), mode='execute' if execute else 'preview', limit=limit)
     graph = Graph.from_payload(payload)
     return await graph.arun(inputs=[{}], outputs=['RemediationSummary-main'])
+
+
+def build_batch_flow(config_path='', *, name='', mode='preview', resume=False, control_snapshot=''):
+    from lfx.graph import Graph
+    from .batch_component import RunPreparedBatch
+
+    graph = Graph()
+    graph.add_component(RunPreparedBatch(policy_path=config_path, batch_id=name,
+                        mode=mode, resume=resume, control_snapshot=control_snapshot), 'RunPreparedBatch-main')
+    graph.initialize()
+    payload = graph.dump(name='GopherCRM prepared batch',
+        description='Prepared ordered batch → just-in-time freeze → existing ticket/PR gates → verified merge handoff.')
+    for node in payload['data']['nodes']:
+        node.update(type='genericNode', position={'x': 100, 'y': 100})
+        node['data']['selected_output'] = 'result'
+        node['data']['node']['outputs'][0]['selected'] = 'Message'
+    return payload
+
+
+async def run_batch_flow(config_path, *, name, execute=False, resume=False, control_snapshot=''):
+    if execute and not control_snapshot:
+        from .batches import BatchRunner
+        from .config import Config
+        control_snapshot = BatchRunner(Config.load(config_path)).control_snapshot()
+    from lfx.graph import Graph
+
+    graph = Graph.from_payload(build_batch_flow(str(config_path), name=name,
+        mode='execute' if execute else 'preview', resume=resume, control_snapshot=control_snapshot))
+    return await graph.arun(inputs=[{}], outputs=['RunPreparedBatch-main'])

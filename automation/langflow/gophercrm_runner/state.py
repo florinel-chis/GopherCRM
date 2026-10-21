@@ -1,10 +1,13 @@
 """Atomic journals and a process lock shared by every Langflow worker."""
 
 from contextlib import contextmanager
+import asyncio
 import fcntl
 import hashlib
 import json
 import os
+import threading
+import uuid
 from pathlib import Path
 
 from .config import GateError
@@ -13,6 +16,8 @@ from .config import GateError
 class Store:
     def __init__(self, root: Path):
         self.root = root
+        self.batch_id = None
+        self._lock_owner = None
 
     def read(self, name: str) -> dict:
         path = self.root / f'{name}.json'
@@ -75,13 +80,14 @@ class Store:
 
     def stop_after_current(self):
         with self.control_lock():
-            control = {'stopped': True, 'allowed_issue': self.read('active').get('issue')}
+            control = {'stopped': True, 'allowed_issue': self.read('active').get('issue'),
+                       'stop_token': uuid.uuid4().hex}
             self.write('control', control)
             return control
 
     def resume_queue(self):
         with self.control_lock():
-            self.write('control', {'stopped': False})
+            self.write('control', dict(self.read('control'), stopped=False, allowed_issue=None))
 
     def stopped(self, issue=None):
         control = self.read('control')
@@ -120,13 +126,32 @@ class Store:
 
     @contextmanager
     def exclusive(self):
+        # A supervisor calls the existing ticket/PR APIs under this same lock.
+        # Only the same task on the same Store may nest it; another task or
+        # process must still acquire flock, even if it supplies the batch ID.
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        identity = (threading.get_ident(), task)
+        if self._lock_owner == identity:
+            yield
+            return
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(self.root / 'runner.lock', os.O_RDWR | os.O_CREAT, 0o600)
+        acquired = False
         try:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise GateError('Another runner stage is active for this state directory') from exc
+            owner = self.read('batch-owner')
+            if owner and owner.get('id') != self.batch_id:
+                raise GateError('A batch owns this queue; resume or abandon that batch first')
+            self._lock_owner = identity
+            acquired = True
             yield
         finally:
+            if acquired:
+                self._lock_owner = None
             os.close(fd)

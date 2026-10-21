@@ -111,7 +111,9 @@ To process one issue through its configured completion target:
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
 ```
 
-To process the full current queue, use `--limit 27 --execute`, or select **Mode = execute** and **Maximum tickets = 27** in the visual workflow. The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
+The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected backend tickets. The full audit queue includes unsupported UI work and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
+
+The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
 
 All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
@@ -240,6 +242,8 @@ make verify-runner RUNNER_PYTHON=python
 make verify
 # Only after intentionally changing workflow components:
 gophercrm-runner export automation/langflow/flows/remediation.json
+gophercrm-runner export --pr automation/langflow/flows/pr-completion.json
+gophercrm-runner export --batch automation/langflow/flows/batch.json
 ```
 
 Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.
