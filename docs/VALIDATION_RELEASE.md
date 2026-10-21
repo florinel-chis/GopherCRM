@@ -59,10 +59,13 @@ retains the full fallback. This is a scope rule, not a claim that all auth chang
 
 For this profile, local and CI run `python3 scripts/ci/check-auth.py`: API compilation,
 vet for the selected Go packages, then uncached race tests selected from auth/session,
-CSRF, middleware, token-repository, password and HTTP integration test files. Test roots
-are discovered from those files, so newly added auth regressions are included. Every root
-must report an exact pass; missing, duplicate or skipped roots and skipped descendants fail.
-The file patterns are explicit: a new test location must be added to the check policy.
+CSRF, service logging-privacy, middleware, token-repository, password, HTTP integration and
+`test/integration/erasure_test.go` files. The logging-privacy and erasure tests cover login
+log redaction and API-key rejection for erased or deactivated owners; both exercise
+`auth_service.go` directly. Test roots are discovered from those files, so newly added auth regressions are
+included. Every root must report an exact pass; missing, duplicate or skipped roots and
+skipped descendants fail. The file patterns are explicit: a new test location must be added
+to the check policy.
 Local browser coverage is health smoke, login and registration on SQLite; CI runs those
 specs on SQLite, MySQL and MariaDB and builds the frontend. Frozen issue checks remain
 mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated

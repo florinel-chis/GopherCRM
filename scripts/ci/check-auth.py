@@ -16,12 +16,17 @@ from gophercrm_runner.config import GateError
 from gophercrm_runner.evidence import named_go_tests
 
 SOURCES = {
-    'internal/service': ('auth*_test.go', 'csrf_test.go'),
+    # logging_privacy_test.go asserts credentials, hashes and tokens never reach the
+    # Login log output; it exercises auth_service.go directly.
+    'internal/service': ('auth*_test.go', 'csrf_test.go', 'logging_privacy_test.go'),
     'internal/handler': ('auth*_test.go',),
     'internal/middleware': ('auth_test.go', 'registration_test.go'),
     'internal/repository': ('refresh_token_repository_test.go', 'password_reset_token_repository_test.go'),
     'internal/utils': ('password_test.go',),
     'tests': ('auth*_test.go', 'apikey_integration_test.go'),
+    # erasure_test.go holds the ValidateAPIKey regressions for erased and
+    # deactivated owners (FEATURES 1.6/8.4) on in-memory SQLite.
+    'test/integration': ('erasure_test.go',),
 }
 TEST = re.compile(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)', re.MULTILINE)
 

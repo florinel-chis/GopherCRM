@@ -62,6 +62,9 @@ class AuthChecksTests(unittest.TestCase):
     def test_real_selection_covers_auth_and_session_boundaries(self):
         selected = checks.discover()
         self.assertIn('TestAuthLockoutExpiryBoundary', selected['internal/service'])
+        self.assertIn('TestAuthLoggingPrivacy_CredentialsAndTokens', selected['internal/service'])
         self.assertIn('TestAuthHandlerTestSuite', selected['internal/handler'])
         self.assertIn('TestAuthSessionIntegrationTestSuite', selected['tests'])
         self.assertIn('TestAuth_ExpiredBearerToken', selected['internal/middleware'])
+        self.assertIn('TestAPIKeyOfAnErasedUserCannotAuthenticate', selected['test/integration'])
+        self.assertIn('TestAPIKeyOfADeactivatedUserCannotAuthenticate', selected['test/integration'])
