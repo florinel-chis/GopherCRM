@@ -151,7 +151,41 @@ authenticated read gets a more generous budget is wrong. The inline comment besi
 in `cmd/main.go` now matches the code — it read "60 req/min" until 2026-09-18, when it was corrected
 to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is keyed on
 `c.ClientIP()`, which is why `TRUSTED_PROXIES` must be set correctly — otherwise a spoofed
-`X-Forwarded-For` defeats the limiter.
+`X-Forwarded-For` defeats the limiter. With no trusted proxies every client behind one proxy
+shares the proxy's bucket; with a trusted proxy the rightmost untrusted forwarded address,
+IPv4 or IPv6, is the identity.
+
+Visitor state is bounded and owns no goroutine:
+
+- **Per-instance capacity.** Every `RateLimit(...)` call — and therefore every tier and every
+  route group that constructs one — has its own token buckets and tracks at most 10,000 client
+  IPs. State is held in process memory, so limits are neither shared between replicas nor kept
+  across restarts.
+- **Conservative overflow.** When an instance is full, a previously unseen IP gets the ordinary
+  429 envelope. Existing clients are never evicted to make room and keep spending their own
+  remaining tokens. A flood of distinct IPs can therefore lock out new clients of that tier until
+  records expire; it cannot buy anyone a fresh burst.
+- **Idle expiry.** A record is reclaimed only after five minutes without a request (throttled
+  requests count as activity) *and* once its bucket has refilled to the full burst. Dropping it
+  is then indistinguishable from keeping it, so expiry never grants tokens early, even for a
+  custom low-rate limiter whose bucket takes hours to refill.
+- **Cleanup lifecycle.** Expiry is opportunistic: each request reclaims at most four eligible
+  records, chosen from a heap ordered by their earliest safe expiry time, so neither ordinary nor
+  rejected requests scan the table. There is no ticker or background goroutine, so constructing
+  and discarding routers (as tests do) leaks nothing and needs no shutdown.
+
+The previously exported config-driven `RateLimiter` (with `RateLimitType`, `PublicRateLimit` and
+`SmartRateLimit`) was never wired to a route and has been removed, together with its tests; the
+relevant assertions (per-IP keys, spoofed-header resistance, 429 envelope) now exercise the
+production `RateLimit`. The unused `config.RateLimitConfig` struct remains and has never
+configured the live tiers. There are no runtime knobs for capacity or idle expiry.
+
+`internal/middleware/rate_limit_test.go` covers capacity and repeated overflow
+(`TestRateLimitCapacity`), clock-driven refill and safe expiry (`TestRateLimitExpiry`), goroutine-free
+construction and disposal (`TestRateLimitLifecycle`), concurrent arrivals and cleanup under `-race`
+(`TestRateLimitConcurrency`), the 429/abort/OPTIONS contract (`TestRateLimitHTTPBehavior`),
+untrusted and trusted proxy identities including IPv6 (`TestRateLimitTrustedProxy`) and per-instance
+state (`TestRateLimitTierIsolation`). Expiry tests use an injected clock rather than sleeping.
 
 `DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside
 `middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, so the
