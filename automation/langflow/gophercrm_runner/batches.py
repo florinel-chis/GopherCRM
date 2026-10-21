@@ -40,7 +40,10 @@ def read_json(path):
 
 
 def policy_hash(config):
-    return contracts.digest(json.loads(json.dumps(asdict(config), default=str)))
+    policy = asdict(config)
+    if config.documentation_mode == 'legacy':
+        policy.pop('documentation_mode')  # Retain prepared v0.5 batch identities.
+    return contracts.digest(json.loads(json.dumps(policy, default=str)))
 
 
 def positive(value):

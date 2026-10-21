@@ -81,5 +81,6 @@
   "ci_poll_seconds": 30,
   "max_repair_rounds": 3,
   "max_provider_calls": 8,
-  "issue_timeout_seconds": 14400
+  "issue_timeout_seconds": 14400,
+  "documentation_mode": "reviewed"
 }

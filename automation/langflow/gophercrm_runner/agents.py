@@ -2,8 +2,10 @@
 
 import json
 import math
+from copy import deepcopy
 
 from .config import GateError
+from . import documentation
 from .evidence import review_coverage
 from .gates import agent_result
 
@@ -34,20 +36,24 @@ ACCEPTANCE_REVIEW_SCHEMA = {
 
 def arguments(config, *, review=False):
     tools = 'Read,Glob,Grep' if review else 'Read,Glob,Grep,Edit,Write'
+    schema = deepcopy(ACCEPTANCE_REVIEW_SCHEMA if review else CLAIM_SCHEMA)
+    if review and config.documentation_mode == 'reviewed':
+        schema['required'].append('documentation')
+        schema['properties']['documentation'] = documentation.REVIEW_SCHEMA
     args = ['claude', '--safe-mode', '-p', '--permission-mode', 'dontAsk',
             '--tools', tools, '--allowedTools', tools, '--no-session-persistence',
             '--output-format', 'json', '--json-schema',
-            json.dumps(ACCEPTANCE_REVIEW_SCHEMA if review else CLAIM_SCHEMA)]
+            json.dumps(schema)]
     if config.agent_model:
         args += ['--model', config.agent_model]
     return args
 
 
-def parse(output, *, review, criteria):
+def parse(output, *, review, criteria, documentation_plan=None):
     raw = agent_result(output)
     report = raw.get('structured_output')
     if review:
-        review_coverage(report, criteria)
+        review_coverage(report, criteria, documentation_plan=documentation_plan)
     else:
         if (not isinstance(report, dict) or set(report) != set(CLAIM_SCHEMA['required'])
                 or not isinstance(report['summary'], str) or not isinstance(report['addressed_criteria'], list)

@@ -22,7 +22,7 @@ from .gates import (check_state, merge_gate, migration_coverage,
 from .process import Commands, redact
 from .state import Store
 from .readiness import check_disk, doctor, environment_failure, verification_environment
-from . import agents, contracts, evidence, telemetry, validation
+from . import agents, contracts, documentation, evidence, telemetry, validation
 
 
 PR_FIELDS = ('number,url,state,isDraft,headRefOid,baseRefOid,mergeable,reviewDecision,'
@@ -53,6 +53,10 @@ class Runner:
         else:
             policy['validation_selector_sha256'] = hashlib.sha256(
                 Path(validation.__file__).read_bytes()).hexdigest()
+        if config.documentation_mode == 'legacy':
+            policy.pop('documentation_mode')
+        else:
+            policy['documentation_policy_sha256'] = evidence.sha(Path(documentation.__file__).read_bytes())
         self.policy = hashlib.sha256(json.dumps(policy, default=str,
                                                sort_keys=True).encode()).hexdigest()
 
@@ -328,7 +332,8 @@ class Runner:
     async def verify_approval(self, record):
         await self.verify_evidence(record)
         frozen = contracts.load_contract(self.config, record['issue'])
-        evidence.review_coverage(record.get('review'), frozen['acceptance'])
+        evidence.review_coverage(record.get('review'), frozen['acceptance'],
+                                 documentation_plan=await self.documentation_evidence(record))
         if not record['review']['approved'] or record.get('reviewed_head') != record['head']:
             raise GateError('Review has not approved this exact candidate')
         receipt = evidence.verify_receipt(self.config.state_dir, record, record.get('review_receipt'),
@@ -408,7 +413,8 @@ class Runner:
         try:
             output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree, input_text=prompt,
                                         timeout=self.config.agent_timeout_seconds, on_start=started)
-            report, metadata = agents.parse(output, review=review, criteria=frozen['acceptance'])
+            report, metadata = agents.parse(output, review=review, criteria=frozen['acceptance'],
+                documentation_plan=await self.documentation_evidence(record) if review else None)
             metadata.update(configured_model=self.config.agent_model or None,
                             cli_version=self.store.read('readiness').get('versions', {}).get('claude'),
                             role=call['role'], head=record['head'], prompt_template_version=1,
@@ -447,8 +453,136 @@ class Runner:
             json.dumps({k: frozen[k] for k in sorted(contracts.MANIFEST_FIELDS)}) +
             '\nTRUSTED CHECK IDENTITIES (runner executes them):\n' + json.dumps(self.config.acceptance_checks) +
             '\nEXPLICIT REPOSITORY GUIDANCE (follow within the runner restrictions above):\n' +
-            '\n'.join(f'### {d["path"]}\n{d["content"]}' for d in frozen['documents'])
+            '\n'.join(f'### {d["path"]}\n{d["content"]}' for d in frozen['documents']) +
+            self.documentation_prompt(record, frozen['scope_paths'])
         )
+
+    def documentation_prompt(self, record, paths):
+        if self.config.documentation_mode != 'reviewed':
+            return ''
+        selected = self.documentation_record(record).get('documentation_plan')
+        guidance = selected if selected and selected.get('head') == record['head'] else {
+            'preliminary_scope_guidance': documentation.suggestions(paths)}
+        return ('\nDOCUMENTATION MAINTENANCE: assess relevant documentation with the behavior change. '
+            'Update it in this PR when needed; do not mechanically rewrite unaffected prose or timestamps. '
+            'Preserve frozen path scope and protected-file restrictions. If required documentation is '
+            'outside that scope, report the gap; never expand permission yourself. Generated API docs '
+            'must reflect their source; do not claim regeneration you did not observe. The runner owns '
+            'commands, so report required generator work that cannot be completed within this execution. '
+            'For independent review, return documentation with exactly one {path, disposition, reason} '
+            'for EVERY document in the exact candidate plan. Use updated for an accurate committed '
+            'change (including a justified removal), already-accurate or no-impact for an unchanged '
+            'document with a specific explanation, or needs-update for a gap. Missing documentation '
+            'cannot be already-accurate. Reject approval and add a blocking finding for any needs-update. '
+            'Review the actual content and implementation; the map and passing tests are not proof '
+            'of semantic accuracy. Report necessary documentation corrections omitted by this map '
+            'as blocking findings too. Suggestions do not grant authority.\n' + json.dumps(guidance))
+
+    @staticmethod
+    def documentation_check(record):
+        return ('internal:documentation-impact:v1', record['base'], record['head'])
+
+    def documentation_record(self, record):
+        return record
+
+    async def prepare_documentation(self, record):
+        if self.config.documentation_mode != 'reviewed':
+            return
+        selected = await asyncio.to_thread(documentation.plan,
+            Path(record['worktree']), record['base'], record['head'])
+        record['documentation_plan'] = selected
+        record['documentation_receipt'] = evidence.write_receipt(self.config.state_dir, record,
+            'documentation', self.documentation_check(record), json.dumps(selected, sort_keys=True), 0)
+        record.pop('documentation_merge', None)
+        self.save(record)
+
+    async def documentation_evidence(self, record):
+        if self.config.documentation_mode != 'reviewed':
+            return None
+        record = self.documentation_record(record)
+        selected = await asyncio.to_thread(documentation.plan,
+            Path(record['worktree']), record['base'], record['head'])
+        if record.get('documentation_plan') != selected:
+            raise GateError('Documentation impact changed or is missing; revalidate this candidate')
+        receipt = evidence.verify_receipt(self.config.state_dir, record,
+            record.get('documentation_receipt'), 'documentation', self.documentation_check(record))
+        observed = json.loads(evidence.safe_artifact(self.config.state_dir, receipt['output_path']).read_text())
+        if observed != selected:
+            raise GateError('Documentation impact differs from its immutable receipt')
+        return selected
+
+    async def finish_documentation(self, record, merge_commit):
+        if self.config.documentation_mode != 'reviewed':
+            return
+        # Read-only remote reconciliation remains possible after an expired budget.
+        active_record, self._record = self._record, None
+        try:
+            if any(record.get(key) != record['head'] for key in ('tested_head', 'reviewed_head')):
+                raise GateError('Merged documentation lacks approval for this exact candidate')
+            selected = await self.documentation_evidence(record)
+            source = self.documentation_record(record)
+            verdict = source.get('review') or {}
+            receipt = evidence.verify_receipt(self.config.state_dir, source, source.get('review_receipt'),
+                'review', agents.arguments(self.config, review=True))
+            observed = json.loads(evidence.safe_artifact(self.config.state_dir, receipt['output_path']).read_text())
+            if observed != verdict or verdict.get('approved') is not True:
+                raise GateError('Documentation merge requires the unchanged independent approval')
+            documentation.review_coverage(verdict.get('documentation'), selected, True)
+            documentation.commit(merge_commit)
+            await self.command('git', 'fetch', 'origin', merge_commit, cwd=Path(record['worktree']))
+            record['documentation_merge'] = await asyncio.to_thread(documentation.verify_merge,
+                Path(record['worktree']), selected, merge_commit)
+            record.pop('documentation_merge_failure', None)
+            self.save(record)
+        except Exception as exc:
+            record['documentation_merge_failure'] = dict(merge_commit=merge_commit,
+                head=record['head'], error=redact(str(exc))[-4000:], at=self.clock())
+            self.save(record)
+            if isinstance(exc, GateError):
+                raise
+            raise GateError('Merged documentation verification is unavailable: ' + redact(str(exc))) from exc
+        finally:
+            self._record = active_record
+
+    async def abandon_issue(self, number, *, reason, processes_stopped=False):
+        """Dispose an inspected, unverified merged ticket without claiming success."""
+        self.config.allows(number)
+        if not reason.strip() or len(reason) > 1000:
+            raise GateError('Disposition requires a short reason')
+        with self.store.exclusive():
+            record = self.store.journal(number)
+            if (not record or record.get('policy') != self.policy or record.get('stage') in {'merged', 'pr_ready'}
+                    or not record.get('documentation_merge_failure') or not record.get('pr')):
+                raise GateError('Only a matching ticket with failed post-merge documentation verification can be abandoned')
+            unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
+            if unresolved and processes_stopped is not True:
+                raise GateError('Inspect orphaned processes, then explicitly pass --processes-stopped')
+            pr = await self.pr(record['pr'])
+            failure = record['documentation_merge_failure']
+            if (pr.get('state') != 'MERGED' or pr.get('headRefOid') != record['head']
+                    or pr.get('headRefName') != record['branch'] or pr.get('baseRefName') != 'main'
+                    or (pr.get('mergeCommit') or {}).get('oid') != failure['merge_commit']):
+                raise GateError('Remote result changed; inspect before disposition')
+            for call in unresolved:
+                record.setdefault('provider_dispositions', []).append(dict(id=call['id'],
+                    pid=call.get('pid'), at=self.clock(), reason=redact(reason), processes_stopped=True))
+                call.update(status='operator-resolved', ended_at=None)
+            if record['stage'] != 'abandoned':
+                record.setdefault('abandonments', []).append(dict(at=self.clock(), reason=redact(reason)))
+                record.update(stage='abandoned', completed_at=self.clock(),
+                    remote_disposition=dict(state='MERGED', head=pr['headRefOid'],
+                        merge_commit=pr['mergeCommit']['oid'], validated_by_this_execution=False))
+                self.save(record)
+            self.store.stop_after_current()
+            self.store.release(number)
+            return dict(issue=number, status='abandoned', remote_state='MERGED',
+                        validated_by_this_execution=False, queue_stopped=True)
+
+    def documentation_result(self, record):
+        if self.config.documentation_mode != 'reviewed':
+            return {}
+        return {'documentation': (self.documentation_record(record).get('review') or {}).get('documentation', []),
+                'documentation_merge': record.get('documentation_merge')}
 
     async def implement(self, issue, record, feedback=''):
         await self.check_inputs(record)
@@ -543,6 +677,8 @@ class Runner:
         await self.clean(worktree)
         if await self.head(worktree) != record['head'] or await self.head(source) != record['head']:
             raise GateError('Commit changed during validation')
+        if self.config.documentation_mode == 'reviewed':
+            await self.perform(record, 'documentation', self.prepare_documentation, record)
         record.update(tested_head=record['head'], stage='review')
         self.save(record)
 
@@ -557,7 +693,8 @@ class Runner:
             if pending['binding'] != binding:
                 raise GateError('Pending review belongs to different evidence; explicitly refresh validation')
             verdict = pending['verdict']
-            evidence.review_coverage(verdict, contracts.load_contract(self.config, record['issue'])['acceptance'])
+            evidence.review_coverage(verdict, contracts.load_contract(self.config, record['issue'])['acceptance'],
+                                     documentation_plan=await self.documentation_evidence(record))
         else:
             verdict = await self.agent(worktree,
                 'Act as an independent adversarial code reviewer. Read only. Find concrete security, '
@@ -621,7 +758,10 @@ class Runner:
             f'commit `{record["head"]}` with no blocking findings. '
             f'Each frozen criterion has matching named-test evidence and independent review:\n\n{acceptance_summary}\n\n'
             f'Completion target: `{record["completion_target"]}`. All six CI checks are required. '
-            'The PR target stops at PR-ready without merging.\n'))
+            'The PR target stops at PR-ready without merging.\n' +
+            ('\nDocumentation reviewed for this candidate:\n' +
+             documentation.summary(record['review']['documentation']) + '\n'
+             if self.config.documentation_mode == 'reviewed' else '')))
         body.chmod(0o600)
         if existing:
             record['pr'] = existing[0]['number']
@@ -746,17 +886,21 @@ class Runner:
         if (pr.get('headRefOid') != record['head'] or pr.get('headRefName') != record['branch']
                 or pr.get('baseRefName') != 'main'):
             raise GateError('Merged PR does not match the validated commit')
+        await self.finish_documentation(record, pr['mergeCommit']['oid'])
         record.setdefault('completed_at', self.clock())
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         self.save(record)
         self.store.release(record['issue'])
         return {'issue': record['issue'], 'status': 'merged', 'url': pr['url'],
-                'merge_commit': record['merge_commit']}
+                'merge_commit': record['merge_commit'], **self.documentation_result(record)}
 
     async def reconcile(self, record):
         """Observe remote results before prerequisites for any new mutation."""
         if not record:
             return None
+        if record.get('stage') == 'abandoned':
+            return dict(issue=record['issue'], status='abandoned',
+                        remote_disposition=record.get('remote_disposition'), validated_by_this_execution=False)
         await self.check_remote()
         if not record.get('pr') and record.get('stage') == 'publishing':
             matches = json.loads(await self.gh('pr', 'list', '--head', record['branch'], '--state', 'all',

@@ -104,7 +104,8 @@ class ValidationSelectionTests(fixtures.EngineTests):
     async def test_legacy_policy_hash_remains_compatible_and_mode_change_invalidates(self):
         policy = asdict(self.config)
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
-                    'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds', 'validation_mode'):
+                    'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds', 'validation_mode',
+                    'documentation_mode'):
             policy.pop(key)
         old = hashlib.sha256(json.dumps(policy, default=str, sort_keys=True).encode()).hexdigest()
         self.assertEqual(self.runner.policy, old)

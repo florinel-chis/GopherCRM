@@ -27,6 +27,12 @@ browser coverage. Production deploys move to validated, published releases.
 | Runner tests | Required when the workflow changes | Always |
 | Independent review and exact-head merge checks | Required | Release uses the already-reviewed main commit |
 
+[Documentation maintenance](DOCUMENTATION_WORKFLOW.md) adds a commit-bound impact plan and
+explicit documentation decisions to the existing independent review call. The runner verifies
+the reviewed document blobs after merge. CI retains the impact report for PRs and main pushes;
+that report is advisory input to semantic review. This does not widen the selected test profile
+or add a separate model call on the successful path.
+
 `automation/langflow/gophercrm_runner/validation.py` owns the deterministic path map.
 Known entity changes select related specs and the read-only health smoke test; mixed
 changes take the union. Auth/shared infrastructure, schema, dependencies, API contracts,

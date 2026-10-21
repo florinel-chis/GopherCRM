@@ -86,6 +86,12 @@ def main():
     revalidate = sub.add_parser('revalidate', help='Merge current main into the active worktree and invalidate prior gates')
     revalidate.add_argument('--config', type=Path, required=True)
     revalidate.add_argument('--issue', type=int, required=True)
+    abandon = sub.add_parser('abandon-issue', help='Dispose an inspected merged ticket whose documentation verification failed')
+    abandon.add_argument('--config', type=Path, required=True)
+    abandon.add_argument('--issue', type=int, required=True)
+    abandon.add_argument('--reason', required=True)
+    abandon.add_argument('--processes-stopped', action='store_true',
+                         help='Confirm unresolved provider processes were inspected and stopped')
     for name in ('extend-budget', 'report', 'note'):
         control = sub.add_parser(name)
         control.add_argument('--config', type=Path, required=True)
@@ -171,11 +177,14 @@ def main():
             local.setup(args.checkout, args.directory)
         else:
             local.serve(args.directory, args.port)
-    elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note'}:
+    elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note', 'abandon-issue'}:
         from .config import Config
         from .engine import Runner
         runner = Runner(Config.load(args.config))
-        if args.command == 'report':
+        if args.command == 'abandon-issue':
+            print(json.dumps(run_async(runner.abandon_issue(args.issue, reason=args.reason,
+                processes_stopped=args.processes_stopped)), indent=2))
+        elif args.command == 'report':
             report = runner.report(args.issue)
             if args.json:
                 print(json.dumps(report, indent=2))

@@ -7,6 +7,12 @@ verifies the merge before admitting the next item. Installing this version neith
 selects tickets nor starts the audit queue. A live two-ticket canary remains a
 separate operator decision; deterministic fixture success is not a live reliability claim.
 
+With `documentation_mode: "reviewed"`, every child also records documentation impact and
+explicit independent review decisions. Relevant document contents must match the approved
+candidate at the merge commit before the next admission. Include required doc paths in each
+manifest's scope; suggestions do not widen it. The existing calls and budgets own this work.
+See [documentation maintenance](../../docs/DOCUMENTATION_WORKFLOW.md).
+
 ## Prepare and preview
 
 Use the same private configuration and environment as ordinary ticket execution.

@@ -96,6 +96,9 @@ def report(record, preflight, operator, now):
                              'minutes': sum(e['minutes'] for e in entries) if entries else None},
         'attempts': preflight.get('attempts', []) + record.get('attempts', []),
         'last_failure': record.get('last_failure'),
+        'documentation': ((record.get('source_snapshot', {}) if record.get('reuse_ticket') else record)
+                          .get('review') or {}).get('documentation'),
+        'documentation_merge': record.get('documentation_merge'),
     }
     return json.loads(redact(json.dumps(result)))
 

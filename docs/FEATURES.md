@@ -1,6 +1,6 @@
 # GopherCRM Feature Documentation & Test Coverage
 
-> **Last updated:** 2026-10-19 for password-reset pages, CI, and customer websites.
+> **Last updated:** 2026-10-21 for focused workflow validation and documentation maintenance.
 > **Baseline audit:** 2026-08-05; historical suite totals below have not been recounted.
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
@@ -27,13 +27,19 @@ Historical totals from the baseline audit:
 ## Continuous integration
 
 [CI](../.github/workflows/ci.yml) runs on pull requests, merge-queue groups and pushes to `main`.
-It checks repository hygiene; Go build, vet and race tests; frontend build, lint and unit tests;
-and Playwright on MySQL 8, MariaDB 10.11 and SQLite. PRs select health smoke and affected
-feature specs, with full coverage for shared or unmapped changes. `make verify` runs the
-non-browser checks locally; unfiltered `make e2e` runs the full browser suite. The manual
+Application changes run repository hygiene; Go build, vet and race tests; frontend build,
+lint and unit tests; and selected Playwright specs on MySQL 8, MariaDB 10.11 and SQLite.
+PRs select health smoke and affected feature specs, with full coverage for shared or unmapped
+application changes. Runner-only changes use hygiene, runner/probe tests, API/frontend build
+health checks and browser health smoke. `make verify` runs the complete non-browser checks
+locally; unfiltered `make e2e` runs the full browser suite. The manual
 [Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
 and publishing verified artifacts. Production deploys consume those published artifacts.
 See the [validation and release runbook](VALIDATION_RELEASE.md).
+CI also publishes documentation impact. New local workflow configurations require explicit
+documentation review and verify reviewed document contents after merge; see
+[documentation maintenance](DOCUMENTATION_WORKFLOW.md). The CI impact report alone is not
+an approval of documentation accuracy.
 
 ## How to Read This Document
 
