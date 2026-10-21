@@ -366,6 +366,21 @@ file, not by trusting the coverage matrix.
   FEATURES.md row 11.2.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new lockout describe block)
 
+### TC-AUTH-026a — Expiry starts a fresh failure window
+- **Priority:** P0
+- **Expected:** A lock remains active strictly before `locked_until`. At or after that
+  instant, a wrong password persists one failed attempt and clears the expired lock.
+  Five new failures create a new 15-minute lock. A successful login clears the counter
+  and lock in storage. Unknown, incorrect, locked and inactive accounts retain the same
+  public **401** with `Invalid email or password`.
+- **Automation:** `internal/service/auth_lockout_test.go` uses deterministic time at
+  one nanosecond before, exactly at and one nanosecond after expiry. It checks repeated
+  failures and successful reset without waiting 15 minutes. The real HTTP/SQLite case
+  `AuthSessionIntegrationTestSuite.TestLoginFailureResponsesRemainGeneric` verifies
+  equivalent failure responses and persisted state through the session login endpoint.
+- **Validation:** the [auth profile](../VALIDATION_RELEASE.md) runs these regressions,
+  the surrounding auth/session checks, and health/login/registration browser specs.
+
 ---
 
 ## Token storage & remember me (FEATURES 1.9)

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A targeted auth validation profile with auth/session race regressions and application
+  health, login and registration checks. Explicit full/release validation remains complete.
 - Explicit documentation impact and review decisions in new Langflow runner configurations,
   with candidate-bound evidence and verification after merge. CI publishes impact reports;
   documentation updates remain in the reviewed PR.
@@ -90,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Expired login lockouts now start a fresh failure window instead of relocking on the
+  first mistyped password; active locks and generic public authentication failures remain enforced.
 - **AEO profile updates on MySQL.** Saving an existing brand profile preserves its
   creation timestamp instead of writing a zero date, which strict MySQL rejected with a 500.
   Saves return the stored timestamps and continue to allow clearing optional fields.

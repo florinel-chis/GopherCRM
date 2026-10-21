@@ -103,8 +103,11 @@ jobs:
       # The Makefile owns the package lists and the exact commands, so a
       # local `make verify` and CI cannot drift apart.
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'runner'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth'
         run: make verify-backend
+      - name: Auth API build, vet and race regressions
+        if: needs.plan.outputs.profile == 'auth'
+        run: python3 scripts/ci/check-auth.py
       - name: Runner-only API build and affected Go probe checks
         if: needs.plan.outputs.profile == 'runner'
         run: |
@@ -133,10 +136,10 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
-        if: needs.plan.outputs.profile != 'runner'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth'
         run: make verify-frontend
-      - name: Runner-only frontend build health check
-        if: needs.plan.outputs.profile == 'runner'
+      - name: Frontend build health check
+        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth'
         working-directory: gocrm-ui
         run: npm ci && npm run build
 

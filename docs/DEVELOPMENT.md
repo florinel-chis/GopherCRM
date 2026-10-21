@@ -99,6 +99,13 @@ hashing (with a legacy SHA256 fallback for migration). Middleware sets the user 
 `middleware.RequireRole()` for RBAC on routes. An API key whose owner has been erased or deactivated
 is rejected at authentication time.
 
+After an account lock expires, the next wrong password begins a fresh five-attempt window.
+The exact expiry is eligible; an active lock still rejects correct credentials. See the
+deterministic lockout tests and the real HTTP/SQLite session regression in
+[authentication test cases](testing/01-authentication.md). Bounded auth changes use the
+[targeted auth validation profile](VALIDATION_RELEASE.md), including race tests and
+health/login/registration browsers. Releases retain complete validation.
+
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
 tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It
