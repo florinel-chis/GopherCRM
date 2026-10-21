@@ -128,7 +128,7 @@ class Config:
         if any(type(n) is not int or n not in self.issues for n in self.workflow_addition_issues):
             raise GateError('Workflow additions must be authorized for explicit queued issue numbers')
         if ('make', 'verify') not in self.test_commands:
-            raise GateError('make verify is a mandatory local gate')
+            raise GateError('make verify must remain registered for application and full validation')
         if not set(REQUIRED_CHECKS).issubset(self.required_checks):
             raise GateError('All six repository checks must remain required')
         for name in ('agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',

@@ -1,7 +1,7 @@
 # Contextual validation and releases
 
-The MVP reduces repeated browser runs while retaining the existing build, lint, unit,
-race, named acceptance, independent review and merge gates. It does not claim that a
+Validation selects checks relevant to the changed code, with application health smoke
+on ordinary changes and the complete matrix before releases. It does not claim that a
 path map proves the absence of regressions. Unknown or shared changes require full
 browser coverage. Production deploys move to validated, published releases.
 
@@ -18,7 +18,7 @@ browser coverage. Production deploys move to validated, published releases.
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene, Go build/vet/race, frontend build/lint/unit | Complete `make verify` | Complete `make verify` |
+| Hygiene and core checks | Application changes: `make verify`; runner-only: hygiene + runner tests + build/health smoke | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -30,7 +30,15 @@ browser coverage. Production deploys move to validated, published releases.
 `automation/langflow/gophercrm_runner/validation.py` owns the deterministic path map.
 Known entity changes select related specs and the read-only health smoke test; mixed
 changes take the union. Auth/shared infrastructure, schema, dependencies, API contracts,
-workflow changes and unknown paths select the complete browser suite. A deleted selected
+unknown application paths select the complete browser suite. Runner-only changes under
+`automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
+`runner` profile: local `make verify-hygiene`, `make verify-runner`, all frozen acceptance
+checks, and SQLite health smoke. CI runs API/frontend build health checks, the affected Go
+probe checks, runner tests and health smoke on its three existing database jobs. It does
+not run unrelated application unit/race suites or the full feature-browser matrix for
+this profile. Mixed runner/application changes retain the application's core and relevant
+feature coverage. Release/deployment scripts, Makefile, application security/shared code
+and unknown paths still select full coverage. A deleted selected
 spec or unavailable trusted base also forces full coverage. Renames include both paths.
 The plan records changed paths, selected specs, policy version and fallback reasons; CI
 artifacts include both commit SHAs and runner journals bind the plan to their candidate.
@@ -43,8 +51,17 @@ creates no business records. It does not replace a ticket's behavior-specific re
 Existing skipped browser scenarios remain coverage gaps; a passing run is not evidence
 that those scenarios were exercised. The named acceptance parser rejects skipped roots.
 
-CI runs the selector from the base commit. The first rollout has no selector on its base
-and therefore runs full coverage. All six existing required job names remain active;
+CI normally runs the selector from the base commit; pushes to reviewed main use main's
+committed selector. To roll out a reviewed policy correction without rerunning an obsolete
+full-suite rule, a maintainer may set the repository variable `REVIEWED_VALIDATION_POLICY_SHA`
+to the **independently reviewed full candidate SHA** before pushing it. This authorizes
+only that exact head, never a branch, arbitrary PR text or a later commit. A mismatch uses
+the base policy. For GitHub's synthetic PR merge checkout, the event's base and pinned
+branch tip must match both merge parents; the selector still comes from the reviewed tip.
+The retained plan records the policy commit and its source. Remove the
+variable after the policy merges. Explicit full/release validation overrides this narrow
+profile even when the policy pin matches. Ordinary PRs cannot authorize their own policy
+through a tracked file. All six existing required job names remain active;
 selection failure fails them rather than leaving required checks skipped or pending.
 Manual CI defaults to full coverage. To inspect a local plan:
 
@@ -72,8 +89,8 @@ is part of contextual and explicit-full validation policy, so upgrading it inval
 Both ticket and existing-PR workflows use the same selection helper. Receipts still bind
 commands, output, head, base and contract; review, CI and merge do not accept stale evidence.
 
-A contextual full fallback requires disposable SQL configuration even for a workflow or
-shared frontend change. This is intentionally conservative. `doctor` checks browser
+A contextual full fallback requires disposable SQL configuration for shared application
+changes. Runner-only work needs just local SQLite smoke. `doctor` checks browser
 availability for contextual mode. Database setup and safety remain operator responsibilities;
 never point E2E commands at an application database.
 
@@ -123,6 +140,16 @@ The motivating #97 run spent about twenty minutes on each full local browser sui
 core verification took only a few minutes. Its full policy was already frozen, so it completed
 under that policy. The workflow change was developed in a separate worktree. This avoids
 retroactively calling less testing equivalent to already-promised testing.
+
+During #135, the user correctly pointed out that treating every automation change as
+shared application code defeated the lighter-workflow objective. The full run was stopped
+and its partial evidence retained. Policy version 2 separates runner-only work from
+application changes, applies the same profile locally and in CI, and retains full release
+validation. The correction also replaces the unconditional local `make verify` command
+for this profile with relevant runner/hygiene checks and health smoke. A policy pin is an
+explicit maintainer rollout decision after independent review, not self-approval by a PR.
+Local agent instructions must point to this policy rather than unconditionally requesting
+`make verify`; otherwise those instructions can reintroduce the expensive run manually.
 
 Portable frontend configuration also exposed an integration dependency: copied form embed
 links assumed an absolute API base. Regression tests reproduced the failure with `/api/v1`;

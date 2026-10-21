@@ -1,0 +1,198 @@
+{
+  "data": {
+    "nodes": [
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "batch_id": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "batch_id",
+                "value": "",
+                "display_name": "Prepared batch ID",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import BoolInput, DropdownInput, StrInput\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass RunPreparedBatch(Component):\n    display_name = 'Prepared batch \u2192 review \u2192 test \u2192 merge'\n    description = 'Sequential prepared tickets with durable budgets, recovery and stop-after-current.'\n    icon = 'ListChecks'\n    inputs = [\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG.'),\n        StrInput(name='batch_id', display_name='Prepared batch ID', value=''),\n        DropdownInput(name='mode', display_name='Mode', options=['preview', 'status', 'execute'], value='preview'),\n        BoolInput(name='resume', display_name='Resume a stopped batch', value=False,\n                  info='Explicitly continue after inspection; preserves spent budgets and frozen inputs.'),\n        StrInput(name='control_snapshot', display_name='Launch control snapshot', value='', advanced=True,\n                 info='Supplied by the launcher so stop requests during startup take precedence.'),\n    ]\n    outputs = [Output(name='result', display_name='Progress and result', method='run_batch')]\n\n    async def run_batch(self) -> Message:\n        import json\n        import os\n        from gophercrm_runner.batches import BatchRunner\n        from gophercrm_runner.config import Config, GateError\n\n        path = self.policy_path or os.environ.get('GOPHERCRM_RUNNER_CONFIG', '')\n        if not path or self.mode not in {'preview', 'status', 'execute'}:\n            raise GateError('Supply a local policy and a valid batch mode')\n        runner = BatchRunner(Config.load(path), config_path=path)\n        if self.mode == 'status':\n            result = runner.status(self.batch_id)\n        else:\n            result = await runner.run(self.batch_id, execute=self.mode == 'execute', resume=self.resume,\n                                      control_snapshot=self.control_snapshot)\n        self.status = result\n        return Message(text=json.dumps(result))\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "control_snapshot": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "control_snapshot",
+                "value": "",
+                "display_name": "Launch control snapshot",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Supplied by the launcher so stop requests during startup take precedence.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "mode": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": [
+                  "preview",
+                  "status",
+                  "execute"
+                ],
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "toggle": false,
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "mode",
+                "value": "preview",
+                "display_name": "Mode",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "external_options": {},
+                "type": "str",
+                "_input_type": "DropdownInput"
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "resume": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "resume",
+                "value": false,
+                "display_name": "Resume a stopped batch",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Explicitly continue after inspection; preserves spent budgets and frozen inputs.",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "type": "bool",
+                "_input_type": "BoolInput"
+              }
+            },
+            "description": "Sequential prepared tickets with durable budgets, recovery and stop-after-current.",
+            "icon": "ListChecks",
+            "base_classes": [
+              "Message"
+            ],
+            "display_name": "Prepared batch \u2192 review \u2192 test \u2192 merge",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Message"
+                ],
+                "selected": "Message",
+                "name": "result",
+                "display_name": "Progress and result",
+                "method": "run_batch",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "RunPreparedBatch",
+          "id": "RunPreparedBatch-main",
+          "selected_output": "result"
+        },
+        "id": "RunPreparedBatch-main",
+        "type": "genericNode",
+        "position": {
+          "x": 100,
+          "y": 100
+        }
+      }
+    ],
+    "edges": []
+  },
+  "is_component": true,
+  "name": "GopherCRM prepared batch",
+  "description": "Prepared ordered batch \u2192 just-in-time freeze \u2192 existing ticket/PR gates \u2192 verified merge handoff."
+}

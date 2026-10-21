@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from lfx.graph import Graph
-from gophercrm_runner.flows import build_flow
+from gophercrm_runner.flows import build_flow, build_batch_flow
 
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):
@@ -80,6 +80,19 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             await self.run_graph(mode='execute')
         self.assertEqual([call.args[0] for call in issue.await_args_list], [95, 96])
         self.assertTrue(all(call.kwargs == {'execute': True} for call in issue.await_args_list))
+
+    async def test_batch_graph_defaults_to_preview_and_reads_durable_status(self):
+        run = AsyncMock(return_value={'status': 'preview'})
+        with patch('gophercrm_runner.batches.BatchRunner.run', run):
+            graph = Graph.from_payload(json.loads(json.dumps(build_batch_flow(str(self.policy), name='canary'))))
+            await graph.arun(inputs=[{}], outputs=['RunPreparedBatch-main'])
+        run.assert_awaited_once_with('canary', execute=False, resume=False, control_snapshot='')
+        with patch('gophercrm_runner.batches.BatchRunner.status', return_value={
+                'status': 'running', 'current_stage': 'review', 'provider_calls': 2}) as status:
+            graph = Graph.from_payload(build_batch_flow(str(self.policy), name='canary', mode='status'))
+            result = await graph.arun(inputs=[{}], outputs=['RunPreparedBatch-main'])
+        status.assert_called_once_with('canary')
+        self.assertIn('provider_calls', json.dumps([item.model_dump(mode='json') for item in result]))
 
 
 if __name__ == '__main__':

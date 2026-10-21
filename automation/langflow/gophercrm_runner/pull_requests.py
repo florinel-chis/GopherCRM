@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import uuid
 
-from . import agents, contracts, evidence, telemetry
+from . import agents, contracts, evidence, telemetry, validation
 from .config import GateError, CommandError
 from .engine import Runner, PR_FIELDS, CIFailure
 from .gates import merge_gate, touches_database, validate_paths
@@ -197,6 +197,8 @@ class PullRequestRunner(Runner):
 
     def save(self, record):
         self.store.write(f'completion-pr-{record["pr"]}', record)
+        if self.batch_context is not None:
+            self.batch_context.progress(record)
 
     @staticmethod
     def identity(pr):
@@ -255,7 +257,7 @@ class PullRequestRunner(Runner):
 
     async def validation_checks(self, record, paths=None):
         paths = paths if paths is not None else await self.validate_agent_paths(record)
-        commands = [('make', 'verify')] + [c for c in self.config.test_commands if c != ('make', 'verify')]
+        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths))
         if any(p.startswith('automation/langflow/') or p in
                {'Makefile', '.github/workflows/remediation-runner.yml'} for p in paths):
             if ('make', 'verify-runner') not in commands:
@@ -481,6 +483,8 @@ class PullRequestRunner(Runner):
                           source_snapshot=source,
                           reuse_ticket=source['head'] == fetched and source['base'] == base)
         record['contract_hash'] = self.contract_digest(record)
+        if self.batch_context is not None:
+            self.batch_context.bind(record)
         return record
 
     async def prepare_worktree(self, record):

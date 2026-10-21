@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "automation/langflow"))
-from gophercrm_runner.validation import browser_command, changed_paths, plan, SMOKE
+from gophercrm_runner.validation import browser_command, changed_paths, core_commands, plan, SMOKE
 
 
 class ValidationSelectionTests(unittest.TestCase):
@@ -52,14 +52,32 @@ class ValidationSelectionTests(unittest.TestCase):
                      "internal/models/ticket.go", "internal/service/interfaces.go",
                      "internal/handler/routes.go", "migrations/new.sql", "go.mod",
                      "gocrm-ui/package-lock.json", "gocrm-ui/src/components/Table.tsx",
-                     "automation/langflow/gophercrm_runner/validation.py",
-                     "scripts/ci/plan-validation.py", ".github/workflows/ci.yml", "new-feature.bin"]:
+                     "scripts/release/release.py", ".github/workflows/release.yml", "new-feature.bin"]:
             with self.subTest(path=path):
                 self.assertEqual(plan([path])["profile"], "full")
                 self.assertEqual(plan([path])["specs"], [])
         self.assertEqual(plan([])["profile"], "full")
         self.assertEqual(plan(["README.md"], full=True)["profile"], "full")
         self.assertEqual(plan(["docs/DEVELOPMENT.md"])["specs"], [SMOKE])
+
+    def test_runner_only_uses_relevant_checks_and_smoke_without_full_application_tests(self):
+        paths = ['automation/langflow/gophercrm_runner/batches.py', 'scripts/ci/plan-validation.py',
+                 '.github/workflows/ci.yml', 'docs/VALIDATION_RELEASE.md']
+        selected = plan(paths)
+        self.assertEqual(selected['profile'], 'runner')
+        self.assertEqual(selected['specs'], [SMOKE])
+        self.assertEqual(core_commands([('make', 'verify'), ('make', 'verify-runner')], selected),
+                         [('make', 'verify-hygiene'), ('make', 'verify-runner'),
+                          ('npm', 'ci', '--prefix', 'gocrm-ui')])
+        mixed = plan(paths + ['internal/repository/ticket_repository.go'])
+        self.assertEqual(mixed['profile'], 'contextual')
+        self.assertIn('e2e/tests/admin-tickets.spec.ts', mixed['specs'])
+        self.assertEqual(core_commands([], mixed), [('make', 'verify')])
+        full = plan(paths, full=True)
+        self.assertEqual(full['profile'], 'full')
+        self.assertEqual(full['specs'], [])
+        self.assertEqual(core_commands([], full), [('make', 'verify')])
+        self.assertEqual(plan(paths + ['internal/middleware/auth.go'])['profile'], 'full')
 
     def test_paths_cannot_inject_commands_or_github_outputs(self):
         for path in ["../secret", "/tmp/file", "docs/x\nspecs=evil.md", r"..\file", "x\0y"]:
@@ -123,8 +141,76 @@ class ValidationSelectionTests(unittest.TestCase):
             subprocess.run([sys.executable, str(ROOT / "scripts/ci/plan-validation.py")],
                            cwd=root, env=env, check=True, capture_output=True, text=True)
             selected = json.loads((root / "validation-plan.json").read_text())
+            # The fixture has no smoke spec, so the trusted selector falls back
+            # to full rather than executing the candidate's throwing module.
             self.assertEqual(selected["profile"], "full")
-            self.assertIn("shared or validation code", selected["reasons"][0])
+            self.assertEqual(selected['policy_origin'], 'base')
+
+    def test_policy_rollout_pin_applies_only_to_exact_head_and_never_weakens_full(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, text=True,
+                                               stderr=subprocess.DEVNULL).strip()
+            git('init', '-b', 'main')
+            git('config', 'user.email', 'test@example.test')
+            git('config', 'user.name', 'Policy Test')
+            selector = root / 'automation/langflow/gophercrm_runner/validation.py'
+            selector.parent.mkdir(parents=True)
+            source = (ROOT / 'automation/langflow/gophercrm_runner/validation.py').read_text()
+            selector.write_text(source)
+            smoke = root / 'gocrm-ui' / SMOKE
+            smoke.parent.mkdir(parents=True)
+            smoke.write_text('// fixture\n')
+            git('add', '.')
+            git('commit', '-m', 'base')
+            base = git('rev-parse', 'HEAD')
+            selector.write_text(source.replace('POLICY_VERSION = 2', 'POLICY_VERSION = 77'))
+            git('add', '.')
+            git('commit', '-m', 'reviewed policy')
+            head = git('rev-parse', 'HEAD')
+            event = root / 'event.json'
+            event.write_text(json.dumps({'pull_request': {'base': {'sha': base}, 'head': {'sha': head}}}))
+            for pin, full, version, profile in [('', 'false', 2, 'runner'), (base, 'false', 2, 'runner'),
+                    (head, 'false', 77, 'runner'), (head, 'true', 77, 'full')]:
+                env = dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request',
+                    GITHUB_OUTPUT=str(root / 'output'), RUNNER_TEMP=folder,
+                    REVIEWED_VALIDATION_POLICY_SHA=pin, FORCE_FULL=full)
+                env.pop('GITHUB_STEP_SUMMARY', None)
+                subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')],
+                    cwd=root, env=env, check=True, capture_output=True)
+                result = json.loads((root / 'validation-plan.json').read_text())
+                self.assertEqual((result['policy_version'], result['profile']), (version, profile))
+                self.assertEqual(result['policy_commit'], head if pin == head else base)
+
+            # Actions checks out a synthetic merge; the reviewed branch SHA
+            # still pins its policy only when both event parents match.
+            git('checkout', '-b', 'updated-main', base)
+            (root / 'README.md').write_text('Main advanced.\n')
+            git('add', '.')
+            git('commit', '-m', 'main update')
+            updated_base = git('rev-parse', 'HEAD')
+            git('merge', '--no-ff', 'main', '-m', 'synthetic PR merge')
+            merged = git('rev-parse', 'HEAD')
+            for event_base, candidate, version in [(updated_base, head, 77),
+                    (base, head, 2), (updated_base, base, 2)]:
+                event.write_text(json.dumps({'pull_request': {
+                    'base': {'sha': event_base}, 'head': {'sha': candidate}}}))
+                env.update(REVIEWED_VALIDATION_POLICY_SHA=head, FORCE_FULL='false')
+                subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')],
+                    cwd=root, env=env, check=True, capture_output=True)
+                result = json.loads((root / 'validation-plan.json').read_text())
+                self.assertEqual(result['policy_version'], version)
+                self.assertEqual(result['head'], merged)
+
+            # A merged main push uses its reviewed policy; other refs keep base.
+            for ref, version in [('refs/heads/main', 77), ('refs/heads/feature', 2)]:
+                event.write_text(json.dumps({'before': updated_base, 'ref': ref}))
+                env.update(GITHUB_EVENT_NAME='push', REVIEWED_VALIDATION_POLICY_SHA='')
+                subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')],
+                    cwd=root, env=env, check=True, capture_output=True)
+                result = json.loads((root / 'validation-plan.json').read_text())
+                self.assertEqual(result['policy_version'], version)
 
     def test_ci_without_trusted_base_falls_back_to_full(self):
         with tempfile.TemporaryDirectory() as folder:

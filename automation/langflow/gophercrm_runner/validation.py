@@ -1,7 +1,7 @@
-"""Deterministic browser-test selection shared by CI and the installed runner.
+"""Deterministic contextual validation shared by CI and the installed runner.
 
-Core build/lint/unit/race checks and frozen acceptance checks are never removed.
-Paths select only trusted, literal spec names. Unknown/shared code goes full.
+Runner-only changes use runner/hygiene tests and application health smoke.
+Application changes retain core and named acceptance checks; unknown/shared app code goes full.
 """
 
 import argparse
@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-POLICY_VERSION = 1
+POLICY_VERSION = 2
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -49,6 +49,8 @@ SHARED_FILES = {
     "internal/repository/interfaces.go",
 }
 DOC_FILES = {"README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "AGENTS.md"}
+RUNNER_PREFIXES = ("automation/langflow/", "scripts/ci/")
+RUNNER_FILES = {".github/workflows/ci.yml", ".github/workflows/remediation-runner.yml"}
 
 
 def feature_for(path):
@@ -72,6 +74,7 @@ def feature_for(path):
 def plan(paths, *, full=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
+    runner_paths = application_paths = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -83,6 +86,10 @@ def plan(paths, *, full=False):
             raise ValueError("Invalid changed path")
         if name in DOC_FILES or name.startswith("docs/") and name.endswith(".md"):
             continue
+        if name.startswith(RUNNER_PREFIXES) or name in RUNNER_FILES:
+            runner_paths = True
+            continue
+        application_paths = True
         if name in SHARED_FILES or name.startswith(SHARED_PREFIXES):
             reasons.append(f"shared or validation code: {name}")
             continue
@@ -107,14 +114,25 @@ def plan(paths, *, full=False):
             specs.update(f"e2e/tests/{spec}.spec.ts" for spec in FEATURES[feature])
         else:
             reasons.append(f"unmapped path: {name}")
+    profile = 'full' if reasons else 'runner' if runner_paths and not application_paths else 'contextual'
     return {
         "policy_version": POLICY_VERSION,
-        "profile": "full" if reasons else "contextual",
-        "reasons": sorted(set(reasons)) or ["smoke plus affected feature suites"],
+        "profile": profile,
+        "reasons": sorted(set(reasons)) or ["runner checks plus health smoke" if profile == 'runner'
+                                          else "smoke plus affected feature suites"],
         "changed_paths": paths,
         "features": sorted(features),
         "specs": [] if reasons else sorted(specs),
     }
+
+
+def core_commands(configured, selected):
+    if selected['profile'] == 'runner':
+        commands = [('make', 'verify-hygiene'), ('make', 'verify-runner'),
+                    ('npm', 'ci', '--prefix', 'gocrm-ui')]
+        return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
+                           and tuple(c) not in commands]
+    return [('make', 'verify')] + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')]
 
 
 def browser_command(command, selected):

@@ -76,7 +76,7 @@ Every new execution requires a frozen task contract. The operator owns its objec
 }
 ```
 
-These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the complete SQLite/MySQL browser and migration matrix. The backend MVP rejects manual/UI profiles and frontend edits explicitly.
+These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the selected browser tests on SQLite/MySQL and migration tests. The backend MVP rejects manual/UI profiles and frontend edits explicitly.
 
 ```sh
 gophercrm-runner freeze --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 96 --manifest /absolute/path/to/task.json
@@ -103,7 +103,7 @@ Doctor checks tool versions, CLI authentication, private writable state, free di
 
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
 
-`make verify` runs first and installs frontend dependencies itself. The runner does not run a second `npm ci`. Application `DB_*` settings are removed from that command's environment so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
+Application profiles use `make verify`, which installs frontend dependencies itself. The runner-only profile installs frontend dependencies separately for health smoke. Application `DB_*` settings are removed from core/hygiene verification so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
 
 To process one issue through its configured completion target:
 
@@ -111,7 +111,9 @@ To process one issue through its configured completion target:
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
 ```
 
-To process the full current queue, use `--limit 27 --execute`, or select **Mode = execute** and **Maximum tickets = 27** in the visual workflow. The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
+The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected backend tickets. The full audit queue includes unsupported UI work and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
+
+The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
 
 All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
@@ -153,7 +155,7 @@ The workflow accepts open, non-draft PRs from the same repository targeting main
 
 Inspect the pinned external contribution before execution: its code, build scripts and validation definitions execute locally with the host's filesystem access. This workflow is not a sandbox. External runner or validation changes can be reviewed, but repair agents cannot modify those protected paths.
 
-For an unchanged PR-ready ticket, the workflow verifies its original contract, named-test receipts and independent review before reusing them. The original ticket's call counts, limits and artifacts remain intact. Its eventual merge result is recorded alongside the separate completion execution. Existing PRs without reusable evidence receive fresh `make verify`, applicable database checks, and a fresh independent read-only Claude review. Runner/workflow changes also require local `make verify-runner` and the **Langflow runner tests** CI check. Criteria from a linked local ticket remain required during fresh validation.
+For an unchanged PR-ready ticket, the workflow verifies its original contract, named-test receipts and independent review before reusing them. The original ticket's call counts, limits and artifacts remain intact. Its eventual merge result is recorded alongside the separate completion execution. Existing PRs without reusable evidence receive fresh checks selected by the validation policy, applicable database checks, and a fresh independent read-only Claude review. Runner/workflow changes also require local `make verify-runner` and the **Langflow runner tests** CI check. Criteria from a linked local ticket remain required during fresh validation.
 
 Review or test failures enter the bounded repair → test → review cycle. Repair agents cannot modify runner code or validation gates; blockers in those paths require a maintainer fix. Missing/failed CI, stale evidence, unresolved GitHub review requirements, changed PR inputs, forks, draft PRs and changed head/base commits block merging. The final merge uses `--squash --match-head-commit`, with no admin bypass. A lost push or merge response is reconciled before repeating work. Merge reconciliation requires the recorded merge stage and rechecks the exact candidate's test/review receipts. Other remote merges are reported as `external_merge`, release the slot, and never satisfy a linked ticket's acceptance criteria. Failure to update a linked ticket after a verified merge is reported separately and can be retried without holding the PR slot.
 
@@ -236,21 +238,27 @@ operational canary from the deferred controlled benchmark.
 ## Maintain and test the runner
 
 ```sh
+make verify-hygiene
 make verify-runner RUNNER_PYTHON=python
-make verify
+npm ci --prefix gocrm-ui
+make e2e E2E_DB_DRIVER=sqlite SPECS='e2e/tests/health-smoke.spec.ts'
 # Only after intentionally changing workflow components:
 gophercrm-runner export automation/langflow/flows/remediation.json
+gophercrm-runner export --pr automation/langflow/flows/pr-completion.json
+gophercrm-runner export --batch automation/langflow/flows/batch.json
 ```
 
 Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (0.4)
+## Contextual validation (runner-only profile added in 0.5)
 
-New configurations select `validation_mode: "contextual"`: full core verification and all
-frozen acceptance checks, then health smoke plus affected browser suites. Shared/unknown
-changes fall back to full browser coverage. Both ticket and existing-PR workflows use the
+New configurations select `validation_mode: "contextual"`: application changes run core
+verification and all frozen acceptance checks, then health smoke plus affected browser
+suites. Runner-only changes use hygiene/runner tests plus health smoke, without unrelated
+application suites. Shared/unknown application changes fall back to full browser coverage.
+Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
 without this field use `legacy` and retain the original v0.3 behavior and policy hashes.
 Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs before migrating
