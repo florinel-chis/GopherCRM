@@ -8,6 +8,7 @@ import re
 
 from .config import CommandError, GateError
 from .process import redact
+from . import documentation
 
 
 BINDING_KEYS = ('execution_id', 'head', 'base', 'policy', 'contract_hash', 'context_hash', 'validation_attempt')
@@ -111,8 +112,11 @@ def verify_receipt(root, record, reference, check_id, argv):
         raise GateError('Missing or invalid evidence artifact') from exc
 
 
-def review_coverage(verdict, criteria):
-    if (not isinstance(verdict, dict) or set(verdict) != {'approved', 'blocking_findings', 'summary', 'criteria'}
+def review_coverage(verdict, criteria, *, documentation_plan=None):
+    fields = {'approved', 'blocking_findings', 'summary', 'criteria'}
+    if documentation_plan is not None:
+        fields.add('documentation')
+    if (not isinstance(verdict, dict) or set(verdict) != fields
             or type(verdict['approved']) is not bool or not isinstance(verdict['summary'], str)
             or not isinstance(verdict['blocking_findings'], list)
             or any(not isinstance(f, str) or not f.strip() for f in verdict['blocking_findings'])
@@ -131,4 +135,6 @@ def review_coverage(verdict, criteria):
         seen.add(item['id'])
     if seen != set(expected) or verdict['approved'] == bool(verdict['blocking_findings']):
         raise GateError('Review coverage or approval contradicts its findings')
+    if documentation_plan is not None:
+        documentation.review_coverage(verdict['documentation'], documentation_plan, verdict['approved'])
     return verdict

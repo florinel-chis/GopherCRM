@@ -8,7 +8,7 @@ from gophercrm_runner.config import GateError
 class AgentTests(unittest.TestCase):
     def test_explicit_provider_tools_and_structured_claims_do_not_grant_acceptance(self):
         from gophercrm_runner.agents import arguments, parse
-        config = SimpleNamespace(agent_model='')
+        config = SimpleNamespace(agent_model='', documentation_mode='legacy')
         for review, allowed in [(False, 'Read,Glob,Grep,Edit,Write'), (True, 'Read,Glob,Grep')]:
             argv = arguments(config, review=review)
             self.assertEqual(argv[argv.index('--tools') + 1], allowed)
@@ -38,3 +38,15 @@ class AgentTests(unittest.TestCase):
                        total_cost_usd=cost)
             _, metadata = parse(json.dumps(raw), review=False, criteria=[{'id': 'AC-1'}])
             self.assertEqual(metadata['cost'], {'status': 'unavailable', 'usd': None})
+
+    def test_documentation_mode_changes_review_schema_without_expanding_tools(self):
+        from gophercrm_runner.agents import arguments
+        for mode in ('legacy', 'reviewed'):
+            config = SimpleNamespace(agent_model='', documentation_mode=mode)
+            argv = arguments(config, review=True)
+            schema = json.loads(argv[argv.index('--json-schema') + 1])
+            self.assertEqual('documentation' in schema['required'], mode == 'reviewed')
+            self.assertEqual(argv[argv.index('--tools') + 1], 'Read,Glob,Grep')
+            implementation = arguments(config)
+            schema = json.loads(implementation[implementation.index('--json-schema') + 1])
+            self.assertNotIn('documentation', schema['required'])

@@ -7,7 +7,8 @@ flowchart LR
   Queue[Explicit GitHub issue queue] --> Loop[Langflow Loop]
   Loop --> Ticket[Implement ticket in its own worktree]
   Ticket --> Tests[Local tests]
-  Tests --> Review[Independent Claude review]
+  Tests --> Docs[Documentation impact and evidence]
+  Docs --> Review[Independent Claude review including docs]
   Review --> CI[Publish PR and wait for CI]
   Review -->|Findings| Repair[Repair]
   Tests -->|Failure| Repair
@@ -17,7 +18,8 @@ flowchart LR
   Target --> PR[PR ready]
   Target --> Merge[Merge tested and reviewed commit]
   PR --> Loop
-  Merge --> Loop
+  Merge --> DocMerge[Verify reviewed docs landed]
+  DocMerge --> Loop
   Loop --> Results[Results]
 ```
 
@@ -26,6 +28,13 @@ The importable [workflow](flows/remediation.json) contains a queue component, La
 ![Imported workflow after a successful preview](screenshots/workflow.png)
 
 ## Install and preview
+
+New configurations enable `documentation_mode: "reviewed"`: update affected docs in the same
+PR, explain unchanged documents, and require the existing reviewer to assess each decision.
+After merge, document contents are verified before completion. Include needed doc paths in
+the frozen task scope; the map never grants extra write permission. Existing configurations
+omitting the field keep legacy evidence and must migrate explicitly after active work finishes.
+See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
 
 Run these commands from the repository root. Use an isolated environment outside the checkout:
 

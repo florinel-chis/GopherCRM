@@ -157,7 +157,7 @@
                 "list": false,
                 "show": true,
                 "multiline": true,
-                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput\nfrom lfx.schema.data import Data\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass RemediateTicket(Component):\n    display_name = 'Implement \u2192 test \u2192 review \u2192 PR / merge'\n    description = 'One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.'\n    icon = 'GitPullRequest'\n    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data', 'JSON'], required=True)]\n    outputs = [Output(name='result', display_name='Result', method='run_ticket')]\n\n    async def run_ticket(self) -> Message:\n        import json\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        item = self.ticket.data if isinstance(self.ticket, Data) else None\n        if not isinstance(item, dict) or item.get('mode') not in {'preview', 'execute'}:\n            raise GateError('Invalid queue item')\n        runner = Runner(Config.load(item['config_path']))\n        self.status = f'Issue #{item[\"issue\"]}: {item[\"mode\"]}'\n        result = await runner.run_issue(item['issue'], execute=item['mode'] == 'execute')\n        self.status = result['status']\n        return Message(text=json.dumps(result))\n",
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput\nfrom lfx.schema.data import Data\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass RemediateTicket(Component):\n    display_name = 'Implement \u2192 test \u2192 review \u2192 PR / merge'\n    description = 'Isolated worktree, focused checks, documentation assessment, independent review, CI and verified merge.'\n    icon = 'GitPullRequest'\n    inputs = [HandleInput(name='ticket', display_name='Ticket', input_types=['Data', 'JSON'], required=True)]\n    outputs = [Output(name='result', display_name='Result', method='run_ticket')]\n\n    async def run_ticket(self) -> Message:\n        import json\n        from gophercrm_runner.config import Config, GateError\n        from gophercrm_runner.engine import Runner\n\n        item = self.ticket.data if isinstance(self.ticket, Data) else None\n        if not isinstance(item, dict) or item.get('mode') not in {'preview', 'execute'}:\n            raise GateError('Invalid queue item')\n        runner = Runner(Config.load(item['config_path']))\n        self.status = f'Issue #{item[\"issue\"]}: {item[\"mode\"]}'\n        result = await runner.run_issue(item['issue'], execute=item['mode'] == 'execute')\n        self.status = result['status']\n        return Message(text=json.dumps(result))\n",
                 "fileTypes": [],
                 "file_path": "",
                 "password": false,
@@ -170,7 +170,7 @@
                 "title_case": false
               }
             },
-            "description": "One isolated worktree. Bounded repair loop, independent Claude review, all CI gates.",
+            "description": "Isolated worktree, focused checks, documentation assessment, independent review, CI and verified merge.",
             "icon": "GitPullRequest",
             "base_classes": [
               "Message"
@@ -568,5 +568,5 @@
   },
   "is_component": false,
   "name": "GopherCRM remediation runner",
-  "description": "Explicit GitHub queue \u2192 sequential Loop \u2192 implement/test/review \u2192 configured PR-ready or merge target. Preview by default."
+  "description": "Explicit queue \u2192 implement \u2192 focused tests/documentation \u2192 independent review \u2192 PR-ready or verified merge. Preview by default."
 }

@@ -21,6 +21,9 @@ from .process import redact
 
 
 class PullRequestRunner(Runner):
+    def documentation_record(self, record):
+        return record['source_snapshot'] if record.get('reuse_ticket') else record
+
     @staticmethod
     def contract_digest(record):
         return evidence.sha(json.dumps({k: record.get(k) for k in
@@ -289,7 +292,8 @@ class PullRequestRunner(Runner):
             await runner.verify_approval(source)
             return
         await self.verify_evidence(record)
-        evidence.review_coverage(record.get('review'), record['criteria'])
+        evidence.review_coverage(record.get('review'), record['criteria'],
+                                 documentation_plan=await self.documentation_evidence(record))
         if not record['review']['approved'] or record.get('reviewed_head') != record['head']:
             raise GateError('Independent review has not approved this exact PR candidate')
         receipt = evidence.verify_receipt(self.config.state_dir, record, record.get('review_receipt'),
@@ -312,7 +316,8 @@ class PullRequestRunner(Runner):
             'For approval, every finding is the empty string and blocking_findings is empty. '
             'If there are no frozen criteria, return an empty criteria array and still review the entire '
             'diff for correctness, security, compatibility and test gaps.\n'
-            'EXPLICIT REPOSITORY GUIDANCE:\n' + json.dumps(record['documents'])
+            'EXPLICIT REPOSITORY GUIDANCE:\n' + json.dumps(record['documents']) +
+            self.documentation_prompt(record, [])
         )
 
     async def agent(self, worktree, prompt, record, *, review=False):
@@ -328,7 +333,8 @@ class PullRequestRunner(Runner):
             output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree,
                                         input_text=prompt, on_start=started,
                                         timeout=self.config.agent_timeout_seconds)
-            report, metadata = agents.parse(output, review=review, criteria=record['criteria'])
+            report, metadata = agents.parse(output, review=review, criteria=record['criteria'],
+                documentation_plan=await self.documentation_evidence(record) if review else None)
             metadata.update(configured_model=self.config.agent_model or None, role=call['role'],
                             head=record['head'], context_hash=record['context_hash'],
                             contract_hash=record['contract_hash'])
@@ -362,7 +368,8 @@ class PullRequestRunner(Runner):
         if pending:
             if pending['binding'] != binding:
                 raise GateError('Pending review belongs to stale PR evidence')
-            verdict = evidence.review_coverage(pending['verdict'], record['criteria'])
+            verdict = evidence.review_coverage(pending['verdict'], record['criteria'],
+                documentation_plan=await self.documentation_evidence(record))
         else:
             diff = await self.command('git', 'diff', '--no-ext-diff', '--no-textconv',
                                       record['base'], record['head'], cwd=worktree)
@@ -419,6 +426,7 @@ class PullRequestRunner(Runner):
             raise GateError('Merged-candidate evidence is unavailable: ' + redact(str(exc))) from exc
         finally:
             self._record = active_record
+        await self.finish_documentation(record, pr['mergeCommit']['oid'])
         record.update(stage='merged', merge_commit=pr['mergeCommit']['oid'], url=pr['url'])
         record.setdefault('completed_at', self.clock())
         self.save(record)
@@ -440,7 +448,8 @@ class PullRequestRunner(Runner):
         self.store.release_pr(record['pr'])
         return {'pr': record['pr'], 'status': 'merged', 'url': pr['url'],
                 'merge_commit': record['merge_commit'],
-                'source_reconciliation_error': record.get('source_reconciliation_error')}
+                'source_reconciliation_error': record.get('source_reconciliation_error'),
+                **self.documentation_result(record)}
 
     def external_merge(self, record, pr):
         if any(c['status'] == 'running' for c in record.get('provider_invocations', [])):

@@ -6,7 +6,7 @@ from lfx.template.field.base import Output
 
 class CompletePullRequest(Component):
     display_name = 'Review → test → merge existing PR'
-    description = 'Explicit pinned PR admission. Independent review, bounded repairs, exact-head merge.'
+    description = 'Pinned PR, tests and documentation review, bounded repairs, exact-head merge and documentation verification.'
     icon = 'GitMerge'
     inputs = [
         StrInput(name='policy_path', display_name='Local configuration path', value='',

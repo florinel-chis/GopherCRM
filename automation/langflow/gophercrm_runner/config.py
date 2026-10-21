@@ -61,6 +61,8 @@ class Config:
     # An omitted mode retains v0.3 behavior and evidence hashes. Explicit full
     # runs the complete browser/database matrix even for UI-only changes.
     validation_mode: str = 'legacy'
+    # Existing journals keep their original approval schema; new policies opt in.
+    documentation_mode: str = 'legacy'
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -88,6 +90,8 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if self.documentation_mode not in {'legacy', 'reviewed'}:
+            raise GateError('documentation_mode must be legacy or reviewed')
         if self.validation_mode not in {'legacy', 'full', 'contextual'}:
             raise GateError('validation_mode must be legacy, full or contextual')
         if self.validation_mode == 'full' and not self.database_test_commands:

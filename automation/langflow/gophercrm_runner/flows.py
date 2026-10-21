@@ -22,7 +22,7 @@ def build_flow(config_path='', *, mode='preview', limit=1):
     graph.add_component_edge('Loop-main', ('done', 'results'), 'RemediationSummary-main')
     graph.initialize()
     payload = graph.dump(name='GopherCRM remediation runner',
-                         description='Explicit GitHub queue → sequential Loop → implement/test/review → configured PR-ready or merge target. Preview by default.')
+                         description='Explicit queue → implement → focused tests/documentation → independent review → PR-ready or verified merge. Preview by default.')
     # Loop's feedback handle is a synthetic input supplied by the editor, not a
     # regular Component input, so add that edge to the public serialized schema.
     payload['data']['edges'].append({
@@ -79,7 +79,7 @@ def build_pr_flow(config_path='', *, number=0, head='', mode='preview', refresh=
                         expected_head=head, mode=mode, refresh=refresh), 'CompletePullRequest-main')
     graph.initialize()
     payload = graph.dump(name='GopherCRM existing PR completion',
-        description='Explicit PR → validation → independent review → repair/retest → CI → exact-head merge.')
+        description='Explicit PR → validation/documentation → independent review → repair/retest → CI → merge/documentation verification.')
     for node in payload['data']['nodes']:
         node.update(type='genericNode', position={'x': 100, 'y': 100})
         node['data']['selected_output'] = 'result'
@@ -112,7 +112,7 @@ def build_batch_flow(config_path='', *, name='', mode='preview', resume=False, c
                         mode=mode, resume=resume, control_snapshot=control_snapshot), 'RunPreparedBatch-main')
     graph.initialize()
     payload = graph.dump(name='GopherCRM prepared batch',
-        description='Prepared ordered batch → just-in-time freeze → existing ticket/PR gates → verified merge handoff.')
+        description='Prepared batch → just-in-time freeze → ticket/PR tests and documentation review → verified merge handoff.')
     for node in payload['data']['nodes']:
         node.update(type='genericNode', position={'x': 100, 'y': 100})
         node['data']['selected_output'] = 'result'

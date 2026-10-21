@@ -219,17 +219,25 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
-ESLint is a required, passing gate. CI selects health smoke and affected browser suites,
-with full coverage for shared or unknown changes, on MySQL, MariaDB and SQLite. Local
+Application profiles include ESLint as a required, passing gate. CI selects health smoke and
+affected browser suites, with full coverage for shared or unknown application changes, on
+MySQL, MariaDB and SQLite. Runner-only changes use hygiene and runner/probe tests, API/frontend
+build checks, and health smoke rather than unrelated application suites. Local
 `make e2e` still defaults to the full suite. See [validation and releases](VALIDATION_RELEASE.md)
 for selection, full-suite overrides, version preparation, rehearsals and publication.
 Production deployment follows a published full-validation release, rather than every main push.
 
-Runner changes additionally require `make verify-runner`. Install `automation/langflow[flows]`
+Runner changes require `make verify-runner` and the focused checks selected by the policy.
+Install `automation/langflow[flows]`
 in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpreter is not
 `python3`. This target runs the deterministic workflow suite, compares the checked-in graph
 without rewriting it, and tests the read-only database probe. Runner CI uses the same target,
 including merge-group events. See the [runner guide](../automation/langflow/README.md).
+
+Update relevant documentation in the same PR. CI identifies affected guides; the local
+workflow records explicit review decisions and verifies documentation after merge. Include
+documentation paths during task preparation and explain when an unchanged document remains
+accurate. See [documentation maintenance](DOCUMENTATION_WORKFLOW.md).
 
 Backend coverage spans handlers, services, middleware (auth, rate limit, error handler, recovery,
 request ID), utils (sort, password, response, crypto, context, transaction), config, and models.

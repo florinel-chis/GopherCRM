@@ -6,7 +6,7 @@ from lfx.template.field.base import Output
 
 class RunPreparedBatch(Component):
     display_name = 'Prepared batch → review → test → merge'
-    description = 'Sequential prepared tickets with durable budgets, recovery and stop-after-current.'
+    description = 'Prepared tickets with durable budgets, recovery, stop control and verified code/documentation handoff.'
     icon = 'ListChecks'
     inputs = [
         StrInput(name='policy_path', display_name='Local configuration path', value='',

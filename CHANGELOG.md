@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Explicit documentation impact and review decisions in new Langflow runner configurations,
+  with candidate-bound evidence and verification after merge. CI publishes impact reports;
+  documentation updates remain in the reviewed PR.
+- Bounded prepared backend batches and a runner-only validation profile using relevant workflow
+  tests and application health smoke. Releases retain the full validation matrix.
+
 - Contextual browser validation for PRs and the local Langflow runner: health smoke plus
-  affected feature specs, with full fallback for shared or unknown changes. Core verification,
+  affected feature specs, with full fallback for shared or unknown changes. Selected core checks,
   named issue regressions, independent review and exact-commit merge checks remain required.
 - A manual full-validation Release workflow with rehearsal mode, version/changelog preparation,
   verified artifacts, annotated tags and draft-first publication. Production deploys now consume
