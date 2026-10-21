@@ -226,8 +226,10 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
-Application profiles include ESLint as a required, passing gate. CI selects health smoke and
-affected browser suites, with full coverage for shared or unknown application changes, on
+The bounded auth profile replaces the full core checks with targeted auth/session race tests,
+API/frontend build checks, and health/login/registration browsers; it does not run frontend
+lint or unit tests. Other application profiles include ESLint as a required, passing gate.
+CI selects health smoke and affected browser suites, with full coverage for shared or unknown application changes, on
 MySQL, MariaDB and SQLite. Runner-only changes use hygiene and runner/probe tests, API/frontend
 build checks, and health smoke rather than unrelated application suites. Local
 `make e2e` still defaults to the full suite. See [validation and releases](VALIDATION_RELEASE.md)
