@@ -9,17 +9,20 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'automation/langflow'))
 from gophercrm_runner import documentation
+from gophercrm_runner.config import GateError
 
 
 def main():
     directory = Path(os.environ['RUNNER_TEMP'])
     selection = json.loads((directory / 'validation-plan.json').read_text())
-    if selection.get('base') and selection.get('base') != '0' * 40:
+    try:
+        if not selection.get('base') or selection.get('base') == '0' * 40:
+            raise GateError('No comparison base is available')
         result = documentation.plan(Path.cwd(), selection['base'], selection['head'])
         result['status'] = 'assessment-required'
-    else:
+    except (GateError, OSError) as exc:
         result = dict(status='comparison-unavailable', base=selection.get('base'),
-                      head=selection.get('head'), documents=[])
+                      head=selection.get('head'), documents=[], reason=str(exc)[:1000])
     result['semantic_approval'] = False
     result['notice'] = ('Impact report only. Update affected docs in the PR or explain why they '
                         'remain accurate, and have the reviewer assess that decision.')

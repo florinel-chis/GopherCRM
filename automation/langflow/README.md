@@ -35,6 +35,10 @@ After merge, document contents are verified before completion. Include needed do
 the frozen task scope; the map never grants extra write permission. Existing configurations
 omitting the field keep legacy evidence and must migrate explicitly after active work finishes.
 See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
+If a merged ticket fails documentation verification, inspect its evidence and either restore
+verification prerequisites or explicitly use `abandon-issue` with a reason. This retains the
+unverified result and leaves the queue stopped; it does not close issues or claim a successful
+handoff. Existing PR completions retain their `abandon-pr` recovery path.
 
 Run these commands from the repository root. Use an isolated environment outside the checkout:
 

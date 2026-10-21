@@ -66,6 +66,9 @@ def suggestions(paths):
                 add((path,), 'changed documentation')
             continue
         lower = path.lower()
+        if ('docker' in lower or path in {'.github/workflows/deploy.yml', 'scripts/deploy/bootstrap.sh'}
+                or path.startswith('scripts/deploy/')):
+            add(('docs/DOCKER.md', 'docs/SETUP.md'), 'container or deployment operations')
         if path.startswith(('automation/langflow/', '.github/', 'scripts/ci/', 'scripts/release/',
                             'scripts/deploy/')) or path == 'Makefile':
             add(WORKFLOW, 'development or delivery workflow')
@@ -95,7 +98,7 @@ def git(repo, *args):
     try:
         return subprocess.check_output(['git', '--literal-pathspecs', *args], cwd=repo,
             stderr=subprocess.PIPE, timeout=15).decode()
-    except (subprocess.SubprocessError, UnicodeError) as exc:
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         raise GateError('Cannot inspect committed documentation') from exc
 
 
@@ -125,7 +128,7 @@ def plan(repo, base, head):
     commit(head)
     try:
         paths = changed_paths(base, head, cwd=repo)
-    except (ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         raise GateError('Cannot determine documentation change scope') from exc
     documents = suggestions(paths)
     if len(documents) > 80:
@@ -173,7 +176,12 @@ def verify_merge(repo, selected, merge_commit):
 
 
 def summary(report):
-    return '\n'.join(f'- `{d["path"]}` — {d["disposition"]}: {d["reason"]}' for d in report)
+    # GitHub interprets issue-closing keywords in PR bodies. Never publish
+    # model-authored prose (or arbitrary repository filenames) through this path.
+    names = {'updated': 'updated', 'already-accurate': 'already accurate', 'no-impact': 'no impact'}
+    counts = ', '.join(f'{sum(d["disposition"] == key for d in report)} {label}'
+                       for key, label in names.items())
+    return f'{len(report)} documents reviewed: {counts}. Detailed decisions are retained in the local workflow report.'
 
 
 def main():

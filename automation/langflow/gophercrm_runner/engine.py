@@ -460,7 +460,7 @@ class Runner:
     def documentation_prompt(self, record, paths):
         if self.config.documentation_mode != 'reviewed':
             return ''
-        selected = record.get('documentation_plan')
+        selected = self.documentation_record(record).get('documentation_plan')
         guidance = selected if selected and selected.get('head') == record['head'] else {
             'preliminary_scope_guidance': documentation.suggestions(paths)}
         return ('\nDOCUMENTATION MAINTENANCE: assess relevant documentation with the behavior change. '
@@ -514,11 +514,11 @@ class Runner:
     async def finish_documentation(self, record, merge_commit):
         if self.config.documentation_mode != 'reviewed':
             return
-        if any(record.get(key) != record['head'] for key in ('tested_head', 'reviewed_head')):
-            raise GateError('Merged documentation lacks approval for this exact candidate')
         # Read-only remote reconciliation remains possible after an expired budget.
         active_record, self._record = self._record, None
         try:
+            if any(record.get(key) != record['head'] for key in ('tested_head', 'reviewed_head')):
+                raise GateError('Merged documentation lacks approval for this exact candidate')
             selected = await self.documentation_evidence(record)
             source = self.documentation_record(record)
             verdict = source.get('review') or {}
@@ -532,9 +532,51 @@ class Runner:
             await self.command('git', 'fetch', 'origin', merge_commit, cwd=Path(record['worktree']))
             record['documentation_merge'] = await asyncio.to_thread(documentation.verify_merge,
                 Path(record['worktree']), selected, merge_commit)
+            record.pop('documentation_merge_failure', None)
             self.save(record)
+        except Exception as exc:
+            record['documentation_merge_failure'] = dict(merge_commit=merge_commit,
+                head=record['head'], error=redact(str(exc))[-4000:], at=self.clock())
+            self.save(record)
+            if isinstance(exc, GateError):
+                raise
+            raise GateError('Merged documentation verification is unavailable: ' + redact(str(exc))) from exc
         finally:
             self._record = active_record
+
+    async def abandon_issue(self, number, *, reason, processes_stopped=False):
+        """Dispose an inspected, unverified merged ticket without claiming success."""
+        self.config.allows(number)
+        if not reason.strip() or len(reason) > 1000:
+            raise GateError('Disposition requires a short reason')
+        with self.store.exclusive():
+            record = self.store.journal(number)
+            if (not record or record.get('policy') != self.policy or record.get('stage') in {'merged', 'pr_ready'}
+                    or not record.get('documentation_merge_failure') or not record.get('pr')):
+                raise GateError('Only a matching ticket with failed post-merge documentation verification can be abandoned')
+            unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
+            if unresolved and processes_stopped is not True:
+                raise GateError('Inspect orphaned processes, then explicitly pass --processes-stopped')
+            pr = await self.pr(record['pr'])
+            failure = record['documentation_merge_failure']
+            if (pr.get('state') != 'MERGED' or pr.get('headRefOid') != record['head']
+                    or pr.get('headRefName') != record['branch'] or pr.get('baseRefName') != 'main'
+                    or (pr.get('mergeCommit') or {}).get('oid') != failure['merge_commit']):
+                raise GateError('Remote result changed; inspect before disposition')
+            for call in unresolved:
+                record.setdefault('provider_dispositions', []).append(dict(id=call['id'],
+                    pid=call.get('pid'), at=self.clock(), reason=redact(reason), processes_stopped=True))
+                call.update(status='operator-resolved', ended_at=None)
+            if record['stage'] != 'abandoned':
+                record.setdefault('abandonments', []).append(dict(at=self.clock(), reason=redact(reason)))
+                record.update(stage='abandoned', completed_at=self.clock(),
+                    remote_disposition=dict(state='MERGED', head=pr['headRefOid'],
+                        merge_commit=pr['mergeCommit']['oid'], validated_by_this_execution=False))
+                self.save(record)
+            self.store.stop_after_current()
+            self.store.release(number)
+            return dict(issue=number, status='abandoned', remote_state='MERGED',
+                        validated_by_this_execution=False, queue_stopped=True)
 
     def documentation_result(self, record):
         if self.config.documentation_mode != 'reviewed':
@@ -856,6 +898,9 @@ class Runner:
         """Observe remote results before prerequisites for any new mutation."""
         if not record:
             return None
+        if record.get('stage') == 'abandoned':
+            return dict(issue=record['issue'], status='abandoned',
+                        remote_disposition=record.get('remote_disposition'), validated_by_this_execution=False)
         await self.check_remote()
         if not record.get('pr') and record.get('stage') == 'publishing':
             matches = json.loads(await self.gh('pr', 'list', '--head', record['branch'], '--state', 'all',

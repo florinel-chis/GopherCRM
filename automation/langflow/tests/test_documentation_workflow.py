@@ -148,6 +148,55 @@ class DocumentationTicketTests(fixtures.EngineTests):
             await self.runner.run_issue(96, execute=True)
         self.assertEqual(self.commands.implementations, 1)
 
+    async def test_failed_merge_has_explicit_idempotent_disposition_without_claiming_success(self):
+        self.drift_merge = True
+        with self.assertRaises(GateError):
+            await self.runner.run_issue(95, execute=True)
+        before = self.runner.store.journal(95)
+        result = await self.runner.abandon_issue(95, reason='Inspected mismatch; prepare a separate correction.')
+        self.assertEqual(result['status'], 'abandoned')
+        self.assertFalse(result['validated_by_this_execution'])
+        after = self.runner.store.journal(95)
+        self.assertEqual(after['provider_calls'], before['provider_calls'])
+        self.assertEqual(after['documentation_merge_failure'], before['documentation_merge_failure'])
+        self.assertEqual(after['receipts'], before['receipts'])
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertTrue(self.runner.store.read('control')['stopped'])
+        self.assertEqual((await self.runner.run_issue(95, execute=True))['status'], 'abandoned')
+        self.assertEqual((await self.runner.run_issue(96, execute=True))['status'], 'stopped')
+        await self.runner.abandon_issue(95, reason='Repeat after response loss.')
+        self.assertEqual(self.runner.store.journal(95)['completed_at'], after['completed_at'])
+        self.assertEqual(self.runner.store.journal(95)['abandonments'], after['abandonments'])
+
+    async def test_unverified_external_merge_requires_orphan_acknowledgement(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.journal(95)
+        record.update(stage='implement', tested_head=None, reviewed_head=None)
+        record['provider_calls'] += 1
+        record['provider_invocations'].append(dict(id='orphan', status='running', pid=123))
+        self.runner.save(record)
+        tree = git(self, 'rev-parse', record['head'] + '^{tree}')
+        merge = git(self, 'commit-tree', tree, '-p', record['base'], '-m', 'external merge during repair')
+        self.commands.pr_data.update(state='MERGED', mergeCommit={'oid': merge})
+        with self.assertRaisesRegex(GateError, 'lacks approval'):
+            await self.runner.run_issue(95, execute=True)
+        with self.assertRaisesRegex(GateError, 'processes-stopped'):
+            await self.runner.abandon_issue(95, reason='Inspected external merge.')
+        result = await self.runner.abandon_issue(95, reason='Inspected and stopped orphan.', processes_stopped=True)
+        self.assertEqual(result['status'], 'abandoned')
+        final = self.runner.store.journal(95)
+        self.assertEqual(final['provider_calls'], record['provider_calls'])
+        self.assertEqual(final['provider_invocations'][-1]['status'], 'operator-resolved')
+        self.assertFalse(final['remote_disposition']['validated_by_this_execution'])
+
+    async def test_ordinary_success_cannot_be_downgraded_to_an_abandonment(self):
+        await self.runner.run_issue(95, execute=True)
+        with self.assertRaises(GateError):
+            await self.runner.abandon_issue(95, reason='Not a failed documentation merge.')
+        self.assertEqual(self.runner.store.journal(95)['stage'], 'merged')
+
     async def test_pr_ready_promotion_keeps_original_documentation_evidence(self):
         self.runner = Runner(replace(self.config, completion_target='pr'), self.commands)
         result = await self.runner.run_issue(95, execute=True)
@@ -192,6 +241,9 @@ class DocumentationPRTests(pr_fixtures.PullRequestTests):
             await self.complete()
         self.assertEqual(self.runner.store.read('completion-pr-122')['stage'], 'merging')
         self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        result = await self.runner.abandon_pr(122, reason='Inspected mismatch; preserve evidence for correction.')
+        self.assertEqual(result['status'], 'abandoned')
+        self.assertEqual(self.runner.store.read('active'), {})
 
 
 for _child, _parent in [(DocumentationTicketTests, fixtures.EngineTests),

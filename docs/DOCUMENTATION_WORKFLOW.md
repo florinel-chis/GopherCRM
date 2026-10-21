@@ -50,13 +50,32 @@ approvals are not relabelled as documentation-reviewed approvals.
    A real gap follows the existing bounded repair, retest and review cycle. The normal
    success path adds no model invocation solely for documentation.
 5. Publication and merge recheck candidate-bound evidence. New ticket PR descriptions
-   include the documentation decisions. Existing-PR completion preserves its admitted
+   include a bounded count of documentation decisions; free-form reasons stay in the
+   private report so they cannot inject GitHub issue-closing keywords. Existing-PR completion preserves its admitted
    title/body and exposes decisions through its result and private report instead.
 6. After GitHub confirms the merge, the runner reads that exact merge commit and compares
    its relevant documentation blobs with the approved candidate. A mismatch stops the
    handoff and records a recoverable failure. It does not start another ticket or guess
    a correction. Lost-response reconciliation works after the execution deadline without
    another merge or model call.
+
+If verification fails, first inspect the retained failure. Restoring missing local evidence
+and repeating the original execution can verify the existing merge without merging again.
+When the mismatch requires a separate correction, explicitly dispose of the failed local
+execution instead of editing its journal:
+
+```sh
+gophercrm-runner abandon-issue --config /absolute/private/config.json --issue 123 \
+  --reason 'Inspected unverified merged documentation; prepare a separate correction'
+```
+
+This command only applies to a merged ticket whose documentation verification failed. It
+retains failures, receipts and spent budgets, marks the execution **abandoned, not validated**,
+releases its active marker and leaves the queue stopped. If a provider invocation remains
+unresolved, inspect and stop its processes first, then pass `--processes-stopped`. Existing PR
+completions use `abandon-pr`. A batch owner must first be recovered if necessary and explicitly
+abandoned using the [batch procedure](../automation/langflow/BATCHES.md); an unverified child
+never advances the batch. Disposition does not edit GitHub or resume the next ticket.
 
 ## What the impact map covers
 
@@ -85,7 +104,8 @@ PYTHONPATH=automation/langflow python3 -m gophercrm_runner.documentation \
 
 CI publishes `documentation-impact-<run-id>` and a job summary for PRs, merge groups and
 merged main commits. It uses the same changed-commit inputs as validation. An unavailable
-comparison is explicitly labelled. This artifact identifies what reviewers should assess;
+comparison (including unsupported document types or excessive scope) is explicitly labelled
+without discarding the validation plan. This artifact identifies what reviewers should assess;
 **it is not semantic approval** and needs no model credentials. Human-authored PRs still need
 their reviewer to check documentation; the strict structured gate applies to the local runner
 with reviewed mode enabled. The post-merge CI report does not launch another agent or PR.
@@ -105,6 +125,11 @@ that an LLM will always notice stale prose.
 The motivating failure was a workflow change whose runbook was updated while FEATURES,
 DEVELOPMENT and operator-local instructions still described the older test policy. This
 change updates those descriptions and maps future workflow changes to the same guides.
+Independent review identified two additional failure paths. Public summaries now use trusted
+counts rather than reviewer-authored prose, which could contain GitHub closing keywords or
+exceed body limits. An explicit disposition now releases an inspected failed post-merge ticket
+without claiming success, preserving the failure and keeping the queue stopped.
+
 Reusing existing model calls avoids turning documentation into another expensive independent
 pipeline. Preserving existing PR body identity also avoids invalidating an admitted review
 merely to append a generated status section.

@@ -43,4 +43,16 @@ class DocumentationCI(unittest.TestCase):
                 else:
                     self.assertEqual(report['documents'], [])
             self.assertIn('Documentation impact', (root / 'summary').read_text())
+            # Unassessable input must not discard validation or pretend docs passed.
+            (repo / 'README.md').unlink()
+            (repo / 'README.md').symlink_to('/etc/passwd')
+            git('add', '.')
+            git('commit', '-m', 'unassessable document')
+            (root / 'validation-plan.json').write_text(json.dumps(dict(base=base, head=git('rev-parse', 'HEAD'))))
+            subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-documentation.py')],
+                cwd=repo, env=environment, check=True, capture_output=True)
+            report = json.loads((root / 'documentation-impact.json').read_text())
+            self.assertEqual(report['status'], 'comparison-unavailable')
+            self.assertIn('symlink', report['reason'])
+            self.assertFalse(report['semantic_approval'])
             self.assertEqual(git('status', '--porcelain'), '')

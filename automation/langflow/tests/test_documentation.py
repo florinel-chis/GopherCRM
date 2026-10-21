@@ -127,6 +127,36 @@ class DocumentationTests(unittest.TestCase):
         # Moving main never changes what the original merge proves.
         self.assertEqual(docs.verify_merge(self.root, selected, merge), receipt)
 
+    def test_public_summary_never_includes_untrusted_issue_keywords_or_large_prose(self):
+        report = [dict(path='docs/Fixes #14.md', disposition='updated',
+                       reason='Closes #12. ' * 300) for _ in range(80)]
+        summary = docs.summary(report)
+        self.assertLess(len(summary), 256)
+        self.assertNotIn('#', summary)
+        self.assertNotIn('Closes', summary)
+        self.assertNotIn('Fixes', summary)
+        self.assertIn('80 updated', summary)
+
+    def test_unavailable_worktree_is_a_recoverable_gate_error(self):
+        with self.assertRaises(GateError):
+            docs.blob(self.root / 'missing', self.base, 'README.md')
+        with self.assertRaises(GateError):
+            docs.plan(self.root / 'missing', self.base, self.base)
+
+    def test_container_and_deployment_changes_include_operational_guides(self):
+        for path in ('Dockerfile', 'docker-compose.yml', '.dockerignore', '.github/workflows/deploy.yml'):
+            selected = {d['path'] for d in docs.suggestions([path])}
+            self.assertTrue({'docs/SETUP.md', 'docs/DOCKER.md'}.issubset(selected))
+
+    def test_legacy_prepared_batch_policy_retains_observed_v050_identity(self):
+        from dataclasses import replace
+        from gophercrm_runner.batches import policy_hash
+        from gophercrm_runner.config import Config
+        config = Config(repository='example/repo', checkout=Path('/repo'), state_dir=Path('/state'), issues=(95,))
+        # Captured with the installed, merged v0.5.0 implementation.
+        self.assertEqual(policy_hash(config), 'b8cf2c70dbbd5ffdf6b8fc3138fa54ca1133a0540caf3330a8d6a00938368b68')
+        self.assertNotEqual(policy_hash(config), policy_hash(replace(config, documentation_mode='reviewed')))
+
 
 if __name__ == '__main__':
     unittest.main()
