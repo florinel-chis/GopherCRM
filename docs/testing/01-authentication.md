@@ -273,7 +273,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:120-142`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:122-145`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -336,7 +336,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:167-171`), deliberately so the account's state is
+  the same error (`internal/service/auth_service.go:180-184`), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
   swagger annotation. A case expecting "account disabled" would be wrong.
@@ -358,13 +358,28 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:145-165`), so a correct password
+  password result is examined (`internal/service/auth_service.go:152-178`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
   later.") before lockout can be observed. Spacing or `DISABLE_RATE_LIMIT=true` is mandatory — see
   FEATURES.md row 11.2.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new lockout describe block)
+
+### TC-AUTH-026a — Expiry starts a fresh failure window
+- **Priority:** P0
+- **Expected:** A lock remains active strictly before `locked_until`. At or after that
+  instant, a wrong password persists one failed attempt and clears the expired lock.
+  Five new failures create a new 15-minute lock. A successful login clears the counter
+  and lock in storage. Unknown, incorrect, locked and inactive accounts retain the same
+  public **401** with `Invalid email or password`.
+- **Automation:** `internal/service/auth_lockout_test.go` uses deterministic time at
+  one nanosecond before, exactly at and one nanosecond after expiry. It checks repeated
+  failures and successful reset without waiting 15 minutes. The real HTTP/SQLite case
+  `AuthSessionIntegrationTestSuite.TestLoginFailureResponsesRemainGeneric` verifies
+  equivalent failure responses and persisted state through the session login endpoint.
+- **Validation:** the [auth profile](../VALIDATION_RELEASE.md) runs these regressions,
+  the surrounding auth/session checks, and health/login/registration browser specs.
 
 ---
 

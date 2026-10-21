@@ -77,6 +77,26 @@ class ValidationSelectionTests(fixtures.EngineTests):
         self.assertIn('E2E_DB_DRIVER=sqlite', checks[0][1])
         self.assertIn(SMOKE, checks[0][1][-1])
 
+    async def test_auth_uses_targeted_checks_and_preserves_explicit_database_contracts(self):
+        runner, record = self.selected_runner()
+        for name in ['login', 'registration']:
+            (self.checkout / 'gocrm-ui/e2e/tests' / (name + '.spec.ts')).write_text('// fixture\n')
+        paths = ['internal/service/auth_service.go', 'tests/auth_session_integration_test.go']
+        with patch.dict(os.environ, {}, clear=True):
+            checks = await runner.validation_checks(record, paths)
+        self.assertIn(('python3', 'scripts/ci/check-auth.py'), [c[1] for c in checks])
+        self.assertNotIn(('make', 'verify'), [c[1] for c in checks])
+        self.assertIn('acceptance-regression', [c[0] for c in checks])
+        self.assertEqual(checks[-1][0], 'browser-0')
+        self.assertIn('e2e/tests/login.spec.ts', checks[-1][1][-1])
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            database = runner.browser_validation_checks(record, paths, database_profile=True)
+        self.assertEqual(database[-1][1], DATABASE_CHECKS[-1])
+        self.assertIn('E2E_DB_DRIVER=mysql', database[1][1])
+        (self.checkout / 'gocrm-ui/e2e/tests/login.spec.ts').unlink()
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
+            await runner.validation_checks(record, paths)
+
     async def test_explicit_full_runs_complete_matrix_for_ui_and_docs(self):
         selected, record = self.selected_runner()
         runner = Runner(replace(selected.config, validation_mode='full'), self.commands)

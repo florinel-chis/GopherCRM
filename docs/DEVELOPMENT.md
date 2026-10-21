@@ -99,6 +99,13 @@ hashing (with a legacy SHA256 fallback for migration). Middleware sets the user 
 `middleware.RequireRole()` for RBAC on routes. An API key whose owner has been erased or deactivated
 is rejected at authentication time.
 
+After an account lock expires, the next wrong password begins a fresh five-attempt window.
+The exact expiry is eligible; an active lock still rejects correct credentials. See the
+deterministic lockout tests and the real HTTP/SQLite session regression in
+[authentication test cases](testing/01-authentication.md). Bounded auth changes use the
+[targeted auth validation profile](VALIDATION_RELEASE.md), including race tests and
+health/login/registration browsers. Releases retain complete validation.
+
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
 tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It
@@ -219,8 +226,10 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
-Application profiles include ESLint as a required, passing gate. CI selects health smoke and
-affected browser suites, with full coverage for shared or unknown application changes, on
+The bounded auth profile replaces the full core checks with targeted auth/session race tests,
+API/frontend build checks, and health/login/registration browsers; it does not run frontend
+lint or unit tests. Other application profiles include ESLint as a required, passing gate.
+CI selects health smoke and affected browser suites, with full coverage for shared or unknown application changes, on
 MySQL, MariaDB and SQLite. Runner-only changes use hygiene and runner/probe tests, API/frontend
 build checks, and health smoke rather than unrelated application suites. Local
 `make e2e` still defaults to the full suite. See [validation and releases](VALIDATION_RELEASE.md)

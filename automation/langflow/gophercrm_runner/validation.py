@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -51,6 +51,12 @@ SHARED_FILES = {
 DOC_FILES = {"README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "AGENTS.md"}
 RUNNER_PREFIXES = ("automation/langflow/", "scripts/ci/")
 RUNNER_FILES = {".github/workflows/ci.yml", ".github/workflows/remediation-runner.yml"}
+AUTH_FILES = {
+    'internal/service/auth_service.go', 'internal/handler/auth_handler.go',
+    'internal/handler/auth_registration.go', 'scripts/ci/check-auth.py',
+}
+AUTH_TEST = re.compile(r'(?:internal/(?:service|handler)/auth[a-z0-9_]*_test|tests/auth[a-z0-9_]*_test)\.go$')
+AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
 
 
 def feature_for(path):
@@ -74,7 +80,7 @@ def feature_for(path):
 def plan(paths, *, full=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
-    runner_paths = application_paths = False
+    runner_paths = application_paths = auth_paths = other_application = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -86,10 +92,15 @@ def plan(paths, *, full=False):
             raise ValueError("Invalid changed path")
         if name in DOC_FILES or name.startswith("docs/") and name.endswith(".md"):
             continue
+        if name in AUTH_FILES or AUTH_TEST.fullmatch(name):
+            auth_paths = application_paths = True
+            specs.update(AUTH_SPECS)
+            continue
         if name.startswith(RUNNER_PREFIXES) or name in RUNNER_FILES:
             runner_paths = True
             continue
         application_paths = True
+        other_application = True
         if name in SHARED_FILES or name.startswith(SHARED_PREFIXES):
             reasons.append(f"shared or validation code: {name}")
             continue
@@ -114,12 +125,17 @@ def plan(paths, *, full=False):
             specs.update(f"e2e/tests/{spec}.spec.ts" for spec in FEATURES[feature])
         else:
             reasons.append(f"unmapped path: {name}")
-    profile = 'full' if reasons else 'runner' if runner_paths and not application_paths else 'contextual'
+    if auth_paths and other_application:
+        reasons.append('auth mixed with other application changes')
+    profile = ('full' if reasons else 'auth' if auth_paths else
+               'runner' if runner_paths and not application_paths else 'contextual')
     return {
         "policy_version": POLICY_VERSION,
         "profile": profile,
-        "reasons": sorted(set(reasons)) or ["runner checks plus health smoke" if profile == 'runner'
-                                          else "smoke plus affected feature suites"],
+        "reasons": sorted(set(reasons)) or [
+            'targeted auth/session checks plus login, registration and health smoke' if profile == 'auth'
+            else "runner checks plus health smoke" if profile == 'runner'
+            else "smoke plus affected feature suites"],
         "changed_paths": paths,
         "features": sorted(features),
         "specs": [] if reasons else sorted(specs),
@@ -127,6 +143,13 @@ def plan(paths, *, full=False):
 
 
 def core_commands(configured, selected):
+    if selected['profile'] == 'auth':
+        commands = [('make', 'verify-hygiene'), ('python3', 'scripts/ci/check-auth.py'),
+                    ('npm', 'ci', '--prefix', 'gocrm-ui')]
+        if any(p.startswith(RUNNER_PREFIXES) or p in RUNNER_FILES for p in selected['changed_paths']):
+            commands.append(('make', 'verify-runner'))
+        return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
+                           and tuple(c) not in commands]
     if selected['profile'] == 'runner':
         commands = [('make', 'verify-hygiene'), ('make', 'verify-runner'),
                     ('npm', 'ci', '--prefix', 'gocrm-ui')]

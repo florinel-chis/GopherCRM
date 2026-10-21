@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "automation/langflow"))
-from gophercrm_runner.validation import browser_command, changed_paths, core_commands, plan, SMOKE
+from gophercrm_runner.validation import browser_command, changed_paths, core_commands, plan, SMOKE, POLICY_VERSION
 
 
 class ValidationSelectionTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(selected["features"], ["customer", "lead"])
 
     def test_shared_security_schema_dependencies_and_unknown_paths_go_full(self):
-        for path in ["internal/service/auth_service.go", "internal/middleware/auth.go",
+        for path in ["internal/middleware/auth.go",
                      "internal/models/ticket.go", "internal/service/interfaces.go",
                      "internal/handler/routes.go", "migrations/new.sql", "go.mod",
                      "gocrm-ui/package-lock.json", "gocrm-ui/src/components/Table.tsx",
@@ -78,6 +78,26 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(full['specs'], [])
         self.assertEqual(core_commands([], full), [('make', 'verify')])
         self.assertEqual(plan(paths + ['internal/middleware/auth.go'])['profile'], 'full')
+
+    def test_auth_checks_are_bounded_and_retain_custom_commands(self):
+        paths = ['internal/service/auth_service.go', 'internal/service/auth_lockout_test.go',
+                 'tests/auth_session_integration_test.go', 'docs/FEATURES.md']
+        selected = plan(paths)
+        self.assertEqual(selected['profile'], 'auth')
+        self.assertEqual(set(selected['specs']), {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'})
+        custom = ('go', 'test', './extra')
+        self.assertEqual(core_commands([('make', 'verify'), custom], selected), [
+            ('make', 'verify-hygiene'), ('python3', 'scripts/ci/check-auth.py'),
+            ('npm', 'ci', '--prefix', 'gocrm-ui'), custom])
+        mixed = plan(paths + ['automation/langflow/gophercrm_runner/validation.py'])
+        self.assertEqual(mixed['profile'], 'auth')
+        self.assertIn(('make', 'verify-runner'), core_commands([], mixed))
+        for path in ['internal/service/customer_service.go', 'internal/repository/user_repository.go',
+                     'internal/models/user.go', 'internal/service/auth_new.go', 'unknown.go', 'api/swagger.json']:
+            with self.subTest(path=path):
+                self.assertEqual(plan(paths + [path])['profile'], 'full')
+        self.assertEqual(plan(paths, full=True)['profile'], 'full')
+        self.assertEqual(plan(['scripts/ci/check-auth.py'])['profile'], 'auth')
 
     def test_paths_cannot_inject_commands_or_github_outputs(self):
         for path in ["../secret", "/tmp/file", "docs/x\nspecs=evil.md", r"..\file", "x\0y"]:
@@ -165,13 +185,13 @@ class ValidationSelectionTests(unittest.TestCase):
             git('add', '.')
             git('commit', '-m', 'base')
             base = git('rev-parse', 'HEAD')
-            selector.write_text(source.replace('POLICY_VERSION = 2', 'POLICY_VERSION = 77'))
+            selector.write_text(source.replace(f'POLICY_VERSION = {POLICY_VERSION}', 'POLICY_VERSION = 77'))
             git('add', '.')
             git('commit', '-m', 'reviewed policy')
             head = git('rev-parse', 'HEAD')
             event = root / 'event.json'
             event.write_text(json.dumps({'pull_request': {'base': {'sha': base}, 'head': {'sha': head}}}))
-            for pin, full, version, profile in [('', 'false', 2, 'runner'), (base, 'false', 2, 'runner'),
+            for pin, full, version, profile in [('', 'false', POLICY_VERSION, 'runner'), (base, 'false', POLICY_VERSION, 'runner'),
                     (head, 'false', 77, 'runner'), (head, 'true', 77, 'full')]:
                 env = dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request',
                     GITHUB_OUTPUT=str(root / 'output'), RUNNER_TEMP=folder,
@@ -193,7 +213,7 @@ class ValidationSelectionTests(unittest.TestCase):
             git('merge', '--no-ff', 'main', '-m', 'synthetic PR merge')
             merged = git('rev-parse', 'HEAD')
             for event_base, candidate, version in [(updated_base, head, 77),
-                    (base, head, 2), (updated_base, base, 2)]:
+                    (base, head, POLICY_VERSION), (updated_base, base, POLICY_VERSION)]:
                 event.write_text(json.dumps({'pull_request': {
                     'base': {'sha': event_base}, 'head': {'sha': candidate}}}))
                 env.update(REVIEWED_VALIDATION_POLICY_SHA=head, FORCE_FULL='false')
@@ -204,7 +224,7 @@ class ValidationSelectionTests(unittest.TestCase):
                 self.assertEqual(result['head'], merged)
 
             # A merged main push uses its reviewed policy; other refs keep base.
-            for ref, version in [('refs/heads/main', 77), ('refs/heads/feature', 2)]:
+            for ref, version in [('refs/heads/main', 77), ('refs/heads/feature', POLICY_VERSION)]:
                 event.write_text(json.dumps({'before': updated_base, 'ref': ref}))
                 env.update(GITHUB_EVENT_NAME='push', REVIEWED_VALIDATION_POLICY_SHA='')
                 subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')],

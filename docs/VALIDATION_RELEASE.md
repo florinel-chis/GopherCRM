@@ -18,7 +18,7 @@ browser coverage. Production deploys move to validated, published releases.
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Application changes: `make verify`; runner-only: hygiene + runner tests + build/health smoke | Complete `make verify` |
+| Hygiene and core checks | Auth profile: hygiene + targeted auth checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -35,7 +35,7 @@ or add a separate model call on the successful path.
 
 `automation/langflow/gophercrm_runner/validation.py` owns the deterministic path map.
 Known entity changes select related specs and the read-only health smoke test; mixed
-changes take the union. Auth/shared infrastructure, schema, dependencies, API contracts,
+changes take the union. Shared infrastructure, schema, dependencies, API contracts,
 unknown application paths select the complete browser suite. Runner-only changes under
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
 `runner` profile: local `make verify-hygiene`, `make verify-runner`, all frozen acceptance
@@ -43,13 +43,40 @@ checks, and SQLite health smoke. CI runs API/frontend build health checks, the a
 probe checks, runner tests and health smoke on its three existing database jobs. It does
 not run unrelated application unit/race suites or the full feature-browser matrix for
 this profile. Mixed runner/application changes retain the application's core and relevant
-feature coverage. Release/deployment scripts, Makefile, application security/shared code
+feature coverage. Release/deployment scripts, Makefile, unmapped security/shared code
 and unknown paths still select full coverage. A deleted selected
 spec or unavailable trusted base also forces full coverage. Renames include both paths.
 The plan records changed paths, selected specs, policy version and fallback reasons; CI
 artifacts include both commit SHAs and runner journals bind the plan to their candidate.
 Maintainers should explicitly choose full validation for high-risk semantic changes even
 when their paths are mapped; the selector does not infer security impact from issue prose.
+
+The bounded `auth` profile covers `auth_service.go`, `auth_handler.go`,
+`auth_registration.go`, auth test files in their service/handler packages and `tests/`,
+and the auth-check script itself. Docs and runner changes may accompany them; any other
+application path (including auth middleware, repositories, schema or generated API contracts)
+retains the full fallback. This is a scope rule, not a claim that all auth changes are low risk.
+
+For this profile, local and CI run `python3 scripts/ci/check-auth.py`: API compilation,
+vet for the selected Go packages, then uncached race tests selected from auth/session,
+CSRF, service logging-privacy, middleware, token-repository, password, HTTP integration and
+`test/integration/erasure_test.go` files. The logging-privacy and erasure tests cover login
+log redaction and API-key rejection for erased or deactivated owners; both exercise
+`auth_service.go` directly. Test roots are discovered from those files, so newly added auth regressions are
+included. Every root must report an exact pass; missing, duplicate or skipped roots and
+skipped descendants fail. The file patterns are explicit: a new test location must be added
+to the check policy.
+Local browser coverage is health smoke, login and registration on SQLite; CI runs those
+specs on SQLite, MySQL and MariaDB and builds the frontend. Frozen issue checks remain
+mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated
+feature-browser suite is added by this profile. An explicitly frozen database profile still
+requires its MySQL/migration checks; explicit full and releases retain the complete matrix.
+
+This refinement came from issue #100: the previous map treated even a bounded login-counter
+fix as a full application change. Deterministic boundary tests and real session HTTP coverage
+provide direct evidence for that behavior without replaying unrelated entity journeys.
+Use an explicitly new local configuration/state after installing the updated selector;
+its content hash invalidates unfinished contextual execution policies.
 
 The smoke test checks `/health`, rejection of anonymous ticket access, admin login and
 successful collection/page loading for leads, customers, tickets, tasks and users. It

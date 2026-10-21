@@ -265,12 +265,15 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (runner-only profile added in 0.5)
+## Contextual validation (auth profile added in 0.7)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser
 suites. Runner-only changes use hygiene/runner tests plus health smoke, without unrelated
-application suites. Shared/unknown application changes fall back to full browser coverage.
+application suites. Bounded auth service/handler changes use targeted auth/session race tests,
+API/frontend build checks, and health/login/registration browsers. Repository, schema,
+middleware and mixed application changes retain the full fallback; explicit database
+acceptance contracts still apply. Shared/unknown application changes fall back to full browser coverage.
 Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
 without this field use `legacy` and retain the original v0.3 behavior and policy hashes.

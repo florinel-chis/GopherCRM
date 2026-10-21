@@ -308,7 +308,10 @@ class Runner:
 
     def browser_validation_checks(self, record, paths, database_profile=False):
         selected = self.validation_selection(record, paths)
-        requires_database = touches_database(paths) or database_profile
+        # The bounded auth profile changes no schema/repository code. Its
+        # checks include real SQLite session persistence; CI exercises auth
+        # browsers on all engines. An explicit database contract still wins.
+        requires_database = (touches_database(paths) and selected['profile'] != 'auth') or database_profile
         if self.config.validation_mode != 'legacy' and selected['profile'] == 'full':
             requires_database = True
         if requires_database:

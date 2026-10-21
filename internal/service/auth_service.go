@@ -55,6 +55,8 @@ type authService struct {
 	jwtConfig        config.JWTConfig
 	apiKeySecret     string
 	appBaseURL       string
+	// loginTime is an instance-local clock for lockout decisions; nil uses wall time.
+	loginTime func() time.Time
 }
 
 func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig, apiKeySecret ...string) AuthService {
@@ -142,8 +144,13 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 		return nil, errors.New("invalid credentials")
 	}
 
+	clock := time.Now
+	if s.loginTime != nil {
+		clock = s.loginTime
+	}
+	now := clock()
 	// Check if account is locked
-	if user.LockedUntil != nil && user.LockedUntil.After(time.Now()) {
+	if user.LockedUntil != nil && user.LockedUntil.After(now) {
 		logger.WithField("user_id", user.ID).Warn("Login failed - account locked")
 		return nil, errors.New("account is locked due to too many failed login attempts, please try again later")
 	}
@@ -151,10 +158,16 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 	// Check password result
 	if bcryptErr != nil {
 		logger.WithField("user_id", user.ID).Warn("Login failed - invalid password")
+		// An expired lock starts a fresh failure window, including at its
+		// exact expiry. Active locks have already returned above.
+		if user.LockedUntil != nil {
+			user.FailedLoginAttempts = 0
+			user.LockedUntil = nil
+		}
 		// Increment failed login attempts
 		user.FailedLoginAttempts++
 		if user.FailedLoginAttempts >= MaxFailedLoginAttempts {
-			lockUntil := time.Now().Add(AccountLockDuration)
+			lockUntil := now.Add(AccountLockDuration)
 			user.LockedUntil = &lockUntil
 			logger.WithField("user_id", user.ID).Warn("Account locked due to too many failed login attempts")
 		}

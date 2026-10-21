@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/handler"
@@ -271,4 +272,57 @@ func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordFlow() {
 
 func TestAuthSessionIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthSessionIntegrationTestSuite))
+}
+
+func (suite *AuthSessionIntegrationTestSuite) TestLoginFailureResponsesRemainGeneric() {
+	var baseline string
+	for _, state := range []string{"unknown", "incorrect", "locked", "inactive", "expired"} {
+		suite.Run(state, func() {
+			email := "login-failure-" + state + "@example.com"
+			password := "WrongPassword123!"
+			user := &models.User{Email: email, FirstName: "Login", LastName: "Failure", Role: models.RoleCustomer}
+			if state != "unknown" {
+				suite.Require().NoError(suite.userService.Register(user, "Password123!"))
+			}
+			switch state {
+			case "locked", "expired":
+				until := time.Now().Add(time.Hour)
+				if state == "expired" {
+					until = time.Now().Add(-time.Hour)
+				} else {
+					password = "Password123!"
+				}
+				suite.Require().NoError(suite.db.Model(user).Updates(map[string]interface{}{
+					"failed_login_attempts": service.MaxFailedLoginAttempts, "locked_until": until,
+				}).Error)
+			case "inactive":
+				password = "Password123!"
+				suite.Require().NoError(suite.db.Model(user).Update("is_active", false).Error)
+			}
+			w := suite.postJSON("/api/v1/auth/login", "", map[string]string{"email": email, "password": password})
+			suite.Equal(http.StatusUnauthorized, w.Code)
+			if baseline == "" {
+				baseline = w.Body.String()
+			}
+			suite.JSONEq(baseline, w.Body.String())
+			var response utils.APIResponse
+			suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			suite.False(response.Success)
+			suite.Require().NotNil(response.Error)
+			suite.Equal("Invalid email or password", response.Error.Message)
+			if state == "expired" {
+				var stored models.User
+				suite.Require().NoError(suite.db.First(&stored, user.ID).Error)
+				suite.Equal(1, stored.FailedLoginAttempts)
+				suite.Nil(stored.LockedUntil)
+				w = suite.postJSON("/api/v1/auth/login", "", map[string]string{
+					"email": email, "password": "Password123!",
+				})
+				suite.Equal(http.StatusOK, w.Code)
+				suite.Require().NoError(suite.db.First(&stored, user.ID).Error)
+				suite.Zero(stored.FailedLoginAttempts)
+				suite.Nil(stored.LockedUntil)
+			}
+		})
+	}
 }
