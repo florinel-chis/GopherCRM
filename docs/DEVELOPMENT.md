@@ -110,15 +110,30 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
 - **Panics.** A panic (or `runtime.Goexit`) unwinding through the callback rolls back the
   transaction or savepoint and keeps propagating untouched: the caller's `recover` sees the
   identical value, and the connection is back in the pool. The manager never swallows a panic.
+- **Poisoned transactions.** A `ROLLBACK TO SAVEPOINT` that fails (for example because a MySQL
+  deadlock already destroyed the transaction, or the connection broke) leaves the inner writes
+  possibly in place, so the whole transaction is poisoned: the nested call returns
+  `ErrTransactionPoisoned` (also matching `ErrRollbackFailed` and the driver error), every
+  enclosing managed call returns it too even when its callback recovered the panic or swallowed
+  the inner error and returned nil, further nested calls on that transaction are refused before
+  their callback runs, and the root never attempts the commit. The manager issues no further
+  statements on a poisoned transaction: enclosing levels skip their own savepoint rollback and
+  the root performs the single `ROLLBACK` that discards everything. If that root rollback fails as
+  well, both failures are joined. The outer callback's own returned error, if any, is preserved
+  alongside; an error it swallowed is not resurrected. A poisoned attempt whose root rollback
+  succeeded left no writes, so the retry helper may replay it when its error is still retryable.
+  For a transaction begun outside the manager, poisoning binds only the managed calls below the
+  first one; the owner receives the error from that call and must roll back itself.
 - **Cancellation.** A context that is already done fails before the callback runs
   (`ErrBeginFailed` wrapping the context error). Cancellation during the callback makes the commit
   fail (`ErrCommitFailed`, also matching `context.Canceled`/`DeadlineExceeded`) and the work is
   discarded; a rollback that `database/sql` already performed for the cancelled context is not
   reported as a failure.
-- **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed` and
-  `ErrRollbackFailed` tag what went wrong; a rollback failure is joined to the callback's error so
-  both stay inspectable with `errors.Is`. A failed commit is ambiguous from the client's side and
-  is never reported as success.
+- **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed`,
+  `ErrRollbackFailed` and `ErrTransactionPoisoned` tag what went wrong; a rollback failure is
+  joined to the callback's error so both stay inspectable with `errors.Is`. A failed commit is
+  ambiguous from the client's side and is never reported as success, and a failed rollback is
+  never followed by a commit.
 - **Retries.** `WithTransactionAndRetry` replays deadlocks, lock waits and SQLite busy/locked
   errors in a fresh root transaction, at most `maxRetries` times, and only when the failed attempt
   rolled back cleanly: an attempt that failed at commit or rollback is returned without replay,
@@ -133,9 +148,12 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
 Regression roots: `TestTransactionPanic{SQLite,MySQL}`, `TestTransactionNested{SQLite,MySQL}`,
 `TestTransactionCancellationRetry{SQLite,MySQL}` (one-connection pools, persisted-row assertions,
 every wait bounded by a context; the MySQL roots create and drop a uniquely named schema on the
-`TEST_MYSQL_DSN` server) and `TestTransactionFinalizationFailures` (a connection-pool wrapper that
-injects begin/commit/rollback/savepoint failures deterministically). Services still call the
-manager with `context.Background()`; request-context propagation is tracked in #107.
+`TEST_MYSQL_DSN` server), `TestTransactionFinalizationFailures` (a connection-pool wrapper that
+injects begin/commit/rollback/savepoint failures deterministically, including poisoned commits
+across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCommitFailedRollback`
+(the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
+be committed). Services still call the manager with `context.Background()`; request-context
+propagation is tracked in #107.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use

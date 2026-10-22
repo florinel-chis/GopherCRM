@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"gorm.io/gorm"
@@ -38,6 +39,14 @@ var (
 	// an error. It is joined to the error that triggered the rollback, so both
 	// remain inspectable.
 	ErrRollbackFailed = errors.New("transaction rollback failed")
+	// ErrTransactionPoisoned tags a transaction in which a ROLLBACK TO
+	// SAVEPOINT failed. The inner writes may still be present, so the
+	// transaction can no longer be committed by anyone: every enclosing managed
+	// call returns this error even when its callback recovered the panic or
+	// swallowed the inner error, further nested calls are refused before their
+	// callback runs, and the root rolls everything back instead of committing.
+	// The error always also matches ErrRollbackFailed and the driver error.
+	ErrTransactionPoisoned = errors.New("transaction cannot commit after a failed nested rollback")
 	// ErrNestedTransactionsDisabled is returned when a nested call would need
 	// a savepoint but the GORM connection disables nested transactions. The
 	// callback is not run: silently joining the outer transaction would let a
@@ -53,11 +62,56 @@ var (
 
 type contextKey string
 
-const txKey contextKey = "tx"
+const (
+	txKey      contextKey = "tx"
+	txStateKey contextKey = "tx-state"
+)
 
 // savepointSeq numbers savepoints so that nested calls, siblings and
 // re-entrant calls on the same transaction never reuse an active name.
 var savepointSeq atomic.Uint64
+
+// txState is shared by every managed call on one transaction. It records the
+// first failed savepoint rollback: from then on the transaction may still hold
+// writes that should have been discarded, and nothing on it may commit.
+type txState struct {
+	mu    sync.Mutex
+	cause error
+}
+
+// poison records the failed rollback. The first cause wins; later failures on
+// an already poisoned transaction add nothing to the decision.
+func (s *txState) poison(cause error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cause == nil {
+		s.cause = cause
+	}
+}
+
+// poisoned returns the recorded cause, or nil while the transaction is sound.
+func (s *txState) poisoned() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cause
+}
+
+// poisonResult combines a callback's outcome with the poison that forbids a
+// commit. The result always matches ErrTransactionPoisoned, the cause (which
+// carries ErrRollbackFailed and the driver error) and the callback's error.
+// A cause the error already carries is not repeated.
+func poisonResult(err, cause error) error {
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: %w", ErrTransactionPoisoned, cause)
+	case errors.Is(err, cause) && errors.Is(err, ErrTransactionPoisoned):
+		return err
+	case errors.Is(err, cause):
+		return errors.Join(err, ErrTransactionPoisoned)
+	default:
+		return errors.Join(err, fmt.Errorf("%w: %w", ErrTransactionPoisoned, cause))
+	}
+}
 
 // TransactionManager manages database transactions.
 //
@@ -79,6 +133,12 @@ var savepointSeq atomic.Uint64
 //   - Finalization failures are reported, never hidden: the callback's error
 //     is preserved and ErrBeginFailed, ErrSavepointFailed, ErrCommitFailed and
 //     ErrRollbackFailed tag what went wrong.
+//   - A failed ROLLBACK TO SAVEPOINT poisons the whole transaction
+//     (ErrTransactionPoisoned). The inner writes may still be there, so a
+//     caller that recovers the panic or swallows the inner error cannot turn
+//     them into a commit: every enclosing managed call returns the error, new
+//     nested calls are refused before their callback runs, and the root rolls
+//     back instead of committing.
 type TransactionManager struct {
 	db *gorm.DB
 }
@@ -165,6 +225,7 @@ func (tm *TransactionManager) runRoot(ctx context.Context, fn func(ctx context.C
 		return false, fmt.Errorf("%w: %w", ErrBeginFailed, tx.Error)
 	}
 
+	state := &txState{}
 	finished := false
 	defer func() {
 		if finished {
@@ -176,13 +237,25 @@ func (tm *TransactionManager) runRoot(ctx context.Context, fn func(ctx context.C
 		// error has no return path on this route and is dropped.
 		_ = rollbackTx(tx)
 	}()
-	err = fn(context.WithValue(ctx, txKey, tx))
+	txCtx := context.WithValue(context.WithValue(ctx, txKey, tx), txStateKey, state)
+	err = fn(txCtx)
 	finished = true
+
+	// A nested rollback that failed somewhere below leaves the transaction
+	// holding writes that should be gone. Whatever the callback returned, the
+	// only safe outcome is a root rollback; a nil return is turned into the
+	// poison error so a recovered panic or swallowed inner error can never
+	// become a commit.
+	if cause := state.poisoned(); cause != nil {
+		err = poisonResult(err, cause)
+	}
 
 	if err != nil {
 		if rbErr := rollbackTx(tx); rbErr != nil {
 			return false, errors.Join(err, fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
 		}
+		// The root ROLLBACK discarded everything, poisoned or not, so a
+		// retry helper may replay the attempt from scratch.
 		return true, err
 	}
 
@@ -212,7 +285,25 @@ func (tm *TransactionManager) runRoot(ctx context.Context, fn func(ctx context.C
 // ctx. The savepoint is created with the caller's context, but rolled back
 // with the enclosing transaction's context: cancelling the inner context must
 // not prevent the inner writes from being discarded.
+//
+// A ROLLBACK TO SAVEPOINT that fails poisons the shared transaction state. A
+// poisoned transaction issues no further statements from the manager: new
+// nested calls are refused, enclosing levels skip their own savepoint rollback
+// and return the poison, and the managed root performs the single ROLLBACK
+// that discards everything.
 func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn func(ctx context.Context) error) (err error) {
+	state, _ := ctx.Value(txStateKey).(*txState)
+	ownsState := state == nil
+	if ownsState {
+		// The transaction was not begun by this manager. The state created
+		// here still binds every managed call below this one, so a deeper
+		// failed rollback reaches the owner through this call's error; the
+		// owner is then responsible for rolling back.
+		state = &txState{}
+	}
+	if cause := state.poisoned(); cause != nil {
+		return poisonResult(nil, cause)
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("%w: %w", ErrSavepointFailed, ctxErr)
 	}
@@ -231,27 +322,48 @@ func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn fun
 		return fmt.Errorf("%w: %w", ErrSavepointFailed, execErr)
 	}
 
+	// rollback discards this level's writes. When that fails the transaction
+	// is poisoned: the writes may still be there and no one may commit them.
+	// A transaction already poisoned by a deeper level is left alone; its
+	// state is unknown and the root ROLLBACK is the cleanup.
+	rollback := func() {
+		if state.poisoned() != nil {
+			return
+		}
+		if rbErr := rollbackToSavepoint(tx, name); rbErr != nil {
+			state.poison(fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
+		}
+	}
+
 	finished := false
 	defer func() {
 		if finished {
 			return
 		}
 		// Panic or runtime.Goexit: discard the inner writes and let the
-		// panic continue to whoever recovers it.
-		_ = rollbackToSavepoint(tx, name)
+		// panic continue to whoever recovers it. A failed rollback has no
+		// return path here, but the poison it recorded reaches whoever
+		// recovers through the enclosing calls' return values.
+		rollback()
 	}()
-	err = fn(context.WithValue(ctx, txKey, inner))
+	txCtx := context.WithValue(ctx, txKey, inner)
+	if ownsState {
+		txCtx = context.WithValue(txCtx, txStateKey, state)
+	}
+	err = fn(txCtx)
 	finished = true
 
 	if err != nil {
-		if rbErr := rollbackToSavepoint(tx, name); rbErr != nil {
-			return errors.Join(err, fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
-		}
-		return err
+		rollback()
+	}
+	if cause := state.poisoned(); cause != nil {
+		// Either this level's rollback failed, or a deeper one did and the
+		// callback handled or swallowed it. Neither may look like success.
+		return poisonResult(err, cause)
 	}
 	// Success leaves the savepoint in place; it is released with the outer
 	// transaction. The inner writes remain provisional until the root commits.
-	return nil
+	return err
 }
 
 // activeTransaction returns the transaction carried by ctx, or nil when the

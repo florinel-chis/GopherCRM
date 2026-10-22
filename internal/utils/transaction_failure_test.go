@@ -11,6 +11,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -168,6 +169,20 @@ func failAlways(prefix string, err error) func(query string) error {
 		}
 		return nil
 	}
+}
+
+// failAlwaysCounting is failAlways plus a count of how often the failing
+// statement was attempted, so a test can prove the manager stopped issuing
+// statements on a transaction it already knows to be broken.
+func failAlwaysCounting(prefix string, err error) (func(query string) error, *atomic.Int32) {
+	attempts := &atomic.Int32{}
+	return func(query string) error {
+		if strings.HasPrefix(query, prefix) {
+			attempts.Add(1)
+			return err
+		}
+		return nil
+	}, attempts
 }
 
 func openFailingSQLite(t *testing.T) (*failingPool, *gorm.DB) {
@@ -446,6 +461,180 @@ func TestTransactionFinalizationFailures(t *testing.T) {
 
 		require.Same(t, marker, recovered)
 		assert.Empty(t, persistedLabels(t, db), "the root rollback discards the inner writes")
+		assertPoolUsable(t)
+	})
+
+	// The scenarios below reproduce the integrity loss found by the independent
+	// regression in transaction_recovery_test.go: a ROLLBACK TO SAVEPOINT that
+	// fails must poison the transaction so that nothing a caller does afterwards
+	// (recovering the panic, swallowing the inner error, returning nil) turns
+	// the possibly retained inner writes into a commit.
+
+	scenario("a recovered nested panic with a failed savepoint rollback poisons the root commit", func(t *testing.T) {
+		rollbackErr := errors.New("injected: rollback to savepoint refused")
+		pool.inject(func(p *failingPool) { p.execHook = failAlways("ROLLBACK TO SAVEPOINT", rollbackErr) })
+		marker := &panicMarker{reason: "recovered by the outer callback"}
+		beginsBefore := pool.beginCount()
+		var recovered interface{}
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "outer"))
+			recovered = callAndRecover(func() {
+				_ = tm.WithTransaction(ctx, func(ctx context.Context) error {
+					require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+					panic(marker)
+				})
+			})
+			return nil
+		})
+
+		require.Same(t, marker, recovered, "the outer callback recovers the identical panic value")
+		require.Error(t, err, "a nil outer return cannot commit a transaction whose nested rollback failed")
+		assert.ErrorIs(t, err, ErrTransactionPoisoned)
+		assert.ErrorIs(t, err, ErrRollbackFailed)
+		assert.ErrorIs(t, err, rollbackErr)
+		assert.NotErrorIs(t, err, ErrCommitFailed, "the root never attempted the commit")
+		assert.Equal(t, beginsBefore+1, pool.beginCount())
+		assertPoolUsable(t)
+	})
+
+	scenario("a swallowed nested rollback failure cannot be committed by the outer callback", func(t *testing.T) {
+		rollbackErr := errors.New("injected: rollback to savepoint refused")
+		innerFailure := errors.New("inner unit rejected")
+		pool.inject(func(p *failingPool) { p.execHook = failAlways("ROLLBACK TO SAVEPOINT", rollbackErr) })
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "outer"))
+			innerErr := tm.WithTransaction(ctx, func(ctx context.Context) error {
+				require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+				return innerFailure
+			})
+			require.ErrorIs(t, innerErr, innerFailure)
+			require.ErrorIs(t, innerErr, ErrTransactionPoisoned, "the nested call already reports that the transaction cannot commit")
+			require.ErrorIs(t, innerErr, rollbackErr)
+			return nil // handled, as far as the caller knows
+		})
+
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		require.ErrorIs(t, err, ErrRollbackFailed)
+		require.ErrorIs(t, err, rollbackErr)
+		assert.NotErrorIs(t, err, innerFailure, "the callback did not return the inner error, so the root does not invent it")
+		assertPoolUsable(t)
+	})
+
+	scenario("poison reaches the root through every nesting level with a single rollback attempt", func(t *testing.T) {
+		rollbackErr := errors.New("injected: rollback to savepoint refused")
+		hook, rollbackAttempts := failAlwaysCounting("ROLLBACK TO SAVEPOINT", rollbackErr)
+		pool.inject(func(p *failingPool) { p.execHook = hook })
+		marker := &panicMarker{reason: "level three exploded"}
+		var levelTwoErr error
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "l1"))
+			levelTwoErr = tm.WithTransaction(ctx, func(ctx context.Context) error {
+				require.NoError(t, insertRecord(ctx, "l2"))
+				recovered := callAndRecover(func() {
+					_ = tm.WithTransaction(ctx, func(ctx context.Context) error {
+						require.NoError(t, insertRecord(ctx, "l3"))
+						panic(marker)
+					})
+				})
+				require.Same(t, marker, recovered)
+				return nil // level two believes it handled the panic
+			})
+			return nil // level one believes level two succeeded
+		})
+
+		require.ErrorIs(t, levelTwoErr, ErrTransactionPoisoned, "an intermediate level cannot report success once poisoned")
+		require.ErrorIs(t, levelTwoErr, rollbackErr)
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		require.ErrorIs(t, err, rollbackErr)
+		assert.Equal(t, int32(1), rollbackAttempts.Load(), "enclosing levels issue no further statements on a poisoned transaction")
+		assertPoolUsable(t)
+	})
+
+	scenario("a poisoned transaction refuses further nested work before running the callback", func(t *testing.T) {
+		rollbackErr := errors.New("injected: rollback to savepoint refused")
+		pool.inject(func(p *failingPool) { p.execHook = failAlways("ROLLBACK TO SAVEPOINT", rollbackErr) })
+		laterCalled := false
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			innerErr := tm.WithTransaction(ctx, func(ctx context.Context) error {
+				require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+				return errors.New("inner unit rejected")
+			})
+			require.ErrorIs(t, innerErr, ErrTransactionPoisoned)
+
+			laterErr := tm.WithTransaction(ctx, func(ctx context.Context) error {
+				laterCalled = true
+				return insertRecord(ctx, "later")
+			})
+			require.ErrorIs(t, laterErr, ErrTransactionPoisoned)
+			require.ErrorIs(t, laterErr, rollbackErr)
+			return nil
+		})
+
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		assert.False(t, laterCalled, "no new nested unit may start on a poisoned transaction")
+		assertPoolUsable(t)
+	})
+
+	scenario("a poisoned root whose own rollback also fails reports both failures", func(t *testing.T) {
+		savepointRollbackErr := errors.New("injected: rollback to savepoint refused")
+		rootRollbackErr := errors.New("injected: root rollback lost")
+		pool.inject(func(p *failingPool) {
+			p.execHook = failAlways("ROLLBACK TO SAVEPOINT", savepointRollbackErr)
+			p.rollbackErr = rootRollbackErr
+		})
+		marker := &panicMarker{reason: "recovered by the outer callback"}
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			recovered := callAndRecover(func() {
+				_ = tm.WithTransaction(ctx, func(ctx context.Context) error {
+					require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+					panic(marker)
+				})
+			})
+			require.Same(t, marker, recovered)
+			return nil
+		})
+
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		require.ErrorIs(t, err, ErrRollbackFailed)
+		require.ErrorIs(t, err, savepointRollbackErr)
+		require.ErrorIs(t, err, rootRollbackErr)
+		assert.NotErrorIs(t, err, ErrCommitFailed)
+		assertPoolUsable(t)
+	})
+
+	scenario("the retry helper neither commits nor replays a swallowed poisoned attempt", func(t *testing.T) {
+		// The inner rollback fails with a non-retryable error and the outer
+		// callback swallows the deferred failure. Nothing retryable remains in
+		// the root's error, so the attempt is not replayed; and because the
+		// root rolled back cleanly, nothing is persisted either.
+		pool.inject(func(p *failingPool) {
+			p.execHook = failAlways("ROLLBACK TO SAVEPOINT", errors.New("SAVEPOINT gocrm_sp does not exist"))
+		})
+		outerAttempts, innerCalls := 0, 0
+
+		err := tm.WithTransactionAndRetry(boundedContext(t), func(ctx context.Context) error {
+			outerAttempts++
+			require.NoError(t, insertRecord(ctx, "outer"))
+			innerErr := tm.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
+				innerCalls++
+				require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+				return retryable
+			}, 5)
+			require.ErrorIs(t, innerErr, ErrNestedRetryDeferred)
+			require.ErrorIs(t, innerErr, ErrTransactionPoisoned)
+			return nil // the outer unit wrongly treats the deferred failure as handled
+		}, 3)
+
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		require.ErrorIs(t, err, ErrRollbackFailed)
+		assert.NotErrorIs(t, err, retryable, "the swallowed inner error is not resurrected")
+		assert.Equal(t, 1, outerAttempts, "a poison error without retryable cause is not replayed")
+		assert.Equal(t, 1, innerCalls)
 		assertPoolUsable(t)
 	})
 }

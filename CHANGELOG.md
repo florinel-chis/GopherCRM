@@ -102,8 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   callback's own error, a rollback already performed by context cancellation is not an error,
   and `WithTransactionAndRetry` replays only attempts that rolled back cleanly, never an
   ambiguous commit; inside a transaction it runs once and defers a retryable failure to the
-  enclosing root retry. A negative retry count is rejected without running the callback. See the
-  transaction section of `docs/DEVELOPMENT.md`.
+  enclosing root retry. A negative retry count is rejected without running the callback. A failed
+  `ROLLBACK TO SAVEPOINT` poisons the transaction (`ErrTransactionPoisoned`): an outer callback
+  that recovers the nested panic or swallows the inner error and returns nil no longer commits the
+  possibly retained inner writes; every enclosing call returns the cleanup error, new nested calls
+  are refused, and the root rolls back instead. See the transaction section of
+  `docs/DEVELOPMENT.md`.
 - Expired login lockouts now start a fresh failure window instead of relocking on the
   first mistyped password; active locks and generic public authentication failures remain enforced.
 - **AEO profile updates on MySQL.** Saving an existing brand profile preserves its
