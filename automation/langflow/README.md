@@ -139,7 +139,7 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 State, private logs, and worktrees live under the configured `state_dir`. A process lock prevents simultaneous execution, and an active-issue journal prevents moving on from an unfinished ticket. A repeated run reconciles an already merged PR before doing more work. Published branches/PRs are reused. Worktrees and logs are retained for inspection; the runner does not reset or remove them.
 
-Each validation attempt records private output and digest-checked receipts under `artifacts/<execution>/<head>/<attempt>/`, binding policy, contract, guidance, base, head, command and result. Independent review must cover every criterion exactly once and cite its matching receipt. Its own verdict also receives a bound receipt, rechecked before publication/completion. Structured implementation reports remain claims, never acceptance. A no-change response stops for explicit operator disposition rather than creating an empty commit or rerunning the model on resume.
+Each validation attempt records private output and digest-checked receipts under `artifacts/<execution>/<head>/<attempt>/`, binding policy, contract, guidance, base, head, command and result. Independent review must cover every criterion exactly once and cite its matching receipt. Its own verdict also receives a bound receipt, rechecked before publication/completion. Structured implementation reports remain claims, never acceptance. The provider schema permits only unique frozen criterion IDs in `addressed_criteria` (an empty list for existing PRs without criteria); descriptions belong in `summary` or `remaining_gaps`. Invalid reports still stop execution and retain edits, spent calls and elapsed time. Resume re-enters the provider call; report-only recovery is not implemented. A no-change response stops for explicit operator disposition rather than creating an empty commit or rerunning the model on resume.
 
 Stop after the admitted ticket, including when Langflow has already loaded more tickets:
 
@@ -250,7 +250,13 @@ operational canary from the deferred controlled benchmark.
 
 ## Maintain and test the runner
 
+Install the `flows` extra in the active Python environment before validation.
+Both `flows` and `ui` explicitly declare the JSON Schema validator used by the
+provider-format regressions, so tests do not rely on the workflow engine's
+transitive dependencies. CI installs `flows` with the same declared dependency.
+
 ```sh
+python -m pip install './automation/langflow[flows]'
 make verify-hygiene
 make verify-runner RUNNER_PYTHON=python
 npm ci --prefix gocrm-ui

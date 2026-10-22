@@ -14,7 +14,10 @@ CLAIM_SCHEMA = {
     'type': 'object', 'additionalProperties': False,
     'required': ['summary', 'addressed_criteria', 'remaining_gaps'],
     'properties': {'summary': {'type': 'string'},
-                   'addressed_criteria': {'type': 'array', 'items': {'type': 'string'}},
+                   'addressed_criteria': {
+                       'type': 'array', 'uniqueItems': True,
+                       'description': 'Exact acceptance IDs only, such as AC-1. Put explanations in summary.',
+                       'items': {'type': 'string', 'pattern': '^AC-[1-9][0-9]*$'}},
                    'remaining_gaps': {'type': 'array', 'items': {'type': 'string'}}},
 }
 ACCEPTANCE_REVIEW_SCHEMA = {
@@ -34,9 +37,16 @@ ACCEPTANCE_REVIEW_SCHEMA = {
 }
 
 
-def arguments(config, *, review=False):
+def arguments(config, *, review=False, criteria=None):
     tools = 'Read,Glob,Grep' if review else 'Read,Glob,Grep,Edit,Write'
     schema = deepcopy(ACCEPTANCE_REVIEW_SCHEMA if review else CLAIM_SCHEMA)
+    if not review and criteria is not None:
+        claims = schema['properties']['addressed_criteria']
+        ids = [criterion['id'] for criterion in criteria]
+        if ids:
+            claims['items']['enum'] = ids
+        else:
+            claims['maxItems'] = 0
     if review and config.documentation_mode == 'reviewed':
         schema['required'].append('documentation')
         schema['properties']['documentation'] = documentation.REVIEW_SCHEMA
