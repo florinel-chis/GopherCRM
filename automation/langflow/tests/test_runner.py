@@ -239,6 +239,11 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'merged')
         self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (2, 2, 2))
         self.assertEqual((self.commands.creates, self.commands.merges), (1, 1))
+        for argv in self.commands.calls:
+            if argv[0] == 'claude' and '--json-schema' in argv:
+                schema = json.loads(argv[argv.index('--json-schema') + 1])
+                if 'addressed_criteria' in schema['properties']:
+                    self.assertEqual(schema['properties']['addressed_criteria']['items']['enum'], ['AC-1'])
         record = self.runner.store.read('issue-95')
         self.assertEqual(record['head'], record['tested_head'])
         self.assertEqual(record['head'], record['reviewed_head'])

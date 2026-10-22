@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow-up mail go out only after the commit. Public errors and API responses are unchanged.
   Regressions run on SQLite and on a disposable MySQL schema (`TestFormConfirmation{TokenClaim,
   Rollback,Concurrent}{SQLite,MySQL}`); see `docs/testing/12-forms.md`.
+
+- Constrain runner implementation reports to the frozen acceptance IDs before provider
+  generation. Descriptive criterion strings, unknown IDs and duplicates are rejected by
+  both the response schema and parser; existing PRs without criteria claim an empty list.
+  This prevents completed edits being stopped by a schema/parser mismatch. Tests and
+  independent review remain the acceptance evidence.
+
 - **Transaction manager: panics, nesting and finalization failures (#106).** A panic inside
   `WithTransaction` now rolls the transaction back before propagating unchanged, so SQLite's
   single pooled connection is released instead of held by an abandoned transaction. A call made

@@ -139,7 +139,7 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 State, private logs, and worktrees live under the configured `state_dir`. A process lock prevents simultaneous execution, and an active-issue journal prevents moving on from an unfinished ticket. A repeated run reconciles an already merged PR before doing more work. Published branches/PRs are reused. Worktrees and logs are retained for inspection; the runner does not reset or remove them.
 
-Each validation attempt records private output and digest-checked receipts under `artifacts/<execution>/<head>/<attempt>/`, binding policy, contract, guidance, base, head, command and result. Independent review must cover every criterion exactly once and cite its matching receipt. Its own verdict also receives a bound receipt, rechecked before publication/completion. Structured implementation reports remain claims, never acceptance. A no-change response stops for explicit operator disposition rather than creating an empty commit or rerunning the model on resume.
+Each validation attempt records private output and digest-checked receipts under `artifacts/<execution>/<head>/<attempt>/`, binding policy, contract, guidance, base, head, command and result. Independent review must cover every criterion exactly once and cite its matching receipt. Its own verdict also receives a bound receipt, rechecked before publication/completion. Structured implementation reports remain claims, never acceptance. The provider schema permits only unique frozen criterion IDs in `addressed_criteria` (an empty list for existing PRs without criteria); descriptions belong in `summary` or `remaining_gaps`. Invalid reports still stop execution and retain edits, spent calls and elapsed time. Resume re-enters the provider call; report-only recovery is not implemented. A no-change response stops for explicit operator disposition rather than creating an empty commit or rerunning the model on resume.
 
 Stop after the admitted ticket, including when Langflow has already loaded more tickets:
 
@@ -265,7 +265,7 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (migration profile added in 0.7.2)
+## Contextual validation (migration profile added in 0.7.3)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser

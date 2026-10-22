@@ -95,6 +95,11 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.commands.reject_reviews = 1
         await self.complete()
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.implementations), (2, 2, 1))
+        for argv in self.commands.calls:
+            if argv[0] == 'claude' and '--json-schema' in argv:
+                schema = json.loads(argv[argv.index('--json-schema') + 1])
+                if 'addressed_criteria' in schema['properties']:
+                    self.assertEqual(schema['properties']['addressed_criteria']['maxItems'], 0)
         self.assertEqual(self.commands.merges, 1)
         record = self.runner.store.read('completion-pr-122')
         self.assertNotEqual(record['head'], self.head)

@@ -330,7 +330,7 @@ class PullRequestRunner(Runner):
             self.save(record)
 
         try:
-            output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree,
+            output = await self.command(*agents.arguments(self.config, review=review, criteria=record['criteria']), cwd=worktree,
                                         input_text=prompt, on_start=started,
                                         timeout=self.config.agent_timeout_seconds)
             report, metadata = agents.parse(output, review=review, criteria=record['criteria'],

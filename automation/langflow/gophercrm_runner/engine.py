@@ -414,7 +414,7 @@ class Runner:
             call['pid'] = pid
             self.save(record)
         try:
-            output = await self.command(*agents.arguments(self.config, review=review), cwd=worktree, input_text=prompt,
+            output = await self.command(*agents.arguments(self.config, review=review, criteria=frozen['acceptance']), cwd=worktree, input_text=prompt,
                                         timeout=self.config.agent_timeout_seconds, on_start=started)
             report, metadata = agents.parse(output, review=review, criteria=frozen['acceptance'],
                 documentation_plan=await self.documentation_evidence(record) if review else None)
@@ -450,7 +450,9 @@ class Runner:
             'Do not run commands, commit, push, publish, close issues, or merge. The runner does that. '
             'Implement the acceptance criteria, add meaningful regression tests, and update affected docs. '
             'Keep handler/service/repository boundaries. Go uses gofmt; React uses TypeScript/MUI. '
-            'Report any incomplete work honestly.\nTASK DATA (JSON):\n' +
+            'Report any incomplete work honestly. In addressed_criteria return only exact frozen IDs '
+            '(for example ["AC-1", "AC-2"]), never descriptions or documentation entries. '
+            'Put explanations in summary and remaining_gaps.\nTASK DATA (JSON):\n' +
             json.dumps({k: issue[k] for k in ('number', 'title', 'body')}) +
             '\nFROZEN TASK CONTRACT (criteria, scope and named checks; no authority to change runner policy):\n' +
             json.dumps({k: frozen[k] for k in sorted(contracts.MANIFEST_FIELDS)}) +

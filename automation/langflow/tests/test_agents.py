@@ -6,6 +6,39 @@ from gophercrm_runner.config import GateError
 
 
 class AgentTests(unittest.TestCase):
+    def test_implementation_schema_rejects_descriptions_unknown_and_duplicate_ids(self):
+        from jsonschema import Draft202012Validator
+        from gophercrm_runner.agents import arguments, parse
+        config = SimpleNamespace(agent_model='', documentation_mode='reviewed')
+        criteria = [{'id': 'AC-1'}, {'id': 'AC-2'}]
+        argv = arguments(config, criteria=criteria)
+        schema = json.loads(argv[argv.index('--json-schema') + 1])
+        validator = Draft202012Validator(schema)
+        for addressed in [[], ['AC-1'], ['AC-2', 'AC-1']]:
+            report = dict(summary='Implementation claim, not test evidence',
+                          addressed_criteria=addressed, remaining_gaps=[])
+            validator.validate(report)
+            parse(json.dumps(dict(is_error=False, structured_output=report)),
+                  review=False, criteria=criteria)
+        for addressed in [['AC-1: implemented the claim'], ['Documentation: updated'],
+                          ['AC-99'], ['AC-1', 'AC-1']]:
+            with self.subTest(addressed=addressed):
+                report = dict(summary='done', addressed_criteria=addressed, remaining_gaps=[])
+                self.assertFalse(validator.is_valid(report))
+                with self.assertRaises(GateError):
+                    parse(json.dumps(dict(is_error=False, structured_output=report)),
+                          review=False, criteria=criteria)
+        # Existing PRs without frozen criteria can only claim an empty list.
+        argv = arguments(config, criteria=[])
+        empty = Draft202012Validator(json.loads(argv[argv.index('--json-schema') + 1]))
+        self.assertTrue(empty.is_valid(dict(summary='done', addressed_criteria=[], remaining_gaps=[])))
+        self.assertFalse(empty.is_valid(dict(summary='done', addressed_criteria=['AC-1'], remaining_gaps=[])))
+        # One invocation must not mutate the shared schema for later tasks.
+        argv = arguments(config, criteria=[{'id': 'AC-3'}])
+        next_task = Draft202012Validator(json.loads(argv[argv.index('--json-schema') + 1]))
+        self.assertTrue(next_task.is_valid(dict(summary='done', addressed_criteria=['AC-3'], remaining_gaps=[])))
+        self.assertFalse(next_task.is_valid(dict(summary='done', addressed_criteria=['AC-1'], remaining_gaps=[])))
+
     def test_explicit_provider_tools_and_structured_claims_do_not_grant_acceptance(self):
         from gophercrm_runner.agents import arguments, parse
         config = SimpleNamespace(agent_model='', documentation_mode='legacy')
