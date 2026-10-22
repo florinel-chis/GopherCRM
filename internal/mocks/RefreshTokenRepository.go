@@ -15,6 +15,24 @@ type RefreshTokenRepository struct {
 	mock.Mock
 }
 
+// ClaimForRotation provides a mock function with given fields: id
+func (_m *RefreshTokenRepository) ClaimForRotation(id uint) error {
+	ret := _m.Called(id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ClaimForRotation")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(uint) error); ok {
+		r0 = rf(id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // Create provides a mock function with given fields: token
 func (_m *RefreshTokenRepository) Create(token *models.RefreshToken) error {
 	ret := _m.Called(token)

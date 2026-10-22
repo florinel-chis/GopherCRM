@@ -92,7 +92,10 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 - **Access-token blocklist** — logout/rotation revoke refresh tokens only; an issued JWT stays
   valid until expiry.
 - **Concurrent-refresh stampede** — several simultaneous 401s can race the refresh interceptor;
-  with strict rotation the losers get logged out. A shared in-flight refresh promise would fix it.
+  with strict rotation the losers get logged out. The backend side is settled (#103): competing
+  refreshes of one token commit exactly one successor and the others get the generic 401, so the
+  server can no longer mint two sessions or strand one. What remains is client-side: a shared
+  in-flight refresh promise so only one request is sent (#115).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
   `SMTP_*` is configured.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
