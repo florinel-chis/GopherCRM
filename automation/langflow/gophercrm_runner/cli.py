@@ -86,6 +86,14 @@ def main():
     revalidate = sub.add_parser('revalidate', help='Merge current main into the active worktree and invalidate prior gates')
     revalidate.add_argument('--config', type=Path, required=True)
     revalidate.add_argument('--issue', type=int, required=True)
+    repair = sub.add_parser('repair-validation', help='Request bounded code repair after inspecting an environment-classified validation failure')
+    repair.add_argument('--config', type=Path, required=True)
+    target = repair.add_mutually_exclusive_group(required=True)
+    target.add_argument('--issue', type=int)
+    target.add_argument('--pr', type=int)
+    repair.add_argument('--head', required=True, help='Full commit of the inspected failed validation')
+    repair.add_argument('--reason', required=True)
+    repair.add_argument('--batch', help='Required for the current child of an owned batch')
     abandon = sub.add_parser('abandon-issue', help='Dispose an inspected merged ticket whose documentation verification failed')
     abandon.add_argument('--config', type=Path, required=True)
     abandon.add_argument('--issue', type=int, required=True)
@@ -201,6 +209,22 @@ def main():
             print(json.dumps(run_async(runner.freeze(args.issue, args.manifest, refresh=args.refresh)), indent=2))
         else:
             run_async(runner.revalidate(args.issue))
+    elif args.command == 'repair-validation':
+        from .config import Config
+        from .engine import Runner
+        from .pull_requests import PullRequestRunner
+        is_pr = args.pr is not None
+        config = Config.load(args.config)
+        number = args.pr if is_pr else args.issue
+        kwargs = dict(head=args.head, reason=args.reason, pull_request=is_pr)
+        if args.batch:
+            from .batches import BatchRunner
+            runner = BatchRunner(config, config_path=args.config)
+            result = run_async(runner.request_validation_repair(args.batch, number, **kwargs))
+        else:
+            runner = (PullRequestRunner if is_pr else Runner)(config)
+            result = run_async(runner.request_validation_repair(number, **kwargs))
+        print(json.dumps(result, indent=2))
     elif args.command in {'status', 'stop-after-current', 'resume-queue'}:
         from .config import Config
         from .state import Store

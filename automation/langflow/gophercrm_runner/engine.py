@@ -95,6 +95,46 @@ class Runner:
             self.save(record)
             return record['budget_extensions'][-1]
 
+    async def request_validation_repair(self, number, *, head, reason, pull_request=False):
+        """Record an inspected misclassification; the normal repair loop still owns edits."""
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+            raise GateError('Validation repair requires a short reason describing the inspected failure')
+        if not pull_request:
+            self.config.allows(number)
+        kind = 'pr' if pull_request else 'issue'
+        key = f'completion-pr-{number}' if pull_request else f'issue-{number}'
+        with self.store.exclusive():
+            record = self.store.read(key)
+            attempts = record.get('attempts', [])
+            failed = attempts[-1] if attempts else {}
+            if (not record or record.get('policy') != self.policy
+                    or record.get('stage') != 'validate' or record.get('head') != head
+                    or self.store.read('active') != {kind: number}
+                    or failed.get('stage') != 'validation' or failed.get('outcome') != 'failed'
+                    or failed.get('head') != head or failed.get('category') != 'environment'):
+                raise GateError('Only the pinned active environment-failed validation can enter repair')
+            if any(call.get('status') == 'running' for call in record.get('provider_invocations', [])):
+                raise GateError('Resolve orphaned provider processes before requesting validation repair')
+            telemetry.remaining(record, self.clock())
+            if (record['provider_calls'] >= record['max_provider_calls']
+                    or record['repairs'] >= self.config.max_repair_rounds):
+                raise GateError('Validation repair requires remaining provider and repair budgets')
+            worktree = Path(record['worktree'])
+            await self.clean(worktree)
+            if await self.head(worktree) != head:
+                raise GateError('Source commit differs from the inspected failed validation')
+            telemetry.remaining(record, self.clock())
+            entry = dict(at=self.clock(), head=head, failed_attempt=failed['id'], reason=redact(reason))
+            record.setdefault('validation_repair_requests', []).append(entry)
+            record.update(stage='repair_pending', feedback=(record.get('feedback') or '') +
+                '\nOperator inspected an environment-classified validation failure and requests '
+                'a bounded source repair. This is not passing evidence. Preserve the regression '
+                'and all existing acceptance requirements. Finding: ' + entry['reason'])
+            self.save(record)
+            return {kind: number, 'head': head, 'status': 'repair_pending',
+                    'provider_calls': record['provider_calls'], 'repairs': record['repairs'],
+                    'deadline': record['deadline'], 'request': entry}
+
     def note(self, number, *, minutes, category, reason):
         self.config.allows(number)
         entry = telemetry.operator_entry(minutes, category, reason, self.clock())

@@ -123,6 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL`); see
   `docs/testing/01-authentication.md`.
 
+- Preserve early Go assertion diagnostics when later passing tests fill a failed command's
+  log, and distinguish expected structured service logs from real environment failures.
+  A shared, commit-pinned `repair-validation` recovery command queues an inspected source
+  repair while retaining failed attempts, spent budgets and all validation/review gates.
+
 - **Form confirmation tokens are consumed atomically (#101).** Confirming a double-opt-in
   submission used to stamp the token as used before the transaction that created or linked the
   lead and confirmed the submission, by an update on the id alone. A failure in that transaction

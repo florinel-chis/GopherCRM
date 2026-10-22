@@ -9,6 +9,7 @@ import shutil
 import tempfile
 
 from .config import BudgetError, EnvironmentError, GateError
+from .diagnostics import classification_text
 
 
 VERSION_PROBES = (
@@ -30,7 +31,8 @@ def environment_failure(error):
         r'EADDRINUSE|Error: https?://\S+ is already used|'
         r'ERR_MODULE_NOT_FOUND|Executable doesn.t exist|could not resolve host|'
         r'connection refused|connect: connection timed out|Error 104[45].*Access denied|'
-        r'JWT_SECRET (?:is not set|environment variable must be set|must be at least|cannot be the default)', str(error), re.I))
+        r'JWT_SECRET (?:is not set|environment variable must be set|must be at least|cannot be the default)',
+        classification_text(error), re.I))
 
 
 def check_disk(config):

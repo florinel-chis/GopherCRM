@@ -24,6 +24,11 @@ class GateError(RuntimeError):
 class CommandError(GateError):
     """A completed command failed; its diagnostics can inform a repair."""
 
+    def __init__(self, message, *, stdout=None, stderr=None):
+        super().__init__(message)
+        self.stdout = stdout
+        self.stderr = stderr
+
 
 class EnvironmentError(GateError):
     """An operator prerequisite failed; do not ask a coding agent to repair it."""
