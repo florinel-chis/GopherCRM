@@ -297,27 +297,34 @@ func TestFormRepositoryMarkConfirmationTokenUsed(t *testing.T) {
 	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
 	token := makeConfirmationToken(t, db, submission.ID, "hash-live", time.Now().Add(48*time.Hour))
 
+	// Each read goes into a fresh struct: GORM adds a populated primary key
+	// on the destination as a condition, so reusing one across ids would
+	// look for a row matching both.
+	loadToken := func(id uint) models.FormConfirmationToken {
+		var stored models.FormConfirmationToken
+		require.NoError(t, db.First(&stored, id).Error)
+		return stored
+	}
+
 	require.NoError(t, repo.MarkConfirmationTokenUsed(token.ID))
 
 	_, err := repo.GetConfirmationTokenByHash("hash-live")
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound, "a spent token is no longer spendable")
 
-	var stored models.FormConfirmationToken
-	require.NoError(t, db.First(&stored, token.ID).Error)
-	require.NotNil(t, stored.UsedAt, "the row is kept, only stamped")
-	firstStamp := *stored.UsedAt
+	claimed := loadToken(token.ID)
+	require.NotNil(t, claimed.UsedAt, "the row is kept, only stamped")
+	firstStamp := *claimed.UsedAt
 
 	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(token.ID), gorm.ErrRecordNotFound,
 		"a token can be claimed exactly once")
-	require.NoError(t, db.First(&stored, token.ID).Error)
-	require.NotNil(t, stored.UsedAt)
-	assert.True(t, stored.UsedAt.Equal(firstStamp), "a refused claim does not restamp the row")
+	reclaimed := loadToken(token.ID)
+	require.NotNil(t, reclaimed.UsedAt)
+	assert.True(t, reclaimed.UsedAt.Equal(firstStamp), "a refused claim does not restamp the row")
 
 	expired := makeConfirmationToken(t, db, submission.ID, "hash-expired", time.Now().Add(-time.Second))
 	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(expired.ID), gorm.ErrRecordNotFound,
 		"an expired token cannot be claimed even though it is unused")
-	require.NoError(t, db.First(&stored, expired.ID).Error)
-	assert.Nil(t, stored.UsedAt, "a refused claim leaves the expired token untouched")
+	assert.Nil(t, loadToken(expired.ID).UsedAt, "a refused claim leaves the expired token untouched")
 
 	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(424242), gorm.ErrRecordNotFound)
 }
