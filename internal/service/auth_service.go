@@ -22,6 +22,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -668,8 +669,14 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 			return utils.ErrNoTransaction
 		}
 		var err error
+		// The owner repository is bound to a locking handle so its read is
+		// `SELECT ... FOR UPDATE` on MySQL (SQLite drops the clause). The
+		// handle must be a fresh Session: Clauses alone returns a statement
+		// that GORM keeps reusing, so the owner lookup would leave its table
+		// and conditions on it and the following Save would then build an
+		// invalid query (SQLite reports an ambiguous `users.id`).
 		userID, err = s.confirmPasswordResetInTransaction(
-			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})), s.refreshTokenRepo.WithTx(tx),
+			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})), s.refreshTokenRepo.WithTx(tx),
 			hash, string(hashed))
 		return err
 	})
