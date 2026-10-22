@@ -250,7 +250,13 @@ operational canary from the deferred controlled benchmark.
 
 ## Maintain and test the runner
 
+Install the `flows,test` extras in the active Python environment before validation.
+The `test` extra declares the JSON Schema validator used by the provider-format
+regressions; the tests must not rely on a workflow engine's transitive dependencies.
+The UI installation can use `ui,test` instead. CI installs `flows,test` explicitly.
+
 ```sh
+python -m pip install './automation/langflow[flows,test]'
 make verify-hygiene
 make verify-runner RUNNER_PYTHON=python
 npm ci --prefix gocrm-ui
@@ -265,7 +271,7 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (migration profile added in 0.7.3)
+## Contextual validation (migration profile added in 0.7.2)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser

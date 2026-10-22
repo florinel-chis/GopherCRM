@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 flows = ["lfx==1.12.6"]
 ui = ["langflow==1.12.6", "lfx==1.12.6", "langflow-base==1.12.6"]
+test = ["jsonschema>=4.20,<5"]
 
 [project.scripts]
 gophercrm-runner = "gophercrm_runner.cli:main"
