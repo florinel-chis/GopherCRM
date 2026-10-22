@@ -123,6 +123,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL`); see
   `docs/testing/01-authentication.md`.
 
+- **Runner validation progress is retained and failed checks are recoverable (#146).**
+  Early Go assertion diagnostics are preserved when later passing tests fill a failed
+  command's log, and expected structured service logs are distinguished from real
+  environment failures. A shared, commit-pinned `repair-validation` recovery command queues
+  an inspected source repair while retaining failed attempts, spent budgets and all
+  validation/review gates. Validation resume verifies and retains successful checks for the
+  unchanged candidate, then runs missing checks in a fresh checkout instead of repeating
+  completed suites. Unusable checkpoints are retained with their invalidation reason while
+  every selected check runs again under a new validation identity and the original limits.
+  Both JSON and text-format service logs are recognized. See `automation/langflow/README.md`
+  for the operator procedure.
+
 - **Form confirmation tokens are consumed atomically (#101).** Confirming a double-opt-in
   submission used to stamp the token as used before the transaction that created or linked the
   lead and confirmed the submission, by an update on the id alone. A failure in that transaction

@@ -75,5 +75,8 @@ class Commands:
         if truncated:
             raise GateError(f'Command output exceeded 20 MiB; truncated private logs: {path}')
         if check and proc.returncode:
-            raise CommandError(f'{args[0]} exited {proc.returncode}; log {path}\n{redact((text + errors)[-12000:])}')
+            from .diagnostics import failure_summary
+            stdout, stderr = redact(text), redact(errors)
+            raise CommandError(f'{args[0]} exited {proc.returncode}; log {path}\n'
+                               f'{failure_summary(stdout, stderr)}', stdout=stdout, stderr=stderr)
         return proc.returncode, text

@@ -310,6 +310,31 @@ class BatchRunner:
             # ordinary recovery path may now handle it; no work is discarded.
             return self.status(name)
 
+    async def request_validation_repair(self, name, number, *, head, reason, pull_request=False):
+        """Keep the original allocation while queuing an inspected source repair."""
+        self.store.batch_id = batch_id(name)
+        with self.store.exclusive():
+            self.plan = self.load(name)
+            self.check_policy(self.plan)
+            self.record = self.store.read(self.record_name(name))
+            if (not self.record or self.record['status'] in {'completed', 'abandoned'}
+                    or self.record['index'] >= len(self.record['allocations'])
+                    or self.record['plan_hash'] != self.plan['plan_hash']
+                    or self.store.read('batch-owner') != {'id': name, 'plan_hash': self.plan['plan_hash']}):
+                raise GateError('No current owned batch allocation to repair')
+            entry = self.plan['entries'][self.record['index']]
+            kind = 'pr' if pull_request else 'issue'
+            if entry['kind'] != kind or entry.get(kind) != number:
+                raise GateError('Validation repair must target the current batch entry')
+            child = self.child(self.record['allocations'][self.record['index']])
+            self.check_record(child)
+            self.budget()
+            runner = self.pr_runner if pull_request else self.runner
+            result = await runner.request_validation_repair(
+                number, head=head, reason=reason, pull_request=pull_request)
+            self.progress(self.store.read(journal_key(entry)))
+            return dict(result, batch=name, resume_required=True)
+
     def recover(self, name, reason, *, processes_stopped=False):
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or processes_stopped is not True:
             raise GateError('Recovery needs a reason and --processes-stopped after inspecting orphaned processes')

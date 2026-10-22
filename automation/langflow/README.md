@@ -151,6 +151,63 @@ gophercrm-runner resume-queue --config "$HOME/.local/share/gophercrm-runner/conf
 
 With no active ticket, a stop request blocks new issue admission. A separate short control lock makes this command usable while execution holds the runner lock. Completed PR-ready executions are skipped by queue discovery. Repeating one only checks its recorded remote result; editing the configuration to `merge` cannot promote it. Use the explicit PR completion workflow below to promote it.
 
+## Inspected validation misclassification
+
+Failed commands retain complete bounded, redacted diagnostics in private logs. Go assertion
+blocks are included in the repair summary even when later passing tests fill the output.
+When Go reports an assertion failure, JSON and logrus text service records from mocked calls do
+not by themselves establish an environment failure. Actual SQL/readiness errors, disk and
+network errors, occupied ports, missing tools and configuration errors still stop execution.
+
+If an older execution stopped at validation with an environment classification, inspect the
+full retained log and verify that the failure is a source assertion and prerequisites work.
+The shared recovery command records that finding against the exact failed commit:
+
+```sh
+gophercrm-runner repair-validation --config /absolute/private/config.json --issue 123 \
+  --head FULL_FAILED_HEAD_SHA --reason 'Inspected assertion failure; unrelated mock logs matched the environment classifier'
+# Existing PR completion uses --pr NUMBER instead of --issue NUMBER.
+# For a batch child, also supply --batch ORIGINAL_BATCH_ID.
+```
+
+This only queues a normal bounded repair for the active, clean, unchanged source after a
+failed environment-classified validation. It cannot override a review rejection, orphaned
+provider, exhausted limit, changed policy, dirty worktree or different commit. The original
+batch owner, prepared plan and current allocation must match when `--batch` is supplied.
+An owned batch cannot be bypassed by omitting that option. The original
+failed attempt, receipts, spent calls/repairs and deadline remain unchanged. Resume with the
+original `run`, `start-batch --resume` or `complete-pr` command; the repair then spends its
+normal round/call and the changed candidate requires fresh validation and independent review.
+It does not rerun the same failed candidate first or turn the operator finding into passing
+evidence. `report` and `report-pr` include the recorded repair request. Actual environment
+failures must still have their prerequisites restored before normal resume.
+
+## Resume validation of an unchanged candidate
+
+Normal resume retains successful checks from an interrupted validation when the source,
+original validation checkout and receipt identities still match. It verifies the execution,
+head, base, policy, contract, context, check command, receipt digest and output digest before
+reuse, and checks named-test and migration coverage again. If the old checkout was removed or
+changed, or the receipts/outputs cannot be verified, resume records the reason and old receipt
+references in `validation_restarts`, starts a new validation attempt and reruns every selected
+check in a fresh checkout. It never treats the unusable checkpoint as passing evidence or
+overwrites its old artifacts. The source and policy must still match, and expired budgets
+still stop execution; this fallback does not reset the deadline, calls or repairs.
+
+Remaining checks run in a fresh checkout. Browser checks install locked frontend dependencies
+there when the earlier installation/core check was already completed. Ignored files and
+application data are not copied from the previous checkout. A failed full browser command
+must pass in full; an isolated diagnostic rerun does not replace it. The original receipts,
+failed/cancelled attempts, spent calls and deadline remain recorded, and `report`/`report-pr`
+include `validation_resumptions`. Source repairs and explicit base refresh invalidate the
+earlier checks; a new candidate still requires all selected checks and independent review.
+
+Implementation agents cannot edit runner code or validation gates. When a review of a runner
+PR requires those changes, a maintainer must prepare and push the corrected commit, then use
+`complete-pr --refresh --head FULL_NEW_HEAD_SHA` with the original configuration. This retains
+spent budgets and requires fresh validation and independent review. An automatic repair's
+documentation-only edits do not resolve a protected-code finding.
+
 ## Complete existing PRs through merge
 
 Import [pr-completion.json](flows/pr-completion.json) into Langflow for the **Review → test → merge existing PR** component. Enter the local policy path, PR number and full current head SHA. Preview is the default. Execute authorizes completion of that specific PR through merge, independently of the issue policy's `completion_target`. The CLI runs this same serialized graph:

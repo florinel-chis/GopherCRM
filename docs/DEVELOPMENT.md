@@ -353,6 +353,25 @@ in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpr
 without rewriting it, and tests the read-only database probe. Runner CI uses the same target,
 including merge-group events. See the [runner guide](../automation/langflow/README.md).
 
+The runner preserves Go assertion failures in bounded repair diagnostics instead of showing
+only the end of a long log. Expected structured service logs from mock failures do not classify
+a separate Go assertion failure as unavailable infrastructure. Inspect full private logs before
+recovery: genuine environment errors still require restoring prerequisites. For a verified
+misclassification, the shared `repair-validation` command records an exact-commit repair request
+without refunding limits or relabelling failed evidence; normal repair, validation and review
+remain mandatory. See [validation recovery](../automation/langflow/README.md#inspected-validation-misclassification).
+
+On ordinary validation resume, successful checks for the unchanged candidate can be reused
+only after verifying their original checkout and complete receipt identities/digests. Missing
+checks run in a fresh checkout with its own locked browser dependencies. Failed full browser
+commands still run in full; source repairs and base refresh invalidate earlier checks. This
+avoids repeating passed backend/frontend/SQLite checks after a later environment interruption
+without weakening the selected gates or independent review.
+If the old checkout or evidence is missing or changed, the runner records the invalidated
+checkpoint and reruns all selected checks under a new validation identity. Original artifacts,
+spent calls/repairs and the deadline remain intact. Runner/gate code is protected from repair
+agents; maintainers prepare those corrections and use the existing PR refresh workflow.
+
 Update relevant documentation in the same PR. CI identifies affected guides; the local
 workflow records explicit review decisions and verifies documentation after merge. Include
 documentation paths during task preparation and explain when an unchanged document remains
