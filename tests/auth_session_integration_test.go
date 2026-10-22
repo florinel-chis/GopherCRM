@@ -76,7 +76,7 @@ func (suite *AuthSessionIntegrationTestSuite) SetupSuite() {
 		RefreshTokenDays: 30,
 	}
 	authService := service.NewAuthServiceWithSessions(
-		userRepo, apiKeyRepo, refreshRepo, resetRepo, suite.mailer,
+		userRepo, apiKeyRepo, refreshRepo, resetRepo, utils.NewTransactionManager(db), suite.mailer,
 		jwtConfig, "http://localhost:5173", "")
 	suite.userService = service.NewUserService(userRepo)
 

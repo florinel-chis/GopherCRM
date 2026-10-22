@@ -18,7 +18,9 @@ file, not by trusting the coverage matrix.
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`
 - `internal/handler/auth_handler.go`, `internal/handler/routes.go`,
-  `internal/service/auth_service.go`, `internal/middleware/rate_limit.go`, `cmd/main.go`
+  `internal/service/auth_service.go`, `internal/repository/password_reset_token_repository.go`,
+  `internal/service/auth_password_reset_regression_test.go`, `internal/middleware/rate_limit.go`,
+  `cmd/main.go`
 - `gocrm-ui/e2e/tests/login.spec.ts`, `gocrm-ui/e2e/tests/registration.spec.ts`,
   `gocrm-ui/e2e/pages/login.page.ts`, `gocrm-ui/e2e/pages/register.page.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/screenshots/helpers/login.ts`,
@@ -543,10 +545,72 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** A user created by the test.
 - **Steps:** Request a reset, read the token out of the delivered mail, open the reset link, set a new
   policy-compliant password, then log in with it.
-- **Expected:** The token is single-use with a 1 h expiry; confirming returns **200** and revokes
-  every refresh token of the account; the old password no longer authenticates.
+- **Expected:** The token is single-use with a 1 h expiry; confirming returns **200**, clears any
+  lockout and revokes every refresh token of the account in the same transaction that writes the
+  password; the old password no longer authenticates and a replay of the link returns the generic
+  **400**.
 - **Automation:** blocked — needs mail capture (with `SMTP_HOST` unset the mailer only writes a
-  redacted log line) *and* the missing `/reset-password` SPA route
+  redacted log line) *and* the missing `/reset-password` SPA route. The API round trip is
+  covered in Go by `tests/auth_session_integration_test.go` `TestPasswordResetRoundTrip`.
+
+### TC-AUTH-037a — Reset confirmation is atomic and single-use
+- **Priority:** P0
+- **Type:** regression
+- **Expected:** `POST /auth/password-reset/confirm` validates the complexity policy and hashes the
+  new password before anything is written, so a weak password, or one bcrypt refuses (over 72
+  bytes), leaves the link usable. The token claim — a conditional update that stamps `used_at`
+  only while the row is unused and strictly unexpired and must affect exactly one row — the owner
+  re-check, the password and lockout update and the revocation of every refresh token of the
+  account then run in one transaction (`internal/service/auth_service.go`
+  `ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `MarkUsed`).
+  The owner re-check is a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL,
+  a plain read on SQLite): it sees the account as currently committed, so an owner deactivated or
+  erased by another connection after the token lookup is refused instead of being reactivated by
+  the password update written from a stale REPEATABLE READ snapshot.
+  A failure of the claim, of the password update or of the revocation is returned, rolls the
+  claim back and the same link works on retry. An unknown, spent or expired token, one that
+  expires or is spent between the lookup and the claim, and an inactive, erased (soft-deleted)
+  or missing owner all return the same generic **400** `Invalid or expired reset token` and
+  leave the committed state unchanged: token unspent, old password, lockout and sessions as
+  they were, unrelated accounts untouched. Competing confirmations of one link with different
+  valid passwords commit exactly once: the winner's password is stored, every prior session of
+  the owner is revoked, the losers are told the link is invalid and did not change the
+  password, and a replay cannot alter that outcome. A successful reset clears the lockout, so
+  the owner signs in immediately with only the new password.
+- **Known issue:** a policy-compliant password longer than bcrypt's 72-byte limit passes the
+  handler's `min=10` binding and the complexity check, is refused by the service without
+  spending the token, and is reported as **500** rather than 400 because the handler classifies
+  only the token sentinel. The link stays usable.
+- **Automation:** `internal/service/auth_password_reset_regression_test.go` runs every scenario
+  on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
+  created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
+  skips, which the named acceptance checks reject). `TestPasswordResetValidation{SQLite,MySQL}`:
+  weak and unhashable passwords with same-link completion, unknown/empty/spent/expired tokens,
+  expiry and spend between lookup and claim through the transaction's own handle, inactive,
+  erased, soft-deleted-with-surviving-token and missing owners, and an owner deactivated or
+  soft-deleted through the transaction's handle between the lookup and the owner check (rejected,
+  rolled back, same link completes afterwards). The stale-snapshot case that needs a second
+  connection is `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL`
+  (`internal/service/auth_reset_owner_race_test.go`): a REPEATABLE READ transaction reads the
+  token, another connection commits `is_active = false`, and the reset must reject, leave the
+  account disabled with its old password and the token unspent.
+  `TestPasswordResetAtomicity{SQLite,MySQL}`: injected claim, password-update and
+  session-revocation failures leave everything as seeded and the same token succeeds on retry;
+  success clears the lockout, revokes both owner sessions, leaves a bystander's password, token
+  and session alone and permits login only with the new password; replay is rejected.
+  `TestPasswordResetConcurrent{SQLite,MySQL}`: three competitors with different passwords —
+  held after the lookup on MySQL's multi-connection pool, serialised by the single connection
+  on SQLite — produce one commit, one spent token, the winner's password, revoked sessions and
+  a rejected replay, under the race detector with every wait bounded. The conditional claim
+  itself is pinned by `internal/repository/password_reset_token_repository_test.go`
+  (`TestPasswordResetTokenRepository_MarkUsed_ClaimsOnlySpendableTokens`,
+  `_RollsBackWithTheTransaction`); the call sequence and the refusal without a transaction
+  manager by `internal/service/auth_session_test.go` `TestAuthService_ConfirmPasswordReset`.
+- **Validation:** the three `password-reset-*` named acceptance checks run the six roots with
+  `-race` and reject skipped evidence. `scripts/ci/check-auth.py`, the
+  [auth profile](../VALIDATION_RELEASE.md) checker, discovers these roots from the
+  `auth*_test.go` pattern and also fails on a skipped root, so the bounded auth profile now
+  requires `TEST_MYSQL_DSN` pointing at a disposable MySQL server.
 
 ### TC-AUTH-038 — Change the password of the signed-in account
 - **Priority:** P1

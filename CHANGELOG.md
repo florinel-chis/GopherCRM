@@ -102,6 +102,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Password reset confirmation is atomic and single-use (#102).**
+  `POST /auth/password-reset/confirm` used to mark the token used by an unconditional update
+  before hashing and writing the password, and revoked sessions only best-effort afterwards: a
+  failure after the stamp burnt a usable link, two simultaneous confirmations could both pass the
+  lookup, and a failed revocation left stolen sessions alive next to the new password. The new
+  password is now validated and hashed before anything is written, so a weak or unhashable
+  password leaves the link usable. The token is then claimed by a conditional update (unused,
+  strictly unexpired, exactly one affected row) in the same transaction that re-checks the owner
+  is active and not erased, writes the password, clears the lockout and revokes every refresh
+  token. The owner re-check is a locking read (the transaction-bound `UserRepository`): on MySQL a
+  plain read inside the transaction answered from the snapshot taken at the token lookup, so an
+  account disabled by another connection right after that lookup still looked active and the
+  password update wrote the stale `is_active` back. Any failure rolls the whole unit back and
+  the same link works on retry; competing
+  confirmations commit exactly once with the winner's password; a confirmation is refused rather
+  than run as separate writes when the transaction manager is not wired. Public errors and API
+  responses are unchanged. Regressions run on SQLite and on a disposable MySQL schema
+  (`TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}`, plus the two-connection
+  `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL`); see
+  `docs/testing/01-authentication.md`.
+
 - **Form confirmation tokens are consumed atomically (#101).** Confirming a double-opt-in
   submission used to stamp the token as used before the transaction that created or linked the
   lead and confirmed the submission, by an update on the id alone. A failure in that transaction

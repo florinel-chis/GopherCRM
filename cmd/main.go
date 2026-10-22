@@ -192,12 +192,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	formRepo := repository.NewFormRepository(models.DB)
 
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
+	txManager := utils.NewTransactionManager(models.DB)
 
+	// The password reset confirmation claims the token, writes the password
+	// and revokes the sessions in one transaction, so the auth service takes
+	// the same transaction manager as the other transactional services.
 	authService := service.NewAuthServiceWithSessions(
-		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, appMailer,
+		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
-	txManager := utils.NewTransactionManager(models.DB)
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)

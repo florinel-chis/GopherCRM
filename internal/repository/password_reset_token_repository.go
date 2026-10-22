@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -32,11 +33,33 @@ func (r *passwordResetTokenRepository) GetByTokenHash(tokenHash string) (*models
 	return &token, nil
 }
 
+// MarkUsed claims a token: it stamps used_at only while the row is still
+// unused and strictly unexpired, and reports gorm.ErrRecordNotFound when
+// nothing was claimed. Both predicates are part of the UPDATE itself rather
+// than checked beforehand, so two callers that both read the token as
+// spendable cannot both claim it — whichever UPDATE runs second finds the row
+// already stamped (or expired meanwhile) and affects no row. Exactly one
+// affected row is the only success. The service runs the claim inside the
+// transaction that changes the password and revokes the sessions, so a
+// rollback hands the token back for a retry instead of burning the link.
 func (r *passwordResetTokenRepository) MarkUsed(id uint) error {
 	now := time.Now()
-	return r.db.Model(&models.PasswordResetToken{}).
-		Where("id = ?", id).
-		Update("used_at", &now).Error
+	result := r.db.Model(&models.PasswordResetToken{}).
+		Where("id = ? AND used_at IS NULL AND expires_at > ?", id, now).
+		Update("used_at", &now)
+	if result.Error != nil {
+		return result.Error
+	}
+	switch result.RowsAffected {
+	case 1:
+		return nil
+	case 0:
+		return gorm.ErrRecordNotFound
+	default:
+		// The primary key makes this unreachable; it is still refused rather
+		// than reported as a single-use claim.
+		return fmt.Errorf("password reset token claim affected %d rows", result.RowsAffected)
+	}
 }
 
 func (r *passwordResetTokenRepository) InvalidateAllForUser(userID uint) error {
