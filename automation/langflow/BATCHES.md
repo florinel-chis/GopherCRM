@@ -137,6 +137,10 @@ gophercrm-runner recover-batch --config /absolute/private/config.json --batch ba
 
 Recovery does not kill arbitrary stored PIDs, refund calls, invent finish times,
 refresh inputs or resume execution. The original gates still apply on `--resume`.
+For an inspected validation misclassification in the current child, use
+[`repair-validation`](README.md#inspected-validation-misclassification) with
+`--batch ORIGINAL_BATCH_ID` as well as the child's `--issue` or `--pr` and exact head.
+The standalone form is refused while a batch owns the queue; resume the same batch afterward.
 If correction requires a new plan or budget, deliberately end the batch with
 `abandon-batch --config ... --batch ... --reason '...'`. An unfinished child stays
 active with its evidence and limits for ordinary operator recovery. Complete it

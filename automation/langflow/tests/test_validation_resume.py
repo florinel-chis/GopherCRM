@@ -1,11 +1,13 @@
 from pathlib import Path
+import json
+import shutil
 import unittest
 from unittest.mock import AsyncMock
 
 import test_runner as fixtures
 import test_batches as batch_fixtures
 import test_pull_requests as pr_fixtures
-from gophercrm_runner.config import CommandError, GateError
+from gophercrm_runner.config import BudgetError, CommandError, GateError
 
 
 SQLITE = ('make', 'e2e', 'E2E_DB_DRIVER=sqlite')
@@ -33,7 +35,7 @@ class ValidationResumeTests(unittest.IsolatedAsyncioTestCase):
             if args == INSTALL:
                 self.installs.append(cwd)
                 return 0, 'Locked frontend dependencies installed'
-            if args in (SQLITE, MYSQL):
+            if args[:3] in (SQLITE, MYSQL):
                 self.browser_calls.append((args, cwd))
                 if args == MYSQL and sum(c[0] == MYSQL for c in self.browser_calls) == 1:
                     raise CommandError('connection refused: temporary test environment failure')
@@ -70,28 +72,71 @@ class ValidationResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final['head'], final['tested_head'])
         self.assertEqual(final['head'], final['reviewed_head'])
 
-    async def test_tampered_receipt_stops_before_reuse_or_reexecution(self):
+    async def assert_fresh_validation(self, old, reason):
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertEqual(self.commands.tests, 2)
+        self.assertEqual(self.commands.implementations, 1)
+        self.assertEqual(final['repairs'], 0)
+        self.assertEqual(final['deadline'], old['deadline'])
+        self.assertNotEqual(final['validation_attempt'], old['validation_attempt'])
+        self.assertNotEqual(final['receipts']['local-0'], old['receipts']['local-0'])
+        restart = final['validation_restarts'][-1]
+        self.assertEqual(restart['receipts'], old['receipts'])
+        self.assertEqual(restart['previous_validation_attempt'], old['validation_attempt'])
+        self.assertIn(reason, restart['reason'])
+        self.assertFalse(final.get('validation_resumptions'))
+        self.assertEqual(len(self.browser_calls), 4)
+        self.assertEqual(final['head'], final['tested_head'])
+        self.assertEqual(final['head'], final['reviewed_head'])
+        return final
+
+    async def test_tampered_receipt_requires_fresh_full_validation(self):
         record = await self.failed()
         receipt = self.config.state_dir / record['receipts']['local-0']['path']
         receipt.write_text('{}')
-        with self.assertRaisesRegex(GateError, 'digest'):
-            await self.runner.run_issue(95, execute=True)
-        self.assertEqual(self.commands.tests, 1)
-        self.assertEqual(len(self.browser_calls), 2)
+        await self.assert_fresh_validation(record, 'digest')
+        self.assertEqual(receipt.read_text(), '{}', 'Do not overwrite the damaged historical artifact')
 
     async def test_dirty_prior_validation_checkout_cannot_supply_reused_evidence(self):
         record = await self.failed()
         (Path(record['validation_worktree']) / 'untracked-change.txt').write_text('tampered')
-        with self.assertRaisesRegex(GateError, 'Worktree changed'):
-            await self.runner.run_issue(95, execute=True)
+        await self.assert_fresh_validation(record, 'Worktree changed')
+
+    async def test_missing_prior_checkout_restarts_without_uncaught_oserror(self):
+        record = await self.failed()
+        shutil.rmtree(record['validation_worktree'])
+        await self.assert_fresh_validation(record, 'No such file')
+
+    async def test_missing_output_restarts_without_reusing_any_pass(self):
+        record = await self.failed()
+        receipt = self.config.state_dir / record['receipts']['local-0']['path']
+        output = self.config.state_dir / json.loads(receipt.read_text())['output_path']
+        output.unlink()
+        await self.assert_fresh_validation(record, 'Missing or invalid evidence')
+
+    async def test_budget_expiry_during_checkpoint_verification_does_not_discard_passes(self):
+        record = await self.failed()
+        original = self.runner.clean
+
+        async def boundary(path):
+            if path == Path(record['validation_worktree']):
+                raise BudgetError('Execution deadline exhausted')
+            await original(path)
+
+        self.runner.clean = boundary
+        with self.assertRaises(BudgetError):
+            await self.runner.validate(record)
+        self.assertFalse(record.get('validation_restarts'))
+        self.assertEqual(record['receipts'], self.runner.store.read('issue-95')['receipts'])
         self.assertEqual(self.commands.tests, 1)
 
     async def test_changed_check_command_cannot_reuse_previous_success(self):
-        await self.failed()
+        old = await self.failed()
         self.checks[2] = ('database-0', SQLITE + ('SPECS=different.spec.ts',), None)
-        with self.assertRaisesRegex(GateError, 'trusted successful check'):
-            await self.runner.run_issue(95, execute=True)
-        self.assertEqual(self.commands.tests, 1)
+        await self.assert_fresh_validation(old, 'trusted successful check')
+        self.assertEqual(self.browser_calls[2][0], self.checks[2][1])
 
     async def test_source_repair_invalidates_prior_successes_and_runs_all_gates(self):
         old = await self.failed()
@@ -146,7 +191,7 @@ class PullRequestValidationResumeTests(unittest.IsolatedAsyncioTestCase):
     git = pr_fixtures.PullRequestTests.git
     complete = pr_fixtures.PullRequestTests.complete
 
-    async def test_existing_pr_resumes_passed_core_before_fresh_independent_review(self):
+    async def failed_pr(self):
         extra = ('fixture', 'later-check')
         self.runner.validation_checks = AsyncMock(return_value=[
             ('local-0', ('make', 'verify'), None), ('local-1', extra, None)])
@@ -165,12 +210,30 @@ class PullRequestValidationResumeTests(unittest.IsolatedAsyncioTestCase):
         self.commands.run = boundary
         with self.assertRaisesRegex(GateError, 'environment'):
             await self.complete()
-        old = self.runner.store.read('completion-pr-122')
+        return self.runner.store.read('completion-pr-122')
+
+    async def test_existing_pr_resumes_passed_core_before_fresh_independent_review(self):
+        old = await self.failed_pr()
         result = await self.complete()
         self.assertEqual(result['status'], 'merged')
         final = self.runner.store.read('completion-pr-122')
         self.assertEqual(self.commands.tests, 1)
         self.assertEqual(final['receipts']['local-0'], old['receipts']['local-0'])
         self.assertEqual(final['deadline'], old['deadline'])
+        self.assertEqual(final['head'], final['tested_head'])
+        self.assertEqual(final['head'], final['reviewed_head'])
+
+    async def test_existing_pr_recovers_missing_checkout_without_head_or_budget_change(self):
+        old = await self.failed_pr()
+        shutil.rmtree(old['validation_worktree'])
+        result = await self.complete()
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('completion-pr-122')
+        self.assertEqual(self.commands.tests, 2)
+        self.assertEqual(final['head'], old['head'])
+        self.assertEqual(final['deadline'], old['deadline'])
+        self.assertEqual(final['repairs'], 0)
+        self.assertNotEqual(final['validation_attempt'], old['validation_attempt'])
+        self.assertEqual(final['validation_restarts'][0]['receipts'], old['receipts'])
         self.assertEqual(final['head'], final['tested_head'])
         self.assertEqual(final['head'], final['reviewed_head'])

@@ -19,6 +19,25 @@ MOCK_LOG = json.dumps(dict(level='error', msg='Expected mocked lookup failure',
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_text_service_records_cannot_turn_assertions_into_environment_failures(self):
+        record = ('time="2026-10-22T20:00:00Z" level=error '
+                  'msg="lookup failed: dial tcp: connection refused" '
+                  'method="GetByID" service="CustomerService"\n')
+        self.assertFalse(environment_failure(CommandError('failed',
+            stdout=record + 'passing output\n' * 3000 + ASSERTION, stderr='')))
+        wrapped = json.dumps(dict(Action='output', Package='example/service',
+                                  Output=record)) + '\n' + ASSERTION
+        self.assertFalse(environment_failure(CommandError('failed', stdout=wrapped, stderr='')))
+        # Startup failures remain environment failures without a Go assertion.
+        self.assertTrue(environment_failure(CommandError('failed', stdout=record, stderr='')))
+        for diagnostic in ('dial tcp: connection refused\n',
+                           'level=error msg="connection refused service=X method=Y"\n',
+                           'time=x level=error msg="connection refused method=Y" service=X\n',
+                           'time=x level=error msg="connection refused\n'):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertTrue(environment_failure(CommandError('failed',
+                    stdout=ASSERTION + record + diagnostic, stderr='')))
+
     def test_early_assertion_survives_large_later_passing_test_output(self):
         stdout = ASSERTION + 'passing test output\n' * 3000 + MOCK_LOG
         summary = failure_summary(stdout, 'make: *** [verify-backend] Error 1\n')

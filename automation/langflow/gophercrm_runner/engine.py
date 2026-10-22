@@ -691,27 +691,40 @@ class Runner:
         record['validation_plan'] = self.validation_selection(record, paths)
         completed = record.get('receipts', {})
         if completed:
-            if not record.get('validation_attempt') or not record.get('validation_worktree'):
-                raise GateError('Completed checks lack their original validation identity')
-            previous = Path(record['validation_worktree'])
-            await self.clean(previous)
-            if await self.head(previous) != record['head']:
-                raise GateError('Previous validation checkout changed commit')
-            if set(completed) - {check_id for check_id, _, _ in checks}:
-                raise GateError('Completed check registry changed')
-            for check_id, command, named_tests in checks:
-                if check_id not in completed:
-                    continue
-                receipt = evidence.verify_receipt(self.config.state_dir, record,
-                                                  completed[check_id], check_id, command)
-                output = evidence.safe_artifact(self.config.state_dir, receipt['output_path']).read_text()
-                if './cmd/migrate' in command:
-                    migration_coverage(output)
-                if named_tests:
-                    evidence.named_go_tests(output, named_tests)
+            try:
+                if not record.get('validation_attempt') or not record.get('validation_worktree'):
+                    raise GateError('Completed checks lack their original validation identity')
+                previous = Path(record['validation_worktree'])
+                await self.clean(previous)
+                if await self.head(previous) != record['head']:
+                    raise GateError('Previous validation checkout changed commit')
+                if set(completed) - {check_id for check_id, _, _ in checks}:
+                    raise GateError('Completed check registry changed')
+                for check_id, command, named_tests in checks:
+                    if check_id not in completed:
+                        continue
+                    receipt = evidence.verify_receipt(self.config.state_dir, record,
+                                                      completed[check_id], check_id, command)
+                    output = evidence.safe_artifact(self.config.state_dir, receipt['output_path']).read_text()
+                    if './cmd/migrate' in command:
+                        migration_coverage(output)
+                    if named_tests:
+                        evidence.named_go_tests(output, named_tests)
+            except BudgetError:
+                raise
+            except (GateError, OSError) as exc:
+                # Unusable checkpoints cannot supply passing evidence. Retain
+                # their references and reason, then require every check again.
+                record.setdefault('validation_restarts', []).append(dict(
+                    at=self.clock(), head=record['head'],
+                    previous_validation_attempt=record.get('validation_attempt'),
+                    previous_worktree=record.get('validation_worktree'),
+                    receipts=dict(completed), reason=redact(str(exc))[:2000]))
+                completed = {}
+        if completed:
             record.setdefault('validation_resumptions', []).append(dict(
                 at=self.clock(), head=record['head'], validation_attempt=record['validation_attempt'],
-                reused_checks=list(completed), previous_worktree=str(previous)))
+                reused_checks=list(completed), previous_worktree=record['validation_worktree']))
         else:
             record.update(validation_attempt=uuid.uuid4().hex, receipts={})
         record.update(tested_head=None, reviewed_head=None, review_receipt=None, pending_review=None)

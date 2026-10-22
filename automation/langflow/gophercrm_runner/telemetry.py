@@ -98,6 +98,7 @@ def report(record, preflight, operator, now):
         'last_failure': record.get('last_failure'),
         'validation_repair_requests': record.get('validation_repair_requests', []),
         'validation_resumptions': record.get('validation_resumptions', []),
+        'validation_restarts': record.get('validation_restarts', []),
         'documentation': ((record.get('source_snapshot', {}) if record.get('reuse_ticket') else record)
                           .get('review') or {}).get('documentation'),
         'documentation_merge': record.get('documentation_merge'),

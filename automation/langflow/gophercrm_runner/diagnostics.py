@@ -2,6 +2,7 @@
 
 import json
 import re
+import shlex
 
 
 def go_output(text):
@@ -65,6 +66,25 @@ def failure_summary(stdout, stderr, limit=12000):
     return excerpt + (tail[-remaining:] if remaining else '')
 
 
+def service_record(line):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        entry = None
+    if isinstance(entry, dict):
+        return all(isinstance(entry.get(key), str) for key in ('level', 'msg', 'service', 'method'))
+    # Logrus also emits key=value text. Parse quoted values so field names
+    # mentioned inside a message cannot masquerade as service/method fields.
+    if not line.startswith(('time=', 'level=')):
+        return False
+    try:
+        fields = dict(part.split('=', 1) for part in shlex.split(line) if '=' in part)
+    except ValueError:
+        return False
+    return (fields.get('level') in {'trace', 'debug', 'info', 'warning', 'warn', 'error', 'fatal', 'panic'}
+            and all(fields.get(key) for key in ('msg', 'service', 'method')))
+
+
 def classification_text(error):
     stdout, stderr = getattr(error, 'stdout', None), getattr(error, 'stderr', None)
     if stdout is None or stderr is None:
@@ -74,16 +94,11 @@ def classification_text(error):
         return text
     lines = []
     for line in text.splitlines():
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            entry = None
         # Go suites intentionally log errors from mocked service calls. An
         # assertion failure is established separately above. Keep the assertion
         # diagnostics and all unrecognised/startup output, including real SQL,
         # disk, browser and configuration errors; ignore only service log records.
-        if (isinstance(entry, dict) and all(isinstance(entry.get(key), str)
-                for key in ('level', 'msg', 'service', 'method'))):
+        if service_record(line):
             continue
         lines.append(line)
     return '\n'.join(lines)

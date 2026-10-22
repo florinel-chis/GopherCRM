@@ -367,6 +367,10 @@ checks run in a fresh checkout with its own locked browser dependencies. Failed 
 commands still run in full; source repairs and base refresh invalidate earlier checks. This
 avoids repeating passed backend/frontend/SQLite checks after a later environment interruption
 without weakening the selected gates or independent review.
+If the old checkout or evidence is missing or changed, the runner records the invalidated
+checkpoint and reruns all selected checks under a new validation identity. Original artifacts,
+spent calls/repairs and the deadline remain intact. Runner/gate code is protected from repair
+agents; maintainers prepare those corrections and use the existing PR refresh workflow.
 
 Update relevant documentation in the same PR. CI identifies affected guides; the local
 workflow records explicit review decisions and verifies documentation after merge. Include

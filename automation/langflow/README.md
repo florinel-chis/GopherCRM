@@ -155,7 +155,7 @@ With no active ticket, a stop request blocks new issue admission. A separate sho
 
 Failed commands retain complete bounded, redacted diagnostics in private logs. Go assertion
 blocks are included in the repair summary even when later passing tests fill the output.
-When Go reports an assertion failure, structured service log records from mocked calls do
+When Go reports an assertion failure, JSON and logrus text service records from mocked calls do
 not by themselves establish an environment failure. Actual SQL/readiness errors, disk and
 network errors, occupied ports, missing tools and configuration errors still stop execution.
 
@@ -187,8 +187,12 @@ failures must still have their prerequisites restored before normal resume.
 Normal resume retains successful checks from an interrupted validation when the source,
 original validation checkout and receipt identities still match. It verifies the execution,
 head, base, policy, contract, context, check command, receipt digest and output digest before
-reuse, and checks named-test and migration coverage again. Changed or missing evidence blocks
-reuse; it cannot turn a failed check into a pass.
+reuse, and checks named-test and migration coverage again. If the old checkout was removed or
+changed, or the receipts/outputs cannot be verified, resume records the reason and old receipt
+references in `validation_restarts`, starts a new validation attempt and reruns every selected
+check in a fresh checkout. It never treats the unusable checkpoint as passing evidence or
+overwrites its old artifacts. The source and policy must still match, and expired budgets
+still stop execution; this fallback does not reset the deadline, calls or repairs.
 
 Remaining checks run in a fresh checkout. Browser checks install locked frontend dependencies
 there when the earlier installation/core check was already completed. Ignored files and
@@ -197,6 +201,12 @@ must pass in full; an isolated diagnostic rerun does not replace it. The origina
 failed/cancelled attempts, spent calls and deadline remain recorded, and `report`/`report-pr`
 include `validation_resumptions`. Source repairs and explicit base refresh invalidate the
 earlier checks; a new candidate still requires all selected checks and independent review.
+
+Implementation agents cannot edit runner code or validation gates. When a review of a runner
+PR requires those changes, a maintainer must prepare and push the corrected commit, then use
+`complete-pr --refresh --head FULL_NEW_HEAD_SHA` with the original configuration. This retains
+spent budgets and requires fresh validation and independent review. An automatic repair's
+documentation-only edits do not resolve a protected-code finding.
 
 ## Complete existing PRs through merge
 
