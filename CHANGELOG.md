@@ -99,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transaction (which blocked forever on that pool): an inner failure rolls back to its savepoint
   while the outer unit may still commit, and an outer failure discards every nested write. Commit
   and rollback failures are reported with `errors.Is`-inspectable sentinels alongside the
-  callback's own error, a rollback already performed by context cancellation is not an error,
+  callback's own error, a rollback already performed by context cancellation is not an error
+  (a nested call whose enclosing context ended reports the cancellation, not a failed cleanup),
   and `WithTransactionAndRetry` replays only attempts that rolled back cleanly, never an
   ambiguous commit; inside a transaction it runs once and defers a retryable failure to the
   enclosing root retry. A negative retry count is rejected without running the callback. A failed

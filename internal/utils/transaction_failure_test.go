@@ -607,6 +607,72 @@ func TestTransactionFinalizationFailures(t *testing.T) {
 		assertPoolUsable(t)
 	})
 
+	scenario("a savepoint rollback refused after the root context ended is cancellation, not poison", func(t *testing.T) {
+		// The injected error fires regardless of the context, so the decision
+		// below rests on the enclosing context's state alone: the transaction
+		// is already dead, database/sql refuses its commit, and the swallowed
+		// inner writes cannot reach the database without any poison.
+		brokenErr := errors.New("injected: rollback to savepoint refused on a dead transaction")
+		pool.inject(func(p *failingPool) { p.execHook = failAlways("ROLLBACK TO SAVEPOINT", brokenErr) })
+		rootCtx, cancel := context.WithCancel(boundedContext(t))
+		defer cancel()
+
+		err := tm.WithTransaction(rootCtx, func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "outer"))
+			innerErr := tm.WithTransaction(ctx, func(ctx context.Context) error {
+				require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+				cancel()
+				return nil
+			})
+			require.ErrorIs(t, innerErr, context.Canceled)
+			require.NotErrorIs(t, innerErr, ErrTransactionPoisoned, "a dead enclosing context is reported as cancellation")
+			require.NotErrorIs(t, innerErr, ErrRollbackFailed)
+			return nil // the outer callback ignores the cancellation
+		})
+
+		require.ErrorIs(t, err, ErrCommitFailed, "database/sql refuses the commit on the cancelled root context")
+		require.ErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, ErrTransactionPoisoned)
+		assert.Empty(t, persistedLabels(t, db))
+		// database/sql may still be finishing its own rollback of the cancelled
+		// transaction on another goroutine, so pool reuse is proven by a bounded
+		// follow-up transaction rather than an instantaneous in-use count.
+		pool.reset()
+		require.NoError(t, tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			return insertRecord(ctx, "after-failure")
+		}))
+		assert.Equal(t, []string{"after-failure"}, persistedLabels(t, db))
+	})
+
+	scenario("a live enclosing context keeps a refused savepoint rollback poisoned", func(t *testing.T) {
+		// The counterpart of the scenario above: only the inner context is
+		// cancelled, the enclosing transaction is alive, and a refused rollback
+		// on it must still poison because the inner writes may remain.
+		rollbackErr := errors.New("injected: rollback to savepoint refused")
+		pool.inject(func(p *failingPool) { p.execHook = failAlways("ROLLBACK TO SAVEPOINT", rollbackErr) })
+
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "outer"))
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			innerErr := tm.WithTransaction(innerCtx, func(ctx context.Context) error {
+				require.NoError(t, insertRecord(ctx, "inner-must-not-commit"))
+				cancel()
+				return nil
+			})
+			require.ErrorIs(t, innerErr, context.Canceled)
+			require.ErrorIs(t, innerErr, ErrTransactionPoisoned)
+			require.ErrorIs(t, innerErr, rollbackErr)
+			return nil
+		})
+
+		require.ErrorIs(t, err, ErrTransactionPoisoned)
+		require.ErrorIs(t, err, rollbackErr)
+		assert.NotErrorIs(t, err, ErrCommitFailed)
+		assert.Empty(t, persistedLabels(t, db))
+		assertPoolUsable(t)
+	})
+
 	scenario("the retry helper neither commits nor replays a swallowed poisoned attempt", func(t *testing.T) {
 		// The inner rollback fails with a non-retryable error and the outer
 		// callback swallows the deferred failure. Nothing retryable remains in

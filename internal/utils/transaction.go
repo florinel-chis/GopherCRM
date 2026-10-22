@@ -138,7 +138,9 @@ func poisonResult(err, cause error) error {
 //     caller that recovers the panic or swallows the inner error cannot turn
 //     them into a commit: every enclosing managed call returns the error, new
 //     nested calls are refused before their callback runs, and the root rolls
-//     back instead of committing.
+//     back instead of committing. A rollback refused only because the
+//     enclosing context ended is not poison: that transaction can no longer
+//     commit and is discarded, and the cancellation is reported instead.
 type TransactionManager struct {
 	db *gorm.DB
 }
@@ -290,7 +292,10 @@ func (tm *TransactionManager) runRoot(ctx context.Context, fn func(ctx context.C
 // poisoned transaction issues no further statements from the manager: new
 // nested calls are refused, enclosing levels skip their own savepoint rollback
 // and return the poison, and the managed root performs the single ROLLBACK
-// that discards everything.
+// that discards everything. The exception is a rollback refused because the
+// enclosing context itself has ended: that transaction is already dead and is
+// discarded by database/sql or by the enclosing level, so the cancellation is
+// returned instead.
 func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn func(ctx context.Context) error) (err error) {
 	state, _ := ctx.Value(txStateKey).(*txState)
 	ownsState := state == nil
@@ -326,13 +331,25 @@ func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn fun
 	// is poisoned: the writes may still be there and no one may commit them.
 	// A transaction already poisoned by a deeper level is left alone; its
 	// state is unknown and the root ROLLBACK is the cleanup.
-	rollback := func() {
+	//
+	// The one failure that does not poison is a rollback refused because the
+	// enclosing handle's own context has ended. The enclosing transaction can
+	// then never commit: database/sql rejects COMMIT on a done context and
+	// rolls the root transaction back itself, and an enclosing nested level
+	// fails its own context check and rolls back to its savepoint on its
+	// still-live parent handle. Nothing this level wrote can reach the
+	// database, so the cancellation is reported instead of a bogus poison.
+	rollback := func() (enclosingCtxErr error) {
 		if state.poisoned() != nil {
-			return
+			return nil
 		}
 		if rbErr := rollbackToSavepoint(tx, name); rbErr != nil {
+			if enclosing := tx.Statement.Context; enclosing != nil && enclosing.Err() != nil {
+				return enclosing.Err()
+			}
 			state.poison(fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
 		}
+		return nil
 	}
 
 	finished := false
@@ -344,7 +361,7 @@ func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn fun
 		// panic continue to whoever recovers it. A failed rollback has no
 		// return path here, but the poison it recorded reaches whoever
 		// recovers through the enclosing calls' return values.
-		rollback()
+		_ = rollback()
 	}()
 	txCtx := context.WithValue(ctx, txKey, inner)
 	if ownsState {
@@ -359,7 +376,11 @@ func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn fun
 	}
 
 	if err != nil {
-		rollback()
+		// A rollback refused by the enclosing context's cancellation is
+		// reported as that cancellation; callers can always classify it.
+		if ctxErr := rollback(); ctxErr != nil && !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("%w: %w", ctxErr, err)
+		}
 	}
 	if cause := state.poisoned(); cause != nil {
 		// Either this level's rollback failed, or a deeper one did and the

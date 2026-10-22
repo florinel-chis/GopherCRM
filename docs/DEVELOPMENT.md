@@ -131,7 +131,13 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
   its context after the callback and rolls back to its savepoint even if the callback returned
   nil; the uncancelled outer transaction may still commit its own work after handling that error.
   A rollback that `database/sql` already performed for the cancelled root context is not
-  reported as a failure.
+  reported as a failure. Likewise, a `ROLLBACK TO SAVEPOINT` refused only because the enclosing
+  context has ended does not poison the transaction: that transaction can no longer commit
+  (`database/sql` refuses `COMMIT` on a done context and discards the root transaction; an
+  enclosing nested level fails its own context check and rolls back on its live parent handle),
+  so the nested call returns the cancellation and the root rolls back on it without attempting
+  the commit. An outer callback that swallows that cancellation and returns nil still gets
+  `ErrCommitFailed` with the context error, and nothing is persisted.
 - **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed`,
   `ErrRollbackFailed` and `ErrTransactionPoisoned` tag what went wrong; a rollback failure is
   joined to the callback's error so both stay inspectable with `errors.Is`. A failed commit is

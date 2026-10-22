@@ -472,9 +472,48 @@ func runTransactionNestedScenarios(t *testing.T, db *gorm.DB) {
 			})
 		})
 
+		// The nested call reports the cancellation; its savepoint rollback is
+		// refused because the root context is dead, which is not a poisoned
+		// transaction: database/sql discards the root transaction itself. The
+		// root therefore rolls back on the callback error and never attempts
+		// the commit.
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrCommitFailed)
 		assert.ErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, ErrTransactionPoisoned, "a rollback refused by the dead root context is not a failed cleanup")
+		assert.NotErrorIs(t, err, ErrRollbackFailed)
+		assert.NotErrorIs(t, err, ErrCommitFailed, "the root never attempted the commit")
+		assert.Empty(t, persistedLabels(t, db))
+		require.NoError(t, tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			return insertRecord(ctx, "after-cancel")
+		}))
+		assert.Equal(t, []string{"after-cancel"}, persistedLabels(t, db))
+	})
+
+	t.Run("a swallowed root cancellation inside a nested call still cannot commit", func(t *testing.T) {
+		clearRecords(t, db)
+		rootCtx, cancel := context.WithCancel(boundedContext(t))
+		defer cancel()
+
+		err := tm.WithTransaction(rootCtx, func(ctx context.Context) error {
+			if err := insertRecord(ctx, "outer"); err != nil {
+				return err
+			}
+			innerErr := tm.WithTransaction(ctx, func(ctx context.Context) error {
+				if err := insertRecord(ctx, "inner"); err != nil {
+					return err
+				}
+				cancel()
+				return nil
+			})
+			require.ErrorIs(t, innerErr, context.Canceled)
+			require.NotErrorIs(t, innerErr, ErrTransactionPoisoned)
+			return nil // the outer callback ignores the cancellation
+		})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrCommitFailed, "the dead root context refuses the commit")
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, ErrTransactionPoisoned)
 		assert.Empty(t, persistedLabels(t, db))
 		require.NoError(t, tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
 			return insertRecord(ctx, "after-cancel")
