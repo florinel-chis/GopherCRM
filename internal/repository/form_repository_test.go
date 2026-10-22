@@ -286,6 +286,10 @@ func TestFormRepositoryConfirmationTokenLookupOnlySpendable(t *testing.T) {
 	}
 }
 
+// The claim is conditional: it stamps a token only while it is unused and
+// unexpired, and it succeeds only when exactly one row was stamped. A second
+// claim of the same token, a claim of an expired one and a claim of an unknown
+// id are all not-found, and none of them writes anything.
 func TestFormRepositoryMarkConfirmationTokenUsed(t *testing.T) {
 	db := setupFormTestDB(t)
 	repo := NewFormRepository(db)
@@ -293,14 +297,61 @@ func TestFormRepositoryMarkConfirmationTokenUsed(t *testing.T) {
 	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
 	token := makeConfirmationToken(t, db, submission.ID, "hash-live", time.Now().Add(48*time.Hour))
 
+	// Each read goes into a fresh struct: GORM adds a populated primary key
+	// on the destination as a condition, so reusing one across ids would
+	// look for a row matching both.
+	loadToken := func(id uint) models.FormConfirmationToken {
+		var stored models.FormConfirmationToken
+		require.NoError(t, db.First(&stored, id).Error)
+		return stored
+	}
+
 	require.NoError(t, repo.MarkConfirmationTokenUsed(token.ID))
 
 	_, err := repo.GetConfirmationTokenByHash("hash-live")
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound, "a spent token is no longer spendable")
 
-	var stored models.FormConfirmationToken
-	require.NoError(t, db.First(&stored, token.ID).Error)
-	assert.NotNil(t, stored.UsedAt, "the row is kept, only stamped")
+	claimed := loadToken(token.ID)
+	require.NotNil(t, claimed.UsedAt, "the row is kept, only stamped")
+	firstStamp := *claimed.UsedAt
+
+	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(token.ID), gorm.ErrRecordNotFound,
+		"a token can be claimed exactly once")
+	reclaimed := loadToken(token.ID)
+	require.NotNil(t, reclaimed.UsedAt)
+	assert.True(t, reclaimed.UsedAt.Equal(firstStamp), "a refused claim does not restamp the row")
+
+	expired := makeConfirmationToken(t, db, submission.ID, "hash-expired", time.Now().Add(-time.Second))
+	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(expired.ID), gorm.ErrRecordNotFound,
+		"an expired token cannot be claimed even though it is unused")
+	assert.Nil(t, loadToken(expired.ID).UsedAt, "a refused claim leaves the expired token untouched")
+
+	assert.ErrorIs(t, repo.MarkConfirmationTokenUsed(424242), gorm.ErrRecordNotFound)
+}
+
+// A claim rolled back with its transaction leaves the token spendable: the
+// stamp is part of the unit of work, not a separate write.
+func TestFormRepositoryMarkConfirmationTokenUsedRollsBackWithTheTransaction(t *testing.T) {
+	db := setupFormTestDB(t)
+	repo := NewFormRepository(db)
+	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
+	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
+	token := makeConfirmationToken(t, db, submission.ID, "hash-live", time.Now().Add(48*time.Hour))
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := repo.WithTx(tx).MarkConfirmationTokenUsed(token.ID); err != nil {
+			return err
+		}
+		_, err := repo.WithTx(tx).GetConfirmationTokenByHash("hash-live")
+		assert.ErrorIs(t, err, gorm.ErrRecordNotFound, "inside the transaction the token is spent")
+		return errors.New("something after the claim failed")
+	})
+	require.Error(t, err)
+
+	found, err := repo.GetConfirmationTokenByHash("hash-live")
+	require.NoError(t, err, "after the rollback the token is spendable again")
+	assert.Equal(t, token.ID, found.ID)
+	require.NoError(t, repo.MarkConfirmationTokenUsed(token.ID))
 }
 
 // Re-submitting the same address must leave exactly one working link, and must

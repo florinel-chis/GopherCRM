@@ -32,6 +32,12 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 - **Mail is log-only without `SMTP_HOST`**, and the log redacts tokenised links, so the opt-in
   confirm flow can only be end-to-end tested with a mail sink; the token path itself is pinned in
   Go tests.
+- **The confirmation regressions run on real SQL.** `form_confirmation_regression_test.go` runs
+  every scenario on in-memory SQLite with the production one-connection pool and, when
+  `TEST_MYSQL_DSN` points at a disposable server, on a uniquely named MySQL schema that is created
+  and dropped per root. Without the variable the MySQL roots skip, which the named acceptance
+  checks reject; with it set but unreachable they fail. Never point the variable at an
+  application database.
 
 ## Definition management
 
@@ -68,7 +74,7 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   `gocrm-ui/e2e/tests/forms-public-api.spec.ts` (before the column limits this path answered 500
   with Error 1406). Saved and published definitions state the
   clamped limit; a legacy pending opt-in row holding an over-wide value is refused at confirm
-  before its token is spent.
+  and the rollback hands its token back unspent.
 - **TC-FORM-024 — submissions over 64KB are rejected (413)** · automated ·
   `form_public_handler_test.go`.
 - **TC-FORM-025 — cross-origin requests to /forms/public get permissive credential-less CORS while
@@ -100,12 +106,38 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   automated · `form_public_handler_test.go` (service-call counter).
 - **TC-FORM-062 — confirmation is single-use and expires after 48h; re-submitting invalidates the
   earlier token** · automated · `form_service_test.go` + `form_repository_test.go`.
+  - The token is claimed by a conditional `UPDATE` (`used_at IS NULL AND expires_at > now`, exactly
+    one affected row) inside the same transaction that re-reads the pending submission, writes the
+    lead and confirms the submission. A spent, expired, unknown or re-submitted token, a token that
+    expires or is spent between the lookup and the claim, a submission that is no longer pending
+    and a token whose submission or form is gone are all refused with nothing written and nothing
+    mailed. Before this, the token was stamped by an unconditional update *before* the transaction,
+    so a failed confirmation consumed a usable link and two simultaneous clicks could both pass
+    the lookup.
+  - `TestFormConfirmationTokenClaimSQLite` / `TestFormConfirmationTokenClaimMySQL`
+    (`form_confirmation_regression_test.go`) and `TestFormRepositoryMarkConfirmationTokenUsed`.
 - **TC-FORM-063 — confirmation flips the submission, creates/attaches the lead, sends the
   follow-up with the content link** · automated · `form_service_test.go`.
+  - All of it commits or none of it does: an injected lead insert, lead update or submission update
+    failure rolls back the claim, the submission and the lead (an existing lead's notes included),
+    the same link then works on retry, and no notification or follow-up is sent for the failed
+    attempt. Mail goes out only after the commit; the regression's mailer reads the database when
+    each message is handed over and asserts it already sees the confirmed, linked submission and
+    the spent token.
+  - `TestFormConfirmationRollbackSQLite` / `TestFormConfirmationRollbackMySQL`.
 - **TC-FORM-064 — full opt-in loop through a real inbox** · blocked · needs an SMTP sink
   (mailpit or similar); the log mailer redacts the tokenised link by design.
 - **TC-FORM-065 — custom confirmation bodies missing {confirmation_link} still get the link
   appended** · automated · `form_service_test.go`.
+- **TC-FORM-066 — simultaneous clicks on one confirmation link yield exactly one confirmation**
+  · automated · `TestFormConfirmationConcurrentSQLite` / `TestFormConfirmationConcurrentMySQL`.
+  Three requests race for one link: exactly one succeeds, one lead is created and linked, the
+  team is notified once and the visitor gets one follow-up; the others are told the link is no
+  longer valid, and a later replay is refused. On MySQL every competitor is held inside its
+  transaction after reading the token as spendable until all have read it, so the conditional
+  claim alone decides. On SQLite the production pool holds one connection, which serialises the
+  competitors (a barrier inside the transaction would deadlock), so the competitors start together
+  and the assertions are the same. Every wait is bounded.
 
 ## Leads and erasure
 

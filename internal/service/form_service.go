@@ -21,6 +21,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
 )
 
 // ErrInvalidConfirmationToken covers every rejection of a double-opt-in
@@ -887,89 +888,130 @@ func (s *formService) storePendingSubmission(form *models.Form, submission *mode
 // ConfirmSubmission spends a confirmation token: the submission becomes
 // confirmed, the lead is created or attached, and the notification and
 // follow-up mail go out. Every rejection maps to ErrInvalidConfirmationToken.
+//
+// The token lookup, its claim, the pending check of the submission, the lead
+// write and the submission update are one transaction. The claim is a
+// conditional UPDATE that stamps the token only while it is still unused and
+// unexpired and must affect exactly one row, so two requests that both read the
+// token as spendable cannot both succeed: the second claim finds nothing to
+// stamp and is rejected. A failure after the claim rolls the whole unit back,
+// token included, so the link stays usable for a retry instead of being spent
+// on a confirmation that never happened. Mail goes out only once the
+// transaction has committed; a notification about a confirmation that was then
+// rolled back would announce a lead that does not exist.
 func (s *formService) ConfirmSubmission(rawToken string) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("handler", "confirm"), "FormService", "ConfirmSubmission")
 
 	if strings.TrimSpace(rawToken) == "" {
 		return fmt.Errorf("confirmation token missing: %w", ErrInvalidConfirmationToken)
 	}
+	hash := hashOpaqueToken(rawToken, s.tokenSecret)
 
-	// The lookup already excludes spent and expired tokens.
-	stored, err := s.repo.GetConfirmationTokenByHash(hashOpaqueToken(rawToken, s.tokenSecret))
+	var (
+		form       *models.Form
+		submission *models.FormSubmission
+	)
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		var err error
+		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), hash)
+		return err
+	})
+	if err != nil {
+		// A rejected link is the visitor's problem and is logged where it is
+		// detected; anything else is a failure of ours.
+		if !errors.Is(err, ErrInvalidConfirmationToken) {
+			utils.LogServiceResponse(logger, err)
+		}
+		return err
+	}
+
+	// Only committed state is announced: the team is told about a lead that
+	// exists and the visitor gets the content for a confirmation that stuck.
+	s.notify(form, submission)
+	s.sendFollowUpMail(form, submission)
+
+	logger.WithField("submission_id", submission.ID).Info("Form submission confirmed")
+	return nil
+}
+
+// confirmInTransaction performs a confirmation on transaction-bound
+// repositories and returns the form and the now-confirmed submission for the
+// mail that follows the commit. Any error discards every write, the token claim
+// included.
+func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, hash string) (*models.Form, *models.FormSubmission, error) {
+	// The lookup already excludes spent and expired tokens; the claim below
+	// re-applies both predicates as part of its own UPDATE.
+	stored, err := formRepo.GetConfirmationTokenByHash(hash)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+			return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
 		}
-		return fmt.Errorf("confirmation token lookup failed: %w", err)
+		return nil, nil, fmt.Errorf("confirmation token lookup failed: %w", err)
 	}
 
 	// Defence in depth in case a repository implementation stops filtering.
-	if stored.UsedAt != nil || stored.ExpiresAt.Before(time.Now()) {
-		return fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+	if stored.UsedAt != nil || !stored.ExpiresAt.After(time.Now()) {
+		return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
 	}
 
-	submission, err := s.repo.GetSubmissionByID(stored.SubmissionID)
+	// Claim the token before reading anything else. The claim is the one
+	// write competing requests contend on: whoever stamps the row first owns
+	// the confirmation, and every other request finds no row to stamp — even
+	// one that passed the lookup a moment ago, or one whose token expired
+	// between the lookup and this statement.
+	if err := formRepo.MarkConfirmationTokenUsed(stored.ID); err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+		}
+		return nil, nil, fmt.Errorf("failed to mark confirmation token used: %w", err)
+	}
+
+	submission, err := formRepo.GetSubmissionByID(stored.SubmissionID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+			return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
 		}
-		return err
+		return nil, nil, err
 	}
 	if submission.Status != models.FormSubmissionPending {
-		return fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+		return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
 	}
 
-	form, err := s.repo.GetByID(submission.FormID)
+	form, err := formRepo.GetByID(submission.FormID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
+			return nil, nil, fmt.Errorf("confirmation token rejected: %w", ErrInvalidConfirmationToken)
 		}
-		return err
+		return nil, nil, err
 	}
 
 	// A submission stored before values were limited to their columns may
-	// hold one the lead insert would reject. Turn it away before the token is
-	// spent: the visitor is told the link is no longer valid and re-submits,
-	// where validation now reports the over-long field.
+	// hold one the lead insert would reject. Turn it away: the rollback hands
+	// the token back, the visitor is told the link is no longer valid and
+	// re-submits, where validation now reports the over-long field.
 	if name, wide := overlongColumnValue(submission.Data); wide {
 		logger.WithField("submission_id", submission.ID).WithField("field", name).
 			Warn("Pending submission holds a value wider than its column; confirmation refused")
-		return fmt.Errorf("pending submission field %q exceeds its column: %w", name, ErrInvalidConfirmationToken)
-	}
-
-	// Spend the token before anything else, so a failure further down cannot
-	// leave a link that can be clicked twice. A visitor who hits such a failure
-	// re-submits the form and gets a fresh link.
-	if err := s.repo.MarkConfirmationTokenUsed(stored.ID); err != nil {
-		return fmt.Errorf("failed to mark confirmation token used: %w", err)
+		return nil, nil, fmt.Errorf("pending submission field %q exceeds its column: %w", name, ErrInvalidConfirmationToken)
 	}
 
 	confirmedAt := time.Now()
 	submission.Status = models.FormSubmissionConfirmed
 	submission.ConfirmedAt = &confirmedAt
 
-	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok {
-			return utils.ErrNoTransaction
+	if form.CreateLead {
+		if err := s.applySubmissionLead(leadRepo, form, submission); err != nil {
+			return nil, nil, err
 		}
-		if form.CreateLead {
-			if err := s.applySubmissionLead(s.leadRepo.WithTx(tx), form, submission); err != nil {
-				return err
-			}
-		}
-		return s.repo.WithTx(tx).UpdateSubmission(submission)
-	})
-	if err != nil {
-		utils.LogServiceResponse(logger, err)
-		return err
 	}
-
-	s.notify(form, submission)
-	s.sendFollowUpMail(form, submission)
-
-	logger.WithField("submission_id", submission.ID).Info("Form submission confirmed")
-	return nil
+	if err := formRepo.UpdateSubmission(submission); err != nil {
+		return nil, nil, err
+	}
+	return form, submission, nil
 }
 
 // applySubmissionLead links the submission to a lead: the newest live lead with

@@ -443,6 +443,7 @@ test --list` reports 100.
 | `service/auth_service_cookie_test.go` | 5 | Service |
 | `service/bulk_operation_service_test.go` | 4 | Service |
 | `service/auth_service_test.go` | 4 (16 subtests) | Service |
+| `service/form_confirmation_regression_test.go` | 6 (SQLite and MySQL roots, + subtests) | Service |
 | `middleware/rate_limit_test.go` | 7 (+ subtests) | Middleware |
 | `middleware/auth_test.go` | 12 | Middleware |
 | `middleware/error_handler_test.go` | 6 | Middleware |
