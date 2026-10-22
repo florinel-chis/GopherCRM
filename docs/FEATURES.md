@@ -41,6 +41,10 @@ locally; unfiltered `make e2e` runs the full browser suite. The manual
 [Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
 and publishing verified artifacts. Production deploys consume those published artifacts.
 See the [validation and release runbook](VALIDATION_RELEASE.md).
+The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs fresh,
+populated-upgrade and rollback/reapply SQL regressions on MySQL 8 and MariaDB 10.11, alongside
+the SQLite upgrade fixtures, on every PR, merge group and main push. Required roots and their
+descendants cannot be skipped; revision-bound JSON artifacts retain the results.
 CI also publishes documentation impact. New local workflow configurations require explicit
 documentation review and verify reviewed document contents after merge; see
 [documentation maintenance](DOCUMENTATION_WORKFLOW.md). The CI impact report alone is not

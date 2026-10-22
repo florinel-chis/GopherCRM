@@ -175,7 +175,10 @@ class ReleaseTests(unittest.TestCase):
         folder.mkdir(parents=True)
         (folder / 'example_test.go').write_text('func TestExampleMySQL(t *testing.T) {}\n')
         events = [{'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/cmd/migrate', 'Test': name} for name in
-                  ['TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema']]
+                  ['TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema',
+                   'TestCustomerWebsiteMigration']]
+        events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
+                      for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})
         def output():
             return '\n'.join(json.dumps(event) for event in events)
