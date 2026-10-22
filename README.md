@@ -497,7 +497,9 @@ returns the unified envelope `{ success, data, error, meta }`.
   whether or not the account exists (anti-enumeration). Delivery goes through SMTP when
   `SMTP_HOST` is configured, otherwise a logging fallback.
 - `POST /api/v1/auth/password-reset/confirm` - Redeem a single-use reset token (1 h expiry) and set
-  a new password. Revokes all refresh tokens.
+  a new password. The token claim, the password update, the lockout reset and the revocation of
+  all refresh tokens are one transaction: a failed or rejected confirmation leaves the link
+  usable, and competing confirmations succeed exactly once.
 
 All of the above sit behind the strict rate-limit tier (10/min). Two more auth endpoints require
 authentication and live on the moderate tier:

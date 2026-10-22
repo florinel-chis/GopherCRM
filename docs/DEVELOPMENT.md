@@ -176,6 +176,27 @@ deterministic lockout tests and the real HTTP/SQLite session regression in
 [targeted auth validation profile](VALIDATION_RELEASE.md), including race tests and
 health/login/registration browsers. Releases retain complete validation.
 
+A password reset link is spent only by a committed reset. `ConfirmPasswordReset` validates the
+complexity policy and hashes the new password before anything is written, so a weak password, or
+one bcrypt refuses (over 72 bytes), leaves the link usable. It then runs one transaction through
+the transaction manager and the `WithTx` repositories: the token is claimed by a conditional
+update (`used_at IS NULL AND expires_at > now`, exactly one affected row, else the generic
+rejection), the owner is re-read and refused if inactive or erased, the password is written with
+the lockout cleared, and every refresh token of the account is revoked. A failure of the password
+update or of the revocation is returned and rolls the claim back, so the same link works on retry;
+competing confirmations commit exactly once, and a token that expires or is spent between the
+lookup and the claim is refused. The service refuses the confirmation rather than running the
+writes separately when the transaction manager or a repository is not wired, which is why
+`NewAuthServiceWithSessions` takes the manager explicitly; `NewAuthService` remains for stateless
+JWT callers. Regression roots: `TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}`
+in `internal/service/auth_password_reset_regression_test.go` (one-connection in-memory SQLite,
+a disposable MySQL schema created from `TEST_MYSQL_DSN`, every wait bounded, every assertion on
+committed rows), plus the conditional-claim tests in
+`internal/repository/password_reset_token_repository_test.go`. The MySQL roots skip without the
+variable and fail when it points at an unreachable server; because the auth checker discovers
+its roots from `auth*_test.go` and rejects skips, the bounded auth profile needs `TEST_MYSQL_DSN`
+as well.
+
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
 tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It

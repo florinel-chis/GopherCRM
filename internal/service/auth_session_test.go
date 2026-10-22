@@ -10,10 +10,15 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // mockMailer is a test double for mailer.Mailer that records the reset link.
@@ -36,11 +41,32 @@ type sessionTestDeps struct {
 	apiKeyRepo  *mocks.APIKeyRepository
 	refreshRepo *mocks.RefreshTokenRepository
 	resetRepo   *mocks.PasswordResetTokenRepository
+	txManager   repository.TransactionManager
 	mailer      *mockMailer
 	svc         AuthService
 }
 
 const sessionTestSecret = "session-test-secret"
+
+var sessionTestJWTConfig = config.JWTConfig{
+	Secret:           sessionTestSecret,
+	ExpiryHours:      1,
+	RefreshTokenDays: 30,
+}
+
+// sessionTestTransactionManager is the real manager on an empty in-memory
+// SQLite database: the mocks never touch it, but the reset flow needs a real
+// transaction in its context to bind the repositories to.
+func sessionTestTransactionManager(t *testing.T) repository.TransactionManager {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return utils.NewTransactionManager(db)
+}
 
 func newSessionAuthService(t *testing.T) *sessionTestDeps {
 	t.Helper()
@@ -49,17 +75,21 @@ func newSessionAuthService(t *testing.T) *sessionTestDeps {
 		apiKeyRepo:  &mocks.APIKeyRepository{},
 		refreshRepo: &mocks.RefreshTokenRepository{},
 		resetRepo:   &mocks.PasswordResetTokenRepository{},
+		txManager:   sessionTestTransactionManager(t),
 		mailer:      &mockMailer{},
 	}
-	jwtConfig := config.JWTConfig{
-		Secret:           sessionTestSecret,
-		ExpiryHours:      1,
-		RefreshTokenDays: 30,
-	}
 	d.svc = NewAuthServiceWithSessions(
-		d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, d.mailer,
-		jwtConfig, "http://localhost:5173", "")
+		d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, d.txManager, d.mailer,
+		sessionTestJWTConfig, "http://localhost:5173", "")
 	return d
+}
+
+// expectTransactionBoundRepos lets the mocks stand in for their own
+// transaction-bound views, which is what the reset flow asks for.
+func (d *sessionTestDeps) expectTransactionBoundRepos() {
+	d.resetRepo.On("WithTx", mock.Anything).Return(d.resetRepo)
+	d.userRepo.On("WithTx", mock.Anything).Return(d.userRepo)
+	d.refreshRepo.On("WithTx", mock.Anything).Return(d.refreshRepo)
 }
 
 func sessionActiveUser(id uint, password string) *models.User {
@@ -352,21 +382,31 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 	})
 }
 
+// The mock-based cases below pin the call sequence of the reset flow; whether
+// the writes really share one transaction on SQL is proven by the real
+// database roots in auth_password_reset_regression_test.go.
 func TestAuthService_ConfirmPasswordReset(t *testing.T) {
-	t.Run("valid token sets the password, marks the token used and revokes sessions", func(t *testing.T) {
-		d := newSessionAuthService(t)
-		user := sessionActiveUser(1, "CurrentPass1!")
-		raw := "reset-token-raw"
-		hash := hashOpaqueToken(raw, sessionTestSecret)
-		prt := &models.PasswordResetToken{
+	const raw = "reset-token-raw"
+	hash := hashOpaqueToken(raw, sessionTestSecret)
+	spendable := func() *models.PasswordResetToken {
+		return &models.PasswordResetToken{
 			BaseModel: models.BaseModel{ID: 9},
 			UserID:    1,
 			TokenHash: hash,
 			ExpiresAt: time.Now().Add(30 * time.Minute),
 		}
-		d.resetRepo.On("GetByTokenHash", hash).Return(prt, nil)
-		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+	}
+
+	t.Run("valid token claims the token, sets the password, clears the lockout and revokes sessions", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		lockedUntil := time.Now().Add(10 * time.Minute)
+		user.FailedLoginAttempts = MaxFailedLoginAttempts
+		user.LockedUntil = &lockedUntil
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
 		d.resetRepo.On("MarkUsed", uint(9)).Return(nil)
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 
 		var updated *models.User
 		d.userRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
@@ -379,39 +419,131 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 
 		assert.NoError(t, err)
 		d.resetRepo.AssertCalled(t, "MarkUsed", uint(9))
-		assert.NotNil(t, updated)
+		require.NotNil(t, updated)
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated.Password), []byte("BrandNewPass1!")))
+		assert.Zero(t, updated.FailedLoginAttempts)
+		assert.Nil(t, updated.LockedUntil)
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
+		// Every write went through the transaction-bound repositories.
+		d.resetRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.refreshRepo.AssertCalled(t, "WithTx", mock.Anything)
 	})
 
 	t.Run("unknown, expired or used token is rejected generically", func(t *testing.T) {
 		// Repository lookup filters used and expired tokens, so all cases
 		// surface as record-not-found here.
 		d := newSessionAuthService(t)
-		hash := hashOpaqueToken("spent", sessionTestSecret)
-		d.resetRepo.On("GetByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
+		d.expectTransactionBoundRepos()
+		spentHash := hashOpaqueToken("spent", sessionTestSecret)
+		d.resetRepo.On("GetByTokenHash", spentHash).Return(nil, gorm.ErrRecordNotFound)
 
 		err := d.svc.ConfirmPasswordReset("spent", "BrandNewPass1!")
 
 		assert.ErrorIs(t, err, ErrInvalidResetToken)
+		d.resetRepo.AssertNotCalled(t, "MarkUsed", mock.Anything)
 		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
 	})
 
-	t.Run("weak password leaves the token spendable", func(t *testing.T) {
+	t.Run("a claim that finds nothing to stamp is rejected generically", func(t *testing.T) {
+		// Both requests read the token as spendable; this one lost the claim.
 		d := newSessionAuthService(t)
-		raw := "reset-token-raw"
-		hash := hashOpaqueToken(raw, sessionTestSecret)
-		prt := &models.PasswordResetToken{
-			BaseModel: models.BaseModel{ID: 9},
-			UserID:    1,
-			TokenHash: hash,
-			ExpiresAt: time.Now().Add(30 * time.Minute),
-		}
-		d.resetRepo.On("GetByTokenHash", hash).Return(prt, nil)
+		d.expectTransactionBoundRepos()
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
+		d.resetRepo.On("MarkUsed", uint(9)).Return(gorm.ErrRecordNotFound)
+
+		err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")
+
+		assert.ErrorIs(t, err, ErrInvalidResetToken)
+		d.userRepo.AssertNotCalled(t, "GetByID", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+	})
+
+	t.Run("weak password is refused before the token is even looked up", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
 
 		err := d.svc.ConfirmPasswordReset(raw, "weak")
 
 		assert.Error(t, err)
+		assert.NotErrorIs(t, err, ErrInvalidResetToken)
+		d.resetRepo.AssertNotCalled(t, "GetByTokenHash", mock.Anything)
+		d.resetRepo.AssertNotCalled(t, "MarkUsed", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+	})
+
+	t.Run("a password bcrypt cannot hash is refused without spending the token", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
+		// Complex by the policy, but over bcrypt's 72-byte limit.
+		tooLong := "Aa1!" + strings.Repeat("x", 80)
+		require.NoError(t, utils.ValidatePasswordComplexity(tooLong))
+
+		err := d.svc.ConfirmPasswordReset(raw, tooLong)
+
+		assert.ErrorIs(t, err, bcrypt.ErrPasswordTooLong)
+		assert.NotErrorIs(t, err, ErrInvalidResetToken)
+		d.resetRepo.AssertNotCalled(t, "MarkUsed", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+	})
+
+	t.Run("inactive or missing owner is rejected generically after the claim", func(t *testing.T) {
+		inactive := sessionActiveUser(1, "CurrentPass1!")
+		inactive.IsActive = false
+		for name, owner := range map[string]struct {
+			user *models.User
+			err  error
+		}{
+			"inactive": {user: inactive},
+			"missing":  {err: gorm.ErrRecordNotFound},
+		} {
+			t.Run(name, func(t *testing.T) {
+				d := newSessionAuthService(t)
+				d.expectTransactionBoundRepos()
+				d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
+				d.resetRepo.On("MarkUsed", uint(9)).Return(nil)
+				d.userRepo.On("GetByID", uint(1)).Return(owner.user, owner.err)
+
+				err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")
+
+				assert.ErrorIs(t, err, ErrInvalidResetToken)
+				d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+				d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+			})
+		}
+	})
+
+	t.Run("a session revocation failure fails the reset", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		injected := errors.New("refresh token table unavailable")
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
+		d.resetRepo.On("MarkUsed", uint(9)).Return(nil)
+		d.userRepo.On("GetByID", uint(1)).Return(sessionActiveUser(1, "CurrentPass1!"), nil)
+		d.userRepo.On("Update", mock.Anything).Return(nil)
+		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(injected)
+
+		err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")
+
+		assert.ErrorIs(t, err, injected, "the failure is returned, not logged away")
+		assert.NotErrorIs(t, err, ErrInvalidResetToken)
+	})
+
+	t.Run("without a transaction manager the reset is refused rather than run unsafely", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.svc = NewAuthServiceWithSessions(
+			d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, nil, d.mailer,
+			sessionTestJWTConfig, "http://localhost:5173", "")
+		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
+
+		err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")
+
+		assert.ErrorIs(t, err, ErrInvalidResetToken)
+		d.resetRepo.AssertNotCalled(t, "GetByTokenHash", mock.Anything)
 		d.resetRepo.AssertNotCalled(t, "MarkUsed", mock.Anything)
 		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
 	})

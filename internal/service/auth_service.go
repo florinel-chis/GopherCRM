@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -51,10 +52,15 @@ type authService struct {
 	apiKeyRepo       repository.APIKeyRepository
 	refreshTokenRepo repository.RefreshTokenRepository
 	resetTokenRepo   repository.PasswordResetTokenRepository
-	mailer           mailer.Mailer
-	jwtConfig        config.JWTConfig
-	apiKeySecret     string
-	appBaseURL       string
+	// txManager binds the password reset confirmation into one transaction:
+	// token claim, password and lockout update, and session revocation. It is
+	// required for that flow; without it the confirmation is refused rather
+	// than run as separate writes.
+	txManager    repository.TransactionManager
+	mailer       mailer.Mailer
+	jwtConfig    config.JWTConfig
+	apiKeySecret string
+	appBaseURL   string
 	// loginTime is an instance-local clock for lockout decisions; nil uses wall time.
 	loginTime func() time.Time
 }
@@ -74,14 +80,18 @@ func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.AP
 
 // NewAuthServiceWithSessions constructs the fully wired auth service with the
 // session lifecycle enabled: refresh token rotation, logout revocation and the
-// password reset flow. NewAuthService (above) remains for callers that only
-// need stateless JWT auth — on such an instance the session methods reject
-// every token with the generic sentinels instead of panicking.
+// password reset flow. The transaction manager must be built on the same
+// database handle as the repositories: the reset confirmation claims the
+// token, writes the password and revokes the sessions through the
+// transaction-bound repositories it yields. NewAuthService (above) remains for
+// callers that only need stateless JWT auth — on such an instance the session
+// methods reject every token with the generic sentinels instead of panicking.
 func NewAuthServiceWithSessions(
 	userRepo repository.UserRepository,
 	apiKeyRepo repository.APIKeyRepository,
 	refreshTokenRepo repository.RefreshTokenRepository,
 	resetTokenRepo repository.PasswordResetTokenRepository,
+	txManager repository.TransactionManager,
 	m mailer.Mailer,
 	jwtConfig config.JWTConfig,
 	appBaseURL string,
@@ -92,6 +102,7 @@ func NewAuthServiceWithSessions(
 		apiKeyRepo:       apiKeyRepo,
 		refreshTokenRepo: refreshTokenRepo,
 		resetTokenRepo:   resetTokenRepo,
+		txManager:        txManager,
 		mailer:           m,
 		jwtConfig:        jwtConfig,
 		apiKeySecret:     apiKeySecret,
@@ -539,9 +550,11 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword s
 }
 
 // revokeAllSessionsBestEffort kills every refresh token of the user after a
-// credential change. The credential update has already been committed, so a
+// password change. The credential update has already been committed, so a
 // revocation failure is logged loudly rather than surfaced as a failure of an
-// operation that in fact succeeded.
+// operation that in fact succeeded. The password reset flow does not use it:
+// there the revocation is part of the transaction and a failure rolls the
+// reset back.
 func (s *authService) revokeAllSessionsBestEffort(userID uint, reason string) {
 	if s.refreshTokenRepo == nil {
 		return
@@ -608,28 +621,28 @@ func (s *authService) RequestPasswordReset(email string) error {
 	return nil
 }
 
-// ConfirmPasswordReset spends a reset token: validates it, applies the
-// complexity policy, updates the password, marks the token used and revokes
-// every refresh token. All token rejections map to ErrInvalidResetToken.
+// ConfirmPasswordReset spends a reset token and sets the new password. All
+// token rejections map to ErrInvalidResetToken; a password that fails the
+// complexity policy or cannot be hashed is reported as such.
+//
+// The new password is validated and hashed before anything is written, so a
+// weak or unhashable password never spends the token: the user retries with
+// the same link. The token lookup, its conditional claim, the owner check, the
+// password and lockout update and the revocation of every refresh token are
+// then one transaction. The claim stamps the token only while it is still
+// unused and strictly unexpired and must affect exactly one row, so two
+// requests that both read the token as spendable cannot both succeed: the
+// second claim finds nothing to stamp and is rejected. A failure after the
+// claim — the password update, the session revocation — rolls the whole unit
+// back, token included, so the link stays usable for a retry instead of being
+// spent on a reset that never happened. An inactive, erased or missing owner
+// is rejected inside the transaction and leaves the token unspent as well.
 func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
-	if s.resetTokenRepo == nil || token == "" {
+	// Every dependency of the transactional flow is required. Running the old
+	// sequence of separate writes when one is missing would reintroduce the
+	// burnt-link and double-spend failures this flow exists to prevent.
+	if s.resetTokenRepo == nil || s.refreshTokenRepo == nil || s.txManager == nil || token == "" {
 		return fmt.Errorf("reset not available: %w", ErrInvalidResetToken)
-	}
-
-	hash := hashOpaqueToken(token, s.sessionTokenSecret())
-
-	// The lookup already excludes used and expired tokens.
-	stored, err := s.resetTokenRepo.GetByTokenHash(hash)
-	if err != nil {
-		if apperrors.IsNotFound(err) {
-			return fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
-		}
-		return fmt.Errorf("reset token lookup failed: %w", err)
-	}
-
-	// Defence in depth in case a repository implementation stops filtering.
-	if stored.UsedAt != nil || stored.ExpiresAt.Before(time.Now()) {
-		return fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
 	}
 
 	// A weak password must NOT spend the token: the user retries with the
@@ -637,35 +650,101 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	if err := utils.ValidatePasswordComplexity(newPassword); err != nil {
 		return err
 	}
-
-	user, err := s.userRepo.GetByID(stored.UserID)
-	if err != nil || !user.IsActive {
-		return fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
-	}
-
-	// Spend the token before writing the password so it is single-use even if
-	// a later step fails; the user can always request a fresh link.
-	if err := s.resetTokenRepo.MarkUsed(stored.ID); err != nil {
-		return fmt.Errorf("failed to mark reset token used: %w", err)
-	}
-
 	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
+		// bcrypt refuses inputs over 72 bytes; nothing has been written.
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
-	user.Password = string(hashed)
+
+	hash := hashOpaqueToken(token, s.sessionTokenSecret())
+
+	var userID uint
+	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		var err error
+		userID, err = s.confirmPasswordResetInTransaction(
+			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx), s.refreshTokenRepo.WithTx(tx),
+			hash, string(hashed))
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	utils.Logger.WithField("user_id", userID).Info("Password reset completed; all sessions revoked")
+	return nil
+}
+
+// confirmPasswordResetInTransaction performs the reset on transaction-bound
+// repositories and returns the owner's id. Any error discards every write,
+// the token claim included.
+func (s *authService) confirmPasswordResetInTransaction(
+	resetRepo repository.PasswordResetTokenRepository,
+	userRepo repository.UserRepository,
+	refreshRepo repository.RefreshTokenRepository,
+	hash, passwordHash string,
+) (uint, error) {
+	// The lookup already excludes used and expired tokens; the claim below
+	// re-applies both predicates as part of its own UPDATE.
+	stored, err := resetRepo.GetByTokenHash(hash)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		}
+		return 0, fmt.Errorf("reset token lookup failed: %w", err)
+	}
+
+	// Defence in depth in case a repository implementation stops filtering.
+	if stored.UsedAt != nil || !stored.ExpiresAt.After(time.Now()) {
+		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+	}
+
+	// Claim the token before reading anything else. The claim is the one
+	// write competing requests contend on: whoever stamps the row first owns
+	// the reset, and every other request finds no row to stamp — even one
+	// that passed the lookup a moment ago, or one whose token expired between
+	// the lookup and this statement.
+	if err := resetRepo.MarkUsed(stored.ID); err != nil {
+		if apperrors.IsNotFound(err) {
+			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		}
+		return 0, fmt.Errorf("failed to mark reset token used: %w", err)
+	}
+
+	// A token must never outlive its owner. The scoped lookup makes an erased
+	// (soft-deleted) owner a not-found; a deactivated one is refused the same
+	// way. The rollback that follows hands the claim back, so the committed
+	// state is exactly what it was.
+	user, err := userRepo.GetByID(stored.UserID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		}
+		return 0, fmt.Errorf("reset token owner lookup failed: %w", err)
+	}
+	if !user.IsActive {
+		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+	}
+
+	user.Password = passwordHash
 	// Ownership of the mailbox has just been proven; clear any lockout so the
 	// user can sign in with the new password immediately.
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
-
-	if err := s.userRepo.Update(user); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
+	if err := userRepo.Update(user); err != nil {
+		return 0, fmt.Errorf("failed to update password: %w", err)
 	}
 
-	s.revokeAllSessionsBestEffort(user.ID, "password reset")
-	utils.Logger.WithField("user_id", user.ID).Info("Password reset completed")
-	return nil
+	// Stolen sessions must die with the old password. A revocation that fails
+	// is a failure of the reset itself: the password and the claim are rolled
+	// back with it rather than committed next to sessions that still work.
+	if err := refreshRepo.RevokeAllForUser(user.ID); err != nil {
+		return 0, fmt.Errorf("failed to revoke sessions after password reset: %w", err)
+	}
+	return user.ID, nil
 }
 
 // csrfTokenMaxAge is the maximum age of a CSRF token (24 hours).
