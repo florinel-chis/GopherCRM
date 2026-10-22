@@ -127,6 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log, and distinguish expected structured service logs from real environment failures.
   A shared, commit-pinned `repair-validation` recovery command queues an inspected source
   repair while retaining failed attempts, spent budgets and all validation/review gates.
+  Validation resume verifies and retains successful checks for the unchanged candidate,
+  then runs missing checks in a fresh checkout instead of repeating completed suites.
 
 - **Form confirmation tokens are consumed atomically (#101).** Confirming a double-opt-in
   submission used to stamp the token as used before the transaction that created or linked the

@@ -361,6 +361,13 @@ misclassification, the shared `repair-validation` command records an exact-commi
 without refunding limits or relabelling failed evidence; normal repair, validation and review
 remain mandatory. See [validation recovery](../automation/langflow/README.md#inspected-validation-misclassification).
 
+On ordinary validation resume, successful checks for the unchanged candidate can be reused
+only after verifying their original checkout and complete receipt identities/digests. Missing
+checks run in a fresh checkout with its own locked browser dependencies. Failed full browser
+commands still run in full; source repairs and base refresh invalidate earlier checks. This
+avoids repeating passed backend/frontend/SQLite checks after a later environment interruption
+without weakening the selected gates or independent review.
+
 Update relevant documentation in the same PR. CI identifies affected guides; the local
 workflow records explicit review decisions and verifies documentation after merge. Include
 documentation paths during task preparation and explain when an unchanged document remains

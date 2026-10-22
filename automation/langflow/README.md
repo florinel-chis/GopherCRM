@@ -182,6 +182,22 @@ It does not rerun the same failed candidate first or turn the operator finding i
 evidence. `report` and `report-pr` include the recorded repair request. Actual environment
 failures must still have their prerequisites restored before normal resume.
 
+## Resume validation of an unchanged candidate
+
+Normal resume retains successful checks from an interrupted validation when the source,
+original validation checkout and receipt identities still match. It verifies the execution,
+head, base, policy, contract, context, check command, receipt digest and output digest before
+reuse, and checks named-test and migration coverage again. Changed or missing evidence blocks
+reuse; it cannot turn a failed check into a pass.
+
+Remaining checks run in a fresh checkout. Browser checks install locked frontend dependencies
+there when the earlier installation/core check was already completed. Ignored files and
+application data are not copied from the previous checkout. A failed full browser command
+must pass in full; an isolated diagnostic rerun does not replace it. The original receipts,
+failed/cancelled attempts, spent calls and deadline remain recorded, and `report`/`report-pr`
+include `validation_resumptions`. Source repairs and explicit base refresh invalidate the
+earlier checks; a new candidate still requires all selected checks and independent review.
+
 ## Complete existing PRs through merge
 
 Import [pr-completion.json](flows/pr-completion.json) into Langflow for the **Review → test → merge existing PR** component. Enter the local policy path, PR number and full current head SHA. Preview is the default. Execute authorizes completion of that specific PR through merge, independently of the issue policy's `completion_target`. The CLI runs this same serialized graph:

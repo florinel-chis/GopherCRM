@@ -689,8 +689,32 @@ class Runner:
         paths = await self.validate_agent_paths(record)
         checks = await self.validation_checks(record, paths)
         record['validation_plan'] = self.validation_selection(record, paths)
-        record.update(validation_attempt=uuid.uuid4().hex, receipts={}, tested_head=None, reviewed_head=None,
-                      review_receipt=None, pending_review=None)
+        completed = record.get('receipts', {})
+        if completed:
+            if not record.get('validation_attempt') or not record.get('validation_worktree'):
+                raise GateError('Completed checks lack their original validation identity')
+            previous = Path(record['validation_worktree'])
+            await self.clean(previous)
+            if await self.head(previous) != record['head']:
+                raise GateError('Previous validation checkout changed commit')
+            if set(completed) - {check_id for check_id, _, _ in checks}:
+                raise GateError('Completed check registry changed')
+            for check_id, command, named_tests in checks:
+                if check_id not in completed:
+                    continue
+                receipt = evidence.verify_receipt(self.config.state_dir, record,
+                                                  completed[check_id], check_id, command)
+                output = evidence.safe_artifact(self.config.state_dir, receipt['output_path']).read_text()
+                if './cmd/migrate' in command:
+                    migration_coverage(output)
+                if named_tests:
+                    evidence.named_go_tests(output, named_tests)
+            record.setdefault('validation_resumptions', []).append(dict(
+                at=self.clock(), head=record['head'], validation_attempt=record['validation_attempt'],
+                reused_checks=list(completed), previous_worktree=str(previous)))
+        else:
+            record.update(validation_attempt=uuid.uuid4().hex, receipts={})
+        record.update(tested_head=None, reviewed_head=None, review_receipt=None, pending_review=None)
         self.save(record)
         # Tests get a fresh checkout of the committed tree; ignored files from
         # an agent or a previous test attempt cannot influence their inputs.
@@ -699,9 +723,10 @@ class Runner:
         await self.command('git', 'worktree', 'add', '--detach', str(worktree), record['head'])
         record['validation_worktree'] = str(worktree)
         self.save(record)
-        for check_id, command, named_tests in checks:
+
+        async def run_check(command):
             try:
-                output = await self.command(*command, cwd=worktree,
+                return await self.command(*command, cwd=worktree,
                     env=verification_environment() if command in {
                         ('make', 'verify'), ('make', 'verify-hygiene')} else None,
                     timeout=self.config.test_timeout_seconds)
@@ -712,6 +737,17 @@ class Runner:
                 raise
             except OSError as exc:
                 raise EnvironmentError('environment failure launching validation') from exc
+
+        remaining = [(key, command, tests) for key, command, tests in checks if key not in completed]
+        # A fresh checkout must install its own locked dependencies even when
+        # the earlier core/installation receipt is reused. Never copy ignored
+        # node_modules or application data from the previous checkout.
+        if (any(command[:2] == ('make', 'e2e') for _, command, _ in remaining)
+                and not any(command[:2] in {('make', 'verify'), ('npm', 'ci')}
+                            for _, command, _ in remaining)):
+            await run_check(('npm', 'ci', '--prefix', 'gocrm-ui'))
+        for check_id, command, named_tests in remaining:
+            output = await run_check(command)
             if './cmd/migrate' in command:
                 migration_coverage(output)
             if named_tests:
@@ -893,7 +929,8 @@ class Runner:
                 if record['stage'] != 'revalidating':
                     record['after_revalidation'] = (record['stage']
                         if record['stage'] in {'implement', 'repair_pending'} else 'validate')
-                record.update(tested_head=None, reviewed_head=None, pending_base=base, stage='revalidating')
+                record.update(tested_head=None, reviewed_head=None, receipts={},
+                              pending_base=base, stage='revalidating')
                 self.save(record)
                 await self.complete_revalidation(record)
             finally:
