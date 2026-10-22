@@ -92,7 +92,50 @@ pages organized per entity under `src/pages/`.
 — never string comparison. The error handler middleware maps error types to HTTP status codes.
 
 **Transaction management** — use `utils.NewTransactionManager(models.DB).WithTransaction()` for
-multi-step operations. Repositories expose `WithTx()` to participate in transactions.
+multi-step operations. Repositories expose `WithTx()` to participate in transactions. The manager
+(`internal/utils/transaction.go`) guarantees the following, on SQLite and MySQL alike:
+
+- **Root calls.** A context without a transaction begins one on the root handle, bound to the
+  caller's context so a dead request never waits for a pooled connection. A nil return commits;
+  an error rolls back and is returned as is (identity preserved).
+- **Nested calls.** A context that already carries an active transaction reuses it under a
+  `SAVEPOINT`; no second root connection is ever acquired, which matters because the SQLite pool
+  holds exactly one. An inner error rolls back to the savepoint and the outer callback decides
+  whether to continue; inner success stays provisional until the outermost call commits, and an
+  outer error or panic discards every nested write. Nesting is unlimited in depth. The savepoint is
+  created with the inner context but rolled back with the enclosing one, so cancelling an inner
+  context cannot leave its writes in the outer transaction. A nested call on an already-cancelled
+  context, or on a handle with GORM's `DisableNestedTransaction`, is refused before the callback
+  runs (`ErrSavepointFailed`, `ErrNestedTransactionsDisabled`).
+- **Panics.** A panic (or `runtime.Goexit`) unwinding through the callback rolls back the
+  transaction or savepoint and keeps propagating untouched: the caller's `recover` sees the
+  identical value, and the connection is back in the pool. The manager never swallows a panic.
+- **Cancellation.** A context that is already done fails before the callback runs
+  (`ErrBeginFailed` wrapping the context error). Cancellation during the callback makes the commit
+  fail (`ErrCommitFailed`, also matching `context.Canceled`/`DeadlineExceeded`) and the work is
+  discarded; a rollback that `database/sql` already performed for the cancelled context is not
+  reported as a failure.
+- **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed` and
+  `ErrRollbackFailed` tag what went wrong; a rollback failure is joined to the callback's error so
+  both stay inspectable with `errors.Is`. A failed commit is ambiguous from the client's side and
+  is never reported as success.
+- **Retries.** `WithTransactionAndRetry` replays deadlocks, lock waits and SQLite busy/locked
+  errors in a fresh root transaction, at most `maxRetries` times, and only when the failed attempt
+  rolled back cleanly: an attempt that failed at commit or rollback is returned without replay,
+  and the loop stops as soon as the context is done. A negative count returns
+  `ErrInvalidRetryCount` without running the callback. Inside an active transaction the callback
+  runs exactly once under a savepoint; a retryable failure is rolled back to that savepoint and
+  returned tagged with `ErrNestedRetryDeferred` (still classified as retryable), because a MySQL
+  deadlock has already destroyed the enclosing transaction and the only safe replay is the
+  enclosing root attempt. An outer callback that swallows that error commits none of the inner
+  writes.
+
+Regression roots: `TestTransactionPanic{SQLite,MySQL}`, `TestTransactionNested{SQLite,MySQL}`,
+`TestTransactionCancellationRetry{SQLite,MySQL}` (one-connection pools, persisted-row assertions,
+every wait bounded by a context; the MySQL roots create and drop a uniquely named schema on the
+`TEST_MYSQL_DSN` server) and `TestTransactionFinalizationFailures` (a connection-pool wrapper that
+injects begin/commit/rollback/savepoint failures deterministically). Services still call the
+manager with `context.Background()`; request-context propagation is tracked in #107.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use

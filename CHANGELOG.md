@@ -92,6 +92,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Transaction manager: panics, nesting and finalization failures (#106).** A panic inside
+  `WithTransaction` now rolls the transaction back before propagating unchanged, so SQLite's
+  single pooled connection is released instead of held by an abandoned transaction. A call made
+  inside an active transaction reuses it under a savepoint rather than beginning a second root
+  transaction (which blocked forever on that pool): an inner failure rolls back to its savepoint
+  while the outer unit may still commit, and an outer failure discards every nested write. Commit
+  and rollback failures are reported with `errors.Is`-inspectable sentinels alongside the
+  callback's own error, a rollback already performed by context cancellation is not an error,
+  and `WithTransactionAndRetry` replays only attempts that rolled back cleanly, never an
+  ambiguous commit; inside a transaction it runs once and defers a retryable failure to the
+  enclosing root retry. A negative retry count is rejected without running the callback. See the
+  transaction section of `docs/DEVELOPMENT.md`.
 - Expired login lockouts now start a fresh failure window instead of relocking on the
   first mistyped password; active locks and generic public authentication failures remain enforced.
 - **AEO profile updates on MySQL.** Saving an existing brand profile preserves its

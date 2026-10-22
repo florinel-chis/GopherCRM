@@ -2,9 +2,11 @@ package utils
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"gorm.io/gorm"
 )
@@ -12,11 +14,71 @@ import (
 // ErrNoTransaction is returned when no transaction is found in the context
 var ErrNoTransaction = errors.New("no transaction found in context")
 
+// Sentinel errors describing how a unit of work failed. Every error returned
+// by the manager can be classified with errors.Is: the callback's own error is
+// always preserved (unwrapped on a clean rollback, joined otherwise), and a
+// failure of BEGIN, SAVEPOINT, COMMIT or ROLLBACK is tagged with one of these.
+var (
+	// ErrInvalidRetryCount is returned by WithTransactionAndRetry for a
+	// negative retry count. The callback is never invoked.
+	ErrInvalidRetryCount = errors.New("transaction retry count must not be negative")
+	// ErrBeginFailed tags a root transaction that could not be started: the
+	// context was already done or BEGIN failed. The callback never ran and
+	// nothing was written.
+	ErrBeginFailed = errors.New("transaction could not be started")
+	// ErrSavepointFailed tags a nested call whose savepoint could not be
+	// created. The callback never ran; the enclosing transaction is untouched.
+	ErrSavepointFailed = errors.New("transaction savepoint could not be created")
+	// ErrCommitFailed tags a COMMIT that returned an error. The outcome is
+	// ambiguous from the client's point of view (the server may or may not
+	// have applied the work), which is why the retry helper never replays
+	// an attempt that failed at commit.
+	ErrCommitFailed = errors.New("transaction commit failed")
+	// ErrRollbackFailed tags a ROLLBACK or ROLLBACK TO SAVEPOINT that returned
+	// an error. It is joined to the error that triggered the rollback, so both
+	// remain inspectable.
+	ErrRollbackFailed = errors.New("transaction rollback failed")
+	// ErrNestedTransactionsDisabled is returned when a nested call would need
+	// a savepoint but the GORM connection disables nested transactions. The
+	// callback is not run: silently joining the outer transaction would let a
+	// failing inner unit leak its writes into the outer commit.
+	ErrNestedTransactionsDisabled = errors.New("nested transaction refused: savepoints are disabled on this connection")
+	// ErrNestedRetryDeferred tags a retryable failure that happened inside an
+	// active transaction. WithTransactionAndRetry does not replay the callback
+	// there: a deadlock on MySQL has already destroyed the enclosing
+	// transaction, so the only safe retry is a fresh root attempt. The wrapped
+	// error keeps its retryable classification for that enclosing retry.
+	ErrNestedRetryDeferred = errors.New("retryable failure inside an active transaction is deferred to the enclosing transaction")
+)
+
 type contextKey string
 
 const txKey contextKey = "tx"
 
-// TransactionManager manages database transactions
+// savepointSeq numbers savepoints so that nested calls, siblings and
+// re-entrant calls on the same transaction never reuse an active name.
+var savepointSeq atomic.Uint64
+
+// TransactionManager manages database transactions.
+//
+// Semantics, in short:
+//
+//   - A call whose context carries no transaction begins one on the root DB,
+//     runs fn with the transaction in the context, commits on nil and rolls
+//     back on error. The caller's context is bound to BEGIN and to every
+//     statement, so a dead context never waits for a pooled connection.
+//   - A call whose context already carries an active transaction (one started
+//     by this manager, or any *gorm.DB bound to a TxCommitter) reuses it under
+//     a SAVEPOINT. It never acquires a second root connection, which would
+//     deadlock on SQLite's single-connection pool. The inner unit is rolled
+//     back to its savepoint on error and stays provisional on success: the
+//     outermost call decides whether anything is committed.
+//   - A panic (or runtime.Goexit) unwinding through fn rolls the transaction
+//     or savepoint back and continues to propagate untouched, so a caller's
+//     recover sees the identical panic value.
+//   - Finalization failures are reported, never hidden: the callback's error
+//     is preserved and ErrBeginFailed, ErrSavepointFailed, ErrCommitFailed and
+//     ErrRollbackFailed tag what went wrong.
 type TransactionManager struct {
 	db *gorm.DB
 }
@@ -26,48 +88,220 @@ func NewTransactionManager(db *gorm.DB) *TransactionManager {
 	return &TransactionManager{db: db}
 }
 
-// WithTransaction executes fn within a database transaction
+// WithTransaction executes fn within a database transaction. See
+// TransactionManager for the root, nested, panic and failure semantics.
 func (tm *TransactionManager) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	// Bind the caller's context so a cancelled or expired request does not sit
-	// waiting for a connection. That wait is unbounded otherwise, and acute on
-	// SQLite where the pool is capped at a single open connection.
-	tx := tm.db.WithContext(ctx).Begin()
-	if tx.Error != nil {
-		return tx.Error
+	if tx := activeTransaction(ctx); tx != nil {
+		return tm.runNested(ctx, tx, fn)
+	}
+	_, err := tm.runRoot(ctx, fn)
+	return err
+}
+
+// WithTransactionAndRetry executes fn within a transaction with retry logic
+// for retryable errors (deadlocks, lock waits, SQLite busy/locked).
+//
+// Each attempt is a fresh root transaction, so a failed attempt leaves no
+// writes behind. An attempt is replayed only when its rollback completed
+// cleanly: a commit or rollback failure is ambiguous and is returned as is.
+// Retries stop once ctx is done and after maxRetries replays. A negative
+// maxRetries is rejected without running fn.
+//
+// Inside an active transaction the callback runs exactly once under a
+// savepoint; a retryable failure is rolled back to that savepoint and returned
+// tagged with ErrNestedRetryDeferred so that the enclosing root attempt, if
+// it retries, replays the whole unit instead of committing partial state.
+func (tm *TransactionManager) WithTransactionAndRetry(ctx context.Context, fn func(ctx context.Context) error, maxRetries int) error {
+	if maxRetries < 0 {
+		return fmt.Errorf("%w: %d", ErrInvalidRetryCount, maxRetries)
 	}
 
-	txCtx := context.WithValue(ctx, txKey, tx)
-	if err := fn(txCtx); err != nil {
-		tx.Rollback()
+	if tx := activeTransaction(ctx); tx != nil {
+		err := tm.runNested(ctx, tx, fn)
+		if err != nil && isRetryableError(err) {
+			return fmt.Errorf("%w: %w", ErrNestedRetryDeferred, err)
+		}
 		return err
 	}
 
-	return tx.Commit().Error
-}
-
-// WithTransactionAndRetry executes fn within a transaction with retry logic for retryable errors
-func (tm *TransactionManager) WithTransactionAndRetry(ctx context.Context, fn func(ctx context.Context) error, maxRetries int) error {
-	var lastErr error
 	attempts := 0
-
-	for attempts = 0; attempts <= maxRetries; attempts++ {
-		lastErr = tm.WithTransaction(ctx, fn)
-		if lastErr == nil {
+	for {
+		attempts++
+		replayable, err := tm.runRoot(ctx, fn)
+		if err == nil {
 			return nil
 		}
-		// Only retry on retryable errors (deadlocks, lock timeouts)
-		if !isRetryableError(lastErr) {
-			return lastErr
+		if !replayable || !isRetryableError(err) {
+			return err
+		}
+		if attempts > maxRetries {
+			return fmt.Errorf("transaction failed after %d attempts: %w", attempts, err)
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("transaction retry abandoned after %d attempts: %w", attempts, errors.Join(ctxErr, err))
 		}
 	}
-
-	return fmt.Errorf("transaction failed after %d attempts: %w", attempts, lastErr)
 }
 
 // GetTxFromContext retrieves the transaction from the context
 func GetTxFromContext(ctx context.Context) (*gorm.DB, bool) {
 	tx, ok := ctx.Value(txKey).(*gorm.DB)
 	return tx, ok
+}
+
+// runRoot begins a transaction on the root DB and runs fn inside it. The
+// boolean reports whether the attempt ended with a clean rollback of a
+// callback error, i.e. whether a retry helper may safely replay it.
+func (tm *TransactionManager) runRoot(ctx context.Context, fn func(ctx context.Context) error) (replayable bool, err error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, fmt.Errorf("%w: %w", ErrBeginFailed, ctxErr)
+	}
+
+	// Bind the caller's context so a cancelled or expired request does not sit
+	// waiting for a connection. That wait is unbounded otherwise, and acute on
+	// SQLite where the pool is capped at a single open connection.
+	tx := tm.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return false, fmt.Errorf("%w: %w", ErrBeginFailed, tx.Error)
+	}
+
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		// fn is unwinding through a panic or runtime.Goexit. Release the
+		// connection now; the panic itself is not recovered here, so it
+		// reaches the caller with its identical value and stack. A rollback
+		// error has no return path on this route and is dropped.
+		_ = rollbackTx(tx)
+	}()
+	err = fn(context.WithValue(ctx, txKey, tx))
+	finished = true
+
+	if err != nil {
+		if rbErr := rollbackTx(tx); rbErr != nil {
+			return false, errors.Join(err, fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
+		}
+		return true, err
+	}
+
+	if commitErr := commitTx(tx); commitErr != nil {
+		// A commit refused because ctx ended reports either the context
+		// error or sql.ErrTxDone, depending on whether database/sql's own
+		// rollback ran first. Attach the context error so callers can always
+		// classify the cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(commitErr, ctxErr) {
+			commitErr = fmt.Errorf("%w: %w", ctxErr, commitErr)
+		}
+		err = fmt.Errorf("%w: %w", ErrCommitFailed, commitErr)
+		// database/sql has usually finalized the transaction already (the
+		// rollback then reports ErrTxDone and is ignored). When the commit
+		// was refused before reaching the driver, e.g. because the context
+		// ended, this releases the connection instead of leaving that to a
+		// background goroutine.
+		if rbErr := rollbackTx(tx); rbErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// runNested runs fn under a savepoint of the transaction already carried by
+// ctx. The savepoint is created with the caller's context, but rolled back
+// with the enclosing transaction's context: cancelling the inner context must
+// not prevent the inner writes from being discarded.
+func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn func(ctx context.Context) error) (err error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%w: %w", ErrSavepointFailed, ctxErr)
+	}
+	if tx.DisableNestedTransaction {
+		return ErrNestedTransactionsDisabled
+	}
+
+	name := fmt.Sprintf("gocrm_sp_%d", savepointSeq.Add(1))
+	inner := tx.WithContext(ctx)
+	// The statements are issued directly rather than through the dialector's
+	// SavePoint/RollbackTo helpers: the SQLite dialector discards their
+	// errors, and a savepoint that silently failed would turn the inner unit
+	// into a bare join of the outer transaction. MySQL/InnoDB and SQLite share
+	// this syntax.
+	if execErr := inner.Exec("SAVEPOINT " + name).Error; execErr != nil {
+		return fmt.Errorf("%w: %w", ErrSavepointFailed, execErr)
+	}
+
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		// Panic or runtime.Goexit: discard the inner writes and let the
+		// panic continue to whoever recovers it.
+		_ = rollbackToSavepoint(tx, name)
+	}()
+	err = fn(context.WithValue(ctx, txKey, inner))
+	finished = true
+
+	if err != nil {
+		if rbErr := rollbackToSavepoint(tx, name); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("%w: %w", ErrRollbackFailed, rbErr))
+		}
+		return err
+	}
+	// Success leaves the savepoint in place; it is released with the outer
+	// transaction. The inner writes remain provisional until the root commits.
+	return nil
+}
+
+// activeTransaction returns the transaction carried by ctx, or nil when the
+// context holds none or holds a handle that is not inside a transaction.
+func activeTransaction(ctx context.Context) *gorm.DB {
+	tx, ok := ctx.Value(txKey).(*gorm.DB)
+	if !ok || tx == nil || tx.Statement == nil {
+		return nil
+	}
+	if committer, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok || committer == nil {
+		return nil
+	}
+	return tx
+}
+
+// committerOf returns the transaction behind tx. The GORM Commit/Rollback
+// helpers are bypassed because they accumulate every error on the shared
+// handle; a rollback issued after a failed commit would otherwise report both.
+func committerOf(tx *gorm.DB) (gorm.TxCommitter, error) {
+	committer, ok := tx.Statement.ConnPool.(gorm.TxCommitter)
+	if !ok || committer == nil {
+		return nil, gorm.ErrInvalidTransaction
+	}
+	return committer, nil
+}
+
+func commitTx(tx *gorm.DB) error {
+	committer, err := committerOf(tx)
+	if err != nil {
+		return err
+	}
+	return committer.Commit()
+}
+
+// rollbackTx rolls the root transaction back. sql.ErrTxDone means database/sql
+// already finalized it, which happens when the bound context ends; the work is
+// discarded either way, so that is not reported as a rollback failure.
+func rollbackTx(tx *gorm.DB) error {
+	committer, err := committerOf(tx)
+	if err != nil {
+		return err
+	}
+	if err := committer.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		return err
+	}
+	return nil
+}
+
+func rollbackToSavepoint(tx *gorm.DB, name string) error {
+	return tx.Exec("ROLLBACK TO SAVEPOINT " + name).Error
 }
 
 // isRetryableError checks if an error is retryable (e.g., deadlocks, lock timeouts)
