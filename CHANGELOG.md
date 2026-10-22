@@ -102,6 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Form confirmation tokens are consumed atomically (#101).** Confirming a double-opt-in
+  submission used to stamp the token as used before the transaction that created or linked the
+  lead and confirmed the submission, by an update on the id alone. A failure in that transaction
+  consumed a usable link, and two simultaneous clicks could both pass the lookup. The token is now
+  claimed inside the same transaction by a conditional update (unused, strictly unexpired, exactly
+  one affected row) before the pending submission is re-read and the lead and submission are
+  written; a lead or submission write failure rolls the claim back so the same link works on
+  retry, competing requests yield exactly one confirmation, and the team notification and the
+  follow-up mail go out only after the commit. Public errors and API responses are unchanged.
+  Regressions run on SQLite and on a disposable MySQL schema (`TestFormConfirmation{TokenClaim,
+  Rollback,Concurrent}{SQLite,MySQL}`); see `docs/testing/12-forms.md`.
 - **Transaction manager: panics, nesting and finalization failures (#106).** A panic inside
   `WithTransaction` now rolls the transaction back before propagating unchanged, so SQLite's
   single pooled connection is released instead of held by an abandoned transaction. A call made

@@ -13,6 +13,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/forms"
+	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -93,19 +94,19 @@ type formFixture struct {
 	mailer   *fakeFormMailer
 	service  FormService
 	owner    *models.User
+	cfg      config.FormsConfig
 }
 
 func newFormFixture(t *testing.T, cfg config.FormsConfig) *formFixture {
 	t.Helper()
+	return newFormFixtureOn(t, cfg, openFormTestSQLite(t))
+}
 
-	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "text"})
-
-	// The challenge signature and the confirmation-token hashes are keyed the
-	// same way the session tokens are: API_KEY_SECRET when set, JWT_SECRET
-	// otherwise. The first is blanked so a developer's environment cannot
-	// change which key the service picks.
-	t.Setenv("API_KEY_SECRET", "")
-	t.Setenv("JWT_SECRET", formTestSecret)
+// openFormTestSQLite is an in-memory database with the pool pinned to one
+// connection, exactly as a SQLite deployment runs: a second pooled connection
+// to ":memory:" would open a second, empty database.
+func openFormTestSQLite(t *testing.T) *gorm.DB {
+	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -117,6 +118,14 @@ func newFormFixture(t *testing.T, cfg config.FormsConfig) *formFixture {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
+	migrateFormTestSchema(t, db)
+	return db
+}
+
+// migrateFormTestSchema creates the tables the forms pipeline touches, plus
+// the ones the lead's foreign keys point at.
+func migrateFormTestSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.Company{}, &models.Customer{},
@@ -125,6 +134,21 @@ func newFormFixture(t *testing.T, cfg config.FormsConfig) *formFixture {
 		&models.FormSubmission{},
 		&models.FormConfirmationToken{},
 	))
+}
+
+// newFormFixtureOn wires the service on an already-migrated database, so the
+// same scenarios run on SQLite and on a disposable MySQL schema.
+func newFormFixtureOn(t *testing.T, cfg config.FormsConfig, db *gorm.DB) *formFixture {
+	t.Helper()
+
+	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "text"})
+
+	// The challenge signature and the confirmation-token hashes are keyed the
+	// same way the session tokens are: API_KEY_SECRET when set, JWT_SECRET
+	// otherwise. The first is blanked so a developer's environment cannot
+	// change which key the service picks.
+	t.Setenv("API_KEY_SECRET", "")
+	t.Setenv("JWT_SECRET", formTestSecret)
 
 	f := &formFixture{
 		db:       db,
@@ -132,11 +156,19 @@ func newFormFixture(t *testing.T, cfg config.FormsConfig) *formFixture {
 		leadRepo: repository.NewLeadRepository(db),
 		userRepo: repository.NewUserRepository(db),
 		mailer:   &fakeFormMailer{},
+		cfg:      cfg,
 	}
 	f.owner = f.createUser(t, "owner@example.com", models.RoleSales, true)
-	f.service = NewFormService(f.repo, f.leadRepo, f.userRepo, f.mailer,
-		utils.NewTransactionManager(db), cfg, formTestAPIPrefix)
+	f.wire(f.repo, f.leadRepo, f.mailer)
 	return f
+}
+
+// wire builds the service around the given repositories and mailer. A test
+// that interposes on them passes its wrappers here; the fixture's own fields
+// keep pointing at the plain ones for verification reads.
+func (f *formFixture) wire(repo repository.FormRepository, leadRepo repository.LeadRepository, m mailer.Mailer) {
+	f.service = NewFormService(repo, leadRepo, f.userRepo, m,
+		utils.NewTransactionManager(f.db), f.cfg, formTestAPIPrefix)
 }
 
 func newDefaultFormFixture(t *testing.T) *formFixture {
@@ -1343,9 +1375,10 @@ func TestFormServiceConfirmCompletesTheSubmission(t *testing.T) {
 }
 
 // A pending submission stored before values were limited to their columns can
-// hold one the lead insert would reject on MySQL. Confirmation refuses it
-// before the token is spent, so the visitor gets the "link no longer valid"
-// answer instead of a server error, and no half-finished state is left.
+// hold one the lead insert would reject on MySQL. Confirmation refuses it and
+// the rollback hands the already-claimed token back, so the visitor gets the
+// "link no longer valid" answer instead of a server error, and no half-finished
+// state is left.
 func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
@@ -1366,9 +1399,10 @@ func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) 
 	var tokens []models.FormConfirmationToken
 	require.NoError(t, f.db.Find(&tokens).Error)
 	require.Len(t, tokens, 1)
-	assert.Nil(t, tokens[0].UsedAt, "the token is not spent")
+	assert.Nil(t, tokens[0].UsedAt, "the claim is rolled back with the rest of the unit")
 	assert.Empty(t, f.leads(t))
 	assert.Equal(t, models.FormSubmissionPending, f.submissions(t, form.ID)[0].Status)
+	assert.Empty(t, f.mailer.to("sales@example.com"), "nothing is announced for a refused confirmation")
 }
 
 func TestFormServiceConfirmIsSingleUse(t *testing.T) {

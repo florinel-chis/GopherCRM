@@ -248,11 +248,33 @@ func (r *formRepository) GetConfirmationTokenByHash(hash string) (*models.FormCo
 	return &token, nil
 }
 
+// MarkConfirmationTokenUsed claims a token: it stamps used_at only while the
+// row is still unused and strictly unexpired, and reports
+// gorm.ErrRecordNotFound when nothing was claimed. The two predicates are part
+// of the UPDATE itself rather than checked beforehand, so two callers that both
+// read the token as spendable cannot both claim it — whichever UPDATE runs
+// second finds the row already stamped (or expired meanwhile) and affects no
+// row. Exactly one affected row is the only success; the caller runs the claim
+// inside the transaction that confirms the submission, so a rollback leaves the
+// token usable for a retry.
 func (r *formRepository) MarkConfirmationTokenUsed(id uint) error {
 	now := time.Now()
-	return r.db.Model(&models.FormConfirmationToken{}).
-		Where("id = ?", id).
-		Update("used_at", &now).Error
+	result := r.db.Model(&models.FormConfirmationToken{}).
+		Where("id = ? AND used_at IS NULL AND expires_at > ?", id, now).
+		Update("used_at", &now)
+	if result.Error != nil {
+		return result.Error
+	}
+	switch result.RowsAffected {
+	case 1:
+		return nil
+	case 0:
+		return gorm.ErrRecordNotFound
+	default:
+		// The primary key makes this unreachable; it is still refused rather
+		// than reported as a single-use claim.
+		return fmt.Errorf("confirmation token claim affected %d rows", result.RowsAffected)
+	}
 }
 
 // InvalidatePendingTokens spends every outstanding token belonging to a pending
