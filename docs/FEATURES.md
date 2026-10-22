@@ -40,7 +40,8 @@ concurrency placeholder remains a reported gap. `make verify` runs the complete 
 locally; unfiltered `make e2e` runs the full browser suite. The manual
 [Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
 and publishing verified artifacts. Production deploys consume those published artifacts.
-See the [validation and release runbook](VALIDATION_RELEASE.md).
+The bounded migration-workflow profile runs SQL/SQLite migration checks and health smoke; its
+two database CI jobs feed the existing required Backend check. See the [validation and release runbook](VALIDATION_RELEASE.md).
 The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs fresh,
 populated-upgrade and rollback/reapply SQL regressions on MySQL 8 and MariaDB 10.11, alongside
 the SQLite upgrade fixtures, on every PR, merge group and main push. Required roots and their

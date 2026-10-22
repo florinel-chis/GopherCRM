@@ -314,7 +314,8 @@ The separate [Database migrations workflow](../.github/workflows/migrations.yml)
 fresh/upgrade/rollback checks on disposable MySQL 8 and MariaDB 10.11 services for every PR,
 merge group and main push. Both jobs retain the existing SQLite upgrade fixtures and reject
 missing or skipped required coverage. Their artifacts include the tested revision and Go JSON
-results; see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
+results, and the required Backend check depends on both jobs. Changes confined to this workflow
+and its checker use targeted migration regressions and health smoke; see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
 
 Runner changes require `make verify-runner` and the focused checks selected by the policy.
 Install `automation/langflow[flows]`

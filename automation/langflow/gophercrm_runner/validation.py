@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-POLICY_VERSION = 4
+POLICY_VERSION = 5
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -51,6 +51,10 @@ SHARED_FILES = {
 DOC_FILES = {"README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "AGENTS.md"}
 RUNNER_PREFIXES = ("automation/langflow/", "scripts/ci/")
 RUNNER_FILES = {".github/workflows/ci.yml", ".github/workflows/remediation-runner.yml"}
+MIGRATION_WORKFLOW_FILES = {
+    '.github/workflows/migrations.yml', 'scripts/release/check-sql-tests.py',
+    'scripts/release/tests/test_release.py', 'scripts/release/tests/test_sql_coverage.py',
+}
 AUTH_FILES = {
     'internal/service/auth_service.go', 'internal/handler/auth_handler.go',
     'internal/handler/auth_registration.go', 'scripts/ci/check-auth.py',
@@ -81,7 +85,7 @@ def feature_for(path):
 def plan(paths, *, full=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
-    runner_paths = application_paths = auth_paths = transaction_paths = other_application = False
+    runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -99,6 +103,9 @@ def plan(paths, *, full=False):
             continue
         if TRANSACTION_PATH.fullmatch(name):
             transaction_paths = application_paths = True
+            continue
+        if name in MIGRATION_WORKFLOW_FILES:
+            migration_paths = application_paths = True
             continue
         if name.startswith(RUNNER_PREFIXES) or name in RUNNER_FILES:
             runner_paths = True
@@ -129,17 +136,20 @@ def plan(paths, *, full=False):
             specs.update(f"e2e/tests/{spec}.spec.ts" for spec in FEATURES[feature])
         else:
             reasons.append(f"unmapped path: {name}")
+    if migration_paths and (auth_paths or transaction_paths or other_application):
+        reasons.append('migration workflow mixed with application changes')
     if transaction_paths and (auth_paths or other_application):
         reasons.append("transactions mixed with other application changes")
     if auth_paths and other_application:
         reasons.append('auth mixed with other application changes')
-    profile = ('full' if reasons else 'transaction' if transaction_paths else 'auth' if auth_paths else
+    profile = ('full' if reasons else 'migration' if migration_paths else 'transaction' if transaction_paths else 'auth' if auth_paths else
                'runner' if runner_paths and not application_paths else 'contextual')
     return {
         "policy_version": POLICY_VERSION,
         "profile": profile,
         "reasons": sorted(set(reasons)) or [
-            'transaction and caller regressions plus health smoke' if profile == 'transaction'
+            'SQL migrations and SQLite upgrades plus health smoke' if profile == 'migration'
+            else 'transaction and caller regressions plus health smoke' if profile == 'transaction'
             else 'targeted auth/session checks plus login, registration and health smoke' if profile == 'auth'
             else "runner checks plus health smoke" if profile == 'runner'
             else "smoke plus affected feature suites"],
@@ -150,9 +160,9 @@ def plan(paths, *, full=False):
 
 
 def core_commands(configured, selected):
-    if selected['profile'] in {'auth', 'transaction'}:
+    if selected['profile'] in {'auth', 'transaction', 'migration'}:
         check = (('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
-                 ('python3', 'scripts/ci/check-go.py', 'transaction'))
+                 ('python3', 'scripts/ci/check-go.py', selected['profile']))
         commands = [('make', 'verify-hygiene'), check,
                     ('npm', 'ci', '--prefix', 'gocrm-ui')]
         if any(p.startswith(RUNNER_PREFIXES) or p in RUNNER_FILES for p in selected['changed_paths']):

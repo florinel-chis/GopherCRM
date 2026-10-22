@@ -121,6 +121,21 @@ class ValidationSelectionTests(unittest.TestCase):
                           'internal/service/auth_service.go', 'go.mod', 'migrations/new.sql']:
             self.assertEqual(plan(paths + [unrelated])['profile'], 'full')
 
+    def test_migration_workflow_profile_does_not_widen_schema_changes(self):
+        paths = ['.github/workflows/migrations.yml', 'scripts/release/check-sql-tests.py',
+                 'scripts/release/tests/test_sql_coverage.py', '.github/workflows/ci.yml']
+        selected = plan(paths)
+        self.assertEqual(selected['profile'], 'migration')
+        self.assertEqual(selected['specs'], [SMOKE])
+        self.assertIn(('python3', 'scripts/ci/check-go.py', 'migration'), core_commands([], selected))
+        self.assertIn(('make', 'verify-runner'), core_commands([], selected))
+        self.assertNotIn(('make', 'verify'), core_commands([], selected))
+        for unrelated in ['migrations/new.sql', 'internal/models/database.go', 'cmd/migrate/main.go',
+                          'internal/utils/transaction.go', 'internal/service/auth_service.go',
+                          'scripts/release/release.py']:
+            self.assertEqual(plan(paths + [unrelated])['profile'], 'full')
+        self.assertEqual(plan(paths, full=True)['profile'], 'full')
+
     def test_changed_test_is_included_and_empty_filter_is_never_contextual(self):
         selected = plan(["gocrm-ui/e2e/tests/new-feature.spec.ts"])
         self.assertIn("e2e/tests/new-feature.spec.ts", selected["specs"])

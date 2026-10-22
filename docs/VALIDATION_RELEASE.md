@@ -18,7 +18,7 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth/transaction profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| Hygiene and core checks | Auth/transaction/migration profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -138,8 +138,11 @@ runner requires the candidate to contain current main before merge.
 
 ## Migration CI
 
-[Database migrations](../.github/workflows/migrations.yml) runs on every PR, merge group
-and main push, with a manual trigger for diagnosis. Its two jobs use disposable MySQL 8
+[Database migrations](../.github/workflows/migrations.yml) is called by CI on every PR,
+merge group and main push, and supports a manual trigger for diagnosis. The existing required
+Backend job depends on both database jobs succeeding, so migration failures block that check
+without requiring new branch-protection names. The reusable call checks out the same revision
+as the rest of CI, including releases. Its two jobs use disposable MySQL 8
 and MariaDB 10.11 services. They run only the migration and SQLite upgrade regressions:
 fresh SQL up/down, a populated prior schema, AutoMigrate-first upgrades, website-column
 rollback/reapply, and the existing populated/half-applied SQLite fixtures. This adds no
@@ -152,6 +155,15 @@ skipped evidence fails, including skipped descendants under a passing parent. Th
 test suite that skips because no SQL server is reachable cannot turn the migration job
 green. The default release mode continues to require real SQL integration coverage and
 also explicitly requires the populated website migration root.
+
+Changes confined to this workflow and the SQL evidence checker/tests select the bounded
+`migration` profile. Local validation runs hygiene (including checker failure-path tests),
+`python3 scripts/ci/check-go.py migration` against disposable MySQL plus SQLite upgrade fixtures,
+all frozen acceptance checks and SQLite health smoke. Accompanying runner changes also run
+runner checks. CI runs the two-engine migration gate, API build/vet, frontend build health and
+health smoke on all three engines. Schema, migration SQL, application code and unrelated release
+machinery remain outside this profile and retain their full fallback. Explicit full/release
+validation remains complete. This is shared profile data and checker code, not a per-ticket helper.
 
 Each engine retains the tested Git revision, Go JSON log and a concise list of passing
 required roots in `migration-results-<engine>-<run-id>` artifacts. The job summary shows
