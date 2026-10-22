@@ -125,9 +125,12 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
   For a transaction begun outside the manager, poisoning binds only the managed calls below the
   first one; the owner receives the error from that call and must roll back itself.
 - **Cancellation.** A context that is already done fails before the callback runs
-  (`ErrBeginFailed` wrapping the context error). Cancellation during the callback makes the commit
-  fail (`ErrCommitFailed`, also matching `context.Canceled`/`DeadlineExceeded`) and the work is
-  discarded; a rollback that `database/sql` already performed for the cancelled context is not
+  (`ErrBeginFailed` for a root or `ErrSavepointFailed` for a nested call, wrapping the context
+  error). Cancellation during a root callback makes the commit fail (`ErrCommitFailed`, also
+  matching `context.Canceled`/`DeadlineExceeded`) and the work is discarded. A nested call checks
+  its context after the callback and rolls back to its savepoint even if the callback returned
+  nil; the uncancelled outer transaction may still commit its own work after handling that error.
+  A rollback that `database/sql` already performed for the cancelled root context is not
   reported as a failure.
 - **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed`,
   `ErrRollbackFailed` and `ErrTransactionPoisoned` tag what went wrong; a rollback failure is

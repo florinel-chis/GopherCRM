@@ -352,6 +352,11 @@ func (tm *TransactionManager) runNested(ctx context.Context, tx *gorm.DB, fn fun
 	}
 	err = fn(txCtx)
 	finished = true
+	// A savepoint has no database/sql Commit call to enforce its context.
+	// Honor cancellation before returning success even when fn returned nil.
+	if err == nil {
+		err = ctx.Err()
+	}
 
 	if err != nil {
 		rollback()

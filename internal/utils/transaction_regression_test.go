@@ -414,6 +414,25 @@ func runTransactionNestedScenarios(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, []string{"outer-after", "outer-before"}, persistedLabels(t, db))
 	})
 
+	t.Run("inner cancellation rolls back even when its callback returns nil", func(t *testing.T) {
+		clearRecords(t, db)
+		err := tm.WithTransaction(boundedContext(t), func(ctx context.Context) error {
+			require.NoError(t, insertRecord(ctx, "outer"))
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			innerErr := tm.WithTransaction(innerCtx, func(inner context.Context) error {
+				require.NoError(t, insertRecord(inner, "cancelled-inner"))
+				cancel()
+				return nil
+			})
+			require.ErrorIs(t, innerErr, context.Canceled)
+			require.NotErrorIs(t, innerErr, ErrRollbackFailed)
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"outer"}, persistedLabels(t, db))
+	})
+
 	t.Run("an already cancelled inner context is refused before the callback runs", func(t *testing.T) {
 		clearRecords(t, db)
 		innerCalled := false
