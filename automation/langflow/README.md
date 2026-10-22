@@ -250,13 +250,13 @@ operational canary from the deferred controlled benchmark.
 
 ## Maintain and test the runner
 
-Install the `flows,test` extras in the active Python environment before validation.
-The `test` extra declares the JSON Schema validator used by the provider-format
-regressions; the tests must not rely on a workflow engine's transitive dependencies.
-The UI installation can use `ui,test` instead. CI installs `flows,test` explicitly.
+Install the `flows` extra in the active Python environment before validation.
+Both `flows` and `ui` explicitly declare the JSON Schema validator used by the
+provider-format regressions, so tests do not rely on the workflow engine's
+transitive dependencies. CI installs `flows` with the same declared dependency.
 
 ```sh
-python -m pip install './automation/langflow[flows,test]'
+python -m pip install './automation/langflow[flows]'
 make verify-hygiene
 make verify-runner RUNNER_PYTHON=python
 npm ci --prefix gocrm-ui
