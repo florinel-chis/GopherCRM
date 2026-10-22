@@ -618,6 +618,44 @@ func runPasswordResetValidationScenarios(t *testing.T, db *gorm.DB) {
 		f.assertBystanderIntact(t, s)
 	})
 
+	t.Run("an owner deactivated between the lookup and the owner check is rejected and not reactivated", func(t *testing.T) {
+		s := f.seed(t)
+		f.hooks.install(func(h *resetHooks) {
+			h.afterTokenLookup = func(tx *gorm.DB, stored *models.PasswordResetToken) error {
+				// The account is disabled after this request read its token as
+				// spendable. The owner check must see the current row, not a
+				// user record read earlier or a stale snapshot, and the
+				// full-row password update must never write is_active back.
+				return tx.Model(&models.User{}).Where("id = ?", stored.UserID).Update("is_active", false).Error
+			}
+		})
+
+		assert.ErrorIs(t, f.svc.ConfirmPasswordReset(s.token, resetNewPassword), ErrInvalidResetToken)
+		// The rollback discarded the simulated deactivation with everything
+		// else, so the account is exactly as seeded.
+		f.assertUntouched(t, s)
+
+		f.hooks.clear()
+		require.NoError(t, f.svc.ConfirmPasswordReset(s.token, resetNewPassword))
+		f.assertReset(t, s, resetNewPassword)
+	})
+
+	t.Run("an owner soft-deleted between the lookup and the owner check is rejected", func(t *testing.T) {
+		s := f.seed(t)
+		f.hooks.install(func(h *resetHooks) {
+			h.afterTokenLookup = func(tx *gorm.DB, stored *models.PasswordResetToken) error {
+				return tx.Model(&models.User{}).Where("id = ?", stored.UserID).Update("deleted_at", time.Now()).Error
+			}
+		})
+
+		assert.ErrorIs(t, f.svc.ConfirmPasswordReset(s.token, resetNewPassword), ErrInvalidResetToken)
+		f.assertUntouched(t, s)
+
+		f.hooks.clear()
+		require.NoError(t, f.svc.ConfirmPasswordReset(s.token, resetNewPassword))
+		f.assertReset(t, s, resetNewPassword)
+	})
+
 	t.Run("an erased owner is rejected", func(t *testing.T) {
 		s := f.seed(t)
 		// Erasure scrubs the row, purges its credentials and soft-deletes it.

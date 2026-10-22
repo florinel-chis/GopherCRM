@@ -14,6 +14,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL reproduces the stale
+// snapshot that only a second connection can create: under REPEATABLE READ
+// the transaction's snapshot is taken at the token lookup, a separate
+// connection then commits the deactivation, and a plain owner read would
+// still see the account as active and the password update would write that
+// stale row back. The owner read must be a locking (current) read. There is
+// no SQLite twin: its one-connection pool cannot interleave a committed
+// write; the transaction-handle scenarios in the validation roots cover the
+// owner check there.
 func TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL(t *testing.T) {
 	db := openFormTestMySQL(t, 2)
 	f := newFormFixtureOn(t, config.FormsConfig{PublicBaseURL: formTestPublicBase}, db)

@@ -22,6 +22,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm/clause"
 )
 
 // Sentinel errors for the session lifecycle, classified with errors.Is().
@@ -636,7 +637,9 @@ func (s *authService) RequestPasswordReset(email string) error {
 // claim — the password update, the session revocation — rolls the whole unit
 // back, token included, so the link stays usable for a retry instead of being
 // spent on a reset that never happened. An inactive, erased or missing owner
-// is rejected inside the transaction and leaves the token unspent as well.
+// is rejected inside the transaction and leaves the token unspent as well; the
+// owner is read with a locking read so that decision rests on the current
+// committed account, not on the transaction's snapshot.
 func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	// Every dependency of the transactional flow is required. Running the old
 	// sequence of separate writes when one is missing would reintroduce the
@@ -666,7 +669,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 		}
 		var err error
 		userID, err = s.confirmPasswordResetInTransaction(
-			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx), s.refreshTokenRepo.WithTx(tx),
+			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})), s.refreshTokenRepo.WithTx(tx),
 			hash, string(hashed))
 		return err
 	})
@@ -714,10 +717,16 @@ func (s *authService) confirmPasswordResetInTransaction(
 		return 0, fmt.Errorf("failed to mark reset token used: %w", err)
 	}
 
-	// A token must never outlive its owner. The scoped lookup makes an erased
-	// (soft-deleted) owner a not-found; a deactivated one is refused the same
-	// way. The rollback that follows hands the claim back, so the committed
-	// state is exactly what it was.
+	// A token must never outlive its owner. The owner is read with a locking
+	// read: on MySQL a plain SELECT inside this REPEATABLE READ transaction
+	// would answer from the snapshot taken at the token lookup, so an account
+	// deactivated or erased a moment after that lookup would still look active
+	// — and the full-row update below would write that stale state back,
+	// reactivating it. The locking read returns the current committed row and
+	// holds its lock until commit, so nothing changes it underneath the update.
+	// The scoped lookup makes an erased (soft-deleted) owner a not-found; a
+	// deactivated one is refused the same way. The rollback that follows hands
+	// the claim back, so the committed state is exactly what it was.
 	user, err := userRepo.GetByID(stored.UserID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {

@@ -563,6 +563,10 @@ file, not by trusting the coverage matrix.
   re-check, the password and lockout update and the revocation of every refresh token of the
   account then run in one transaction (`internal/service/auth_service.go`
   `ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `MarkUsed`).
+  The owner re-check is a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL,
+  a plain read on SQLite): it sees the account as currently committed, so an owner deactivated or
+  erased by another connection after the token lookup is refused instead of being reactivated by
+  the password update written from a stale REPEATABLE READ snapshot.
   A failure of the claim, of the password update or of the revocation is returned, rolls the
   claim back and the same link works on retry. An unknown, spent or expired token, one that
   expires or is spent between the lookup and the claim, and an inactive, erased (soft-deleted)
@@ -583,7 +587,13 @@ file, not by trusting the coverage matrix.
   skips, which the named acceptance checks reject). `TestPasswordResetValidation{SQLite,MySQL}`:
   weak and unhashable passwords with same-link completion, unknown/empty/spent/expired tokens,
   expiry and spend between lookup and claim through the transaction's own handle, inactive,
-  erased, soft-deleted-with-surviving-token and missing owners.
+  erased, soft-deleted-with-surviving-token and missing owners, and an owner deactivated or
+  soft-deleted through the transaction's handle between the lookup and the owner check (rejected,
+  rolled back, same link completes afterwards). The stale-snapshot case that needs a second
+  connection is `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL`
+  (`internal/service/auth_reset_owner_race_test.go`): a REPEATABLE READ transaction reads the
+  token, another connection commits `is_active = false`, and the reset must reject, leave the
+  account disabled with its old password and the token unspent.
   `TestPasswordResetAtomicity{SQLite,MySQL}`: injected claim, password-update and
   session-revocation failures leave everything as seeded and the same token succeeds on retry;
   success clears the lockout, revokes both owner sessions, leaves a bystander's password, token
