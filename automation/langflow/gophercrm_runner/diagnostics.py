@@ -38,8 +38,9 @@ def go_failure_blocks(text):
             outputs.setdefault(key, []).append(event['Output'])
         elif event.get('Action') == 'fail':
             failed.append(key)
-    if failed:
-        return ''.join(''.join(outputs.get(key, [])) for key in failed)
+    json_failures = ''.join(''.join(outputs.get(key, [])) for key in failed)
+    if json_failures:
+        return json_failures
     blocks, active = [], False
     for line in go_output(text).splitlines(keepends=True):
         if re.match(r'^\s*--- FAIL: Test\S+', line):

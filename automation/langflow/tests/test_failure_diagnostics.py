@@ -50,6 +50,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 self.assertTrue(environment_failure(CommandError('failed', stdout=stdout, stderr='')))
                 self.assertTrue(environment_failure(CommandError('failed', stdout=ASSERTION, stderr=diagnostic)))
 
+    def test_embedded_json_fixture_without_output_cannot_hide_real_plain_assertions(self):
+        fixture = json.dumps(dict(Action='fail', Package='example/pkg', Test='TestFixture')) + '\n'
+        stdout = fixture + ASSERTION + 'later passing output\n' * 3000 + MOCK_LOG
+        summary = failure_summary(stdout, '')
+        self.assertIn('must not reactivate', summary)
+        self.assertFalse(environment_failure(CommandError(summary, stdout=stdout, stderr='')))
+
     def test_startup_unknown_logs_and_legacy_errors_keep_environment_detection(self):
         self.assertTrue(environment_failure(CommandError('failed', stdout=MOCK_LOG, stderr='')))
         unknown = json.dumps(dict(level='error', msg='connection refused'))
