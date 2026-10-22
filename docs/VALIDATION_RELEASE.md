@@ -2,8 +2,8 @@
 
 Validation selects checks relevant to the changed code, with application health smoke
 on ordinary changes and the complete matrix before releases. It does not claim that a
-path map proves the absence of regressions. Unknown or shared changes require full
-browser coverage. Production deploys move to validated, published releases.
+path map proves the absence of regressions. Unmapped shared changes retain full coverage; mapped transaction changes use direct
+boundary and caller tests with health smoke. Production deploys move to validated, published releases.
 
 ## Working prompt
 
@@ -18,7 +18,7 @@ browser coverage. Production deploys move to validated, published releases.
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth profile: hygiene + targeted auth checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| Hygiene and core checks | Auth/transaction profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -35,7 +35,7 @@ or add a separate model call on the successful path.
 
 `automation/langflow/gophercrm_runner/validation.py` owns the deterministic path map.
 Known entity changes select related specs and the read-only health smoke test; mixed
-changes take the union. Shared infrastructure, schema, dependencies, API contracts,
+changes take the union. Unmapped shared infrastructure, schema, dependencies, API contracts,
 unknown application paths select the complete browser suite. Runner-only changes under
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
 `runner` profile: local `make verify-hygiene`, `make verify-runner`, all frozen acceptance
@@ -71,6 +71,33 @@ specs on SQLite, MySQL and MariaDB and builds the frontend. Frozen issue checks 
 mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated
 feature-browser suite is added by this profile. An explicitly frozen database profile still
 requires its MySQL/migration checks; explicit full and releases retain the complete matrix.
+
+The bounded `transaction` profile covers only `internal/utils/transaction.go` and its
+`transaction*_test.go` tests, with accompanying docs and runner changes. It runs hygiene,
+`python3 scripts/ci/check-go.py transaction`, frozen acceptance checks, and health smoke on
+SQLite and MySQL locally. The shared Go checker builds the API, vets selected packages and
+runs uncached race tests discovered from transaction tests and their lead, form, deal,
+company, AEO and bulk service/repository/integration callers. Missing boundary roots,
+unavailable SQL, skipped or duplicate required roots and incomplete package output fail.
+One existing empty `TestLeadConversionTransaction/concurrent_conversion_attempts` placeholder
+is explicitly reported as a coverage gap; any other skip still fails. It does not exempt
+transaction acceptance tests or claim lead-conversion concurrency coverage.
+CI runs the same Go profile against SQLite/MySQL, the transaction boundaries additionally on
+MariaDB, frontend build health, and health smoke on all three engines. The configured local
+migration checks remain required. There are no full frontend unit or unrelated feature-browser
+runs in this profile. Other application changes in the same diff retain full fallback;
+explicit full and release runs retain the complete matrix and execute these transaction
+boundaries on both SQL engines even though ordinary Go suites may skip without SQL. New transaction callers
+or test locations require updating the maintained source map.
+
+This profile corrects the #106 run that selected all 159 SQLite browser cases merely because
+the transaction helper was shared. That run was stopped and retained as partial evidence.
+The revised candidate needs fresh focused validation and independent review. An orphaned Vite
+server also exposed a port-conflict classification gap: occupied browser ports now stop as
+environment failures instead of spending a source-repair call. Stop only the identified stale
+process, then resume; do not change application code or reuse an unknown server. Do not edit a
+frozen execution's policy or reinterpret its interrupted checks: retain it, document the
+handoff and remaining budgets, and use an explicitly new configuration/state for completion.
 
 This refinement came from issue #100: the previous map treated even a bounded login-counter
 fix as a full application change. Deterministic boundary tests and real session HTTP coverage
@@ -116,8 +143,9 @@ that omit the field use `"legacy"`: the original v0.3 behavior and policy hashes
 mode retains its original conditional local browser coverage. Explicit `"full"` always
 requires the complete SQLite/MySQL browser and migration matrix, including UI-only and
 documentation changes, and therefore requires disposable SQL configuration. Do not edit
-an admitted execution's policy. Finish it, install the reviewed runner, and create a new
-configuration/state directory for contextual runs. The installed selector's content hash
+an admitted execution's policy. Finish it, or explicitly stop and retain it when correcting
+a policy; record the handoff and remaining budgets, then create a new configuration/state
+directory for contextual completion with fresh evidence. The installed selector's content hash
 is part of contextual and explicit-full validation policy, so upgrading it invalidates unfinished evidence.
 Both ticket and existing-PR workflows use the same selection helper. Receipts still bind
 commands, output, head, base and contract; review, CI and merge do not accept stale evidence.

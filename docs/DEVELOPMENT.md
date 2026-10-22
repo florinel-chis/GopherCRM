@@ -92,7 +92,77 @@ pages organized per entity under `src/pages/`.
 — never string comparison. The error handler middleware maps error types to HTTP status codes.
 
 **Transaction management** — use `utils.NewTransactionManager(models.DB).WithTransaction()` for
-multi-step operations. Repositories expose `WithTx()` to participate in transactions.
+multi-step operations. Repositories expose `WithTx()` to participate in transactions. The manager
+(`internal/utils/transaction.go`) guarantees the following, on SQLite and MySQL alike:
+
+- **Root calls.** A context without a transaction begins one on the root handle, bound to the
+  caller's context so a dead request never waits for a pooled connection. A nil return commits;
+  an error rolls back and is returned as is (identity preserved).
+- **Nested calls.** A context that already carries an active transaction reuses it under a
+  `SAVEPOINT`; no second root connection is ever acquired, which matters because the SQLite pool
+  holds exactly one. An inner error rolls back to the savepoint and the outer callback decides
+  whether to continue; inner success stays provisional until the outermost call commits, and an
+  outer error or panic discards every nested write. Nesting is unlimited in depth. The savepoint is
+  created with the inner context but rolled back with the enclosing one, so cancelling an inner
+  context cannot leave its writes in the outer transaction. A nested call on an already-cancelled
+  context, or on a handle with GORM's `DisableNestedTransaction`, is refused before the callback
+  runs (`ErrSavepointFailed`, `ErrNestedTransactionsDisabled`).
+- **Panics.** A panic (or `runtime.Goexit`) unwinding through the callback rolls back the
+  transaction or savepoint and keeps propagating untouched: the caller's `recover` sees the
+  identical value, and the connection is back in the pool. The manager never swallows a panic.
+- **Poisoned transactions.** A `ROLLBACK TO SAVEPOINT` that fails (for example because a MySQL
+  deadlock already destroyed the transaction, or the connection broke) leaves the inner writes
+  possibly in place, so the whole transaction is poisoned: the nested call returns
+  `ErrTransactionPoisoned` (also matching `ErrRollbackFailed` and the driver error), every
+  enclosing managed call returns it too even when its callback recovered the panic or swallowed
+  the inner error and returned nil, further nested calls on that transaction are refused before
+  their callback runs, and the root never attempts the commit. The manager issues no further
+  statements on a poisoned transaction: enclosing levels skip their own savepoint rollback and
+  the root performs the single `ROLLBACK` that discards everything. If that root rollback fails as
+  well, both failures are joined. The outer callback's own returned error, if any, is preserved
+  alongside; an error it swallowed is not resurrected. A poisoned attempt whose root rollback
+  succeeded left no writes, so the retry helper may replay it when its error is still retryable.
+  For a transaction begun outside the manager, poisoning binds only the managed calls below the
+  first one; the owner receives the error from that call and must roll back itself.
+- **Cancellation.** A context that is already done fails before the callback runs
+  (`ErrBeginFailed` for a root or `ErrSavepointFailed` for a nested call, wrapping the context
+  error). Cancellation during a root callback makes the commit fail (`ErrCommitFailed`, also
+  matching `context.Canceled`/`DeadlineExceeded`) and the work is discarded. A nested call checks
+  its context after the callback and rolls back to its savepoint even if the callback returned
+  nil; the uncancelled outer transaction may still commit its own work after handling that error.
+  A rollback that `database/sql` already performed for the cancelled root context is not
+  reported as a failure. Likewise, a `ROLLBACK TO SAVEPOINT` refused only because the enclosing
+  context has ended does not poison the transaction: that transaction can no longer commit
+  (`database/sql` refuses `COMMIT` on a done context and discards the root transaction; an
+  enclosing nested level fails its own context check and rolls back on its live parent handle),
+  so the nested call returns the cancellation and the root rolls back on it without attempting
+  the commit. An outer callback that swallows that cancellation and returns nil still gets
+  `ErrCommitFailed` with the context error, and nothing is persisted.
+- **Finalization failures.** `ErrBeginFailed`, `ErrSavepointFailed`, `ErrCommitFailed`,
+  `ErrRollbackFailed` and `ErrTransactionPoisoned` tag what went wrong; a rollback failure is
+  joined to the callback's error so both stay inspectable with `errors.Is`. A failed commit is
+  ambiguous from the client's side and is never reported as success, and a failed rollback is
+  never followed by a commit.
+- **Retries.** `WithTransactionAndRetry` replays deadlocks, lock waits and SQLite busy/locked
+  errors in a fresh root transaction, at most `maxRetries` times, and only when the failed attempt
+  rolled back cleanly: an attempt that failed at commit or rollback is returned without replay,
+  and the loop stops as soon as the context is done. A negative count returns
+  `ErrInvalidRetryCount` without running the callback. Inside an active transaction the callback
+  runs exactly once under a savepoint; a retryable failure is rolled back to that savepoint and
+  returned tagged with `ErrNestedRetryDeferred` (still classified as retryable), because a MySQL
+  deadlock has already destroyed the enclosing transaction and the only safe replay is the
+  enclosing root attempt. An outer callback that swallows that error commits none of the inner
+  writes.
+
+Regression roots: `TestTransactionPanic{SQLite,MySQL}`, `TestTransactionNested{SQLite,MySQL}`,
+`TestTransactionCancellationRetry{SQLite,MySQL}` (one-connection pools, persisted-row assertions,
+every wait bounded by a context; the MySQL roots create and drop a uniquely named schema on the
+`TEST_MYSQL_DSN` server), `TestTransactionFinalizationFailures` (a connection-pool wrapper that
+injects begin/commit/rollback/savepoint failures deterministically, including poisoned commits
+across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCommitFailedRollback`
+(the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
+be committed). Services still call the manager with `context.Background()`; request-context
+propagation is tracked in #107.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use
@@ -226,6 +296,10 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
+The bounded transaction profile runs API build/vet, transaction and affected-caller race
+regressions, named acceptance checks, configured migration checks and health smoke on SQLite
+and MySQL. CI adds MariaDB transaction checks and health smoke. It avoids unrelated feature
+browsers and frontend unit tests; see the same policy for its exact scope and known gap.
 The bounded auth profile replaces the full core checks with targeted auth/session race tests,
 API/frontend build checks, and health/login/registration browsers; it does not run frontend
 lint or unit tests. Other application profiles include ESLint as a required, passing gate.

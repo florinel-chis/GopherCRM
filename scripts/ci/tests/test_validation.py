@@ -105,6 +105,22 @@ class ValidationSelectionTests(unittest.TestCase):
                 plan([path])
         self.assertEqual(plan(["gocrm-ui/e2e/tests/$(touch pwned).spec.ts"])["profile"], "full")
 
+    def test_transaction_profile_uses_callers_and_health_with_explicit_full_override(self):
+        paths = ['internal/utils/transaction.go', 'internal/utils/transaction_recovery_test.go',
+                 'automation/langflow/gophercrm_runner/validation.py', 'docs/DEVELOPMENT.md']
+        selected = plan(paths)
+        self.assertEqual(selected['profile'], 'transaction')
+        self.assertEqual(selected['specs'], [SMOKE])
+        commands = core_commands([('make', 'verify'), ('go', 'test', './extra')], selected)
+        self.assertIn(('python3', 'scripts/ci/check-go.py', 'transaction'), commands)
+        self.assertIn(('make', 'verify-runner'), commands)
+        self.assertIn(('go', 'test', './extra'), commands)
+        self.assertNotIn(('make', 'verify'), commands)
+        self.assertEqual(plan(paths, full=True)['profile'], 'full')
+        for unrelated in ['internal/utils/transaction_other.go', 'internal/utils/password.go', 'internal/service/form_service.go',
+                          'internal/service/auth_service.go', 'go.mod', 'migrations/new.sql']:
+            self.assertEqual(plan(paths + [unrelated])['profile'], 'full')
+
     def test_changed_test_is_included_and_empty_filter_is_never_contextual(self):
         selected = plan(["gocrm-ui/e2e/tests/new-feature.spec.ts"])
         self.assertIn("e2e/tests/new-feature.spec.ts", selected["specs"])

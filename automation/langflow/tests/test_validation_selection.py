@@ -110,6 +110,23 @@ class ValidationSelectionTests(fixtures.EngineTests):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
             await runner.validation_checks(record, ['README.md'])
 
+    async def test_transaction_profile_keeps_database_and_acceptance_without_full_browsers(self):
+        runner, record = self.selected_runner()
+        paths = ['internal/utils/transaction.go']
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await runner.validation_checks(record, paths)
+            pr = PullRequestRunner(runner.config, self.commands)
+            record['criteria'] = []
+            external = await pr.validation_checks(record, paths)
+        self.assertIn(('python3', 'scripts/ci/check-go.py', 'transaction'), [c[1] for c in checks])
+        self.assertNotIn(('make', 'verify'), [c[1] for c in checks])
+        self.assertIn('acceptance-regression', [c[0] for c in checks])
+        database = [c for c in checks if c[0].startswith('database-')]
+        self.assertEqual(database, [c for c in external if c[0].startswith('database-')])
+        self.assertEqual(database[0][1][-1], 'SPECS=' + SMOKE)
+        self.assertEqual(database[1][1][-1], 'SPECS=' + SMOKE)
+        self.assertEqual(database[-1][1], DATABASE_CHECKS[-1])
+
     async def test_full_mode_requires_database_matrix_and_pr_uses_it_too(self):
         with self.assertRaisesRegex(GateError, 'requires database_test_commands'):
             Runner(replace(self.config, validation_mode='full'), self.commands)

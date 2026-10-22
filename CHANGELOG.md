@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A shared transaction validation profile with SQLite/MySQL boundaries, affected-caller race
+  regressions and health smoke; CI adds MariaDB boundaries. Partial full-suite attempts remain
+  evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.
+  Browser port conflicts stop for environment recovery without launching a code repair.
+
 - A targeted auth validation profile with auth/session race regressions and application
   health, login and registration checks. Explicit full/release validation remains complete.
 - Explicit documentation impact and review decisions in new Langflow runner configurations,
@@ -92,6 +97,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Transaction manager: panics, nesting and finalization failures (#106).** A panic inside
+  `WithTransaction` now rolls the transaction back before propagating unchanged, so SQLite's
+  single pooled connection is released instead of held by an abandoned transaction. A call made
+  inside an active transaction reuses it under a savepoint rather than beginning a second root
+  transaction (which blocked forever on that pool): an inner failure rolls back to its savepoint
+  while the outer unit may still commit, and an outer failure discards every nested write. Commit
+  and rollback failures are reported with `errors.Is`-inspectable sentinels alongside the
+  callback's own error, a rollback already performed by context cancellation is not an error
+  (a nested call whose enclosing context ended reports the cancellation, not a failed cleanup),
+  and `WithTransactionAndRetry` replays only attempts that rolled back cleanly, never an
+  ambiguous commit; inside a transaction it runs once and defers a retryable failure to the
+  enclosing root retry. A negative retry count is rejected without running the callback. A failed
+  `ROLLBACK TO SAVEPOINT` poisons the transaction (`ErrTransactionPoisoned`): an outer callback
+  that recovers the nested panic or swallows the inner error and returns nil no longer commits the
+  possibly retained inner writes; every enclosing call returns the cleanup error, new nested calls
+  are refused, and the root rolls back instead. See the transaction section of
+  `docs/DEVELOPMENT.md`.
 - Expired login lockouts now start a fresh failure window instead of relocking on the
   first mistyped password; active locks and generic public authentication failures remain enforced.
 - **AEO profile updates on MySQL.** Saving an existing brand profile preserves its

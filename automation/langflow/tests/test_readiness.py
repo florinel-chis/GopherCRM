@@ -125,6 +125,21 @@ class ReadinessTests(fixtures.EngineTests):
         self.assertEqual(self.commands.implementations, 1)
         self.assertEqual(self.runner.store.read('issue-95')['repairs'], 0)
 
+    async def test_browser_port_conflict_stops_without_a_source_repair(self):
+        original = self.commands.run
+
+        async def occupied_port(args, **kwargs):
+            if tuple(args) == ('make', 'verify'):
+                raise CommandError('Error: http://localhost:15177 is already used, '
+                                   'make sure that nothing is running on the port/url')
+            return await original(args, **kwargs)
+
+        self.commands.run = occupied_port
+        with self.assertRaisesRegex(GateError, 'environment'):
+            await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.implementations, 1)
+        self.assertEqual(self.runner.store.read('issue-95')['repairs'], 0)
+
     async def test_missing_migration_test_names_fail_readiness(self):
         browser = self.root / 'chromium'
         browser.write_text('fixture'); browser.chmod(0o700)
