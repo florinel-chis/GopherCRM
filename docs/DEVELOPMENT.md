@@ -296,6 +296,10 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
+The bounded transaction profile runs API build/vet, transaction and affected-caller race
+regressions, named acceptance checks, configured migration checks and health smoke on SQLite
+and MySQL. CI adds MariaDB transaction checks and health smoke. It avoids unrelated feature
+browsers and frontend unit tests; see the same policy for its exact scope and known gap.
 The bounded auth profile replaces the full core checks with targeted auth/session race tests,
 API/frontend build checks, and health/login/registration browsers; it does not run frontend
 lint or unit tests. Other application profiles include ESLint as a required, passing gate.

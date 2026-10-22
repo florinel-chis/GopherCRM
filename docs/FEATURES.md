@@ -33,7 +33,10 @@ PRs select health smoke and affected feature specs, with full coverage for share
 application changes. Runner-only changes use hygiene, runner/probe tests, API/frontend build
 health checks and browser health smoke. The bounded auth profile uses auth/session race tests,
 API/frontend builds and health/login/registration browsers; repository/schema/mixed changes
-retain full fallback. `make verify` runs the complete non-browser checks
+retain full fallback. The bounded transaction-helper profile uses API build/vet, transaction
+and caller race regressions, configured migration checks and browser health smoke, with
+SQLite/MySQL locally and additional MariaDB boundaries in CI. The existing empty lead-conversion
+concurrency placeholder remains a reported gap. `make verify` runs the complete non-browser checks
 locally; unfiltered `make e2e` runs the full browser suite. The manual
 [Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
 and publishing verified artifacts. Production deploys consume those published artifacts.

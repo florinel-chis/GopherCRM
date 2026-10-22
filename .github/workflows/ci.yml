@@ -88,6 +88,15 @@ jobs:
     needs: plan
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    services:
+      db:
+        image: ${{ needs.plan.outputs.profile == 'transaction' && 'mysql:8.0' || '' }}
+        env:
+          MYSQL_ROOT_PASSWORD: transaction-test-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptransaction-test-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,11 +112,16 @@ jobs:
       # The Makefile owns the package lists and the exact commands, so a
       # local `make verify` and CI cannot drift apart.
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction'
         run: make verify-backend
       - name: Auth API build, vet and race regressions
         if: needs.plan.outputs.profile == 'auth'
         run: python3 scripts/ci/check-auth.py
+      - name: Transaction boundaries and affected callers
+        if: needs.plan.outputs.profile == 'transaction'
+        env:
+          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-go.py transaction
       - name: Runner-only API build and affected Go probe checks
         if: needs.plan.outputs.profile == 'runner'
         run: |
@@ -136,10 +150,10 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction'
         run: make verify-frontend
       - name: Frontend build health check
-        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth'
+        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction'
         working-directory: gocrm-ui
         run: npm ci && npm run build
 
@@ -218,6 +232,11 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      - name: Transaction boundaries on MariaDB
+        if: needs.plan.outputs.profile == 'transaction' && matrix.db.id == 'mariadb1011'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-go.py transaction --storage-only
       - name: Generate a per-run JWT secret
         run: echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> "$GITHUB_ENV"
       # The same script as `make e2e` locally: reset gocrm_e2e (or, on the

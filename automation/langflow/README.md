@@ -101,7 +101,7 @@ Dependencies need a pinned merged PR associated with the prerequisite issue, who
 
 First inspect `config.json`, authenticate `gh` and `claude`, install Playwright Chromium in the repository, and configure disposable test databases. For backend persistence changes, the runner requires:
 
-- `make verify`, always;
+- core commands selected by the contextual policy (explicit full/legacy uses `make verify`);
 - SQLite and MySQL browser tests from `database_test_commands`;
 - `TEST_MYSQL_DSN` pointing to a reachable disposable MySQL/MariaDB server, and successful fresh/upgrade migration tests; skipped migration tests fail the gate;
 - the E2E database environment described in [the E2E guide](../../gocrm-ui/e2e/README.md). `make e2e` resets its configured test database, so use the dedicated E2E database, never an application database.
@@ -116,7 +116,7 @@ Doctor checks tool versions, CLI authentication, private writable state, free di
 
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
 
-Application profiles use `make verify`, which installs frontend dependencies itself. The runner-only profile installs frontend dependencies separately for health smoke. Application `DB_*` settings are removed from core/hygiene verification so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
+General application profiles use `make verify`, which installs frontend dependencies itself. Runner, auth and transaction profiles use their targeted checks and install frontend dependencies separately for health smoke. Application `DB_*` settings are removed from core/hygiene verification so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
 
 To process one issue through its configured completion target:
 
@@ -265,7 +265,7 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (auth profile added in 0.7)
+## Contextual validation (transaction profile added in 0.7.1)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser
@@ -273,10 +273,13 @@ suites. Runner-only changes use hygiene/runner tests plus health smoke, without 
 application suites. Bounded auth service/handler changes use targeted auth/session race tests,
 API/frontend build checks, and health/login/registration browsers. Repository, schema,
 middleware and mixed application changes retain the full fallback; explicit database
-acceptance contracts still apply. Shared/unknown application changes fall back to full browser coverage.
+acceptance contracts still apply. Transaction-helper-only changes use the shared Go checker
+for SQLite/MySQL boundaries and affected callers, configured migration checks and health smoke.
+CI also exercises transaction boundaries on MariaDB. Unmapped shared application changes retain
+full fallback; the transaction profile does not run unrelated feature browsers or frontend units.
 Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
 without this field use `legacy` and retain the original v0.3 behavior and policy hashes.
-Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs before migrating
-to a fresh contextual configuration/state directory. See the [policy, release runbook and
+Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs, or explicitly stop and preserve a superseded execution with its remaining
+budgets, before migrating to a fresh contextual configuration/state directory and fresh checks. See the [policy, release runbook and
 lessons](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.
