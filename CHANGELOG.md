@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A shared transaction validation profile with SQLite/MySQL boundaries, affected-caller race
   regressions and health smoke; CI adds MariaDB boundaries. Partial full-suite attempts remain
-  evidence of interrupted runs, and explicit full/release validation remains complete.
+  evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.
+  Browser port conflicts stop for environment recovery without launching a code repair.
 
 - A targeted auth validation profile with auth/session race regressions and application
   health, login and registration checks. Explicit full/release validation remains complete.

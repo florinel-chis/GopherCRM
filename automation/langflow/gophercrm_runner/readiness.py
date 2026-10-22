@@ -27,6 +27,7 @@ def environment_failure(error):
     """Conservative known infrastructure failures; never guess a source fix."""
     return bool(re.search(
         r'ENOSPC|no space left on device|EAI_AGAIN|ENETUNREACH|ECONNREFUSED|'
+        r'EADDRINUSE|Error: https?://\S+ is already used|'
         r'ERR_MODULE_NOT_FOUND|Executable doesn.t exist|could not resolve host|'
         r'connection refused|connect: connection timed out|Error 104[45].*Access denied|'
         r'JWT_SECRET (?:is not set|environment variable must be set|must be at least|cannot be the default)', str(error), re.I))

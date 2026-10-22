@@ -86,12 +86,16 @@ CI runs the same Go profile against SQLite/MySQL, the transaction boundaries add
 MariaDB, frontend build health, and health smoke on all three engines. The configured local
 migration checks remain required. There are no full frontend unit or unrelated feature-browser
 runs in this profile. Other application changes in the same diff retain full fallback;
-explicit full and release runs always retain the complete matrix. New transaction callers
+explicit full and release runs retain the complete matrix and execute these transaction
+boundaries on both SQL engines even though ordinary Go suites may skip without SQL. New transaction callers
 or test locations require updating the maintained source map.
 
 This profile corrects the #106 run that selected all 159 SQLite browser cases merely because
 the transaction helper was shared. That run was stopped and retained as partial evidence.
-The revised candidate needs fresh focused validation and independent review. Do not edit a
+The revised candidate needs fresh focused validation and independent review. An orphaned Vite
+server also exposed a port-conflict classification gap: occupied browser ports now stop as
+environment failures instead of spending a source-repair call. Stop only the identified stale
+process, then resume; do not change application code or reuse an unknown server. Do not edit a
 frozen execution's policy or reinterpret its interrupted checks: retain it, document the
 handoff and remaining budgets, and use an explicitly new configuration/state for completion.
 
