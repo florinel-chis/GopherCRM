@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.
   Browser port conflicts stop for environment recovery without launching a code repair.
 
+- Dedicated PR migration checks on disposable MySQL 8 and MariaDB 10.11 services,
+  including populated upgrades, rollback/reapply and SQLite upgrade fixtures. Required
+  tests must execute without skips; CI retains their results and tested revision. Both engines
+  feed the existing required Backend check. Workflow/checker-only changes use shared targeted
+  migration validation and health smoke.
 - A targeted auth validation profile with auth/session race regressions and application
   health, login and registration checks. Explicit full/release validation remains complete.
 - Explicit documentation impact and review decisions in new Langflow runner configurations,

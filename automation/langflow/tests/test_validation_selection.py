@@ -127,6 +127,18 @@ class ValidationSelectionTests(fixtures.EngineTests):
         self.assertEqual(database[1][1][-1], 'SPECS=' + SMOKE)
         self.assertEqual(database[-1][1], DATABASE_CHECKS[-1])
 
+    async def test_migration_workflow_uses_sql_checker_and_health_in_ticket_and_pr(self):
+        runner, record = self.selected_runner()
+        paths = ['.github/workflows/migrations.yml', 'scripts/release/check-sql-tests.py']
+        ticket = await runner.validation_checks(record, paths)
+        record['criteria'] = []
+        pr = await PullRequestRunner(runner.config, self.commands).validation_checks(record, paths)
+        for checks in (ticket, pr):
+            self.assertIn(('python3', 'scripts/ci/check-go.py', 'migration'), [c[1] for c in checks])
+            self.assertNotIn(('make', 'verify'), [c[1] for c in checks])
+            self.assertEqual(checks[-1][1], ('make', 'e2e', 'E2E_DB_DRIVER=sqlite', 'SPECS=' + SMOKE))
+        self.assertIn('acceptance-regression', [c[0] for c in ticket])
+
     async def test_full_mode_requires_database_matrix_and_pr_uses_it_too(self):
         with self.assertRaisesRegex(GateError, 'requires database_test_commands'):
             Runner(replace(self.config, validation_mode='full'), self.commands)

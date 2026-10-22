@@ -83,9 +83,15 @@ jobs:
       - name: Size guard and e2e runner self-test
         run: make verify-hygiene
 
+  migrations:
+    needs: plan
+    uses: ./.github/workflows/migrations.yml
+    with:
+      revision: ${{ inputs.revision || github.sha }}
+
   backend:
     name: Backend (build, vet, test)
-    needs: plan
+    needs: [plan, migrations]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     services:
@@ -106,13 +112,17 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
         run: test "$PLAN_RESULT" = success
+      - name: Require SQL migration and SQLite upgrade coverage
+        env:
+          MIGRATION_RESULT: ${{ needs.migrations.result }}
+        run: test "$MIGRATION_RESULT" = success
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # The Makefile owns the package lists and the exact commands, so a
       # local `make verify` and CI cannot drift apart.
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-backend
       - name: Auth API build, vet and race regressions
         if: needs.plan.outputs.profile == 'auth'
@@ -127,6 +137,11 @@ jobs:
         env:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
         run: python3 scripts/ci/check-go.py transaction --storage-only
+      - name: Migration-profile API build and vet
+        if: needs.plan.outputs.profile == 'migration'
+        run: |
+          go build ./cmd/...
+          go vet ./cmd/migrate ./internal/models
       - name: Runner-only API build and affected Go probe checks
         if: needs.plan.outputs.profile == 'runner'
         run: |
@@ -155,10 +170,10 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction'
+        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-frontend
       - name: Frontend build health check
-        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction'
+        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'migration'
         working-directory: gocrm-ui
         run: npm ci && npm run build
 

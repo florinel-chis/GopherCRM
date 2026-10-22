@@ -1,0 +1,82 @@
+name: Database migrations
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrations-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  migrations:
+    name: Migrations (${{ matrix.db.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        db:
+          - name: MySQL 8
+            id: mysql8
+            image: mysql:8.0
+            health: mysqladmin ping -h 127.0.0.1 -pmigration-test-password
+          - name: MariaDB 10.11
+            id: mariadb1011
+            image: mariadb:10.11
+            health: healthcheck.sh --connect --innodb_initialized
+    services:
+      db:
+        image: ${{ matrix.db.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: migration-test-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="${{ matrix.db.health }}"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      # Disposable CI service only. Tests create and drop their own unique schemas.
+      TEST_MYSQL_DSN: root:migration-test-password@tcp(127.0.0.1:3306)/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Test coverage gate failure paths
+        run: python3 -m unittest discover -s scripts/release/tests
+      - name: Fresh schema, populated upgrades, rollback and reapply
+        run: |
+          set -o pipefail
+          git rev-parse HEAD > migration-revision.txt
+          go test -json -race -count=1 -timeout 10m ./cmd/migrate ./internal/models \
+            -run '^(TestMigrationFresh_FullUpAndDown|TestMigrationUpgrade_FromMainAutoMigratedSchema|TestCustomerWebsiteMigration|TestMigrateDatabase_SQLiteUpgradeFromV120|TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120|TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade|TestCustomerWebsiteUpgradeFromSQLiteFixture)$' \
+            | tee migration-tests.jsonl
+      - name: Require every migration and SQLite upgrade root without skips
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python3 scripts/release/check-sql-tests.py --migrations-only migration-tests.jsonl \
+            | tee migration-summary.txt
+          cat migration-summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: migration-results-${{ matrix.db.id }}-${{ github.run_id }}
+          path: |
+            migration-tests.jsonl
+            migration-revision.txt
+            migration-summary.txt
+          if-no-files-found: error

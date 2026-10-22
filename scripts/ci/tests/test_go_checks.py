@@ -31,6 +31,23 @@ class GoChecksTests(unittest.TestCase):
              self.assertRaises(go_checks.GateError):
             profiles.run('transaction')
 
+    def test_migration_profile_requires_sql_and_sqlite_fixtures(self):
+        with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+             patch.object(go_checks, 'run') as run:
+            profiles.run('migration')
+            selected = run.call_args.args[0]
+            self.assertIn('TestCustomerWebsiteMigration', selected['cmd/migrate'])
+            self.assertIn('TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade', selected['internal/models'])
+            self.assertEqual(run.call_args.kwargs['known_skips'], {})
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):
+            profiles.run('migration')
+        with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+             patch.object(go_checks, 'discover', return_value={'cmd/migrate': [], 'internal/models': []}), \
+             self.assertRaises(go_checks.GateError):
+            profiles.run('migration')
+        with self.assertRaises(go_checks.GateError):
+            profiles.run('migration', storage_only=True)
+
     def test_only_exact_known_placeholder_is_exempt_and_completion_required(self):
         module, root = 'example/pkg', 'TestBoundary'
         def event(action, name=None):

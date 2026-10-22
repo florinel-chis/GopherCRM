@@ -116,7 +116,7 @@ Doctor checks tool versions, CLI authentication, private writable state, free di
 
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
 
-General application profiles use `make verify`, which installs frontend dependencies itself. Runner, auth and transaction profiles use their targeted checks and install frontend dependencies separately for health smoke. Application `DB_*` settings are removed from core/hygiene verification so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
+General application profiles use `make verify`, which installs frontend dependencies itself. Runner, auth, transaction and migration profiles use their targeted checks and install frontend dependencies separately for health smoke. Application `DB_*` settings are removed from core/hygiene verification so default-configuration tests are independent of the runtime server. `TEST_MYSQL_DSN` remains available, and database/browser commands retain the operator's full environment.
 
 To process one issue through its configured completion target:
 
@@ -265,7 +265,7 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (transaction profile added in 0.7.1)
+## Contextual validation (migration profile added in 0.7.2)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser
@@ -275,7 +275,9 @@ API/frontend build checks, and health/login/registration browsers. Repository, s
 middleware and mixed application changes retain the full fallback; explicit database
 acceptance contracts still apply. Transaction-helper-only changes use the shared Go checker
 for SQLite/MySQL boundaries and affected callers, configured migration checks and health smoke.
-CI also exercises transaction boundaries on MariaDB. Unmapped shared application changes retain
+CI also exercises transaction boundaries on MariaDB. Migration-workflow/checker-only changes
+use the shared migration Go profile and health smoke; CI migration results feed its required
+Backend check. Actual schema and migration SQL changes retain full fallback. Unmapped shared application changes retain
 full fallback; the transaction profile does not run unrelated feature browsers or frontend units.
 Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
