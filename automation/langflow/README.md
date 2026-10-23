@@ -112,7 +112,7 @@ Set `disposable_database: true` only after provisioning that disposable server, 
 gophercrm-runner doctor --config "$HOME/.local/share/gophercrm-runner/config.json"
 ```
 
-Doctor checks tool versions, CLI authentication, private writable state, free disk (4 GiB by default), Chromium, the browser JWT prerequisite, required migration test names, and database connectivity using `SELECT 1`. It never resets a database, calls the coding model, or writes GitHub. Unavailable branch-protection metadata is reported as unknown. The same checks run before execution from either the CLI or Langflow; disk capacity is checked again before each fresh validation checkout. Environment failures stop for operator correction without consuming a code-repair round.
+Doctor first compares the installed runner modules with the trusted checkout and stops on a known mismatch; install and verify the reviewed version before execution. It then checks tool versions, CLI authentication, private writable state, free disk (4 GiB by default), Chromium, the browser JWT prerequisite, required migration test names, and database connectivity using `SELECT 1`. It never resets a database, calls the coding model, or writes GitHub. Unavailable branch-protection metadata is reported as unknown. The same checks run before execution from either the CLI or Langflow; disk capacity is checked again before each fresh validation checkout. Environment failures stop for operator correction without consuming a code-repair round.
 
 These environment variables must be present in the process running the CLI or starting the Langflow server. Keep credentials in the local environment/private files, never in exported flow JSON. Validation uses a fresh checkout of each committed candidate, with frontend dependencies installed using `npm ci`. Ignored files in the agent's worktree are rejected so they cannot change test inputs.
 
@@ -131,6 +131,11 @@ The default repair budget is three rounds shared by local test failures, review 
 All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
 ## Inspect and resume
+
+For a single restart report, worker identity/heartbeat, batch budget extensions, validation
+cost previews and safe dependency cleanup, use the [operations runbook](OPERATIONS.md).
+`handoff --config ... --markdown` reports the active candidate and next action without
+resuming execution. `report` and `report-pr` also accept `--markdown`.
 
 ```sh
 gophercrm-runner status --config "$HOME/.local/share/gophercrm-runner/config.json"
@@ -304,6 +309,11 @@ redacted summary; raw `status` journals are intended for local inspection.
 The [MVP process report](workflow-mvp-process.md) contains the refined execution prompt,
 coverage boundaries, observed failures and follow-up priorities. It distinguishes the single
 operational canary from the deferred controlled benchmark.
+
+The [2026-10-23 workflow retrospective](retrospective-2026-10-23.md) reviews recent sessions
+and retained execution evidence, separates delivered fixes from remaining gaps, and proposes
+prioritized improvements to recovery, resource management, browser reliability and reporting.
+Its proposals do not change current execution or validation policy.
 
 ## Maintain and test the runner
 

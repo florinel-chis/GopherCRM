@@ -1,14 +1,17 @@
 """Bounded subprocess execution with cancellation and private diagnostic logs."""
 
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
 import signal
+import time
 import uuid
 
-from .config import CommandError, GateError
+from .config import BudgetError, CommandError, GateError
+from .resources import Samples, heavy_command, heavy_lease
 
 
 def redact(text: str) -> str:
@@ -24,7 +27,8 @@ class Commands:
 
     async def run(self, args: list[str] | tuple[str, ...], *, cwd: Path,
                   timeout: int = 120, input_text: str | None = None,
-                  check: bool = True, env: dict[str, str] | None = None, on_start=None) -> tuple[int, str]:
+                  check: bool = True, env: dict[str, str] | None = None, on_start=None,
+                  wall_deadline=None, minimum_free_bytes=0, wall_clock=time.time) -> tuple[int, str]:
         self.log_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
@@ -34,7 +38,8 @@ class Commands:
         error_fd = os.open(error_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         # Stream to disk, rather than retaining unlimited agent/test output in RAM.
         try:
-            with os.fdopen(fd, 'wb') as output, os.fdopen(error_fd, 'wb') as errors:
+            with os.fdopen(fd, 'wb') as output, os.fdopen(error_fd, 'wb') as errors, \
+                    (heavy_lease() if heavy_command(args) else nullcontext()):
                 proc = await asyncio.create_subprocess_exec(
                     *args, cwd=cwd, stdin=asyncio.subprocess.PIPE,
                     stdout=output, stderr=errors, start_new_session=True, env=env,
@@ -42,9 +47,9 @@ class Commands:
                 try:
                     if on_start is not None:
                         on_start(proc.pid)
-                    await asyncio.wait_for(
-                        proc.communicate(input_text.encode() if input_text is not None else None), timeout,
-                    )
+                    await wait_command(proc, input_text, timeout, wall_deadline,
+                        Samples(path.with_suffix('.resources.json'), cwd, proc.pid, minimum_free_bytes)
+                        if heavy_command(args) else None, clock=wall_clock)
                 except BaseException:
                     try:
                         os.killpg(proc.pid, signal.SIGTERM)
@@ -80,3 +85,36 @@ class Commands:
             raise CommandError(f'{args[0]} exited {proc.returncode}; log {path}\n'
                                f'{failure_summary(stdout, stderr)}', stdout=stdout, stderr=stderr)
         return proc.returncode, text
+
+
+async def wait_command(proc, input_text, timeout, deadline, samples=None, *, clock=time.time,
+                       monotonic=time.monotonic, interval=2):
+    """Recheck wall time after sleep/resume as well as the event loop's timeout."""
+    started = clock()
+    limit = min(started + timeout, deadline) if deadline is not None else started + timeout
+    monotonic_limit = monotonic() + timeout
+    communicate = asyncio.create_task(proc.communicate(input_text.encode() if input_text is not None else None))
+    next_sample = started
+    try:
+        while True:
+            now = clock()
+            monotonic_remaining = monotonic_limit - monotonic()
+            if deadline is not None and now >= deadline:
+                raise BudgetError('Execution wall-clock deadline exhausted during command')
+            if now >= limit or monotonic_remaining <= 0:
+                raise asyncio.TimeoutError()
+            if samples and now >= next_sample:
+                samples.sample()
+                next_sample = now + 15
+            done, _ = await asyncio.wait({communicate}, timeout=min(interval, limit - now, monotonic_remaining))
+            if done:
+                await communicate
+                if deadline is not None and clock() >= deadline:
+                    raise BudgetError('Command finished after the execution wall-clock deadline')
+                if samples:
+                    samples.sample()
+                return
+    finally:
+        if not communicate.done():
+            communicate.cancel()
+        await asyncio.gather(communicate, return_exceptions=True)

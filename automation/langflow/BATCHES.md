@@ -89,8 +89,10 @@ The detached child inherits the existing private environment. Its standard input
 is disconnected and its log has mode `0600` under the private state directory.
 Start reports a launch reservation, PID and log path; inspect status/logs for
 actual progress or startup failure. There is **no automatic restart**. An abrupt
-process death may leave the last worker state as `running`; timestamps and logs
-show the last observed progress, not a heartbeat. Restart explicitly after inspection.
+process death may leave the last worker state as `running`. Status now includes a separate
+five-second heartbeat and an observed PID/start-identity comparison. Missing or stale
+observations require inspection; they never authorize killing an arbitrary PID or starting
+a duplicate. See the [recovery report](OPERATIONS.md#inspect-an-interrupted-execution).
 
 Import [flows/batch.json](flows/batch.json) in Langflow. Supply the local policy
 path and prepared ID. **Preview** is the default. **Status** reads the same durable
@@ -127,6 +129,12 @@ perform new work:
 gophercrm-runner start-batch --config /absolute/private/config.json --batch backend-canary --resume
 ```
 
+An inspected exhausted budget can use `extend-batch-budget --batch ... --seconds ...
+--calls ... --reason ...`. It updates the current child allocation and batch together using
+a recoverable journal intent; it preserves spent work and does not resume execution.
+The [operations runbook](OPERATIONS.md#extend-an-inspected-batch-budget) explains deadline
+arithmetic and interruption recovery. Standalone child extensions cannot bypass ownership.
+
 After a hard crash with an unresolved provider invocation, inspect and stop the
 orphaned provider/test processes first. Then record that acknowledgement:
 
@@ -141,17 +149,23 @@ For an inspected validation misclassification in the current child, use
 [`repair-validation`](README.md#inspected-validation-misclassification) with
 `--batch ORIGINAL_BATCH_ID` as well as the child's `--issue` or `--pr` and exact head.
 The standalone form is refused while a batch owns the queue; resume the same batch afterward.
-If correction requires a new plan or budget, deliberately end the batch with
+If correction requires a new plan or policy, deliberately end the batch with
 `abandon-batch --config ... --batch ... --reason '...'`. An unfinished child stays
 active with its evidence and limits for ordinary operator recovery. Complete it
 before preparing new work. Unresolved provider calls must be acknowledged before
 abandonment. Historical plans, allocations and spent work remain intact.
 
-The MVP performs **no automatic cleanup**. It retains source/worktrees, dependency
-installs, databases, receipts and logs, and keeps the existing disk threshold.
+The runner performs **no automatic cleanup**. The explicit `retention` preview/apply command
+can reclaim dependencies from verified, inactive merged validation worktrees; it retains
+source, databases, receipts and logs. The existing disk threshold also applies during long checks.
 Disk shortage stops execution for inspection; it never deletes the main
 checkout's dependencies. No frontend evidence, parallel execution, release,
 deployment, branch-rule changes or external notifications are included.
+
+Retention preview and apply are refused while a batch owns that state directory, even when
+the batch is stopped or failed. Use another completed, unowned state's configuration to
+reclaim eligible dependencies there. Cleanup within the owned state becomes available only
+after completion or explicit abandonment; do not abandon useful work solely for cleanup.
 
 ## Development record and lessons
 
@@ -187,7 +201,7 @@ Lessons from implementation:
   now selects workflow tests and health smoke locally and in CI; application and
   full-release coverage remain separately defined in the validation runbook.
 
-Potential follow-ups, after a separately selected live canary: add a worker
-heartbeat/process-identity display; measure time per phase before overlapping CI;
-add conservative completed-dependency cleanup with explicit ownership proofs;
-and design frontend evidence support separately. None is enabled by this MVP.
+Version 0.8.0 adds the heartbeat/process observation, shared heavy-command lock, historical
+phase measurements and explicit completed-dependency cleanup described in [OPERATIONS.md](OPERATIONS.md).
+Measure the live continuation before overlapping CI or expanding execution. Frontend evidence
+support remains separate.

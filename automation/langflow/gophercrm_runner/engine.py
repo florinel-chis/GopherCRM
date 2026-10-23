@@ -66,6 +66,9 @@ class Runner:
                 self.batch_context.check_record(self._record)
             seconds = telemetry.remaining(self._record, self.clock(), active_call=self._call_id)
             kwargs['timeout'] = min(kwargs.get('timeout', 120), seconds)
+            kwargs['wall_deadline'] = self._record['deadline']
+            kwargs['wall_clock'] = self.clock
+        kwargs['minimum_free_bytes'] = self.config.min_free_disk_mb * 1024 * 1024
         try:
             return await self.commands.run(args, **kwargs)
         except asyncio.TimeoutError as exc:
@@ -689,6 +692,11 @@ class Runner:
         paths = await self.validate_agent_paths(record)
         checks = await self.validation_checks(record, paths)
         record['validation_plan'] = self.validation_selection(record, paths)
+        from .operations import validation_preview
+        record['validation_forecast'] = validation_preview(self.config, paths)
+        record['validation_forecast']['selection'] = record['validation_plan']
+        record['validation_forecast']['commands'] = [list(argv) for _, argv, _ in checks]
+        record['validation_forecast']['basis'] = 'Committed candidate and frozen registered checks.'
         completed = record.get('receipts', {})
         if completed:
             try:
@@ -737,19 +745,40 @@ class Runner:
         record['validation_worktree'] = str(worktree)
         self.save(record)
 
-        async def run_check(command):
+        async def run_check(command, check_id='dependency-setup'):
+            from .resources import process_identity
+            current = dict(id=check_id, command=list(command), head=record['head'],
+                           started_at=self.clock(), outcome='running')
+            record['current_check'] = current
+            record.setdefault('check_attempts', []).append(current)
+            self.save(record)
+            def started(pid):
+                current.update(pid=pid, process_identity=process_identity(pid))
+                self.save(record)
             try:
-                return await self.command(*command, cwd=worktree,
+                output = await self.command(*command, cwd=worktree,
                     env=verification_environment() if command in {
                         ('make', 'verify'), ('make', 'verify-hygiene')} else None,
-                    timeout=self.config.test_timeout_seconds)
+                    timeout=self.config.test_timeout_seconds, on_start=started)
+                current['outcome'] = 'success'
+                return output
             except CommandError as exc:
+                current['outcome'] = 'failed'
                 if environment_failure(exc):
                     raise EnvironmentError('environment failure during validation; restore prerequisites '
                                            'and resume without a code repair') from exc
                 raise
+            except asyncio.TimeoutError as exc:
+                current['outcome'] = 'timeout'
+                raise EnvironmentError('Validation command timed out; inspect diagnostics and host resources before any source repair') from exc
             except OSError as exc:
+                current['outcome'] = 'environment'
                 raise EnvironmentError('environment failure launching validation') from exc
+            finally:
+                if current['outcome'] == 'running':
+                    current['outcome'] = 'interrupted'
+                current['ended_at'] = self.clock()
+                self.save(record)
 
         remaining = [(key, command, tests) for key, command, tests in checks if key not in completed]
         # A fresh checkout must install its own locked dependencies even when
@@ -760,7 +789,7 @@ class Runner:
                             for _, command, _ in remaining)):
             await run_check(('npm', 'ci', '--prefix', 'gocrm-ui'))
         for check_id, command, named_tests in remaining:
-            output = await run_check(command)
+            output = await run_check(command, check_id)
             if './cmd/migrate' in command:
                 migration_coverage(output)
             if named_tests:

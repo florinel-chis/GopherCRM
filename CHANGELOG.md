@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Runner recovery and Markdown handoff reports, batch-wide audited budget extensions,
+  worker heartbeats, installed-module verification and validation-cost previews. Heavy commands
+  share a machine lock, record bounded resource observations and enforce wall-clock deadlines
+  after sleep. Explicit retention preview/apply reclaims only inactive merged validation
+  dependencies while preserving source and evidence.
+
 - A shared transaction validation profile with SQLite/MySQL boundaries, affected-caller race
   regressions and health smoke; CI adds MariaDB boundaries. Partial full-suite attempts remain
   evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.

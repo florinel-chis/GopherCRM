@@ -5,6 +5,7 @@ execution lock across handoffs and calls the existing ticket/PR executors.
 """
 
 from dataclasses import asdict
+from copy import deepcopy
 import json
 from pathlib import Path
 import re
@@ -234,8 +235,54 @@ class BatchRunner:
     def budget(self):
         if self.clock() >= self.record['deadline']:
             raise BudgetError('Batch deadline exhausted, including downtime')
-        if self.spent() >= self.plan['max_provider_calls']:
+        if self.spent() >= self.call_limit():
             raise BudgetError('Batch provider-call budget exhausted')
+
+    def call_limit(self):
+        return self.record.get('max_provider_calls', self.plan['max_provider_calls'])
+
+    def extend_budget(self, name, *, calls=0, seconds=0, reason):
+        """Extend the current allocation and batch together without resetting work."""
+        if (type(calls) is not int or type(seconds) is not int or min(calls, seconds) < 0
+                or calls + seconds == 0 or not isinstance(reason, str) or not reason.strip()
+                or len(reason) > 1000):
+            raise GateError('Budget extension requires positive increments and a short reason')
+        self.store.batch_id = batch_id(name)
+        with self.store.exclusive():
+            self.plan = self.load(name)
+            self.check_policy(self.plan)
+            self.record = self.store.read(self.record_name(name))
+            if (not self.record or self.record['status'] in {'completed', 'abandoned'}
+                    or self.record['plan_hash'] != self.plan['plan_hash']
+                    or self.store.read('batch-owner') != {'id': name, 'plan_hash': self.plan['plan_hash']}
+                    or self.record['index'] >= len(self.record['allocations'])):
+                raise GateError('Only the current owned batch allocation can be extended')
+            allocation = self.record['allocations'][self.record['index']]
+            child = self.child(allocation)
+            if not child:
+                raise GateError('Child admission has no journal; recover the interrupted admission before extending')
+            self.check_record(child)
+            if child.get('stage') in {'merged', 'pr_ready', 'abandoned'} or any(
+                    c['status'] == 'running' for c in child.get('provider_invocations', [])):
+                raise GateError('Resolve the current child and orphaned invocations before extending')
+            updated, child = deepcopy(self.record), deepcopy(child)
+            before = dict(batch_deadline=updated['deadline'], batch_calls=self.call_limit(),
+                          child_deadline=child['deadline'], child_calls=child['max_provider_calls'])
+            updated['deadline'] += seconds
+            updated['max_provider_calls'] = self.call_limit() + calls
+            child['deadline'] += seconds
+            child['max_provider_calls'] += calls
+            target = updated['allocations'][updated['index']]
+            target.update(deadline=child['deadline'], max_provider_calls=child['max_provider_calls'])
+            event = dict(id=uuid.uuid4().hex, at=self.clock(), reason=redact(reason), before=before,
+                         after=dict(batch_deadline=updated['deadline'], batch_calls=updated['max_provider_calls'],
+                                    child_deadline=child['deadline'], child_calls=child['max_provider_calls']))
+            for record in (updated, child):
+                record.setdefault('budget_extensions', []).append(event)
+            updated['updated_at'] = self.clock()
+            self.store.transaction({self.record_name(name): updated,
+                                    journal_key(self.plan['entries'][updated['index']]): child})
+            return dict(event, batch=name, resume_required=True)
 
     def bind(self, record):
         allocation = self.record['allocations'][self.record['index']]
@@ -250,7 +297,7 @@ class BatchRunner:
                 or record['deadline'] != allocation['deadline']
                 or record['max_provider_calls'] != allocation['max_provider_calls']
                 or record['provider_calls'] > allocation['max_provider_calls']
-                or self.spent() > self.plan['max_provider_calls']):
+                or self.spent() > self.call_limit()):
             raise BudgetError('Batch allocation or durable budget changed')
 
     def progress(self, record):
@@ -269,8 +316,12 @@ class BatchRunner:
         self.plan, self.record = plan, record
         result = dict(record)
         result['worker'] = worker
+        from .resources import liveness
+        result['worker_observation'] = liveness(worker, self.clock())
+        heartbeat = self.store.read(f'batch-{name}-heartbeat')
+        result['heartbeat_at'] = heartbeat.get('at') if heartbeat.get('token') == worker.get('token') else None
         result['total_entries'] = len(plan['entries'])
-        result['max_provider_calls'] = plan['max_provider_calls']
+        result['max_provider_calls'] = self.call_limit()
         result['provider_calls'] = self.spent()
         result['remaining_seconds'] = max(0, record['deadline'] - self.clock())
         if record['index'] < len(record['allocations']):
@@ -405,10 +456,19 @@ class BatchRunner:
             raise GateError('Main differs from the accepted batch base')
         await self.runner.clean(self.config.checkout)
         start = record['index'] if record else 0
+        forecasts = []
+        from .operations import validation_preview
         for entry in self.plan['entries'][start:]:
             await self.inspect_entry(entry, base)
+            if entry['kind'] == 'issue':
+                manifest = read_json(entry['manifest'])
+                forecasts.append(dict(issue=entry['issue'], **validation_preview(
+                    self.config, manifest['scope_paths'], manifest=manifest)))
         return {'id': name, 'status': 'preview', 'base': base, 'remaining_entries': len(self.plan['entries']) - start,
-                'max_provider_calls': self.plan['max_provider_calls'], 'timeout_seconds': self.plan['timeout_seconds']}
+                'max_provider_calls': record.get('max_provider_calls', self.plan['max_provider_calls']),
+                'timeout_seconds': self.plan['timeout_seconds'],
+                'remaining_seconds': max(0, record['deadline'] - self.clock()) if record else None,
+                'validation_forecasts': forecasts}
 
     def control_snapshot(self):
         with self.store.control_lock():
@@ -500,7 +560,7 @@ class BatchRunner:
                             base=self.record['accepted_base'], started_at=now,
                             deadline=min(self.record['deadline'], now + self.config.issue_timeout_seconds),
                             max_provider_calls=min(self.config.max_provider_calls,
-                                                   self.plan['max_provider_calls'] - self.spent()))
+                                                   self.call_limit() - self.spent()))
                         with self.store.control_lock():
                             if self.store.stopped() or self.store.read(f'batch-{name}-control').get('stopped'):
                                 self.record.update(status='stopped', reason='Stop requested during preflight')

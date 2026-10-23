@@ -47,8 +47,12 @@ def check_disk(config):
 
 
 async def doctor(config, commands):
+    from .operations import runtime_identity
     report = {'ready': False, 'completion_target': config.completion_target, 'versions': {},
               'branch_protection': {'status': 'unknown'}}
+    report['runner_identity'] = runtime_identity(config.checkout)
+    if report['runner_identity']['matches_checkout'] is False:
+        raise EnvironmentError('Installed runner modules differ from the trusted checkout; install and verify the intended version')
     report['free_disk_bytes'] = check_disk(config)
     try:
         config.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
