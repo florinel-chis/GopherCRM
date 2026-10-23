@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-POLICY_VERSION = 5
+POLICY_VERSION = 6
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -60,6 +60,13 @@ AUTH_FILES = {
     'internal/handler/auth_registration.go', 'scripts/ci/check-auth.py',
 }
 AUTH_TEST = re.compile(r'(?:internal/(?:service|handler)/auth[a-z0-9_]*_test|tests/auth[a-z0-9_]*_test)\.go$')
+AUTH_PERSISTENCE_FILES = {
+    'internal/repository/refresh_token_repository.go',
+    'internal/repository/refresh_token_repository_test.go',
+    'internal/mocks/RefreshTokenRepository.go',
+}
+REPOSITORY_INTERFACES = 'internal/repository/interfaces.go'
+REFRESH_INTERFACE = re.compile(r'(?ms)^type RefreshTokenRepository interface \{\n.*?^\}\n?')
 TRANSACTION_PATH = re.compile(r'internal/utils/transaction(?:\.go|(?:_[a-z0-9_]+)?_test\.go)$')
 AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
 
@@ -82,10 +89,31 @@ def feature_for(path):
     return None
 
 
-def plan(paths, *, full=False):
+def refresh_interface_only(base, head, *, cwd=None):
+    """Prove the shared file changed only inside the refresh-token interface.
+
+    Path-only previews cannot grant this exception. Missing/deleted files,
+    unexpected formatting or another changed declaration retain full coverage.
+    """
+    if not all(isinstance(ref, str) and re.fullmatch(r'[0-9a-f]{40}', ref) for ref in (base, head)):
+        return False
+    bodies = []
+    for ref in (base, head):
+        result = subprocess.run(['git', 'show', f'{ref}:{REPOSITORY_INTERFACES}'],
+                                cwd=cwd, capture_output=True, text=True)
+        if result.returncode or len(REFRESH_INTERFACE.findall(result.stdout)) != 1:
+            return False
+        bodies.append(result.stdout)
+    return bodies[0] != bodies[1] and (
+        REFRESH_INTERFACE.sub('<refresh-token-interface>\n', bodies[0]) ==
+        REFRESH_INTERFACE.sub('<refresh-token-interface>\n', bodies[1]))
+
+
+def plan(paths, *, full=False, refresh_interface=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
+    persistence_paths = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -96,6 +124,10 @@ def plan(paths, *, full=False):
                 or any(ord(c) < 32 for c in name)):
             raise ValueError("Invalid changed path")
         if name in DOC_FILES or name.startswith("docs/") and name.endswith(".md"):
+            continue
+        if name in AUTH_PERSISTENCE_FILES or name == REPOSITORY_INTERFACES and refresh_interface:
+            persistence_paths = auth_paths = application_paths = True
+            specs.update(AUTH_SPECS)
             continue
         if name in AUTH_FILES or AUTH_TEST.fullmatch(name):
             auth_paths = application_paths = True
@@ -142,7 +174,8 @@ def plan(paths, *, full=False):
         reasons.append("transactions mixed with other application changes")
     if auth_paths and other_application:
         reasons.append('auth mixed with other application changes')
-    profile = ('full' if reasons else 'migration' if migration_paths else 'transaction' if transaction_paths else 'auth' if auth_paths else
+    profile = ('full' if reasons else 'migration' if migration_paths else 'transaction' if transaction_paths else
+               'auth-persistence' if persistence_paths else 'auth' if auth_paths else
                'runner' if runner_paths and not application_paths else 'contextual')
     return {
         "policy_version": POLICY_VERSION,
@@ -150,6 +183,7 @@ def plan(paths, *, full=False):
         "reasons": sorted(set(reasons)) or [
             'SQL migrations and SQLite upgrades plus health smoke' if profile == 'migration'
             else 'transaction and caller regressions plus health smoke' if profile == 'transaction'
+            else 'auth/session and transaction boundaries on real databases plus auth browsers' if profile == 'auth-persistence'
             else 'targeted auth/session checks plus login, registration and health smoke' if profile == 'auth'
             else "runner checks plus health smoke" if profile == 'runner'
             else "smoke plus affected feature suites"],
@@ -160,11 +194,14 @@ def plan(paths, *, full=False):
 
 
 def core_commands(configured, selected):
-    if selected['profile'] in {'auth', 'transaction', 'migration'}:
-        check = (('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
+    if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration'}:
+        check = (('python3', 'scripts/ci/check-auth.py', '--persistence') if selected['profile'] == 'auth-persistence' else
+                 ('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
                  ('python3', 'scripts/ci/check-go.py', selected['profile']))
-        commands = [('make', 'verify-hygiene'), check,
-                    ('npm', 'ci', '--prefix', 'gocrm-ui')]
+        commands = [('make', 'verify-hygiene'), check]
+        if selected['profile'] == 'auth-persistence':
+            commands.append(('python3', 'scripts/ci/check-go.py', 'transaction', '--storage-only'))
+        commands.append(('npm', 'ci', '--prefix', 'gocrm-ui'))
         if any(p.startswith(RUNNER_PREFIXES) or p in RUNNER_FILES for p in selected['changed_paths']):
             commands.append(('make', 'verify-runner'))
         return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
@@ -207,7 +244,9 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
-    selected = plan(changed_paths(args.base, args.head), full=args.full)
+    paths = changed_paths(args.base, args.head)
+    selected = plan(paths, full=args.full, refresh_interface=(
+        REPOSITORY_INTERFACES in paths and refresh_interface_only(args.base, args.head)))
     # Deleted/renamed specs cannot make a contextual run silently shrink.
     if any(not (Path("gocrm-ui") / spec).is_file() for spec in selected["specs"]):
         selected = plan(selected["changed_paths"], full=True)

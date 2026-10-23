@@ -168,19 +168,23 @@ def main():
             result = operations.measurements(args.root or config.state_dir, include_siblings=args.include_siblings)
         elif args.command == 'validation-preview':
             manifest = json.loads(args.manifest.read_text()) if args.manifest else None
+            selected = None
             if args.base:
                 if not args.head:
                     parser.error('--base requires --head with a full commit SHA')
-                from .validation import changed_paths
+                from .validation import changed_paths, plan, refresh_interface_only, REPOSITORY_INTERFACES
                 try:
                     paths = changed_paths(args.base, args.head, cwd=config.checkout)
+                    selected = plan(paths, full=config.validation_mode != 'contextual', refresh_interface=(
+                        REPOSITORY_INTERFACES in paths and
+                        refresh_interface_only(args.base, args.head, cwd=config.checkout)))
                 except ValueError as exc:
                     parser.error(str(exc))
             elif manifest:
                 paths = manifest['scope_paths']
             else:
                 raise GateError('Supply a manifest or committed base/head for validation preview')
-            result = operations.validation_preview(config, paths, manifest=manifest)
+            result = operations.validation_preview(config, paths, manifest=manifest, selected=selected)
         else:
             from .retention import reclaim
             result = reclaim(config, apply=args.apply, plan_hash=args.plan_hash)
