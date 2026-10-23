@@ -63,7 +63,7 @@ Heavy runner commands (`make verify*`, `make e2e`, builds, Go and npm commands) 
 shared per-user machine lock. Another state directory cannot start overlapping heavy work;
 it stops with an environment failure rather than spending a code-repair call. Dependency
 cleanup takes the same lock. Independent shell commands outside the runner are not governed
-by this lock.
+by this lock. Go/npm/npx version probes do not acquire it or replace resource observations.
 
 Private `logs/*.resources.json` files retain the first/latest observation, a tail of at most
 60 samples, minimum free disk and maximum observed RSS summed across owned processes.
@@ -74,7 +74,9 @@ pages are observations, not interchangeable measures of memory pressure. Unsuppo
 remain unavailable.
 
 The configured free-disk floor is enforced during long checks as well as admission. Low disk
-stops the command group and preserves diagnostics. Memory measurements currently inform
+stops the command group and preserves diagnostics. An unavailable disk observation is recorded
+and stops validation because the floor cannot be enforced. Missing load or memory observations
+remain unknown. Memory measurements currently inform
 operator decisions; they do not impose an uncalibrated memory limit. Use historical growth
 to set `min_free_disk_mb` before preparing a new batch; existing policies remain frozen.
 

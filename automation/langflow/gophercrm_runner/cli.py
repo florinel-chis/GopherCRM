@@ -141,7 +141,7 @@ def main():
         elif name == 'validation-preview':
             command.add_argument('--manifest', type=Path)
             command.add_argument('--base')
-            command.add_argument('--head', default='HEAD')
+            command.add_argument('--head')
         else:
             command.add_argument('--apply', action='store_true')
             command.add_argument('--plan-hash')
@@ -169,8 +169,13 @@ def main():
         elif args.command == 'validation-preview':
             manifest = json.loads(args.manifest.read_text()) if args.manifest else None
             if args.base:
+                if not args.head:
+                    parser.error('--base requires --head with a full commit SHA')
                 from .validation import changed_paths
-                paths = changed_paths(args.base, args.head, cwd=config.checkout)
+                try:
+                    paths = changed_paths(args.base, args.head, cwd=config.checkout)
+                except ValueError as exc:
+                    parser.error(str(exc))
             elif manifest:
                 paths = manifest['scope_paths']
             else:

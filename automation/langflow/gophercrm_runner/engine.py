@@ -694,6 +694,7 @@ class Runner:
         record['validation_plan'] = self.validation_selection(record, paths)
         from .operations import validation_preview
         record['validation_forecast'] = validation_preview(self.config, paths)
+        record['validation_forecast']['selection'] = record['validation_plan']
         record['validation_forecast']['commands'] = [list(argv) for _, argv, _ in checks]
         record['validation_forecast']['basis'] = 'Committed candidate and frozen registered checks.'
         completed = record.get('receipts', {})
@@ -767,12 +768,12 @@ class Runner:
                     raise EnvironmentError('environment failure during validation; restore prerequisites '
                                            'and resume without a code repair') from exc
                 raise
-            except OSError as exc:
-                current['outcome'] = 'environment'
-                raise EnvironmentError('environment failure launching validation') from exc
             except asyncio.TimeoutError as exc:
                 current['outcome'] = 'timeout'
                 raise EnvironmentError('Validation command timed out; inspect diagnostics and host resources before any source repair') from exc
+            except OSError as exc:
+                current['outcome'] = 'environment'
+                raise EnvironmentError('environment failure launching validation') from exc
             finally:
                 if current['outcome'] == 'running':
                     current['outcome'] = 'interrupted'

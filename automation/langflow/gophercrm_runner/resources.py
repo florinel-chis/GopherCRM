@@ -39,6 +39,8 @@ def liveness(metadata, now=None):
 
 
 def heavy_command(args):
+    if list(args) in (['go', 'version'], ['npm', '--version'], ['npx', '--version']):
+        return False
     return bool(args and (args[0] in {'npm', 'npx', 'go'} or
                           args[0] == 'make' and any(a.startswith(('verify', 'e2e', 'build')) for a in args[1:])))
 
@@ -62,9 +64,17 @@ def heavy_lease(root=None):
 
 
 def snapshot(path, pid=None):
-    result = {'at': time.time(), 'free_disk_bytes': shutil.disk_usage(path).free,
-              'load_average': list(os.getloadavg()), 'memory': {'status': 'unavailable'},
+    result = {'at': time.time(), 'free_disk_bytes': None, 'disk_observation': 'unavailable',
+              'load_average': None, 'memory': {'status': 'unavailable'},
               'owned_processes': [], 'process_observation': 'unavailable'}
+    try:
+        result.update(free_disk_bytes=shutil.disk_usage(path).free, disk_observation='observed')
+    except OSError:
+        pass
+    try:
+        result['load_average'] = list(os.getloadavg())
+    except OSError:
+        pass
     try:
         if platform.system() == 'Linux':
             values = dict(re.findall(r'^(\w+):\s+(\d+)', Path('/proc/meminfo').read_text(), re.M))
@@ -119,7 +129,8 @@ class Samples:
         self.value['samples'] = (self.value['samples'] + [current])[-60:]
         free = current['free_disk_bytes']
         previous = self.value['minimum_free_disk_bytes']
-        self.value['minimum_free_disk_bytes'] = free if previous is None else min(free, previous)
+        if free is not None:
+            self.value['minimum_free_disk_bytes'] = free if previous is None else min(free, previous)
         self.value['peak_owned_rss_bytes'] = max(self.value['peak_owned_rss_bytes'],
                                                sum(p['rss_bytes'] for p in current['owned_processes']))
         temp = self.path.with_suffix('.tmp')
@@ -127,5 +138,7 @@ class Samples:
         with os.fdopen(fd, 'w') as stream:
             json.dump(self.value, stream)
         os.replace(temp, self.path)
-        if free < self.minimum_free_bytes:
+        if free is None and self.minimum_free_bytes:
+            raise EnvironmentError('Free disk observation unavailable; cannot enforce the configured floor')
+        if free is not None and free < self.minimum_free_bytes:
             raise EnvironmentError('Free disk fell below the configured floor during validation; inspect resource samples')

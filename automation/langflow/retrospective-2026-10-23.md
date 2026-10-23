@@ -291,7 +291,11 @@ Source inspection used `Runner.run_command` and `extend_budget` in
 The batch-budget interaction and sleep/resume explanation need regression experiments;
 they are not presented as live reproductions or a proven crash diagnosis.
 
-This change adds the retrospective and links it from the runner's documentation. Product
-FEATURES, ROADMAP, CHANGELOG, validation rules and operator commands remain accurate because
-no product or runner behavior changes. Future implementation PRs must update the affected
-runbooks and undergo their normal independent review and validation.
+This retrospective lands alongside the runner 0.8.0 operations implementation. The delivered
+recovery commands, resource supervision and retention operations are documented in
+[OPERATIONS.md](OPERATIONS.md), with corresponding updates to CHANGELOG, DEVELOPMENT,
+BATCHES and the runner README. Product FEATURES and ROADMAP remain accurate because CRM
+behavior is unchanged. Validation selection and acceptance gates are preserved. The dated
+measurements above describe the earlier runs; they do not claim that the implementation has
+already improved live outcomes. The live continuation and next ticket require their own
+measured analysis after independent review and validation.

@@ -163,7 +163,8 @@ def handoff(config, *, issue=None, pr=None, batch=None):
     worker = dict(worker, **{k: heartbeat[k] for k in ('process_identity',) if k in heartbeat
                             and heartbeat.get('token') == worker.get('token')})
     summary = telemetry.report(record, {}, store.read(f'operator-{issue}'), now)
-    summary.update(pr=pr or record.get('pr'), batch=batch, observed_at=now,
+    summary.update(target_kind='pr' if pr is not None else 'issue',
+                   pr=pr or record.get('pr'), batch=batch, observed_at=now,
                    runtime=runtime_identity(config.checkout), policy=record.get('policy'),
                    source=git_state(record.get('worktree')), validation_checkout=git_state(record.get('validation_worktree')),
                    worker=liveness(worker, now), heartbeat_at=heartbeat.get('at'),
@@ -206,7 +207,8 @@ def handoff(config, *, issue=None, pr=None, batch=None):
 
 
 def markdown(value):
-    label = f"Issue #{value['issue']}" if value.get('issue') else f"PR #{value.get('pr')}"
+    label = (f"PR #{value.get('pr')}" if value.get('target_kind') == 'pr' or not value.get('issue')
+             else f"Issue #{value['issue']}")
     lines = [f"# {label} workflow report", '',
              f"Status: **{value.get('status')}**. Candidate: `{value.get('head')}`.", '',
              f"Next action: {value.get('next_action', 'Inspect the recorded completion evidence.')}", '',

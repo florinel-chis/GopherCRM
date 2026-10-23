@@ -259,6 +259,8 @@ class BatchRunner:
                 raise GateError('Only the current owned batch allocation can be extended')
             allocation = self.record['allocations'][self.record['index']]
             child = self.child(allocation)
+            if not child:
+                raise GateError('Child admission has no journal; recover the interrupted admission before extending')
             self.check_record(child)
             if child.get('stage') in {'merged', 'pr_ready', 'abandoned'} or any(
                     c['status'] == 'running' for c in child.get('provider_invocations', [])):
@@ -463,7 +465,9 @@ class BatchRunner:
                 forecasts.append(dict(issue=entry['issue'], **validation_preview(
                     self.config, manifest['scope_paths'], manifest=manifest)))
         return {'id': name, 'status': 'preview', 'base': base, 'remaining_entries': len(self.plan['entries']) - start,
-                'max_provider_calls': self.plan['max_provider_calls'], 'timeout_seconds': self.plan['timeout_seconds'],
+                'max_provider_calls': record.get('max_provider_calls', self.plan['max_provider_calls']),
+                'timeout_seconds': self.plan['timeout_seconds'],
+                'remaining_seconds': max(0, record['deadline'] - self.clock()) if record else None,
                 'validation_forecasts': forecasts}
 
     def control_snapshot(self):

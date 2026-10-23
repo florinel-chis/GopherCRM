@@ -1,7 +1,9 @@
 """Operational recovery must preserve evidence and refuse unsafe shortcuts."""
 
 import asyncio
+from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import replace
+import io
 import json
 import os
 from pathlib import Path
@@ -15,7 +17,7 @@ from unittest.mock import patch
 from gophercrm_runner import operations, retention
 from gophercrm_runner.config import BudgetError, EnvironmentError, GateError
 from gophercrm_runner.process import Commands, wait_command
-from gophercrm_runner.resources import Samples, heavy_lease, liveness
+from gophercrm_runner.resources import Samples, heavy_command, heavy_lease, liveness, snapshot
 from gophercrm_runner.state import Store
 import test_batches as batch_fixtures
 import test_runner
@@ -127,8 +129,80 @@ class OperationalReports(unittest.TestCase):
         with patch('gophercrm_runner.resources.process_identity', return_value='new-process'):
             self.assertEqual(liveness({'pid': 123, 'process_identity': 'old-process'})['status'], 'identity-mismatch')
 
+    def test_pr_markdown_uses_pr_identity_even_with_legacy_issue_field(self):
+        Store(self.config.state_dir).write('completion-pr-123', dict(
+            issue=123, pr=123, stage='review', head='candidate', provider_calls=1, max_provider_calls=4))
+        self.assertTrue(operations.markdown(operations.handoff(self.config, pr=123)).startswith('# PR #123 '))
+
+    def test_validation_preview_cli_requires_explicit_commit_pair(self):
+        from gophercrm_runner import cli
+        base = ['runner', 'validation-preview', '--config', 'unused', '--base', self.commands.base]
+        with patch('gophercrm_runner.config.Config.load', return_value=self.config):
+            for argv in [base, base + ['--head', 'HEAD']]:
+                with patch.object(sys, 'argv', argv), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit:
+                    cli.main()
+                self.assertEqual(exit.exception.code, 2)
+            output = io.StringIO()
+            with patch.object(sys, 'argv', base + ['--head', self.commands.base]), redirect_stdout(output):
+                cli.main()
+            self.assertIn('selection', json.loads(output.getvalue()))
+
+
+class ValidationObservations(unittest.IsolatedAsyncioTestCase):
+    setUp = test_runner.EngineTests.setUp
+    asyncSetUp = test_runner.EngineTests.asyncSetUp
+    tearDown = test_runner.EngineTests.tearDown
+
+    async def test_timeout_persists_current_check_and_stops_without_spending_a_repair(self):
+        run = self.commands.run
+        async def timeout(args, **kwargs):
+            if tuple(args) == ('make', 'verify'):
+                kwargs['on_start'](os.getpid())
+                saved = self.runner.store.read('issue-95')['current_check']
+                self.assertEqual(saved['outcome'], 'running')
+                self.assertEqual(saved['pid'], os.getpid())
+                raise asyncio.TimeoutError()
+            return await run(args, **kwargs)
+        with patch.object(self.commands, 'run', timeout), self.assertRaisesRegex(EnvironmentError, 'timed out'):
+            await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.read('issue-95')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertEqual(record['repairs'], 0)
+        self.assertEqual(record['provider_calls'], 1)
+        self.assertEqual(record['current_check']['outcome'], 'timeout')
+        self.assertIn('ended_at', record['check_attempts'][-1])
+        self.assertEqual(record['receipts'], {})
+
+    async def test_module_mismatch_blocks_before_tools_or_provider(self):
+        from gophercrm_runner.readiness import doctor
+        with patch('gophercrm_runner.operations.runtime_identity', return_value={'matches_checkout': False}):
+            with self.assertRaisesRegex(EnvironmentError, 'modules differ'):
+                await doctor(self.config, self.commands)
+        self.assertEqual(self.commands.calls, [])
+
 
 class ResourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_version_probes_do_not_take_heavy_lease(self):
+        for argv in [('go', 'version'), ('npm', '--version'), ('npx', '--version')]:
+            self.assertFalse(heavy_command(argv))
+        for argv in [('go', 'test', './...'), ('npm', 'ci'), ('make', 'e2e')]:
+            self.assertTrue(heavy_command(argv))
+
+    async def test_unavailable_observations_are_recorded_and_disk_floor_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch('gophercrm_runner.resources.shutil.disk_usage', side_effect=OSError('missing')):
+                with patch('gophercrm_runner.resources.os.getloadavg', side_effect=OSError('unavailable')):
+                    observation = snapshot(root)
+            self.assertIsNone(observation['free_disk_bytes'])
+            self.assertIsNone(observation['load_average'])
+            self.assertEqual(observation['disk_observation'], 'unavailable')
+            sample = Samples(root / 'resources.json', root, os.getpid(), 10)
+            with patch('gophercrm_runner.resources.snapshot', return_value=observation):
+                with self.assertRaisesRegex(EnvironmentError, 'observation unavailable'):
+                    sample.sample()
+            self.assertEqual(json.loads(sample.path.read_text())['latest']['disk_observation'], 'unavailable')
+
     async def test_backward_clock_jump_cannot_extend_command_timeout(self):
         class Process:
             async def communicate(self, value):
