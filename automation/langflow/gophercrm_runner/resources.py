@@ -41,6 +41,9 @@ def liveness(metadata, now=None):
 def heavy_command(args):
     if list(args) in (['go', 'version'], ['npm', '--version'], ['npx', '--version']):
         return False
+    if (len(args) >= 2 and args[0] == 'python3'
+            and args[1] in {'scripts/ci/check-auth.py', 'scripts/ci/check-go.py'}):
+        return True
     return bool(args and (args[0] in {'npm', 'npx', 'go'} or
                           args[0] == 'make' and any(a.startswith(('verify', 'e2e', 'build')) for a in args[1:])))
 

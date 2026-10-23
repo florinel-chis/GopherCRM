@@ -134,6 +134,13 @@ class OperationalReports(unittest.TestCase):
             issue=123, pr=123, stage='review', head='candidate', provider_calls=1, max_provider_calls=4))
         self.assertTrue(operations.markdown(operations.handoff(self.config, pr=123)).startswith('# PR #123 '))
 
+    def test_handoff_ignores_heartbeat_from_another_worker_launch(self):
+        store = Store(self.config.state_dir)
+        store.write('batch-fixture-worker', {'pid': 123, 'token': 'current'})
+        store.write('batch-fixture-heartbeat', {'at': 100, 'token': 'old', 'process_identity': 'old'})
+        self.assertIsNone(operations.handoff(self.config, batch='fixture')['heartbeat_at'])
+
+
     def test_validation_preview_cli_requires_explicit_commit_pair(self):
         from gophercrm_runner import cli
         base = ['runner', 'validation-preview', '--config', 'unused', '--base', self.commands.base]
@@ -182,6 +189,16 @@ class ValidationObservations(unittest.IsolatedAsyncioTestCase):
 
 
 class ResourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_every_registered_validation_profile_is_resource_supervised(self):
+        from gophercrm_runner import validation
+        from gophercrm_runner.config import DATABASE_CHECKS
+        for profile in ['full', 'contextual', 'runner', 'auth', 'transaction', 'migration']:
+            selected = {'profile': profile, 'changed_paths': []}
+            commands = validation.core_commands([('make', 'verify')], selected)
+            for command in [*commands, *DATABASE_CHECKS]:
+                with self.subTest(profile=profile, command=command):
+                    self.assertTrue(heavy_command(command))
+
     async def test_version_probes_do_not_take_heavy_lease(self):
         for argv in [('go', 'version'), ('npm', '--version'), ('npx', '--version')]:
             self.assertFalse(heavy_command(argv))

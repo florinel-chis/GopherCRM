@@ -167,7 +167,8 @@ def handoff(config, *, issue=None, pr=None, batch=None):
                    pr=pr or record.get('pr'), batch=batch, observed_at=now,
                    runtime=runtime_identity(config.checkout), policy=record.get('policy'),
                    source=git_state(record.get('worktree')), validation_checkout=git_state(record.get('validation_worktree')),
-                   worker=liveness(worker, now), heartbeat_at=heartbeat.get('at'),
+                   worker=liveness(worker, now),
+                   heartbeat_at=heartbeat.get('at') if heartbeat.get('token') == worker.get('token') else None,
                    pending_journal_update=bool(store.read('pending-update')),
                    validation_plan=record.get('validation_plan'), receipts=[])
     summary['current_check'] = record.get('current_check')

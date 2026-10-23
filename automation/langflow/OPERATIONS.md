@@ -59,7 +59,8 @@ orphaned provider invocation.
 
 ## Observe resource use and enforce deadlines
 
-Heavy runner commands (`make verify*`, `make e2e`, builds, Go and npm commands) acquire one
+Heavy runner commands (`make verify*`, `make e2e`, builds, Go and npm commands, and the Python
+auth/transaction/migration check entrypoints) acquire one
 shared per-user machine lock. Another state directory cannot start overlapping heavy work;
 it stops with an environment failure rather than spending a code-repair call. Dependency
 cleanup takes the same lock. Independent shell commands outside the runner are not governed
