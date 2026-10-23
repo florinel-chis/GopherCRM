@@ -162,6 +162,11 @@ Disk shortage stops execution for inspection; it never deletes the main
 checkout's dependencies. No frontend evidence, parallel execution, release,
 deployment, branch-rule changes or external notifications are included.
 
+Retention preview and apply are refused while a batch owns that state directory, even when
+the batch is stopped or failed. Use another completed, unowned state's configuration to
+reclaim eligible dependencies there. Cleanup within the owned state becomes available only
+after completion or explicit abandonment; do not abandon useful work solely for cleanup.
+
 ## Development record and lessons
 
 Issue [#135](https://github.com/florinel-chis/GopherCRM/issues/135) follows the

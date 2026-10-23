@@ -160,6 +160,19 @@ class ValidationObservations(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = test_runner.EngineTests.asyncSetUp
     tearDown = test_runner.EngineTests.tearDown
 
+    async def test_runner_forwards_absolute_deadline_clock_and_disk_floor(self):
+        from unittest.mock import AsyncMock
+        self.runner.clock = lambda: 100
+        self.runner._record = {'deadline': 160}
+        run = AsyncMock(return_value=(0, 'done'))
+        with patch.object(self.commands, 'run', run):
+            await self.runner.run_command(('go', 'test', './...'), cwd=self.checkout, timeout=1000)
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs['wall_deadline'], 160)
+        self.assertIs(kwargs['wall_clock'], self.runner.clock)
+        self.assertEqual(kwargs['timeout'], 60)
+        self.assertEqual(kwargs['minimum_free_bytes'], self.config.min_free_disk_mb * 1024 * 1024)
+
     async def test_timeout_persists_current_check_and_stops_without_spending_a_repair(self):
         run = self.commands.run
         async def timeout(args, **kwargs):
@@ -189,6 +202,49 @@ class ValidationObservations(unittest.IsolatedAsyncioTestCase):
 
 
 class ResourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_heavy_command_holds_lease_and_writes_resource_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lease = root / 'lease'
+            def observe(*args):
+                with self.assertRaisesRegex(EnvironmentError, 'Another heavy'):
+                    with heavy_lease(lease):
+                        pass
+                return {'at': time.time(), 'free_disk_bytes': 100, 'owned_processes': []}
+            with patch('gophercrm_runner.process.heavy_command', return_value=True), \
+                    patch('gophercrm_runner.process.heavy_lease', lambda: heavy_lease(lease)), \
+                    patch('gophercrm_runner.resources.snapshot', side_effect=observe):
+                code, output = await Commands(root / 'logs').run(
+                    [sys.executable, '-c', 'print("completed")'], cwd=root, minimum_free_bytes=50)
+            self.assertEqual((code, output.strip()), (0, 'completed'))
+            files = list((root / 'logs').glob('*.resources.json'))
+            self.assertEqual(len(files), 1)
+            data = json.loads(files[0].read_text())
+            self.assertGreaterEqual(data['count'], 2)
+            self.assertEqual(data['minimum_free_disk_bytes'], 100)
+            with heavy_lease(lease):
+                pass
+
+    async def test_real_heavy_command_stops_on_disk_floor_and_preserves_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pids = []
+            observation = {'at': time.time(), 'free_disk_bytes': 10, 'owned_processes': []}
+            with patch('gophercrm_runner.process.heavy_command', return_value=True), \
+                    patch('gophercrm_runner.process.heavy_lease', lambda: heavy_lease(root / 'lease')), \
+                    patch('gophercrm_runner.resources.snapshot', return_value=observation):
+                with self.assertRaisesRegex(EnvironmentError, 'configured floor'):
+                    await Commands(root / 'logs').run(
+                        [sys.executable, '-c', 'import time; time.sleep(60)'], cwd=root,
+                        minimum_free_bytes=50, on_start=pids.append)
+            self.assertEqual(len(pids), 1)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pids[0], 0)
+            data = json.loads(next((root / 'logs').glob('*.resources.json')).read_text())
+            self.assertEqual(data['latest']['free_disk_bytes'], 10)
+            with heavy_lease(root / 'lease'):
+                pass
+
     async def test_every_registered_validation_profile_is_resource_supervised(self):
         from gophercrm_runner import validation
         from gophercrm_runner.config import DATABASE_CHECKS
@@ -329,6 +385,16 @@ class RetentionTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertEqual((tree / 'README.md').read_bytes(), original)
         self.assertTrue((self.config.state_dir / 'issue-95.json').exists())
+
+    def test_owned_batch_refuses_retention_without_removing_completed_dependencies(self):
+        _, target = self.tree()
+        store = Store(self.config.state_dir)
+        store.write('batch-owner', {'id': 'failed-batch', 'plan_hash': 'frozen'})
+        for apply in [False, True]:
+            with self.assertRaisesRegex(GateError, 'batch owns'):
+                retention.reclaim(self.config, apply=apply, plan_hash='irrelevant')
+        self.assertTrue((target / 'dependency').exists())
+        self.assertEqual(store.read('batch-owner')['id'], 'failed-batch')
 
     def test_active_marker_dirty_source_and_backup_journal_never_authorize_removal(self):
         tree, target = self.tree()

@@ -137,6 +137,12 @@ heavy-command locks. A changed selection requires another preview. The platform 
 symlink-safe recursive deletion. Reclaimed bytes are logical file sizes, not a guarantee about
 filesystem free-space changes. No background cleanup is installed.
 
+Both preview and apply refuse a state directory while a batch owns it, including a failed or
+stopped batch awaiting recovery. They become available there after the batch completes or is
+explicitly abandoned. Do not abandon an execution merely to clean dependencies: use the
+configuration of another completed, unowned state directory to reclaim its eligible trees,
+or restore disk headroom elsewhere before resuming the owned batch.
+
 ## Documentation decisions and rollout
 
 These commands implement the operational portion of the
