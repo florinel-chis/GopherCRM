@@ -353,6 +353,13 @@ in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpr
 without rewriting it, and tests the read-only database probe. Runner CI uses the same target,
 including merge-group events. See the [runner guide](../automation/langflow/README.md).
 
+The [runner operations guide](../automation/langflow/OPERATIONS.md) covers a shared recovery
+report, worker heartbeats, consistent batch-budget extensions, validation previews and explicit
+cleanup of completed dependencies. Heavy commands across state directories share one per-user
+machine lock and retain bounded resource observations. Readiness compares installed runner
+modules with the trusted checkout; verify this after upgrades and restart long-lived workers.
+These controls preserve the selected acceptance/review gates and do not enable automatic cleanup.
+
 The runner preserves Go assertion failures in bounded repair diagnostics instead of showing
 only the end of a long log. Expected structured service logs from mock failures do not classify
 a separate Go assertion failure as unavailable infrastructure. Inspect full private logs before

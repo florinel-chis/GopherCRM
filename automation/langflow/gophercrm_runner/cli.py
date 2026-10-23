@@ -27,7 +27,7 @@ def main():
     export.add_argument('path', type=Path)
     export.add_argument('--pr', action='store_true', help='Export the existing-PR completion workflow')
     export.add_argument('--batch', action='store_true', help='Export the prepared-batch workflow')
-    for name in ('prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', '_batch-worker'):
+    for name in ('prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', 'extend-batch-budget', '_batch-worker'):
         command = sub.add_parser(name)
         command.add_argument('--config', type=Path, required=True)
         if name == 'prepare-batch':
@@ -38,8 +38,11 @@ def main():
             command.add_argument('--resume', action='store_true')
         if name == 'run-batch':
             command.add_argument('--execute', action='store_true', help='Preview is the default')
-        if name in {'abandon-batch', 'recover-batch'}:
+        if name in {'abandon-batch', 'recover-batch', 'extend-batch-budget'}:
             command.add_argument('--reason', required=True)
+        if name == 'extend-batch-budget':
+            command.add_argument('--calls', type=int, default=0)
+            command.add_argument('--seconds', type=int, default=0)
         if name == 'recover-batch':
             command.add_argument('--processes-stopped', action='store_true')
         if name == '_batch-worker':
@@ -58,6 +61,8 @@ def main():
         command.add_argument('--pr', type=int, required=True)
         if name != 'report-pr':
             command.add_argument('--reason', required=True)
+        else:
+            command.add_argument('--markdown', action='store_true')
         if name == 'extend-pr-budget':
             command.add_argument('--calls', type=int, default=0)
             command.add_argument('--seconds', type=int, default=0)
@@ -106,6 +111,7 @@ def main():
         control.add_argument('--issue', type=int, required=True)
         if name == 'report':
             control.add_argument('--json', action='store_true')
+            control.add_argument('--markdown', action='store_true')
         else:
             control.add_argument('--reason', required=True)
             if name == 'extend-budget':
@@ -120,6 +126,25 @@ def main():
     serve = sub.add_parser('serve', help='Start the local Langflow UI on loopback')
     serve.add_argument('--directory', type=Path, required=True)
     serve.add_argument('--port', type=int, default=7860)
+    for name in ('handoff', 'history', 'validation-preview', 'retention'):
+        command = sub.add_parser(name)
+        command.add_argument('--config', type=Path, required=True)
+        if name == 'handoff':
+            target = command.add_mutually_exclusive_group()
+            target.add_argument('--issue', type=int)
+            target.add_argument('--pr', type=int)
+            command.add_argument('--batch')
+            command.add_argument('--markdown', action='store_true')
+        elif name == 'history':
+            command.add_argument('--root', type=Path)
+            command.add_argument('--include-siblings', action='store_true')
+        elif name == 'validation-preview':
+            command.add_argument('--manifest', type=Path)
+            command.add_argument('--base')
+            command.add_argument('--head', default='HEAD')
+        else:
+            command.add_argument('--apply', action='store_true')
+            command.add_argument('--plan-hash')
     args = parser.parse_args()
     if args.command == 'export':
         from .flows import export_flow, build_pr_flow, build_batch_flow
@@ -130,7 +155,32 @@ def main():
             args.path.write_text(json.dumps(build_batch_flow() if args.batch else build_pr_flow(), indent=2) + '\n')
         else:
             export_flow(args.path)
-    elif args.command in {'prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', '_batch-worker'}:
+    elif args.command in {'handoff', 'history', 'validation-preview', 'retention'}:
+        from .config import Config, GateError
+        from . import operations
+        config = Config.load(args.config)
+        if args.command == 'handoff':
+            result = operations.handoff(config, issue=args.issue, pr=args.pr, batch=args.batch)
+            if args.markdown:
+                print(operations.markdown(result))
+                return
+        elif args.command == 'history':
+            result = operations.measurements(args.root or config.state_dir, include_siblings=args.include_siblings)
+        elif args.command == 'validation-preview':
+            manifest = json.loads(args.manifest.read_text()) if args.manifest else None
+            if args.base:
+                from .validation import changed_paths
+                paths = changed_paths(args.base, args.head, cwd=config.checkout)
+            elif manifest:
+                paths = manifest['scope_paths']
+            else:
+                raise GateError('Supply a manifest or committed base/head for validation preview')
+            result = operations.validation_preview(config, paths, manifest=manifest)
+        else:
+            from .retention import reclaim
+            result = reclaim(config, apply=args.apply, plan_hash=args.plan_hash)
+        print(json.dumps(result, indent=2))
+    elif args.command in {'prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', 'extend-batch-budget', '_batch-worker'}:
         from .batches import BatchRunner
         from .config import Config
         runner = BatchRunner(Config.load(args.config), config_path=args.config)
@@ -152,6 +202,8 @@ def main():
             result = runner.stop(args.batch)
         elif args.command == 'recover-batch':
             result = runner.recover(args.batch, args.reason, processes_stopped=args.processes_stopped)
+        elif args.command == 'extend-batch-budget':
+            result = runner.extend_budget(args.batch, calls=args.calls, seconds=args.seconds, reason=args.reason)
         else:
             result = runner.abandon(args.batch, args.reason)
         print(json.dumps(result, indent=2))
@@ -166,6 +218,10 @@ def main():
         runner = PullRequestRunner(Config.load(args.config))
         if args.command == 'report-pr':
             result = runner.report_pr(args.pr)
+            if args.markdown:
+                from .operations import handoff, markdown
+                print(markdown(handoff(runner.config, pr=args.pr)))
+                return
         elif args.command == 'extend-pr-budget':
             result = runner.extend_pr_budget(args.pr, calls=args.calls, seconds=args.seconds, reason=args.reason)
         elif args.command == 'abandon-pr':
@@ -194,7 +250,10 @@ def main():
                 processes_stopped=args.processes_stopped)), indent=2))
         elif args.command == 'report':
             report = runner.report(args.issue)
-            if args.json:
+            if args.markdown:
+                from .operations import handoff, markdown
+                print(markdown(handoff(runner.config, issue=args.issue)))
+            elif args.json:
                 print(json.dumps(report, indent=2))
             else:
                 from .telemetry import format_report

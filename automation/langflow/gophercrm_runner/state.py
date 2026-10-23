@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -33,6 +34,46 @@ class Store:
             out.flush()
             os.fsync(out.fileno())
         os.replace(temp, target)
+        directory = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    def transaction(self, updates):
+        """Persist an authorized multi-journal update before applying any member.
+
+        Caller holds exclusive(). Recovery only accepts exact before/after images,
+        so interrupted writes cannot overwrite later or externally changed state.
+        """
+        if self._lock_owner is None or self.read('pending-update'):
+            raise GateError('Journal transaction requires the lock and no pending update')
+        intent = {'id': uuid.uuid4().hex, 'batch_id': self.batch_id, 'updates': [
+            {'name': name, 'before': self.read(name), 'after': data} for name, data in updates.items()]}
+        self.write('pending-update', intent)
+        self.recover_update()
+
+    def recover_update(self):
+        intent = self.read('pending-update')
+        if not intent:
+            return
+        if self._lock_owner is None or intent.get('batch_id') != self.batch_id:
+            raise GateError('Pending journal update belongs to another execution owner')
+        changes = intent.get('updates', [])
+        if (not isinstance(changes, list) or len(changes) != 2 or not self.batch_id
+                or any(not isinstance(c, dict) or set(c) != {'name', 'before', 'after'}
+                       or not isinstance(c['name'], str)
+                       or not re.fullmatch(r'(?:batch-[a-z][a-z0-9-]{0,63}|issue-[0-9]+|completion-pr-[0-9]+)', c['name'])
+                       or not isinstance(c['before'], dict) or not isinstance(c['after'], dict) for c in changes)
+                or len({c['name'] for c in changes}) != 2
+                or f'batch-{self.batch_id}' not in {c['name'] for c in changes}):
+            raise GateError('Invalid pending journal update')
+        for change in changes:
+            if self.read(change['name']) not in (change['before'], change['after']):
+                raise GateError('Journal changed during interrupted update; inspect retained intent')
+        for change in changes:
+            self.write(change['name'], change['after'])
+        self.write('pending-update', {})
 
     def journal(self, issue: int) -> dict:
         """Read a versioned journal, retaining exact legacy bytes before conversion.
@@ -150,6 +191,7 @@ class Store:
                 raise GateError('A batch owns this queue; resume or abandon that batch first')
             self._lock_owner = identity
             acquired = True
+            self.recover_update()
             yield
         finally:
             if acquired:

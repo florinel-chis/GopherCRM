@@ -132,6 +132,11 @@ All six existing repository CI checks must succeed. Additional failing checks al
 
 ## Inspect and resume
 
+For a single restart report, worker identity/heartbeat, batch budget extensions, validation
+cost previews and safe dependency cleanup, use the [operations runbook](OPERATIONS.md).
+`handoff --config ... --markdown` reports the active candidate and next action without
+resuming execution. `report` and `report-pr` also accept `--markdown`.
+
 ```sh
 gophercrm-runner status --config "$HOME/.local/share/gophercrm-runner/config.json"
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
@@ -304,6 +309,11 @@ redacted summary; raw `status` journals are intended for local inspection.
 The [MVP process report](workflow-mvp-process.md) contains the refined execution prompt,
 coverage boundaries, observed failures and follow-up priorities. It distinguishes the single
 operational canary from the deferred controlled benchmark.
+
+The [2026-10-23 workflow retrospective](retrospective-2026-10-23.md) reviews recent sessions
+and retained execution evidence, separates delivered fixes from remaining gaps, and proposes
+prioritized improvements to recovery, resource management, browser reliability and reporting.
+Its proposals do not change current execution or validation policy.
 
 ## Maintain and test the runner
 

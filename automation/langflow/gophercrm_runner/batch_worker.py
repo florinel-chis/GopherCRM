@@ -13,6 +13,7 @@ from .batches import BatchRunner, batch_id
 from .config import Config, GateError
 from .process import redact
 from .state import Store
+from .resources import process_identity
 
 
 def start(config_path, name, *, resume=False):
@@ -80,7 +81,16 @@ def work(config_path, name, lock_fd, token, ready_fd, *, resume=False):
     # Fail closed for direct invocation without the inherited exclusive lock.
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     metadata.update(status='running', pid=os.getpid())
+    metadata['process_identity'] = process_identity(os.getpid())
     store.write(key, metadata)
+    stop_heartbeat = threading.Event()
+    def heartbeat():
+        while not stop_heartbeat.is_set():
+            store.write(f'batch-{name}-heartbeat', dict(token=token, pid=os.getpid(), at=time.time(),
+                                                      process_identity=metadata['process_identity']))
+            stop_heartbeat.wait(5)
+    pulse = threading.Thread(target=heartbeat, daemon=True)
+    pulse.start()
     try:
         from .cli import run_async
         from .flows import run_batch_flow
@@ -94,6 +104,8 @@ def work(config_path, name, lock_fd, token, ready_fd, *, resume=False):
         metadata.update(status='exited', exit_code=1, reason=redact(str(exc))[-2000:] or type(exc).__name__)
         print(json.dumps({'error': metadata['reason']}), flush=True)
     finally:
+        stop_heartbeat.set()
+        pulse.join(timeout=10)
         metadata['exited_at'] = time.time()
         store.write(key, metadata)
         os.close(lock_fd)
