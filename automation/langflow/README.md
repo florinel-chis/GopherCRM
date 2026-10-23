@@ -338,13 +338,16 @@ Tests use real temporary Git worktrees and commits with deterministic Claude/Git
 
 Langflow references: [custom components](https://docs.langflow.org/components/custom/), [Loop](https://docs.langflow.org/loop), [installation](https://docs.langflow.org/get-started-installation), and [workflow API](https://docs.langflow.org/concepts-publish).
 
-## Contextual validation (migration profile added in 0.7.2)
+## Contextual validation (auth persistence profile added in 0.8.1)
 
 New configurations select `validation_mode: "contextual"`: application changes run core
 verification and all frozen acceptance checks, then health smoke plus affected browser
 suites. Runner-only changes use hygiene/runner tests plus health smoke, without unrelated
 application suites. Bounded auth service/handler changes use targeted auth/session race tests,
-API/frontend build checks, and health/login/registration browsers. Repository, schema,
+API/frontend build checks, and health/login/registration browsers. Bounded refresh-token
+persistence changes add mandatory SQLite/MySQL rotation and transaction boundaries,
+migrations and auth browsers; CI also exercises MariaDB. Shared-interface changes qualify
+only with a base/head proof that other declarations are unchanged. Other shared repositories, schema,
 middleware and mixed application changes retain the full fallback; explicit database
 acceptance contracts still apply. Transaction-helper-only changes use the shared Go checker
 for SQLite/MySQL boundaries and affected callers, configured migration checks and health smoke.

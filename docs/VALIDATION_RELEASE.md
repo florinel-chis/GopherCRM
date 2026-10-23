@@ -54,8 +54,8 @@ when their paths are mapped; the selector does not infer security impact from is
 The bounded `auth` profile covers `auth_service.go`, `auth_handler.go`,
 `auth_registration.go`, auth test files in their service/handler packages and `tests/`,
 and the auth-check script itself. Docs and runner changes may accompany them; any other
-application path (including auth middleware, repositories, schema or generated API contracts)
-retains the full fallback. This is a scope rule, not a claim that all auth changes are low risk.
+application path retains the full fallback unless it qualifies for the separate
+`auth-persistence` profile below. This is a scope rule, not a claim that all auth changes are low risk.
 
 For this profile, local and CI run `python3 scripts/ci/check-auth.py`: API compilation,
 vet for the selected Go packages, then uncached race tests selected from auth/session,
@@ -65,12 +65,38 @@ log redaction and API-key rejection for erased or deactivated owners; both exerc
 `auth_service.go` directly. Test roots are discovered from those files, so newly added auth regressions are
 included. Every root must report an exact pass; missing, duplicate or skipped roots and
 skipped descendants fail. The file patterns are explicit: a new test location must be added
-to the check policy.
+to the check policy. Retained password-reset and rotation sources include SQL regressions,
+so service-only auth changes must exercise them too: discovery of any MySQL root requires
+`TEST_MYSQL_DSN` before compilation, and CI provisions disposable MySQL for both auth profiles.
 Local browser coverage is health smoke, login and registration on SQLite; CI runs those
 specs on SQLite, MySQL and MariaDB and builds the frontend. Frozen issue checks remain
 mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated
 feature-browser suite is added by this profile. An explicitly frozen database profile still
 requires its MySQL/migration checks; explicit full and releases retain the complete matrix.
+
+The `auth-persistence` profile extends those auth paths to the refresh-token repository,
+its tests and generated `RefreshTokenRepository` mock. A change to the shared repository
+interfaces file qualifies only when comparison of the actual base/head Git blobs proves
+that all changes are inside the existing `RefreshTokenRepository` declaration. Path-only
+manifest previews cannot establish that exception. Changes to another declaration, imports,
+schema, middleware, unrelated application code or dependencies retain full coverage.
+
+Local validation runs hygiene, `python3 scripts/ci/check-auth.py --persistence`, transaction
+boundaries via `python3 scripts/ci/check-go.py transaction --storage-only`, all frozen named
+acceptance checks, configured migrations, and health/login/registration browsers on SQLite
+and MySQL. The auth checker requires a disposable SQL server and all six exact rotation
+atomicity, concurrency and validation roots across SQLite/MySQL; missing or skipped roots
+and descendants fail. CI adds the same persistence and transaction boundaries on MariaDB,
+keeps migration gates on both SQL engines, and runs the three browser specs on all engines.
+Frontend build health remains required in CI; unrelated frontend units and entity browsers
+are excluded. Explicit full validation and releases remain complete.
+
+This correction follows the stopped #103 recovery, which replayed unrelated entity browsers
+under its old frozen policy. Passed checks and the interrupted browser attempt remain historical
+evidence. Install the reviewed selector, retain the old journal and remaining budgets, then
+use a new configuration/state for fresh focused completion; never rewrite an admitted policy
+or relabel the interrupted check as passed. Record actual candidate selection before expensive
+work. A manifest containing scope globs is a conservative preview, not the committed diff.
 
 The bounded `transaction` profile covers only `internal/utils/transaction.go` and its
 `transaction*_test.go` tests, with accompanying docs and runner changes. It runs hygiene,

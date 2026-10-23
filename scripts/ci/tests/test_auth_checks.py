@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,6 +14,25 @@ spec.loader.exec_module(checks)
 
 
 class AuthChecksTests(unittest.TestCase):
+    def test_persistence_requires_database_and_every_rotation_boundary(self):
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(checks.GateError):
+            checks.run(persistence=True)
+        for missing in checks.PERSISTENCE_ROOTS:
+            with self.subTest(missing=missing), patch.dict(os.environ, {'TEST_MYSQL_DSN': 'configured'}), \
+                 patch.object(checks, 'discover', return_value={
+                     'internal/service': checks.PERSISTENCE_ROOTS - {missing}}), \
+                 patch.object(checks.subprocess, 'run') as command, self.assertRaises(checks.GateError):
+                checks.run(persistence=True)
+            command.assert_not_called()
+        # Later service-only auth changes still discover these SQL tests. They
+        # must not silently skip them just because the path profile is `auth`.
+        for names in [checks.PERSISTENCE_ROOTS, {'TestPasswordResetValidationMySQL'}]:
+            with patch.dict(os.environ, {}, clear=True), \
+                 patch.object(checks, 'discover', return_value={'internal/service': names}), \
+                 patch.object(checks.subprocess, 'run') as command, self.assertRaises(checks.GateError):
+                checks.run()
+            command.assert_not_called()
+
     def test_discovery_includes_new_roots_and_rejects_missing_sources(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(checks.SOURCES, {'pkg': ('auth*_test.go',)}, clear=True):
             root = Path(folder)
