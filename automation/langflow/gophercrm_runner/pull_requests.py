@@ -260,7 +260,8 @@ class PullRequestRunner(Runner):
 
     async def validation_checks(self, record, paths=None):
         paths = paths if paths is not None else await self.validate_agent_paths(record)
-        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths))
+        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths),
+                                             explicit_full=self.config.validation_mode == 'full')
         if any(p.startswith('automation/langflow/') or p in
                {'Makefile', '.github/workflows/remediation-runner.yml'} for p in paths):
             if ('make', 'verify-runner') not in commands:

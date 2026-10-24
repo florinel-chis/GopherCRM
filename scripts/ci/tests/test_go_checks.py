@@ -61,3 +61,31 @@ class GoChecksTests(unittest.TestCase):
                        event('pass', root), complete + event('pass')]:
             with self.subTest(output=output), self.assertRaises(go_checks.GateError):
                 go_checks.verify(output, module, [root], known)
+
+    def test_aeo_selection_covers_runtime_security_and_callers_and_requires_all_roots(self):
+        selected = go_checks.discover(profiles.AEO_SOURCES)
+        self.assertIn('TestAEOServiceSuite', selected['internal/service'])
+        self.assertIn('TestAEORepository_RunLifecycle', selected['internal/repository'])
+        self.assertIn('TestAEOHandlerTestSuite', selected['internal/handler'])
+        self.assertIn('TestHealthPayloadReportsTheBuildRevision', selected['cmd'])
+        self.assertTrue(selected['internal/aeo'])
+        self.assertTrue(selected['internal/config'])
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):
+            profiles.run('aeo')
+        without_runtime = dict(selected, cmd=['TestHealthPayloadReportsTheBuildRevision'])
+        with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+             patch.object(go_checks, 'discover', return_value=without_runtime), \
+             self.assertRaisesRegex(go_checks.GateError, 'Missing required AEO'):
+            profiles.run('aeo')
+        for package, names in profiles.AEO_REQUIRED_ROOTS.items():
+            selected[package] = sorted(set(selected[package]) | names)
+        with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+             patch.object(go_checks, 'discover', return_value=selected), patch.object(go_checks, 'run') as run:
+            profiles.run('aeo')
+            self.assertEqual(run.call_args.kwargs['known_skips'], {})
+        for package, required in profiles.AEO_REQUIRED_ROOTS.items():
+            for name in required:
+                missing = dict(selected, **{package: [n for n in selected[package] if n != name]})
+                with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+                     patch.object(go_checks, 'discover', return_value=missing), self.assertRaises(go_checks.GateError):
+                    profiles.run('aeo')

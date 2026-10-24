@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       db:
-        image: ${{ (needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && 'mysql:8.0' || '' }}
+        image: ${{ (needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && 'mysql:8.0' || '' }}
         env:
           MYSQL_ROOT_PASSWORD: transaction-test-password
         ports: ['3306:3306']
@@ -122,8 +122,13 @@ jobs:
       # The Makefile owns the package lists and the exact commands, so a
       # local `make verify` and CI cannot drift apart.
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
+        if: needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-backend
+      - name: AEO runtime and persistence regressions on SQLite and MySQL
+        if: needs.plan.outputs.profile == 'aeo'
+        env:
+          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-go.py aeo
       - name: Auth API build, vet and race regressions
         if: needs.plan.outputs.profile == 'auth'
         env:
@@ -143,7 +148,13 @@ jobs:
         if: needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'auth-persistence'
         env:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py transaction --storage-only
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          if [ "$VALIDATION_PROFILE" = full ]; then
+            python3 scripts/ci/check-go.py transaction
+          else
+            python3 scripts/ci/check-go.py transaction --storage-only
+          fi
       - name: Migration-profile API build and vet
         if: needs.plan.outputs.profile == 'migration'
         run: |
@@ -177,10 +188,10 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
-        if: needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
+        if: needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-frontend
       - name: Frontend build health check
-        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'migration'
+        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'migration'
         working-directory: gocrm-ui
         run: npm ci && npm run build
 
@@ -259,6 +270,11 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      - name: AEO runtime and persistence regressions on MariaDB
+        if: needs.plan.outputs.profile == 'aeo' && matrix.db.id == 'mariadb1011'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-go.py aeo
       - name: Auth persistence on MariaDB
         if: needs.plan.outputs.profile == 'auth-persistence' && matrix.db.id == 'mariadb1011'
         env:
@@ -268,7 +284,13 @@ jobs:
         if: (needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && matrix.db.id == 'mariadb1011'
         env:
           TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py transaction --storage-only
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          if [ "$VALIDATION_PROFILE" = full ]; then
+            python3 scripts/ci/check-go.py transaction
+          else
+            python3 scripts/ci/check-go.py transaction --storage-only
+          fi
       - name: Generate a per-run JWT secret
         run: echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> "$GITHUB_ENV"
       # The same script as `make e2e` locally: reset gocrm_e2e (or, on the

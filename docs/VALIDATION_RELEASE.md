@@ -18,7 +18,7 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth/transaction/migration profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| Hygiene and core checks | Auth/transaction/migration/AEO profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -102,6 +102,39 @@ evidence. Install the reviewed selector, retain the old journal and remaining bu
 use a new configuration/state for fresh focused completion; never rewrite an admitted policy
 or relabel the interrupted check as passed. Record actual candidate selection before expensive
 work. A manifest containing scope globs is a conservative preview, not the committed diff.
+
+The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
+repository, handler and their tests/mocks, plus `cmd/aeo_runtime.go` and AEO startup tests.
+It excludes schema, shared configuration, middleware, frontend and dependency changes.
+Docs and runner changes may accompany it. `cmd/main.go` requires a committed Go AST
+comparison: imports, database initialization, route/middleware wiring and unrelated
+constructors must remain unchanged. Only AEO construction/reconciliation/scheduling,
+returning a drain handle through the existing router/dependency calls, and the shutdown
+portion of `main` are masked. This proves scope, not semantic correctness. The shared
+repository interfaces file qualifies only for changes inside `AEORepository`.
+
+Selection requires `TestAEORuntimeStartup` and `TestAEORuntimeShutdown` in
+`cmd/aeo*_test.go`, plus `TestAEORunLifecycle{SQLite,MySQL}` and
+`TestAEOConcurrentShutdown{SQLite,MySQL}` in `internal/service/aeo*_test.go`.
+These roots belong to the runtime implementation, not the policy rollout. Missing or
+duplicate roots, deleted inputs or failed scope proofs retain full coverage. Path-only
+previews cannot prove startup/interface exceptions or root availability; inspect the
+committed selection before execution.
+
+Local checks are hygiene, `python3 scripts/ci/check-go.py aeo`, every frozen named
+acceptance check, configured migration checks, and health smoke plus `aeo-providers`
+browsers on SQLite/MySQL. The checker builds the API, vets selected packages and runs
+uncached race roots from all cmd/AEO engine tests, AEO service/repository/handler tests,
+configuration tests, AEO model tests and transaction boundaries. A disposable
+`TEST_MYSQL_DSN` is mandatory; missing, skipped or duplicate required roots and skipped
+descendants fail. CI runs this checker on MySQL and MariaDB, retains migration jobs and
+frontend build health, and runs the two browser specs on all three engines. The provider
+browser covers runtime credentials but does not replace scheduled-start acceptance.
+No unrelated entity browsers or full frontend unit suite is added. Explicit full/release
+gates remain complete: explicit full local validation and full/release CI run the
+transaction caller profile, which discovers all AEO service/repository roots, on configured
+SQL engines (MySQL locally; MySQL and MariaDB in CI). Every discovered SQL root must pass,
+including future lifecycle roots; this also works before those new roots land.
 
 The bounded `transaction` profile covers only `internal/utils/transaction.go` and its
 `transaction*_test.go` tests, with accompanying docs and runner changes. It runs hygiene,

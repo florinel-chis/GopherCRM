@@ -119,6 +119,34 @@ the trusted checkout's runner source. A known mismatch blocks new paid execution
 checkout source is reported as unknown. After installing a reviewed runner version, verify
 this identity and restart any long-lived UI process that still has older modules loaded.
 
+## Inspect the candidate before validation
+
+Set `"validation_review_required": true` in a fresh policy before admission. After
+implementation commits, the runner saves `validation_inspection` with the exact
+head/base/policy, commands and named-test identities, then stops before dependency
+installation or checks. This is an operator hold, not a source failure or a request for
+user authorization; no repair call is spent. Inspect the committed diff and complete plan:
+
+```sh
+gophercrm-runner confirm-validation --config /absolute/private/config.json \
+  --issue 111 --head FULL_HEAD_SHA --plan-hash INSPECTED_HASH --batch aeo-runtime \
+  --reason 'Inspected exact diff and every check; bounded AEO profile'
+gophercrm-runner start-batch --config /absolute/private/config.json \
+  --batch aeo-runtime --resume
+```
+
+Omit `--batch` for standalone work; use `--pr` for PR completion. Confirmation requires
+the exclusive execution lock, active candidate and unchanged plan. Changed candidates,
+bases, contracts, policies, commands or named-test identities require fresh inspection.
+Original deadlines, calls, repair rounds and receipts remain intact. If selection
+unexpectedly requires full coverage, do not confirm it: inspect scope or use the documented
+fresh-policy migration. Explicit full/release policy remains available. The default is
+false, preserving previously admitted configuration hashes.
+
+Version 0.8.2 adds this hold and the shared AEO profile in
+[VALIDATION_RELEASE](../../docs/VALIDATION_RELEASE.md). Install only reviewed main, verify
+module identity, then prepare a fresh application state after the prerequisite merges.
+
 ## Reclaim completed dependencies
 
 ```sh

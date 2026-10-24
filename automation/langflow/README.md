@@ -61,6 +61,11 @@ uv pip install --python "$HOME/.local/share/gophercrm-langflow/venv/bin/python" 
 
 Verify the installed source against the reviewed checkout and restart Langflow only when no execution is active. A successful installer exit can otherwise leave an older build of the same version loaded.
 
+Version 0.8.2 adds the bounded AEO runtime profile and optional
+`validation_review_required` candidate inspection. See [operations](OPERATIONS.md#inspect-the-candidate-before-validation)
+for the shared confirmation command. Enable it before admission in a fresh policy;
+confirmation records operator inspection without changing acceptance or merge gates.
+
 ## Use the visual workflow
 
 ```sh

@@ -101,7 +101,7 @@ def validation_preview(config, paths, *, manifest=None, history_root=None, selec
     if any(not (config.checkout / 'gocrm-ui' / spec).is_file() for spec in selected['specs']):
         selected = validation.plan(paths, full=True)
         selected['reasons'].append('selected spec is missing')
-    checks = [list(c) for c in validation.core_commands(config.test_commands, selected)]
+    checks = [list(c) for c in validation.core_commands(config.test_commands, selected, explicit_full=config.validation_mode == 'full')]
     acceptance = []
     if manifest:
         for check in manifest.get('acceptance', []):

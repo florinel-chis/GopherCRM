@@ -68,6 +68,8 @@ class Config:
     validation_mode: str = 'legacy'
     # Existing journals keep their original approval schema; new policies opt in.
     documentation_mode: str = 'legacy'
+    # Operator inspection of the committed plan, before any local checks.
+    validation_review_required: bool = False
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -95,6 +97,8 @@ class Config:
         return result
 
     def validate(self) -> None:
+        if type(self.validation_review_required) is not bool:
+            raise GateError('validation_review_required must be boolean')
         if self.documentation_mode not in {'legacy', 'reviewed'}:
             raise GateError('documentation_mode must be legacy or reviewed')
         if self.validation_mode not in {'legacy', 'full', 'contextual'}:
