@@ -123,7 +123,10 @@ changes, schema/configuration changes and other mixed application changes retain
 mailer tests, log-error sanitation and eight existing password-reset/form mail caller roots.
 It requires `TestSMTPDeadlines`, `TestSMTPHeaders`, `TestSMTPTLSAuth` and
 `TestSMTPFailureRedaction`, and every selected caller root, before starting Go commands.
-Selection requires all four SMTP roots exactly once at the committed candidate. Missing
+Selection requires all four SMTP test declarations exactly once in committed regular
+package test files; comments and literals cannot supply them. This is declaration presence,
+not proof of build eligibility, execution or meaningful assertions; build and exact runtime
+checks plus independent review remain mandatory. Missing
 or duplicate roots retain full fallback; these roots will be supplied by the SMTP behavior
 fix, not this policy prerequisite. The checker also rejects missing or skipped roots as
 defense in depth; they do not silently reduce coverage. The source boundary has

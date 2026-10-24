@@ -458,13 +458,32 @@ def env_comments_only(base, head, *, cwd=None):
 
 
 def mailer_roots_present(head, *, cwd=None):
+    """Prove committed declarations, not runtime success or test semantics."""
     if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
         return False
-    result = subprocess.run(['git', 'grep', '-h', '-E', '^func[[:space:]]+TestSMTP', head, '--',
-                             ':(glob)internal/mailer/*_test.go'], cwd=cwd, capture_output=True, text=True)
-    names = re.findall(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)',
-                       result.stdout, re.MULTILINE)
-    return result.returncode == 0 and all(names.count(name) == 1 for name in MAILER_REQUIRED_ROOTS)
+    listing = subprocess.run(['git', 'ls-tree', '-r', head, '--', 'internal/mailer'],
+                             cwd=cwd, capture_output=True, text=True)
+    if listing.returncode:
+        return False
+    names = []
+    for line in listing.stdout.splitlines():
+        metadata, separator, path = line.partition('\t')
+        if not separator or not MAILER_TEST.fullmatch(path):
+            continue
+        if not metadata.startswith('100644 blob '):
+            return False
+        result = subprocess.run(['git', 'show', f'{head}:{path}'], cwd=cwd,
+                                capture_output=True, text=True)
+        if result.returncode:
+            return False
+        # Ignore complete comments/literals, not only matching grep lines. A
+        # quoted sample function cannot satisfy candidate declaration presence.
+        source = GO_LEXEME.sub(lambda match: (
+            re.sub(r'[^\n]', ' ', match.group())
+            if match.lastgroup in {'ignore', 'literal'} else match.group()), result.stdout)
+        names.extend(re.findall(r'^\s*func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)\s*\{',
+                                source, re.MULTILINE))
+    return all(names.count(name) == 1 for name in MAILER_REQUIRED_ROOTS)
 
 
 def candidate_scope(paths, base, head, *, cwd=None):

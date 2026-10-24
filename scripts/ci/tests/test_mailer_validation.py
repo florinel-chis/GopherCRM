@@ -85,6 +85,16 @@ class MailerValidationTests(unittest.TestCase):
                 # A dirty worktree cannot supply proof for a committed candidate.
                 roots.write_text(complete)
                 self.assertFalse(v.mailer_roots_present(missing, cwd=root))
+            declarations = '\n'.join(complete.splitlines()[2:])
+            for fake in ['/*\n' + declarations + '\n*/',
+                         'var sample = `\n' + declarations + '\n`',
+                         '\n'.join('// ' + line for line in declarations.splitlines()),
+                         declarations.replace('*testing.T', '*testing.B')]:
+                roots.write_text('package mailer\n' + fake + '\n')
+                git('add', '.'); git('commit', '-m', 'not real test declarations')
+                invalid = git('rev-parse', 'HEAD')
+                self.assertFalse(v.mailer_roots_present(invalid, cwd=root))
+                self.assertEqual(v.plan(paths, **v.candidate_scope(paths, base, invalid, cwd=root))['profile'], 'full')
             roots.write_text(complete + complete.splitlines()[-1] + '\n')
             git('add', '.'); git('commit', '-m', 'duplicate root')
             self.assertFalse(v.mailer_roots_present(git('rev-parse', 'HEAD'), cwd=root))
