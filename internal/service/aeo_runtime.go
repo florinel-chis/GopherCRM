@@ -32,7 +32,7 @@ const aeoRunCleanupTimeout = 5 * time.Second
 //
 // It is the single answer to "what is still running": a start registers itself
 // before touching the database, the executor goroutine inherits that
-// registration and releases it once the run row is terminal, and shutdown
+// registration and releases it after the finalization attempt, and shutdown
 // first closes admission, then cancels the shared run context, then waits for
 // the count to reach zero or for its deadline. Admission and the count share
 // one mutex, so a start cannot slip between "admission closed" and "wait": it
@@ -139,7 +139,7 @@ func (r *AEORuntime) Service() AEOService { return r.svc }
 
 // Shutdown stops admitting runs, cancels every manual, scheduled and
 // single-prompt run in flight — the cancellation reaches provider calls and
-// repository writes — and waits for all of them to finalize. It returns nil
+// repository writes — and waits for all of them to finish. It returns nil
 // only once no owned work remains, so the caller may close the database
 // afterwards without a late write racing it. When ctx expires first it returns
 // an error naming the active count; the caller then follows the crash policy:
@@ -154,7 +154,7 @@ func (r *AEORuntime) Shutdown(ctx context.Context) error {
 func (r *AEORuntime) ActiveRuns() int { return r.svc.lifecycle.activeCount() }
 
 // runInBackground executes an admitted run on the owner's context and releases
-// the admission once the engine has finalized the row. It is the only place a
+// the admission once the engine has attempted finalization. It is the only place a
 // run's ownership ends.
 func (s *aeoService) runInBackground(ctx context.Context, executor aeo.Executor, run *models.AEORun, prompts []models.AEOPrompt, profile *models.AEOProfile, release func(), logger *logrus.Entry) {
 	defer release()

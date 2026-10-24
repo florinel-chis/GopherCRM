@@ -50,7 +50,7 @@ func newAEORuntime(runs *service.AEORuntime) *aeoBackground {
 // regardless of which engines hold credentials right now: the service resolves
 // the current providers — environment keys overlaid with the administrator's
 // stored keys — when a tick is due, so a deployment that boots with no key and
-// receives one through the settings UI runs the same day without a restart. A
+// receives one through the settings UI uses it at the next due run without a restart. A
 // tick that finds the module unconfigured is logged once and the loop sleeps
 // until the next day.
 func (r *aeoBackground) startScheduler(ctx context.Context, hour int) {

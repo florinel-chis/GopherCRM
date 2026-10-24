@@ -204,6 +204,9 @@ Runs are owned by the process that started them (`service.AEORuntime`). On SIGIN
 4. The process joins the owned runs and scheduler under the same 15 s deadline.
 5. Only once background work and HTTP requests have drained does the process close the database handle.
 
+If the finalizing write fails, the failure is logged and the row may remain `running` even
+after all owned work has joined. Startup reconciliation recovers that row on the next boot.
+
 **Limit.** The drain waits at most 15 s. A provider or database write that ignores cancellation
 past that point is not abandoned by closing the pool under it: the process exits without closing
 the database (logged as `AEO background work did not drain before the shutdown deadline`), the

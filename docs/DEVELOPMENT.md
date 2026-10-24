@@ -559,11 +559,12 @@ when the two disagree.
 
 ### AEO background work and shutdown
 
-The AEO module is the one place the API owns goroutines beyond a request. `cmd/aeo_runtime.go`
+The API owns AEO goroutines beyond individual requests. `cmd/aeo_runtime.go`
 holds them: `service.NewAEORuntime` wires the service together with the owner of its runs, the
 daily scheduler is a joinable `aeo.Scheduler` armed whenever `AEO_SCHEDULE_ENABLED` is on, and
 `setupDependencies` returns the stop handle `main` drains — through `drainAEO`, bounded by
-`aeoDrainTimeout` (15 s) — before `models.CloseDatabase`. Inside the service, admission and the
+`aeoDrainTimeout` (15 s) — before `models.CloseDatabase`. HTTP requests then have their
+existing separate 5 s shutdown deadline. Inside the service, admission and the
 active-run count share one mutex (`aeoRunOwner`), separate from `startMu`, so shutdown never queues
 behind a start blocked in a database call; it closes admission, cancels the shared run context and
 waits. Run records and answer writes go through `AEORepository.WithContext(runCtx)`, and the

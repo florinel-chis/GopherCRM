@@ -384,7 +384,8 @@ tick that finds no profile, key or active prompt is logged once and skipped unti
 answers 503 `SHUTTING_DOWN`), cancels the scheduler and every run in flight, waits for them to
 finalize, and only then closes the database. An interrupted run ends `failed`, or `partial` when
 some answers were already recorded; queries cut short count as failed and are not stored as
-answers. The drain waits at most 15 seconds. If a provider call or database write still has not
+answers. A failed finalizing write leaves its row for startup reconciliation even if the
+work drains successfully. The AEO drain waits at most 15 seconds. If a provider call or database write still has not
 released by then, the process exits without closing the database and the run row left in
 `running` is failed by the next start's reconciliation, exactly as after a crash.
 
