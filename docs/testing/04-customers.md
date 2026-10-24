@@ -589,9 +589,11 @@ depend on that are flagged.
 - **Expected:** **200**. Headers `Content-Type: text/csv; charset=utf-8` and
   `Content-Disposition: attachment; filename=customers-export.csv`. The body is raw CSV, **not** the
   `{success,data}` envelope. First line is exactly
-  `id,first_name,last_name,email,phone,company,address,notes,assigned_to_id,created_at,updated_at`.
+  `id,first_name,last_name,email,phone,company,address,notes,assigned_to_id,created_at,updated_at,website`.
   The created customer appears as a row with an empty `assigned_to_id` cell and RFC3339 timestamps.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new, API-level)
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new, API-level); the
+  header, row rendering, quoting and formula prefix are pinned at the API level by
+  `tests/customer_export_csv_test.go` (`TestCustomerExportCSV{SQLite,MySQL}`)
 
 ### TC-CUST-036 — Export is admin-only and ignores pagination
 - **Priority:** P0
@@ -609,8 +611,40 @@ depend on that are flagged.
   once. Step 3 returns 200 and **every** non-erased customer, not one — the export path reads no
   pagination parameters, only `search`, `sort_by` and `sort_order`. Soft-deleted (erased) customers
   are absent.
-- **Automation:** blocked — needs sales/support tokens, i.e. a role-login helper; the customer-role
-  and admin halves can be automated today
+- **Automation:** blocked in Playwright — needs sales/support tokens, i.e. a role-login helper; the
+  customer-role and admin halves can be automated today. The 403/401 contract for every non-admin
+  role is asserted against the real routes by `tests/customer_export_csv_test.go`
+
+### TC-CUST-036a — A sorted export of a large book is complete and deterministic
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** Admin token; more than 1,000 live customers whose sort values run against id
+  order and repeat (several customers per company, several created in the same second), a few of
+  them erased, and a `search` term that still matches more than 500 of them.
+- **Steps:**
+  1. `GET /api/v1/customers/export?sort_by=company&sort_order=desc`; parse the body as CSV.
+  2. Repeat for every allowed `sort_by` (`created_at`, `updated_at`, `first_name`, `last_name`,
+     `email`, `company`) in both directions, with and without `search`, and once with no `sort_by`.
+  3. Repeat one request and compare the two bodies.
+- **Expected:** Every request returns 200 and every matching live customer exactly once — the row
+  count equals the matching count and no id repeats. Rows are ordered by the requested column and
+  then by id, both in the requested direction, so duplicate sort values always come out in the same
+  order and `desc` is the exact reverse of `asc`; with no `sort_by` the order is id ascending.
+  Erased customers are absent, the search still narrows the file, and two identical requests return
+  identical bodies. The same holds on SQLite and MySQL.
+- **Known issue (fixed, #105):** `ListAllForExport` used to apply the requested `ORDER BY` on top of
+  GORM's `FindInBatches`, whose continuation is `id > last id of the previous batch`. Under any
+  non-id ordering that cursor skipped every customer whose id was below the previous batch's last
+  id, so a sorted export of more than 500 rows silently lost rows while looking complete. The
+  repository now reads the rows with one ordered statement.
+- **Automation:** automated (API-level) — `internal/repository/customer_export_traversal_test.go`
+  (`TestCustomerExportTraversal{SQLite,MySQL}`: the repository against an adversarial fixture whose
+  duplicate values straddle the old batch boundaries, including a NULL and an empty company) and
+  `tests/customer_export_csv_test.go` (`TestCustomerExportCSV{SQLite,MySQL}`: the real routes,
+  JWT middleware and handler, parsed with `encoding/csv`; also pins quoting of commas, quotes and
+  newlines, the apostrophe prefix on formula-like cells, authorization and the JSON error envelope
+  when the read fails before the response starts). The MySQL roots create and drop a disposable
+  schema on `TEST_MYSQL_DSN`; they skip without the variable and fail when it is unreachable.
 
 ---
 

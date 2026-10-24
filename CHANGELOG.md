@@ -115,6 +115,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sorted customer CSV exports no longer lose rows (#105).** `GET /customers/export` read the
+  book in 500-row primary-key batches through GORM's `FindInBatches` while also applying the
+  requested `sort_by`. The batch continuation is `id > last id of the previous batch`, which is
+  only a valid cursor under id order: with any other `sort_by`, every customer whose id was below
+  the previous batch's last id was skipped, so a sorted export of more than 500 customers silently
+  came back incomplete while looking like a whole file. The repository now reads every matching row
+  with one ordered statement, ordered by the requested column and then by id, both in the requested
+  direction (id ascending without `sort_by`), so duplicate values, NULLs in the legacy nullable
+  `company` column and collation ties order deterministically, `desc` is the exact reverse of
+  `asc`, and the read is one consistent snapshot on MySQL and SQLite. The sort allowlist,
+  invalid-parameter handling, search filter, erasure exclusion, CSV header and quoting, formula
+  prefix, admin-only guard and the all-or-nothing fetch before the response are unchanged.
+  Regression roots: `TestCustomerExportTraversal{SQLite,MySQL}` in
+  `internal/repository/customer_export_traversal_test.go` and `TestCustomerExportCSV{SQLite,MySQL}`
+  in `tests/customer_export_csv_test.go`, both on more than 1,000 rows whose sort values run
+  against id order with duplicates straddling the old batch boundaries; the MySQL roots use a
+  disposable schema on `TEST_MYSQL_DSN`.
 - **Refresh token rotation is atomic and single-use (#103).**
   `POST /auth/refresh` used to read the presented token, revoke it with an unconditional update
   and insert its replacement as independent writes: two simultaneous requests could both pass the

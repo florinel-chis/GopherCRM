@@ -262,6 +262,22 @@ to true in production.
 **Sort validation** — all repository sort queries validate `sortBy` against per-entity column
 allowlists via `utils.ValidateSort()` to prevent SQL injection.
 
+**Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
+`FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
+only valid when the rows are ordered by id; under any other ordering it skips and repeats rows
+across batches. The customer CSV export did exactly that and lost rows past the first 500 (#105).
+`CustomerRepository.ListAllForExport` now reads every matching row with one ordered statement whose
+order is total: the requested column, then `id`, both in the requested direction, or `id` ascending
+without a sort column. That makes duplicate values, NULLs in the legacy nullable `company` column
+and MySQL collation ties deterministic, makes `desc` the exact reverse of `asc`, and makes the read
+one consistent snapshot on both engines. The result is still fetched in full before the handler
+writes a byte. Regression roots: `TestCustomerExportTraversal{SQLite,MySQL}`
+(`internal/repository/customer_export_traversal_test.go`) and `TestCustomerExportCSV{SQLite,MySQL}`
+(`tests/customer_export_csv_test.go`); the MySQL roots create a disposable schema on
+`TEST_MYSQL_DSN`, skip without it and fail when it is unreachable. If a whole-book read ever needs
+to be chunked again, continue on a composite `(sort column, id)` keyset that handles NULL
+explicitly, never on the primary key alone.
+
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
 RateLimit.
 
