@@ -91,6 +91,32 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.complete())['status'], 'merged')
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (1, 1, 1))
 
+    async def test_zero_repair_allowance_keeps_successful_validation_review_and_merge(self):
+        self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=0), self.commands)
+        result = await self.complete()
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (1, 1, 1))
+        self.assertEqual(self.commands.implementations, 0)
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual((record['repairs'], record['provider_calls']), (0, 1))
+        self.assertEqual(record['head'], record['tested_head'])
+        self.assertEqual(record['head'], record['reviewed_head'])
+
+    async def test_zero_repair_allowance_preserves_review_rejection_on_resume(self):
+        self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=0), self.commands)
+        self.commands.reject_reviews = 1
+        with self.assertRaisesRegex(GateError, 'Repair budget exhausted'):
+            await self.complete()
+        self.commands.reject_reviews = 0
+        with self.assertRaisesRegex(GateError, 'Repair budget exhausted'):
+            await self.complete()
+        self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (1, 1, 0))
+        self.assertEqual(self.commands.implementations, 0)
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual((record['repairs'], record['provider_calls']), (0, 1))
+        self.assertEqual(record['stage'], 'repair_pending')
+        self.assertFalse(record['review']['approved'])
+
     async def test_rejection_repairs_then_retests_and_reviews_new_head(self):
         self.commands.reject_reviews = 1
         await self.complete()

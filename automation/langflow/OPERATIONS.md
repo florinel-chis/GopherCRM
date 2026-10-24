@@ -186,7 +186,8 @@ the fresh policy when no repair rounds remain. A failed check or rejected review
 before reserving a repair or calling an implementation provider; no gate is waived. Record
 the old and remaining allowances in the migration evidence. Do not edit an admitted policy.
 
-Shared Go profiles remove application `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`,
+The `check-go.py` profiles (AEO, transaction and migration) remove application
+`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`,
 `DB_NAME`, `DB_DRIVER` and `DB_PATH` only from their Go subprocesses. They retain
 `TEST_MYSQL_DSN` for disposable SQL fixtures. This prevents inherited server settings from
 polluting configuration-default tests locally and in CI; browser/server settings are unchanged.
