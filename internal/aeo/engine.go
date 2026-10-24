@@ -170,11 +170,25 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 	)
 
 	for _, task := range tasks {
-		// Acquire a worker slot, or stop dispatching the moment the run is
-		// cancelled. A task that never ran is a lost query, counted below.
+		// Stop dispatching the moment the run is cancelled. A task that never
+		// ran is a lost query, counted below. The check comes before the slot
+		// acquisition because select picks at random among ready cases: with a
+		// free slot and a cancelled context it would otherwise dispatch half the
+		// batch of an already-cancelled run.
+		if ctx.Err() != nil {
+			skipped++
+			continue
+		}
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
+			skipped++
+			continue
+		}
+		if ctx.Err() != nil {
+			// Cancelled while waiting for the slot, and the select still handed
+			// it out. Give it back and count the task as lost.
+			<-slots
 			skipped++
 			continue
 		}

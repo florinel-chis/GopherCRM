@@ -83,9 +83,36 @@ type fakeAEORepo struct {
 	citations [][]models.AEOCitation
 	runs      []models.AEORun
 	contexts  []context.Context
+	// runWrites records, for every UpdateRun that went through a WithContext
+	// binding, the state of the bound context at the moment of the write. The
+	// engine releases its cleanup context as soon as the write returns, so
+	// inspecting the context afterwards would always see it cancelled.
+	runWrites []boundWrite
 
 	createErr error
 	updateErr error
+}
+
+// boundWrite is the observable state of a bound context at write time.
+type boundWrite struct {
+	err         error
+	hasDeadline bool
+}
+
+// boundFakeRepo is what fakeAEORepo.WithContext returns: the same state, with
+// the bound context remembered so the write can report whether it was still
+// alive and bounded when it happened.
+type boundFakeRepo struct {
+	*fakeAEORepo
+	ctx context.Context
+}
+
+func (r *boundFakeRepo) UpdateRun(run *models.AEORun) error {
+	_, hasDeadline := r.ctx.Deadline()
+	r.mu.Lock()
+	r.runWrites = append(r.runWrites, boundWrite{err: r.ctx.Err(), hasDeadline: hasDeadline})
+	r.mu.Unlock()
+	return r.fakeAEORepo.UpdateRun(run)
 }
 
 var _ repository.AEORepository = (*fakeAEORepo)(nil)
@@ -188,12 +215,13 @@ func (r *fakeAEORepo) WithTx(*gorm.DB) repository.AEORepository { return r }
 
 // WithContext records the context each binding was asked for, so a test can
 // prove the run's writes are bound to the run context and the finalizing write
-// to a fresh one, then answers from the same state.
+// to a fresh one, then answers from the same state through a binding that
+// remembers the context for finalizedWrites.
 func (r *fakeAEORepo) WithContext(ctx context.Context) repository.AEORepository {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.contexts = append(r.contexts, ctx)
-	return r
+	return &boundFakeRepo{fakeAEORepo: r, ctx: ctx}
 }
 
 // boundContexts returns the contexts handed to WithContext, in order.
@@ -202,6 +230,16 @@ func (r *fakeAEORepo) boundContexts() []context.Context {
 	defer r.mu.Unlock()
 	out := make([]context.Context, len(r.contexts))
 	copy(out, r.contexts)
+	return out
+}
+
+// finalizedWrites returns the bound-context state observed by each UpdateRun,
+// in order.
+func (r *fakeAEORepo) finalizedWrites() []boundWrite {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]boundWrite, len(r.runWrites))
+	copy(out, r.runWrites)
 	return out
 }
 
@@ -577,9 +615,13 @@ func TestEngineCancellationReachesProviderAndWrites(t *testing.T) {
 	contexts := repo.boundContexts()
 	require.Len(t, contexts, 2, "one binding for the run's writes, one for the finalizing write")
 	assert.ErrorIs(t, contexts[0].Err(), context.Canceled, "answer writes are bound to the run context")
-	assert.NoError(t, contexts[1].Err(), "the finalizing write runs on a context that is still alive")
-	_, hasDeadline := contexts[1].Deadline()
-	assert.True(t, hasDeadline, "the cleanup context is bounded")
+
+	// The engine releases its cleanup context once the write returns, so the
+	// context's liveness is judged as the write observed it, not afterwards.
+	writes := repo.finalizedWrites()
+	require.Len(t, writes, 1, "the interrupted run is finalized exactly once")
+	assert.NoError(t, writes[0].err, "the finalizing write runs on a context that is still alive")
+	assert.True(t, writes[0].hasDeadline, "the cleanup context is bounded")
 }
 
 // blockingUpdateRepo blocks the finalizing write until the context it was
