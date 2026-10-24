@@ -66,6 +66,10 @@ Version 0.8.2 adds the bounded AEO runtime profile and optional
 for the shared confirmation command. Enable it before admission in a fresh policy;
 confirmation records operator inspection without changing acceptance or merge gates.
 
+Version 0.8.3 lets proven comment-only edits in the root `.env.example` accompany a
+bounded profile. Active settings and ambiguous dotenv syntax retain full fallback;
+see [validation policy](../../docs/VALIDATION_RELEASE.md) for the conservative proof.
+
 ## Use the visual workflow
 
 ```sh
