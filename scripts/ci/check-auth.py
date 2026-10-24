@@ -6,6 +6,8 @@ update. Missing files, empty selections and skipped roots/descendants fail close
 """
 
 from pathlib import Path
+import argparse
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'automation/langflow'))
 from gophercrm_runner.config import GateError
 from gophercrm_runner.evidence import named_go_tests
+from gophercrm_runner.validation import ROTATION_ROOTS
 
 SOURCES = {
     # logging_privacy_test.go asserts credentials, hashes and tokens never reach the
@@ -29,6 +32,7 @@ SOURCES = {
     'test/integration': ('erasure_test.go',),
 }
 TEST = re.compile(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)', re.MULTILINE)
+PERSISTENCE_ROOTS = ROTATION_ROOTS
 
 
 def discover(root=ROOT):
@@ -47,8 +51,14 @@ def discover(root=ROOT):
     return selected
 
 
-def run(root=ROOT):
+def run(root=ROOT, *, persistence=False):
+    if persistence and not os.environ.get('TEST_MYSQL_DSN'):
+        raise GateError('Auth persistence checks require a disposable TEST_MYSQL_DSN server')
     selected = discover(root)
+    if persistence and not PERSISTENCE_ROOTS.issubset(selected.get('internal/service', ())):
+        raise GateError('Missing required SQLite/MySQL refresh rotation boundary regressions')
+    if any(name.endswith('MySQL') for names in selected.values() for name in names) and not os.environ.get('TEST_MYSQL_DSN'):
+        raise GateError('Selected MySQL auth regressions require a disposable TEST_MYSQL_DSN server')
     subprocess.run(['go', 'build', './cmd/...'], cwd=root, check=True)
     subprocess.run(['go', 'vet', *('./' + p for p in selected)], cwd=root, check=True)
     # Package-by-package execution keeps memory bounded on local machines.
@@ -66,4 +76,7 @@ def run(root=ROOT):
 
 
 if __name__ == '__main__':
-    run()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--persistence', action='store_true',
+                        help='Require real SQL and all refresh-rotation boundary roots')
+    run(persistence=parser.parse_args().persistence)

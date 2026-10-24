@@ -9,7 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "automation/langflow"))
-from gophercrm_runner.validation import browser_command, changed_paths, core_commands, plan, SMOKE, POLICY_VERSION
+from gophercrm_runner.validation import (browser_command, changed_paths, core_commands, plan,
+                                        refresh_interface_only, rotation_roots_present, ROTATION_ROOTS, SMOKE, POLICY_VERSION)
 
 
 class ValidationSelectionTests(unittest.TestCase):
@@ -104,6 +105,95 @@ class ValidationSelectionTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 plan([path])
         self.assertEqual(plan(["gocrm-ui/e2e/tests/$(touch pwned).spec.ts"])["profile"], "full")
+
+    def test_auth_persistence_retains_database_boundaries_without_unrelated_browsers(self):
+        paths = ['internal/service/auth_service.go', 'internal/repository/refresh_token_repository.go',
+                 'internal/repository/refresh_token_repository_test.go',
+                 'internal/mocks/RefreshTokenRepository.go', 'internal/repository/interfaces.go']
+        self.assertEqual(plan(paths)['profile'], 'full')  # A path is not a scope proof.
+        self.assertEqual(plan(paths, refresh_interface=True)['profile'], 'full')  # Required tests are not proved.
+        selected = plan(paths, refresh_interface=True, rotation_roots=True)
+        self.assertEqual(selected['profile'], 'auth-persistence')
+        self.assertEqual(set(selected['specs']), {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'})
+        commands = core_commands([('make', 'verify'), ('go', 'test', './extra')], selected)
+        self.assertIn(('python3', 'scripts/ci/check-auth.py', '--persistence'), commands)
+        self.assertIn(('python3', 'scripts/ci/check-go.py', 'transaction', '--storage-only'), commands)
+        self.assertIn(('go', 'test', './extra'), commands)
+        self.assertNotIn(('make', 'verify'), commands)
+        for path in ['internal/repository/user_repository.go', 'internal/service/customer_service.go',
+                     'internal/middleware/auth.go', 'internal/models/refresh_token.go',
+                     'migrations/new.sql', 'go.mod', 'api/swagger.json', 'internal/utils/transaction.go']:
+            with self.subTest(path=path):
+                self.assertEqual(plan(paths + [path], refresh_interface=True, rotation_roots=True)['profile'], 'full')
+        self.assertEqual(plan(paths, refresh_interface=True, rotation_roots=True, full=True)['profile'], 'full')
+
+    def test_shared_interface_scope_is_proven_from_real_git_blobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root,
+                                               stderr=subprocess.DEVNULL, text=True).strip()
+            git('init', '-b', 'main')
+            git('config', 'user.email', 'test@example.test')
+            git('config', 'user.name', 'Validation Test')
+            file = root / 'internal/repository/interfaces.go'
+            file.parent.mkdir(parents=True)
+            original = ('package repository\n\ntype Other interface {\n\tRead() error\n}\n\n'
+                        'type RefreshTokenRepository interface {\n\tCreate() error\n}\n')
+            file.write_text(original)
+            roots = root / 'internal/service/auth_rotation_test.go'
+            roots.parent.mkdir(parents=True)
+            roots_source = 'package service\nimport \"testing\"\n' + ''.join(
+                f'func {name}(t *testing.T) {{}}\n' for name in sorted(ROTATION_ROOTS))
+            roots.write_text(roots_source)
+            selector = root / 'automation/langflow/gophercrm_runner/validation.py'
+            selector.parent.mkdir(parents=True)
+            selector.write_text((ROOT / 'automation/langflow/gophercrm_runner/validation.py').read_text())
+            for spec in [SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts']:
+                target = root / 'gocrm-ui' / spec
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('// fixture\n')
+            git('add', '.'); git('commit', '-m', 'base')
+            base = git('rev-parse', 'HEAD')
+            variants = [
+                (original.replace('Create() error', 'Create() error\n\tClaimForRotation(id uint) error'), True),
+                (original.replace('Create() error', 'Nested() struct { Value string }'), True),
+                (original.replace('Create() error', 'Nested() [len("}")]int'), True),
+                (original.replace('Create() error', 'Nested() [len(`}`)]int'), True),
+                (original.replace('Create() error\n}', 'Create() error }; func unrelated() {\n}'), False),
+                (original.replace('Create() error', 'Create() error\n/* type RefreshTokenRepository interface {\n} */'), True),
+                (original.replace('Create() error', '/* unterminated'), False),
+                (original.replace('Read() error', 'Write() error'), False),
+                (original.replace('Create() error', 'Claim() error').replace('Read() error', 'Write() error'), False),
+                (original.replace('package repository', 'package changed'), False),
+                (original.replace('type RefreshTokenRepository', 'type Renamed'), False),
+                (original + '\ntype RefreshTokenRepository interface {\n\tOther()\n}\n', False),
+            ]
+            for body, expected in variants:
+                file.write_text(body); git('add', 'internal/repository/interfaces.go'); git('commit', '-m', 'candidate')
+                head = git('rev-parse', 'HEAD')
+                with self.subTest(body=body):
+                    self.assertEqual(refresh_interface_only(base, head, cwd=root), expected)
+                    event = root / 'event.json'
+                    event.write_text(json.dumps({'pull_request': {'base': {'sha': base}, 'head': {'sha': head}}}))
+                    env = dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request',
+                               GITHUB_OUTPUT=str(root / 'outputs'), RUNNER_TEMP=folder,
+                               REVIEWED_VALIDATION_POLICY_SHA='', FORCE_FULL='false')
+                    env.pop('GITHUB_STEP_SUMMARY', None)
+                    subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')],
+                                   cwd=root, env=env, check=True, capture_output=True)
+                    selected = json.loads((root / 'validation-plan.json').read_text())
+                    self.assertEqual(selected['changed_paths'], ['internal/repository/interfaces.go'])
+                    self.assertEqual(selected['profile'], 'auth-persistence' if expected else 'full')
+            file.unlink(); git('add', 'internal/repository/interfaces.go'); git('commit', '-m', 'deleted')
+            self.assertFalse(refresh_interface_only(base, git('rev-parse', 'HEAD'), cwd=root))
+            self.assertFalse(refresh_interface_only(base, base, cwd=root))
+            self.assertFalse(refresh_interface_only('HEAD', base, cwd=root))
+            self.assertTrue(rotation_roots_present(base, cwd=root))
+            for missing in ROTATION_ROOTS:
+                roots.write_text(roots_source.replace(f'func {missing}(t *testing.T) {{}}\n', ''))
+                git('add', 'internal/service/auth_rotation_test.go'); git('commit', '-m', 'missing root')
+                self.assertFalse(rotation_roots_present(git('rev-parse', 'HEAD'), cwd=root))
 
     def test_transaction_profile_uses_callers_and_health_with_explicit_full_override(self):
         paths = ['internal/utils/transaction.go', 'internal/utils/transaction_recovery_test.go',

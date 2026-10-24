@@ -340,7 +340,8 @@ class Runner:
 
     def validation_selection(self, record, paths):
         try:
-            selected = validation.plan(paths, full=self.config.validation_mode != 'contextual')
+            selected = validation.plan(paths, full=self.config.validation_mode != 'contextual',
+                **validation.candidate_scope(paths, record.get('base'), record.get('head'), cwd=record['worktree']))
         except ValueError as exc:
             raise GateError(str(exc)) from exc
         if any(not (Path(record['worktree']) / 'gocrm-ui' / spec).is_file()
@@ -693,7 +694,7 @@ class Runner:
         checks = await self.validation_checks(record, paths)
         record['validation_plan'] = self.validation_selection(record, paths)
         from .operations import validation_preview
-        record['validation_forecast'] = validation_preview(self.config, paths)
+        record['validation_forecast'] = validation_preview(self.config, paths, selected=record['validation_plan'])
         record['validation_forecast']['selection'] = record['validation_plan']
         record['validation_forecast']['commands'] = [list(argv) for _, argv, _ in checks]
         record['validation_forecast']['basis'] = 'Committed candidate and frozen registered checks.'

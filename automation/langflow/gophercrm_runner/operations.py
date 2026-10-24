@@ -96,8 +96,8 @@ def measurements(root, *, include_siblings=False):
                       'but task complexity and environments can differ; these are not causal benchmarks.'}
 
 
-def validation_preview(config, paths, *, manifest=None, history_root=None):
-    selected = validation.plan(paths, full=config.validation_mode != 'contextual')
+def validation_preview(config, paths, *, manifest=None, history_root=None, selected=None):
+    selected = selected or validation.plan(paths, full=config.validation_mode != 'contextual')
     if any(not (config.checkout / 'gocrm-ui' / spec).is_file() for spec in selected['specs']):
         selected = validation.plan(paths, full=True)
         selected['reasons'].append('selected spec is missing')
