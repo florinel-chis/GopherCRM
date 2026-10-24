@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'automation/langflow'))
 from gophercrm_runner.config import GateError
 from gophercrm_runner.evidence import named_go_tests
+from gophercrm_runner.validation import ROTATION_ROOTS
 
 SOURCES = {
     # logging_privacy_test.go asserts credentials, hashes and tokens never reach the
@@ -31,9 +32,7 @@ SOURCES = {
     'test/integration': ('erasure_test.go',),
 }
 TEST = re.compile(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)', re.MULTILINE)
-PERSISTENCE_ROOTS = {f'TestRefreshRotation{boundary}{engine}'
-                     for boundary in ('Atomicity', 'Concurrent', 'Validation')
-                     for engine in ('SQLite', 'MySQL')}
+PERSISTENCE_ROOTS = ROTATION_ROOTS
 
 
 def discover(root=ROOT):

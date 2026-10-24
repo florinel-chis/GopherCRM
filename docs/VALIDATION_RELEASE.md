@@ -77,8 +77,13 @@ requires its MySQL/migration checks; explicit full and releases retain the compl
 The `auth-persistence` profile extends those auth paths to the refresh-token repository,
 its tests and generated `RefreshTokenRepository` mock. A change to the shared repository
 interfaces file qualifies only when comparison of the actual base/head Git blobs proves
-that all changes are inside the existing `RefreshTokenRepository` declaration. Path-only
-manifest previews cannot establish that exception. Changes to another declaration, imports,
+that all changes are inside the existing `RefreshTokenRepository` interface body. Comments,
+literals and nested braces cannot hide another declaration. The candidate must also contain
+all six `TestRefreshRotation{Atomicity,Concurrent,Validation}{SQLite,MySQL}` roots in
+`internal/service/auth*_test.go`. They may land with the application fix; they are not yet
+present on the policy's original main base. Missing roots retain full fallback, as missing
+browser specs do, instead of selecting a profile that cannot run. Path-only manifest previews
+cannot establish these exceptions. Changes to another declaration, imports,
 schema, middleware, unrelated application code or dependencies retain full coverage.
 
 Local validation runs hygiene, `python3 scripts/ci/check-auth.py --persistence`, transaction

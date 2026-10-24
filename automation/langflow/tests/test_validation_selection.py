@@ -118,6 +118,7 @@ class ValidationSelectionTests(fixtures.EngineTests):
         paths = ['internal/service/auth_service.go', 'internal/repository/refresh_token_repository.go',
                  'internal/repository/interfaces.go']
         with patch('gophercrm_runner.validation.refresh_interface_only', return_value=True) as proof, \
+             patch('gophercrm_runner.validation.rotation_roots_present', return_value=True), \
              patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
             checks = await runner.validation_checks(record, paths)
             external = await PullRequestRunner(runner.config, self.commands).validation_checks(record, paths)
@@ -135,6 +136,7 @@ class ValidationSelectionTests(fixtures.EngineTests):
         with patch('gophercrm_runner.validation.refresh_interface_only', return_value=False):
             self.assertEqual(runner.validation_selection(record, paths)['profile'], 'full')
         with patch('gophercrm_runner.validation.refresh_interface_only', return_value=True), \
+             patch('gophercrm_runner.validation.rotation_roots_present', return_value=True), \
              patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
             await runner.validation_checks(record, paths)
 

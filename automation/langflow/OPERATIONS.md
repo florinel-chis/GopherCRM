@@ -103,8 +103,10 @@ gophercrm-runner history --config /absolute/private/config.json \
 Prepared batch previews include each issue's provisional selection and registered checks.
 Before expensive validation, the journal records the actual candidate's selection and exact
 commands. The frozen acceptance checks and database matrix remain mandatory. A missing
-selected spec or unknown/shared path still forces full coverage. Token-repository changes
-are not reclassified as bounded auth merely to shorten a run.
+selected spec or unqualified shared path still forces full coverage. Token-repository changes
+are not reclassified as service-only auth merely to shorten a run. Version 0.8.1 adds a separate
+auth-persistence profile with candidate test-availability and shared-interface scope proofs,
+real SQL boundaries and focused auth browsers; see the [validation policy](../../docs/VALIDATION_RELEASE.md).
 
 History reads exact issue/PR journal filenames and ignores backups. It groups completed
 validation durations by profile and policy, preserves failures and reused-check counts, and
@@ -145,14 +147,16 @@ or restore disk headroom elsewhere before resuming the owned batch.
 
 ## Documentation decisions and rollout
 
-These commands implement the operational portion of the
-[2026-10-23 retrospective](retrospective-2026-10-23.md). Browser failures still require
-controlled diagnosis; this release does not label #103's timeouts as infrastructure faults,
-relax its full validation or claim its acceptance. The first live continuation and subsequent
-ticket should record their measured outcomes before further policy changes.
+These commands were introduced in 0.8.0 as the operational portion of the
+[2026-10-23 retrospective](retrospective-2026-10-23.md), without changing validation selection.
+The subsequent #103 continuation was stopped because its old policy still selected unrelated
+entity browsers. Version 0.8.1 separately adds the bounded persistence policy described above.
+Use a fresh explicit completion state under the reviewed policy; retain old evidence and spent
+budgets, and never relabel an interrupted check. This correction neither establishes the cause
+of the earlier timeouts nor claims #103's acceptance. Record the focused continuation's outcome.
 
-Updated guides: this runbook, the runner README, batch operations, DEVELOPMENT and CHANGELOG.
-Product FEATURES and ROADMAP remain accurate because CRM behavior is unchanged. The validation
-policy still selects the same gates; DOCUMENTATION_WORKFLOW still governs review and post-merge
+The 0.8.0 rollout updated this runbook, the runner README, batch operations, DEVELOPMENT and
+CHANGELOG. The 0.8.1 policy correction also updates VALIDATION_RELEASE and the FEATURES CI
+description. CRM behavior is unchanged. DOCUMENTATION_WORKFLOW still governs review and post-merge
 verification. Report publication remains an explicit operator action; no external notifications
 or automatic GitHub comments are introduced.

@@ -66,7 +66,13 @@ AUTH_PERSISTENCE_FILES = {
     'internal/mocks/RefreshTokenRepository.go',
 }
 REPOSITORY_INTERFACES = 'internal/repository/interfaces.go'
-REFRESH_INTERFACE = re.compile(r'(?ms)^type RefreshTokenRepository interface \{\n.*?^\}\n?')
+ROTATION_ROOTS = {f'TestRefreshRotation{boundary}{engine}'
+                  for boundary in ('Atomicity', 'Concurrent', 'Validation')
+                  for engine in ('SQLite', 'MySQL')}
+GO_LEXEME = re.compile(
+    r'(?P<ignore>\s+|//[^\n]*|/\*.*?\*/)|'
+    r'(?P<literal>`[^`]*`|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')|'
+    r'(?P<word>[^\W\d]\w*)|(?P<symbol>.)', re.DOTALL)
 TRANSACTION_PATH = re.compile(r'internal/utils/transaction(?:\.go|(?:_[a-z0-9_]+)?_test\.go)$')
 AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
 
@@ -89,6 +95,41 @@ def feature_for(path):
     return None
 
 
+def without_refresh_interface_body(source):
+    """Mask one top-level interface body using Go lexical delimiters.
+
+    Comments and literals cannot supply braces or fake declarations. Matching
+    balanced braces also prevents an inline `}; func ...` from hiding a new
+    top-level declaration. Compilation remains the syntax/semantic authority.
+    """
+    tokens = []
+    for match in GO_LEXEME.finditer(source):
+        if match.lastgroup == 'ignore':
+            continue
+        token = match.group()
+        if match.lastgroup == 'symbol' and (token in ('"', "'", '`') or
+                                            source[match.start():match.start() + 2] == '/*'):
+            return None
+        tokens.append((token if match.lastgroup != 'literal' else '<literal>', match.start(), match.end()))
+    depth, spans = 0, []
+    for index, (token, _, _) in enumerate(tokens):
+        if depth == 0 and [t[0] for t in tokens[index:index + 4]] == [
+                'type', 'RefreshTokenRepository', 'interface', '{']:
+            nested = 1
+            for later in tokens[index + 4:]:
+                nested += (later[0] == '{') - (later[0] == '}')
+                if nested == 0:
+                    spans.append((tokens[index + 3][2], later[1]))
+                    break
+        depth += (token == '{') - (token == '}')
+        if depth < 0:
+            return None
+    if depth or len(spans) != 1:
+        return None
+    start, end = spans[0]
+    return source[:start] + '<refresh-interface-body>' + source[end:]
+
+
 def refresh_interface_only(base, head, *, cwd=None):
     """Prove the shared file changed only inside the refresh-token interface.
 
@@ -97,19 +138,37 @@ def refresh_interface_only(base, head, *, cwd=None):
     """
     if not all(isinstance(ref, str) and re.fullmatch(r'[0-9a-f]{40}', ref) for ref in (base, head)):
         return False
-    bodies = []
+    bodies, masks = [], []
     for ref in (base, head):
         result = subprocess.run(['git', 'show', f'{ref}:{REPOSITORY_INTERFACES}'],
                                 cwd=cwd, capture_output=True, text=True)
-        if result.returncode or len(REFRESH_INTERFACE.findall(result.stdout)) != 1:
+        if result.returncode:
             return False
         bodies.append(result.stdout)
-    return bodies[0] != bodies[1] and (
-        REFRESH_INTERFACE.sub('<refresh-token-interface>\n', bodies[0]) ==
-        REFRESH_INTERFACE.sub('<refresh-token-interface>\n', bodies[1]))
+        masks.append(without_refresh_interface_body(result.stdout))
+    return bodies[0] != bodies[1] and masks[0] is not None and masks[0] == masks[1]
 
 
-def plan(paths, *, full=False, refresh_interface=False):
+def rotation_roots_present(head, *, cwd=None):
+    """Require the six maintained boundary roots in the candidate, not main."""
+    if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
+        return False
+    pattern = r'^func[[:space:]]+TestRefreshRotation(Atomicity|Concurrent|Validation)(SQLite|MySQL)[[:space:]]*\('
+    result = subprocess.run(['git', 'grep', '-h', '-E', pattern, head, '--',
+                             ':(glob)internal/service/auth*_test.go'],
+                            cwd=cwd, capture_output=True, text=True)
+    names = re.findall(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)',
+                       result.stdout, re.MULTILINE)
+    return result.returncode == 0 and len(names) == len(ROTATION_ROOTS) and set(names) == ROTATION_ROOTS
+
+
+def candidate_scope(paths, base, head, *, cwd=None):
+    persistence = any(p in AUTH_PERSISTENCE_FILES or p == REPOSITORY_INTERFACES for p in paths)
+    return dict(refresh_interface=REPOSITORY_INTERFACES in paths and refresh_interface_only(base, head, cwd=cwd),
+                rotation_roots=persistence and rotation_roots_present(head, cwd=cwd))
+
+
+def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
@@ -174,6 +233,8 @@ def plan(paths, *, full=False, refresh_interface=False):
         reasons.append("transactions mixed with other application changes")
     if auth_paths and other_application:
         reasons.append('auth mixed with other application changes')
+    if persistence_paths and not rotation_roots:
+        reasons.append('required refresh rotation boundary roots are not proved at candidate')
     profile = ('full' if reasons else 'migration' if migration_paths else 'transaction' if transaction_paths else
                'auth-persistence' if persistence_paths else 'auth' if auth_paths else
                'runner' if runner_paths and not application_paths else 'contextual')
@@ -245,8 +306,7 @@ def main():
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     paths = changed_paths(args.base, args.head)
-    selected = plan(paths, full=args.full, refresh_interface=(
-        REPOSITORY_INTERFACES in paths and refresh_interface_only(args.base, args.head)))
+    selected = plan(paths, full=args.full, **candidate_scope(paths, args.base, args.head))
     # Deleted/renamed specs cannot make a contextual run silently shrink.
     if any(not (Path("gocrm-ui") / spec).is_file() for spec in selected["specs"]):
         selected = plan(selected["changed_paths"], full=True)

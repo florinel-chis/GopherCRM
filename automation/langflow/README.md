@@ -347,7 +347,9 @@ application suites. Bounded auth service/handler changes use targeted auth/sessi
 API/frontend build checks, and health/login/registration browsers. Bounded refresh-token
 persistence changes add mandatory SQLite/MySQL rotation and transaction boundaries,
 migrations and auth browsers; CI also exercises MariaDB. Shared-interface changes qualify
-only with a base/head proof that other declarations are unchanged. Other shared repositories, schema,
+only with a base/head proof that other declarations are unchanged. Auth-persistence also requires
+all six named SQLite/MySQL rotation boundaries to be present in the candidate. Missing roots,
+other shared repositories, schema,
 middleware and mixed application changes retain the full fallback; explicit database
 acceptance contracts still apply. Transaction-helper-only changes use the shared Go checker
 for SQLite/MySQL boundaries and affected callers, configured migration checks and health smoke.

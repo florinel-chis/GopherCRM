@@ -172,12 +172,11 @@ def main():
             if args.base:
                 if not args.head:
                     parser.error('--base requires --head with a full commit SHA')
-                from .validation import changed_paths, plan, refresh_interface_only, REPOSITORY_INTERFACES
+                from .validation import changed_paths, plan, candidate_scope
                 try:
                     paths = changed_paths(args.base, args.head, cwd=config.checkout)
-                    selected = plan(paths, full=config.validation_mode != 'contextual', refresh_interface=(
-                        REPOSITORY_INTERFACES in paths and
-                        refresh_interface_only(args.base, args.head, cwd=config.checkout)))
+                    selected = plan(paths, full=config.validation_mode != 'contextual',
+                                    **candidate_scope(paths, args.base, args.head, cwd=config.checkout))
                 except ValueError as exc:
                     parser.error(str(exc))
             elif manifest:

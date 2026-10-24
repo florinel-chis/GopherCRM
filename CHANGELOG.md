@@ -105,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refresh-token persistence validation now uses auth/session and transaction boundary checks,
   named SQLite/MySQL rotation regressions, migrations and auth browsers; CI adds MariaDB.
   Shared repository-interface changes qualify only with proof that other declarations are
-  unchanged. Unrelated entity browsers and frontend unit suites are excluded from this
+  unchanged and all six required rotation boundary roots are present in the candidate.
+  Unrelated entity browsers and frontend unit suites are excluded from this
   bounded profile; explicit full/release validation remains complete.
 
 - **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite

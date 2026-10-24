@@ -179,7 +179,8 @@ health/login/registration browsers. Releases retain complete validation.
 Refresh-token persistence has a separate bounded profile with real SQLite/MySQL rotation
 and transaction boundaries, migration checks and health/login/registration browsers. CI
 also covers MariaDB. The shared repository interfaces file qualifies only when its Git diff
-changes the refresh-token interface alone. See the [validation policy](VALIDATION_RELEASE.md)
+changes the refresh-token interface alone and the candidate contains all six rotation boundary
+roots. See the [validation policy](VALIDATION_RELEASE.md)
 for scope and migration of a stopped execution to the reviewed selector.
 
 A password reset link is spent only by a committed reset. `ConfirmPasswordReset` validates the

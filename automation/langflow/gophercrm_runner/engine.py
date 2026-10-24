@@ -341,9 +341,7 @@ class Runner:
     def validation_selection(self, record, paths):
         try:
             selected = validation.plan(paths, full=self.config.validation_mode != 'contextual',
-                refresh_interface=(validation.REPOSITORY_INTERFACES in paths and
-                    validation.refresh_interface_only(record.get('base'), record.get('head'),
-                                                      cwd=record['worktree'])))
+                **validation.candidate_scope(paths, record.get('base'), record.get('head'), cwd=record['worktree']))
         except ValueError as exc:
             raise GateError(str(exc)) from exc
         if any(not (Path(record['worktree']) / 'gocrm-ui' / spec).is_file()

@@ -81,6 +81,10 @@ class AuthChecksTests(unittest.TestCase):
 
     def test_real_selection_covers_auth_and_session_boundaries(self):
         selected = checks.discover()
+        from gophercrm_runner.validation import rotation_roots_present
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=checks.ROOT, text=True).strip()
+        self.assertEqual(rotation_roots_present(head, cwd=checks.ROOT),
+                         checks.PERSISTENCE_ROOTS.issubset(selected['internal/service']))
         self.assertIn('TestAuthLockoutExpiryBoundary', selected['internal/service'])
         self.assertIn('TestAuthLoggingPrivacy_CredentialsAndTokens', selected['internal/service'])
         self.assertIn('TestAuthHandlerTestSuite', selected['internal/handler'])
