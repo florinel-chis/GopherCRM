@@ -32,8 +32,11 @@ lint and unit tests; and selected Playwright specs on MySQL 8, MariaDB 10.11 and
 PRs select health smoke and affected feature specs, with full coverage for shared or unmapped
 application changes. Runner-only changes use hygiene, runner/probe tests, API/frontend build
 health checks and browser health smoke. The bounded auth profile uses auth/session race tests,
-API/frontend builds and health/login/registration browsers; repository/schema/mixed changes
-retain full fallback. The bounded transaction-helper profile uses API build/vet, transaction
+API/frontend builds and health/login/registration browsers. The auth-persistence profile adds
+real SQLite/MySQL rotation and transaction boundaries, migrations and auth browsers, with
+additional MariaDB coverage in CI. It requires all six rotation boundary roots at the candidate;
+shared-interface edits also need proof that only the refresh-token interface body changed.
+Other shared repository/schema/mixed changes retain full fallback. The bounded transaction-helper profile uses API build/vet, transaction
 and caller race regressions, configured migration checks and browser health smoke, with
 SQLite/MySQL locally and additional MariaDB boundaries in CI. The existing empty lead-conversion
 concurrency placeholder remains a reported gap. `make verify` runs the complete non-browser checks

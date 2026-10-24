@@ -110,6 +110,36 @@ class ValidationSelectionTests(fixtures.EngineTests):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
             await runner.validation_checks(record, ['README.md'])
 
+    async def test_auth_persistence_scope_proof_keeps_sql_and_named_acceptance_in_both_engines(self):
+        runner, record = self.selected_runner()
+        record.update(base='a' * 40, head='b' * 40, criteria=[])
+        for name in ['login', 'registration']:
+            (self.checkout / 'gocrm-ui/e2e/tests' / (name + '.spec.ts')).write_text('// fixture\n')
+        paths = ['internal/service/auth_service.go', 'internal/repository/refresh_token_repository.go',
+                 'internal/repository/interfaces.go']
+        with patch('gophercrm_runner.validation.refresh_interface_only', return_value=True) as proof, \
+             patch('gophercrm_runner.validation.rotation_roots_present', return_value=True), \
+             patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await runner.validation_checks(record, paths)
+            external = await PullRequestRunner(runner.config, self.commands).validation_checks(record, paths)
+        proof.assert_called_with(record['base'], record['head'], cwd=record['worktree'])
+        self.assertIn(('python3', 'scripts/ci/check-auth.py', '--persistence'), [c[1] for c in checks])
+        self.assertNotIn(('make', 'verify'), [c[1] for c in checks])
+        ids = [c[0] for c in checks]
+        self.assertLess(ids.index('acceptance-regression'), ids.index('database-0'))
+        database = [c for c in checks if c[0].startswith('database-')]
+        self.assertEqual(database, [c for c in external if c[0].startswith('database-')])
+        self.assertEqual(database[-1][1], DATABASE_CHECKS[-1])
+        for check in database[:2]:
+            self.assertEqual(set(check[1][-1].removeprefix('SPECS=').split()),
+                             {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'})
+        with patch('gophercrm_runner.validation.refresh_interface_only', return_value=False):
+            self.assertEqual(runner.validation_selection(record, paths)['profile'], 'full')
+        with patch('gophercrm_runner.validation.refresh_interface_only', return_value=True), \
+             patch('gophercrm_runner.validation.rotation_roots_present', return_value=True), \
+             patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
+            await runner.validation_checks(record, paths)
+
     async def test_transaction_profile_keeps_database_and_acceptance_without_full_browsers(self):
         runner, record = self.selected_runner()
         paths = ['internal/utils/transaction.go']
