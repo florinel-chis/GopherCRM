@@ -76,7 +76,7 @@ GO_LEXEME = re.compile(
     r'(?P<word>[^\W\d]\w*)|(?P<symbol>.)', re.DOTALL)
 TRANSACTION_PATH = re.compile(r'internal/utils/transaction(?:\.go|(?:_[a-z0-9_]+)?_test\.go)$')
 AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
-MAILER_FILES = {'internal/mailer/smtp.go', 'internal/mailer/mailer.go', 'internal/mailer/log.go'}
+MAILER_FILES = {'internal/mailer/smtp.go'}
 MAILER_TEST = re.compile(r'internal/mailer/[a-z0-9_]+_test\.go$')
 MAILER_REQUIRED_ROOTS = {'TestSMTPDeadlines', 'TestSMTPHeaders', 'TestSMTPTLSAuth',
                          'TestSMTPFailureRedaction'}
@@ -457,9 +457,20 @@ def env_comments_only(base, head, *, cwd=None):
     return active[0] == active[1]
 
 
+def mailer_roots_present(head, *, cwd=None):
+    if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
+        return False
+    result = subprocess.run(['git', 'grep', '-h', '-E', '^func[[:space:]]+TestSMTP', head, '--',
+                             ':(glob)internal/mailer/*_test.go'], cwd=cwd, capture_output=True, text=True)
+    names = re.findall(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)',
+                       result.stdout, re.MULTILINE)
+    return result.returncode == 0 and all(names.count(name) == 1 for name in MAILER_REQUIRED_ROOTS)
+
+
 def candidate_scope(paths, base, head, *, cwd=None):
     persistence = any(p in AUTH_PERSISTENCE_FILES or p == REPOSITORY_INTERFACES for p in paths)
-    return dict(env_comments='.env.example' in paths and env_comments_only(base, head, cwd=cwd),
+    return dict(mailer_roots=any(p in MAILER_FILES or MAILER_TEST.fullmatch(p) for p in paths) and mailer_roots_present(head, cwd=cwd),
+                env_comments='.env.example' in paths and env_comments_only(base, head, cwd=cwd),
                 aeo_roots=any(p in AEO_FILES or AEO_PATH.fullmatch(p) or p in {'cmd/main.go', REPOSITORY_INTERFACES} for p in paths) and aeo_roots_present(head, cwd=cwd),
                 aeo_main='cmd/main.go' in paths and aeo_main_only(base, head, cwd=cwd),
                 aeo_interface=REPOSITORY_INTERFACES in paths and aeo_interface_only(base, head, cwd=cwd),
@@ -467,7 +478,7 @@ def candidate_scope(paths, base, head, *, cwd=None):
                 rotation_roots=persistence and rotation_roots_present(head, cwd=cwd))
 
 
-def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False, env_comments=False):
+def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False, env_comments=False, mailer_roots=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
@@ -537,6 +548,8 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
             reasons.append(f"unmapped path: {name}")
     if aeo_paths and not aeo_roots:
         reasons.append('required AEO startup/shutdown and database roots are not proved at candidate')
+    if mailer_paths and not mailer_roots:
+        reasons.append('required SMTP boundary tests are absent from candidate')
     if mailer_paths and (aeo_paths or auth_paths or transaction_paths or migration_paths or other_application):
         reasons.append('mailer transport mixed with other application changes')
     if aeo_paths and (auth_paths or transaction_paths or migration_paths or other_application):

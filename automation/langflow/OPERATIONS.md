@@ -152,7 +152,7 @@ Include that literal documentation path before freezing when its guidance change
 settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
 plan before continuing. Install reviewed main and verify module identity as above.
 
-Version 0.8.5 adds a mailer-only profile with four required SMTP boundary roots and focused
+Version 0.8.5 adds a bounded SMTP transport profile with four required boundary roots and focused
 delivery callers. Its checker rejects missing/skipped tests; it does not need a SQL server
 for SMTP fixtures. The local browser set is SQLite health smoke; CI retains all-engine health
 and migration gates. Include operational SMTP documentation and environment-example comments

@@ -22,26 +22,27 @@ spec.loader.exec_module(profiles)
 class MailerValidationTests(unittest.TestCase):
     def test_only_mailer_scope_uses_transport_callers_and_health(self):
         paths = ['internal/mailer/smtp.go', 'internal/mailer/smtp_test.go', 'README.md']
-        selected = v.plan(paths)
+        selected = v.plan(paths, mailer_roots=True)
         self.assertEqual(selected['profile'], 'mailer')
         self.assertEqual(selected['specs'], [v.SMOKE])
         self.assertEqual(v.core_commands([('make', 'verify'), ('custom',)], selected), [
             ('make', 'verify-hygiene'), ('python3', 'scripts/ci/check-go.py', 'mailer'),
             ('npm', 'ci', '--prefix', 'gocrm-ui'), ('custom',)])
         for name in v.MAILER_FILES:
-            self.assertEqual(v.plan([name])['profile'], 'mailer')
-        for extra in ['internal/mailer/new_transport.go', 'internal/service/auth_service.go',
+            self.assertEqual(v.plan([name], mailer_roots=True)['profile'], 'mailer')
+        for extra in ['internal/mailer/new_transport.go', 'internal/mailer/mailer.go', 'internal/mailer/log.go', 'internal/service/auth_service.go',
                       'internal/service/form_service.go', 'internal/service/form_service_test.go',
                       'internal/repository/user_repository.go', 'internal/config/config.go',
                       'internal/models/user.go', 'internal/utils/log_error.go', 'cmd/main.go',
                       'migrations/022.sql', 'go.mod', 'gocrm-ui/src/api/client.ts',
                       'internal/aeo/engine.go', 'internal/utils/transaction.go', 'unknown.go']:
             with self.subTest(extra=extra):
-                self.assertEqual(v.plan(paths + [extra], aeo_roots=True)['profile'], 'full')
-        mixed = v.plan(paths + ['scripts/ci/check-go.py'])
+                self.assertEqual(v.plan(paths + [extra], aeo_roots=True, mailer_roots=True)['profile'], 'full')
+        mixed = v.plan(paths + ['scripts/ci/check-go.py'], mailer_roots=True)
         self.assertEqual(mixed['profile'], 'mailer')
         self.assertIn(('make', 'verify-runner'), v.core_commands([], mixed))
-        full = v.plan(paths, full=True)
+        self.assertEqual(v.plan(paths)['profile'], 'full')
+        full = v.plan(paths, full=True, mailer_roots=True)
         self.assertEqual(full['profile'], 'full')
         self.assertEqual(full['specs'], [])
         self.assertEqual(v.core_commands([], full, explicit_full=True), [
@@ -65,11 +66,29 @@ class MailerValidationTests(unittest.TestCase):
             source.write_text('package mailer\n// Bounded SMTP transport.\n')
             env.write_text('# SMTP operations have a deadline\nDB_HOST=localhost\n')
             (root / 'README.md').write_text('SMTP operations are bounded.\n')
+            roots = root / 'internal/mailer/smtp_test.go'
+            roots.write_text('package mailer\nimport "testing"\n' + ''.join(
+                f'func {name}(t *testing.T) {{}}\n' for name in sorted(v.MAILER_REQUIRED_ROOTS)))
             git('add', '.'); git('commit', '-m', 'candidate'); head = git('rev-parse', 'HEAD')
             paths = v.changed_paths(base, head, cwd=root)
             selected = v.plan(paths, **v.candidate_scope(paths, base, head, cwd=root))
             self.assertEqual(selected['profile'], 'mailer')
             self.assertEqual(selected['specs'], [v.SMOKE])
+            self.assertFalse(v.mailer_roots_present(base, cwd=root))
+            self.assertFalse(v.mailer_roots_present('HEAD', cwd=root))
+            complete = roots.read_text()
+            for name in sorted(v.MAILER_REQUIRED_ROOTS):
+                roots.write_text(complete.replace(f'func {name}(t *testing.T) {{}}\n', ''))
+                git('add', '.'); git('commit', '-m', 'missing root')
+                missing = git('rev-parse', 'HEAD')
+                self.assertEqual(v.plan(paths, **v.candidate_scope(paths, base, missing, cwd=root))['profile'], 'full')
+                # A dirty worktree cannot supply proof for a committed candidate.
+                roots.write_text(complete)
+                self.assertFalse(v.mailer_roots_present(missing, cwd=root))
+            roots.write_text(complete + complete.splitlines()[-1] + '\n')
+            git('add', '.'); git('commit', '-m', 'duplicate root')
+            self.assertFalse(v.mailer_roots_present(git('rev-parse', 'HEAD'), cwd=root))
+            roots.write_text(complete)
             env.write_text('# SMTP operations have a deadline\nDB_HOST=remote\n')
             git('add', '.'); git('commit', '-m', 'active setting'); head = git('rev-parse', 'HEAD')
             self.assertEqual(v.plan(paths, **v.candidate_scope(paths, base, head, cwd=root))['profile'], 'full')

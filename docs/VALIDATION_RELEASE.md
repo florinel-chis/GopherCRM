@@ -114,16 +114,19 @@ database connection variables from Go subprocesses,
 while retaining `TEST_MYSQL_DSN` for disposable fixtures. This applies equally to local and
 CI checks, including MariaDB; browser/server connection settings remain unchanged.
 
-The bounded `mailer` profile covers only `internal/mailer/smtp.go`, `mailer.go`, `log.go`
-and package test files, plus documentation and proven comment-only `.env.example` edits.
-Unmapped production helpers, service/handler changes, schema/configuration changes and other
-mixed application changes retain full fallback. Workflow changes add runner checks.
+The bounded `mailer` profile covers only `internal/mailer/smtp.go` and package test files,
+plus documentation and proven comment-only `.env.example` edits.
+The mailer interface/factory, log transport, unmapped production helpers, service/handler
+changes, schema/configuration changes and other mixed application changes retain full fallback. Workflow changes add runner checks.
 
 `python3 scripts/ci/check-go.py mailer` runs API build, vet and uncached race checks for all
 mailer tests, log-error sanitation and eight existing password-reset/form mail caller roots.
 It requires `TestSMTPDeadlines`, `TestSMTPHeaders`, `TestSMTPTLSAuth` and
 `TestSMTPFailureRedaction`, and every selected caller root, before starting Go commands.
-Missing or skipped roots fail; they do not silently reduce coverage. The source boundary has
+Selection requires all four SMTP roots exactly once at the committed candidate. Missing
+or duplicate roots retain full fallback; these roots will be supplied by the SMTP behavior
+fix, not this policy prerequisite. The checker also rejects missing or skipped roots as
+defense in depth; they do not silently reduce coverage. The source boundary has
 no persistence change, so local browsers need only SQLite health smoke. SMTP behavior is
 covered by protocol fixtures, and no login/form browser pretends to test a real SMTP relay.
 CI keeps frontend build, health smoke on all three engines and the existing MySQL/MariaDB

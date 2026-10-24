@@ -586,7 +586,7 @@ comment-only `.env.example` edit needs the shared committed proof to retain a bo
 profile; changing active settings or unsupported syntax retains full fallback. A
 changed candidate needs another inspection. See [operations](../automation/langflow/OPERATIONS.md).
 
-For changes confined to the mailer transport package, `python3 scripts/ci/check-go.py mailer`
+For changes confined to `internal/mailer/smtp.go` and mailer package tests, `python3 scripts/ci/check-go.py mailer`
 requires the SMTP deadline/header/TLS/privacy roots and selected password-reset/form delivery
 callers, then runs API build, vet and uncached race checks. Local browser coverage is SQLite
 health smoke; CI retains all engine health and migration gates. No SMTP account or external
