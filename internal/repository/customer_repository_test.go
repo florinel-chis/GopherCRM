@@ -37,8 +37,10 @@ func setupCustomerExportDB(t *testing.T) *gorm.DB {
 // The export exists to produce the WHOLE book of customers, so the one thing it
 // must never do is silently stop at a page boundary. The row count here is
 // comfortably past the 20/100 limits the list endpoints work in and past the
-// repository's own batch size, so a batching bug that dropped or repeated a
-// batch shows up as a wrong count rather than as a plausible-looking file.
+// 500-row batches the export used to be read in, so a read that dropped or
+// repeated a batch shows up as a wrong count rather than as a plausible-looking
+// file. Sorted traversals of the same size, where the old batching lost rows
+// (#105), are covered by customer_export_traversal_test.go.
 func TestListAllForExport_ReturnsEveryRowRegardlessOfPageSize(t *testing.T) {
 	db := setupCustomerExportDB(t)
 	repo := NewCustomerRepository(db)

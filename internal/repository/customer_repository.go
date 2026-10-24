@@ -7,6 +7,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type customerRepository struct {
@@ -175,25 +176,32 @@ func (r *customerRepository) Search(query string, offset, limit int, sortBy, sor
 	return customers, err
 }
 
-// exportBatchSize is how many customers are read per round trip by
-// ListAllForExport. Big enough that a full export is a handful of queries,
-// small enough that no single result set has to be held in the driver at once.
-const exportBatchSize = 500
-
 // ListAllForExport returns every customer matching the optional search term,
 // with no pagination at all — the export is a whole-book download, and a page
 // boundary in the middle of it would produce a file that looks complete and is
 // not.
 //
-// Rows are read in batches rather than in one unbounded query so the driver
-// never has to materialise the entire table in a single result set. The
-// accumulated slice is still held in memory, which is the deliberate trade: this
-// deployment's customer table is small, and the alternative (streaming rows
-// straight into the HTTP response) would mean a mid-stream failure arriving
+// The rows are read by ONE ordered statement. An earlier version read them in
+// primary-key batches through GORM's FindInBatches while also applying the
+// requested ORDER BY; FindInBatches continues each batch with `id > last id of
+// the previous batch`, which is only a valid cursor when the rows are ordered
+// by id. Under any other ordering the continuation skipped every customer whose
+// id was below the previous batch's last id and could repeat others, so a
+// sorted export of more than one batch silently lost rows (#105). A single
+// statement has no batch boundary to get wrong, is one consistent read on both
+// MySQL (InnoDB) and SQLite, and costs the server one sort instead of one per
+// batch. The result still lands in one slice before the handler writes a byte,
+// which is the same memory footprint the batched read accumulated; streaming
+// the file is deliberately not done, because a mid-stream failure would arrive
 // after a 200 and half a file.
 //
-// FindInBatches drives an ordered keyset scan on the primary key by itself, so
-// this is portable across MySQL and SQLite without any driver-specific SQL.
+// Ordering is deterministic. With a sort column the rows are ordered by that
+// column and then by id, both in the requested direction, so duplicate values
+// (two customers at the same company, two rows created in the same millisecond,
+// two emails equal under MySQL's case-insensitive collation, NULLs in a legacy
+// nullable column) always come out in the same order and a descending export is
+// the exact reverse of the ascending one. Without a sort column the rows are
+// ordered by id ascending, which is what the primary-key batching produced.
 //
 // Soft-deleted rows are excluded by GORM's own scope: an erased customer must
 // never reappear in an export.
@@ -211,24 +219,27 @@ func (r *customerRepository) ListAllForExport(search, sortBy, sortOrder string) 
 		)
 	}
 
+	descending := false
 	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
+		column, direction, err := utils.ValidateSort("customers", sortBy, sortOrder)
 		if err != nil {
 			return nil, err
 		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+		descending = direction == "desc"
+		db = db.Order(clause.OrderByColumn{
+			Column: clause.Column{Table: clause.CurrentTable, Name: column},
+			Desc:   descending,
+		})
 	}
+	// The id tie-breaker makes the order total: no two live rows share one.
+	db = db.Order(clause.OrderByColumn{
+		Column: clause.Column{Table: clause.CurrentTable, Name: "id"},
+		Desc:   descending,
+	})
 
 	customers := make([]models.Customer, 0)
-	var batch []models.Customer
-	result := db.FindInBatches(&batch, exportBatchSize, func(tx *gorm.DB, _ int) error {
-		customers = append(customers, batch...)
-		return nil
-	})
-	if result.Error != nil {
-		return nil, result.Error
+	if err := db.Find(&customers).Error; err != nil {
+		return nil, err
 	}
 	return customers, nil
 }
