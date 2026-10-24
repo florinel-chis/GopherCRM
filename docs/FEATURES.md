@@ -521,3 +521,7 @@ and interface scope proofs and six lifecycle roots; this policy does not itself 
 the queued runtime fix. Optional candidate inspection stops the runner before checks until
 the operator records the exact plan. See [validation](VALIDATION_RELEASE.md) and
 [operations](../automation/langflow/OPERATIONS.md).
+
+Comment-only changes to the root `.env.example` can accompany these bounded profiles
+when the shared committed proof preserves every active setting. Unsupported syntax and
+actual setting changes retain full fallback; explicit full/release gates are unchanged.

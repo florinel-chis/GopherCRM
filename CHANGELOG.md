@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then, the process exits without closing the database and the next boot's reconciliation fails
   the row, as after a crash. (#111)
 
+- A conservative committed proof for comment-only `.env.example` edits, allowing required
+  configuration guidance to accompany bounded validation without relaxing active-setting,
+  mixed-scope or explicit full/release gates.
+
 - A shared bounded AEO runtime validation profile with committed startup/interface scope
   proofs, required lifecycle roots, focused Go checks and health/provider browsers. SQL,
   MariaDB migration coverage and explicit full/release gates remain mandatory.

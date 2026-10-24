@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 7
+POLICY_VERSION = 8
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -416,16 +416,54 @@ def aeo_interface_only(base, head, *, cwd=None):
     return masks[0] is not None and masks[0] == masks[1]
 
 
+def env_comments_only(base, head, *, cwd=None):
+    """Prove only comments/blank lines changed in the root configuration example.
+
+    Keep this deliberately narrower than a dotenv parser: quoted, escaped,
+    expanded or multiline assignments cannot grant the exception. Active
+    simple assignments must be byte-for-byte identical and in the same order.
+    """
+    if not all(isinstance(ref, str) and re.fullmatch(r'[0-9a-f]{40}', ref) for ref in (base, head)):
+        return False
+    active = []
+    for ref in (base, head):
+        mode = subprocess.run(['git', 'ls-tree', ref, '--', '.env.example'],
+                              cwd=cwd, capture_output=True, text=True)
+        if mode.returncode or not re.fullmatch(r'100644 blob [0-9a-f]{40}\t\.env\.example\n', mode.stdout):
+            return False
+        result = subprocess.run(['git', 'show', f'{ref}:.env.example'],
+                                cwd=cwd, capture_output=True)
+        if result.returncode:
+            return False
+        try:
+            content = result.stdout.decode('utf-8')
+        except UnicodeError:
+            return False
+        if any(not (char.isprintable() or char in '\n\t') for char in content):
+            return False
+        lines = []
+        for line in content.split('\n'):
+            stripped = line.strip(' \t')
+            if not stripped or stripped.startswith('#'):
+                continue
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:@%+,\-]*', stripped):
+                return False
+            lines.append(line)
+        active.append(lines)
+    return active[0] == active[1]
+
+
 def candidate_scope(paths, base, head, *, cwd=None):
     persistence = any(p in AUTH_PERSISTENCE_FILES or p == REPOSITORY_INTERFACES for p in paths)
-    return dict(aeo_roots=any(p in AEO_FILES or AEO_PATH.fullmatch(p) or p in {'cmd/main.go', REPOSITORY_INTERFACES} for p in paths) and aeo_roots_present(head, cwd=cwd),
+    return dict(env_comments='.env.example' in paths and env_comments_only(base, head, cwd=cwd),
+                aeo_roots=any(p in AEO_FILES or AEO_PATH.fullmatch(p) or p in {'cmd/main.go', REPOSITORY_INTERFACES} for p in paths) and aeo_roots_present(head, cwd=cwd),
                 aeo_main='cmd/main.go' in paths and aeo_main_only(base, head, cwd=cwd),
                 aeo_interface=REPOSITORY_INTERFACES in paths and aeo_interface_only(base, head, cwd=cwd),
                 refresh_interface=REPOSITORY_INTERFACES in paths and refresh_interface_only(base, head, cwd=cwd),
                 rotation_roots=persistence and rotation_roots_present(head, cwd=cwd))
 
 
-def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False):
+def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False, env_comments=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
@@ -439,7 +477,8 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         if (not name or "\\" in name or path.is_absolute() or ".." in path.parts
                 or any(ord(c) < 32 for c in name)):
             raise ValueError("Invalid changed path")
-        if name in DOC_FILES or name.startswith("docs/") and name.endswith(".md"):
+        if (name in DOC_FILES or name.startswith("docs/") and name.endswith(".md")
+                or name == '.env.example' and env_comments):
             continue
         if (name in AEO_FILES or AEO_PATH.fullmatch(name) or
                 name == 'cmd/main.go' and aeo_main or name == REPOSITORY_INTERFACES and aeo_interface):
