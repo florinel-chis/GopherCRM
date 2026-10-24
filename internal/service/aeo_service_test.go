@@ -13,6 +13,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -914,6 +915,10 @@ func (r *statefulAEORepo) CreateRun(run *models.AEORun) error {
 }
 
 func (r *statefulAEORepo) MarkStaleRunsFailed(time.Time) (int64, error) { return 0, nil }
+
+// WithContext must keep answering from this state: the embedded mock's version
+// would hand back the bare mock and bypass the overrides above.
+func (r *statefulAEORepo) WithContext(context.Context) repository.AEORepository { return r }
 
 func (r *statefulAEORepo) createdRuns() int {
 	r.mu.Lock()

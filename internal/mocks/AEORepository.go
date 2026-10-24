@@ -3,6 +3,7 @@
 package mocks
 
 import (
+	context "context"
 	time "time"
 
 	models "github.com/florinel-chis/gophercrm/internal/models"
@@ -283,6 +284,29 @@ func (_m *AEORepository) WithTx(tx *gorm.DB) repository.AEORepository {
 		r0 = ret.Get(0).(repository.AEORepository)
 	}
 	return r0
+}
+
+// WithContext provides a mock function with given fields: ctx.
+//
+// Binding a context is plumbing, not behaviour a suite scripts: the service and
+// the engine bind every run to a cancellation context before reading or
+// writing, so without this shortcut every StartRun expectation would also have
+// to arm WithContext. When no expectation is registered the mock returns
+// itself, so the scripted reads and writes keep answering; a registered
+// expectation is honoured like any other.
+func (_m *AEORepository) WithContext(ctx context.Context) repository.AEORepository {
+	for _, call := range _m.ExpectedCalls {
+		if call.Method == "WithContext" {
+			ret := _m.Called(ctx)
+
+			var r0 repository.AEORepository
+			if ret.Get(0) != nil {
+				r0 = ret.Get(0).(repository.AEORepository)
+			}
+			return r0
+		}
+	}
+	return _m
 }
 
 // NewAEORepository creates a new instance of AEORepository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

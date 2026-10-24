@@ -374,8 +374,19 @@ category and the numeric HTTP status, never the provider's response text. See
 [docs/AEO_SECURITY.md](docs/AEO_SECURITY.md) for the syntax and the migration checklist.
 
 `AEO_SCHEDULE_ENABLED` (default `true`) and `AEO_SCHEDULE_HOUR` (default `6`, server local time)
-control the daily run. With no key set at all the module still boots; starting a run then returns
-503 instead of recording a run that could never produce an answer.
+control the daily run. The scheduler is armed whenever it is enabled, with or without a key at
+boot: engines are resolved when the hour arrives, so a key saved in Settings is used by the next
+scheduled run without a restart. With no key set at all the module still boots; starting a run
+then returns 503 instead of recording a run that could never produce an answer, and a scheduled
+tick that finds no profile, key or active prompt is logged once and skipped until the next day.
+
+**Shutdown.** On SIGINT/SIGTERM the process stops admitting runs (a run requested while draining
+answers 503 `SHUTTING_DOWN`), cancels the scheduler and every run in flight, waits for them to
+finalize, and only then closes the database. An interrupted run ends `failed`, or `partial` when
+some answers were already recorded; queries cut short count as failed and are not stored as
+answers. The drain waits at most 15 seconds. If a provider call or database write still has not
+released by then, the process exits without closing the database and the run row left in
+`running` is failed by the next start's reconciliation, exactly as after a crash.
 
 Prompt generation (`POST /aeo/prompts/generate`) deliberately runs on one named engine rather than
 whatever happens to be configured, so its output keeps a consistent shape. Anthropic is the default;

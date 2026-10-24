@@ -82,6 +82,7 @@ type fakeAEORepo struct {
 	answers   []models.AEOAnswer
 	citations [][]models.AEOCitation
 	runs      []models.AEORun
+	contexts  []context.Context
 
 	createErr error
 	updateErr error
@@ -185,6 +186,25 @@ func (r *fakeAEORepo) CountAnswersWithCitations(time.Time, time.Time) (int64, er
 }
 func (r *fakeAEORepo) WithTx(*gorm.DB) repository.AEORepository { return r }
 
+// WithContext records the context each binding was asked for, so a test can
+// prove the run's writes are bound to the run context and the finalizing write
+// to a fresh one, then answers from the same state.
+func (r *fakeAEORepo) WithContext(ctx context.Context) repository.AEORepository {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.contexts = append(r.contexts, ctx)
+	return r
+}
+
+// boundContexts returns the contexts handed to WithContext, in order.
+func (r *fakeAEORepo) boundContexts() []context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]context.Context, len(r.contexts))
+	copy(out, r.contexts)
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -221,6 +241,10 @@ func TestNewEngineAppliesDefaults(t *testing.T) {
 	engine = NewEngine(&fakeAEORepo{}, nil, EngineOptions{Concurrency: 2, QueryTimeout: 5 * time.Second})
 	assert.Equal(t, 2, engine.opts.Concurrency)
 	assert.Equal(t, 5*time.Second, engine.opts.QueryTimeout)
+	assert.Equal(t, defaultCleanupTimeout, engine.opts.CleanupTimeout)
+
+	engine = NewEngine(&fakeAEORepo{}, nil, EngineOptions{CleanupTimeout: time.Second})
+	assert.Equal(t, time.Second, engine.opts.CleanupTimeout)
 }
 
 func TestEngineExecuteRunStatuses(t *testing.T) {
@@ -369,6 +393,13 @@ func (r strictLengthRepo) CreateAnswerWithCitations(answer *models.AEOAnswer, ci
 	return r.fakeAEORepo.CreateAnswerWithCitations(answer, citations)
 }
 
+// WithContext keeps the strict check in front of the writes; the embedded
+// fake's version would return the fake itself and bypass it.
+func (r strictLengthRepo) WithContext(ctx context.Context) repository.AEORepository {
+	r.fakeAEORepo.WithContext(ctx)
+	return r
+}
+
 func TestEngineKeepsTheAnswerWhenOneCitationIsTooLong(t *testing.T) {
 	repo := strictLengthRepo{&fakeAEORepo{}}
 	longURL := "https://globex.com/" + strings.Repeat("a", 1100)
@@ -476,6 +507,10 @@ func TestEngineAppliesPerQueryTimeout(t *testing.T) {
 	assert.Equal(t, RunStatusFailed, run.Status)
 }
 
+// A run whose context is already cancelled dispatches nothing: every query is
+// counted as lost, no answer row is written for a call that never happened, and
+// the row is still finalized — on a fresh context — so it does not stay
+// "running" for the overlap guard to trip on.
 func TestEngineHonoursACancelledParentContext(t *testing.T) {
 	repo := &fakeAEORepo{}
 	provider := &fakeProvider{name: "slow", model: "s1", delay: 2 * time.Second}
@@ -485,11 +520,100 @@ func TestEngineHonoursACancelledParentContext(t *testing.T) {
 	cancel()
 
 	engine := NewEngine(repo, []Provider{provider}, EngineOptions{})
-	require.NoError(t, engine.Execute(ctx, run, enginePrompts("q1"), testProfile()))
+	err := engine.Execute(ctx, run, enginePrompts("q1", "q2"), testProfile())
+	require.ErrorIs(t, err, context.Canceled)
 
 	answers, _ := repo.snapshot()
-	require.Len(t, answers, 1)
-	assert.Equal(t, "slow: request canceled", answers[0].Error)
+	assert.Empty(t, answers, "a cancelled query is not evidence about the brand")
+	assert.EqualValues(t, 0, provider.calls.Load(), "nothing is dispatched after cancellation")
+
+	assert.Equal(t, RunStatusFailed, run.Status)
+	assert.Equal(t, 2, run.TotalQueries)
+	assert.Equal(t, 2, run.FailedQueries)
+	require.NotNil(t, run.CompletedAt)
+	require.Len(t, repo.runs, 1, "the interrupted run is finalized exactly once")
+	assert.Equal(t, RunStatusFailed, repo.runs[0].Status)
+}
+
+// Cancelling a run mid-flight reaches the provider call and is observed by the
+// repository binding: answer writes carry the run context, the finalizing write
+// a live one, and the recorded progress decides between partial and failed.
+func TestEngineCancellationReachesProviderAndWrites(t *testing.T) {
+	repo := &fakeAEORepo{}
+	fast := &fakeProvider{name: "fast", model: "f1", answer: ProviderAnswer{Text: "Acme leads."}}
+	slow := &fakeProvider{name: "slow", model: "s1", delay: time.Minute, answer: ProviderAnswer{Text: "Acme."}}
+	run := newTestRun()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Concurrency 1 serializes the tasks: the fast provider's answer lands
+	// first, then the slow call is in flight when the run is cancelled.
+	engine := NewEngine(repo, []Provider{fast, slow}, EngineOptions{Concurrency: 1})
+	done := make(chan error, 1)
+	go func() { done <- engine.Execute(ctx, run, enginePrompts("q1"), testProfile()) }()
+
+	require.Eventually(t, func() bool { return slow.inFlght.Load() == 1 }, 5*time.Second, time.Millisecond,
+		"the slow provider must be in flight before the run is cancelled")
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Execute did not return after cancellation: the provider call was not released")
+	}
+	assert.EqualValues(t, 0, slow.inFlght.Load(), "the cancelled call returned")
+
+	answers, _ := repo.snapshot()
+	require.Len(t, answers, 1, "the answer recorded before cancellation is kept; the cancelled one is not written")
+	assert.Equal(t, "fast", answers[0].Provider)
+
+	assert.Equal(t, RunStatusPartial, run.Status, "recorded progress plus a lost query is partial")
+	assert.Equal(t, 2, run.TotalQueries)
+	assert.Equal(t, 1, run.FailedQueries)
+	require.NotNil(t, run.CompletedAt)
+
+	contexts := repo.boundContexts()
+	require.Len(t, contexts, 2, "one binding for the run's writes, one for the finalizing write")
+	assert.ErrorIs(t, contexts[0].Err(), context.Canceled, "answer writes are bound to the run context")
+	assert.NoError(t, contexts[1].Err(), "the finalizing write runs on a context that is still alive")
+	_, hasDeadline := contexts[1].Deadline()
+	assert.True(t, hasDeadline, "the cleanup context is bounded")
+}
+
+// blockingUpdateRepo blocks the finalizing write until the context it was
+// bound with expires, the way a database that is holding the lock would.
+type blockingUpdateRepo struct {
+	*fakeAEORepo
+	bound context.Context
+}
+
+func (r *blockingUpdateRepo) WithContext(ctx context.Context) repository.AEORepository {
+	r.fakeAEORepo.WithContext(ctx)
+	return &blockingUpdateRepo{fakeAEORepo: r.fakeAEORepo, bound: ctx}
+}
+
+func (r *blockingUpdateRepo) UpdateRun(run *models.AEORun) error {
+	<-r.bound.Done()
+	return r.bound.Err()
+}
+
+// The finalizing write is bounded: a blocked database cannot hold the executor
+// — and therefore shutdown — hostage; the row is left for stale-run recovery.
+func TestEngineFinalizationIsBoundedWhenTheDatabaseBlocks(t *testing.T) {
+	repo := &blockingUpdateRepo{fakeAEORepo: &fakeAEORepo{}}
+	provider := &fakeProvider{name: "alpha", model: "a1", answer: ProviderAnswer{Text: "Acme."}}
+	run := newTestRun()
+
+	engine := NewEngine(repo, []Provider{provider}, EngineOptions{CleanupTimeout: 50 * time.Millisecond})
+
+	started := time.Now()
+	require.NoError(t, engine.Execute(context.Background(), run, enginePrompts("q1"), testProfile()))
+	assert.Less(t, time.Since(started), 5*time.Second, "finalization gave up at its own deadline")
+
+	assert.Equal(t, RunStatusCompleted, run.Status, "the in-memory row is classified even when the write failed")
+	assert.Empty(t, repo.fakeAEORepo.runs, "nothing was written: the row stays running for recovery")
 }
 
 func TestEngineBoundsConcurrency(t *testing.T) {

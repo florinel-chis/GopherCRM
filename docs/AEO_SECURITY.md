@@ -186,6 +186,32 @@ the call outside the CRM with your own tooling.
 6. After restarting, check the startup log for `AEO egress policy is malformed` and the provider
    log for `endpoint is not permitted by the egress policy`.
 
+## Shutdown and interrupted runs
+
+Runs are owned by the process that started them (`service.AEORuntime`). On SIGINT/SIGTERM:
+
+1. The scheduler is cancelled and run admission closes before any join. A `POST /aeo/runs` or `POST /aeo/prompts/{id}/run` that arrives while
+   the process drains is answered 503 `SHUTTING_DOWN`; nothing new reaches a provider.
+2. Every run in flight — manual, scheduled or single-prompt — is cancelled. The cancellation
+   reaches the provider HTTP calls (the request is aborted; the key is not re-sent) and the
+   repository writes, which are bound to the run context. It also interrupts a scheduled start
+   waiting for a database connection, so shutdown can join the scheduler without deadlocking.
+3. Each interrupted run is finalized on a short, independent cleanup context (5 s): the row
+   leaves `running` for `failed`, or `partial` when some answers were already recorded, with
+   `completed_at` and `failed_queries` set. Queries that were cut short or never dispatched are
+   counted as failed but **not** stored as answers; a cancelled call is not evidence about the
+   brand, and the categories `canceled`/`timeout` therefore do not appear from a shutdown.
+4. The process joins the owned runs and scheduler under the same 15 s deadline.
+5. Only once background work and HTTP requests have drained does the process close the database handle.
+
+**Limit.** The drain waits at most 15 s. A provider or database write that ignores cancellation
+past that point is not abandoned by closing the pool under it: the process exits without closing
+the database (logged as `AEO background work did not drain before the shutdown deadline`), the
+SQLite WAL is recovered on the next open, and the run row left in `running` is failed by the next
+boot's reconciliation, the same path a crash takes. Its remaining results are lost. Two API
+processes sharing one database still each arm a scheduler and each admit a run; the ownership is
+per process.
+
 ## Regression coverage
 
 No test reaches a real provider or uses a real credential. The tests inject a scripted resolver,
@@ -203,3 +229,5 @@ policy. Production defaults are not weakened, and no `localhost` or `.test` spec
 | `TestAEOFailureSanitization` | `internal/aeo` | All providers: SDK errors, Gemini envelopes, non-JSON/oversized bodies, transport/TLS/DNS, cancellation, redirects; reflected fake keys and logger capture |
 | `TestAEOFailurePersistence` | `internal/aeo` | Engine repository boundary: bounded `AEOAnswer.Error`, counts, status, hostile errors and panics, success path |
 | `TestAEOGenerationFailureSanitization` | `internal/service` | Prompt generation with hostile errors and panics, captured logs, success path |
+| `TestAEORuntimeStartup`, `TestAEORuntimeShutdown` | `cmd` | Real startup wiring on SQLite with a loopback stub authorized through the ordinary local-origin exception: scheduler armed with no boot key, key stored after boot used at the due tick (the request carries the stored key), quiet skip when unconfigured, disabled scheduling arms no timer; stop cancels the in-flight provider request, joins the scheduler, persists terminal state before the database closes, and the drain deadline holds against a blocked SQLite write; a scheduled admission waiting for a pooled connection is cancelled before joining the scheduler |
+| `TestAEORunLifecycle{SQLite,MySQL}`, `TestAEOConcurrentShutdown{SQLite,MySQL}` | `internal/service` | Real repository and engine on SQLite and disposable MySQL: interrupted manual/scheduled/single-prompt runs persist `failed`/`partial`, cancellation reaches provider gates and blocked writes, finalization uses a live bounded context, a failed finalization is recovered by `ReconcileRunningRuns`, no late writes after a successful join; concurrent manual/scheduled starts admit one run, shutdown does not deadlock on a start blocked in the database, nothing starts after shutdown, repeated/concurrent shutdown is safe, uncooperative providers hold only the deadline |

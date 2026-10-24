@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,6 +87,18 @@ func NewAEORepository(db *gorm.DB) AEORepository {
 
 func (r *aeoRepository) WithTx(tx *gorm.DB) AEORepository {
 	return &aeoRepository{db: tx}
+}
+
+// WithContext binds every statement of the returned repository to ctx. GORM
+// hands the context to database/sql, so a cancelled ctx aborts a statement
+// waiting for a pooled connection or for the database lock: on MySQL the driver
+// kills the in-flight query, on SQLite the driver interrupts it at the next
+// statement boundary. A nil ctx keeps the receiver's existing session.
+func (r *aeoRepository) WithContext(ctx context.Context) AEORepository {
+	if ctx == nil {
+		return r
+	}
+	return &aeoRepository{db: r.db.WithContext(ctx)}
 }
 
 // ---------------------------------------------------------------------------

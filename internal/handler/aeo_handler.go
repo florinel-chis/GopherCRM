@@ -726,6 +726,12 @@ func (h *AEOHandler) respondError(c *gin.Context, logger *logrus.Entry, err erro
 	case errors.Is(err, apperrors.ErrNoProvidersConfigured):
 		logger.WithError(utils.LogError(err)).Warn("No AEO providers configured")
 		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDERS_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, service.ErrAEOShuttingDown):
+		// The process is draining: admission is closed so the run would be
+		// cancelled before it could do anything. 503 tells the client to retry
+		// against the restarted process rather than treat it as its own fault.
+		logger.WithError(utils.LogError(err)).Warn("AEO run refused: the runtime is shutting down")
+		utils.RespondError(c, http.StatusServiceUnavailable, "SHUTTING_DOWN", err.Error(), nil)
 	case errors.Is(err, apperrors.ErrGenerationProviderNotConfigured):
 		logger.WithError(utils.LogError(err)).Warn("Prompt generation provider not configured")
 		utils.RespondError(c, http.StatusServiceUnavailable, "PROVIDER_NOT_CONFIGURED", err.Error(), nil)
