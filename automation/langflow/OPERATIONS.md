@@ -180,6 +180,18 @@ or restore disk headroom elsewhere before resuming the owned batch.
 
 ## Documentation decisions and rollout
 
+When a reviewed policy correction requires a fresh completion, preserve the old journals,
+receipts, spent calls and absolute deadline. Version 0.8.4 permits `max_repair_rounds: 0` in
+the fresh policy when no repair rounds remain. A failed check or rejected review then stops
+before reserving a repair or calling an implementation provider; no gate is waived. Record
+the old and remaining allowances in the migration evidence. Do not edit an admitted policy.
+
+The `check-go.py` profiles (AEO, transaction and migration) remove application
+`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`,
+`DB_NAME`, `DB_DRIVER` and `DB_PATH` only from their Go subprocesses. They retain
+`TEST_MYSQL_DSN` for disposable SQL fixtures. This prevents inherited server settings from
+polluting configuration-default tests locally and in CI; browser/server settings are unchanged.
+
 These commands were introduced in 0.8.0 as the operational portion of the
 [2026-10-23 retrospective](retrospective-2026-10-23.md), without changing validation selection.
 The subsequent #103 continuation was stopped because its old policy still selected unrelated

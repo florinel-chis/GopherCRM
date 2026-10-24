@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,40 @@ spec.loader.exec_module(profiles)
 
 
 class GoChecksTests(unittest.TestCase):
+    def test_go_processes_isolate_application_database_settings_and_keep_fixture_dsn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / 'go'
+            executable.write_text('#!' + sys.executable + '\n' + '''
+import json, os, sys
+from pathlib import Path
+with Path('calls.jsonl').open('a') as output:
+    output.write(json.dumps({'command': sys.argv[1:], 'env': dict(os.environ)}) + '\\n')
+if sys.argv[1] == 'list':
+    print('example/fixture')
+elif sys.argv[1] == 'test':
+    for event in [{'Action': 'pass', 'Package': 'example/fixture', 'Test': 'TestBoundary'},
+                  {'Action': 'pass', 'Package': 'example/fixture'}]:
+        print(json.dumps(event))
+''')
+            executable.chmod(0o755)
+            environment = dict(PATH=str(root), TEST_MYSQL_DSN='disposable-fixture',
+                               JWT_SECRET='test-only-secret', GOCACHE='test-cache')
+            for key in ('DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
+                        'DB_DRIVER', 'DB_PATH'):
+                environment[key] = 'application-setting'
+            with patch.dict(os.environ, environment, clear=True):
+                before = dict(os.environ)
+                go_checks.run({'fixture': ['TestBoundary']}, root=root)
+                self.assertEqual(dict(os.environ), before)
+            calls = [json.loads(line) for line in (root / 'calls.jsonl').read_text().splitlines()]
+            self.assertEqual([call['command'][0] for call in calls], ['build', 'vet', 'list', 'test'])
+            for call in calls:
+                with self.subTest(command=call['command'][0]):
+                    self.assertFalse(any(key.startswith('DB_') for key in call['env']))
+                    for key in ('TEST_MYSQL_DSN', 'JWT_SECRET', 'GOCACHE'):
+                        self.assertEqual(call['env'][key], environment[key])
+
     def test_transaction_selection_covers_boundaries_and_callers(self):
         selected = go_checks.discover(profiles.TRANSACTION_SOURCES)
         self.assertIn('TestTransactionRecoveredNestedPanicCannotCommitFailedRollback', selected['internal/utils'])

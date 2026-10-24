@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -224,6 +225,22 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    async def test_zero_repair_budget_stops_before_reserving_a_round_or_provider_call(self):
+        config = replace(self.config, max_repair_rounds=0)
+        config.validate()
+        runner = Runner(config, self.commands)
+        record = {'repairs': 0, 'provider_calls': 1, 'stage': 'repair_pending'}
+        before = dict(record)
+        with patch.object(runner, 'implement', new_callable=AsyncMock) as implement:
+            with self.assertRaisesRegex(GateError, 'Repair budget exhausted'):
+                await runner.repair({'number': 95}, record, 'Failed required check')
+            implement.assert_not_awaited()
+        self.assertEqual(record, before)
+        self.assertEqual(self.commands.calls, [])
+        for invalid in (-1, True, False, 0.5, '0', None):
+            with self.subTest(value=invalid), self.assertRaisesRegex(GateError, 'max_repair_rounds'):
+                replace(config, max_repair_rounds=invalid).validate()
 
     async def test_preview_has_no_mutations_or_agent_calls(self):
         before = {str(p): p.read_bytes() for p in self.config.state_dir.rglob('*') if p.is_file()}

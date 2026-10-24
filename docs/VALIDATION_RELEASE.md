@@ -109,6 +109,11 @@ use a new configuration/state for fresh focused completion; never rewrite an adm
 or relabel the interrupted check as passed. Record actual candidate selection before expensive
 work. A manifest containing scope globs is a conservative preview, not the committed diff.
 
+The shared `check-go.py` profiles (AEO, transaction and migration) isolate application
+database connection variables from Go subprocesses,
+while retaining `TEST_MYSQL_DSN` for disposable fixtures. This applies equally to local and
+CI checks, including MariaDB; browser/server connection settings remain unchanged.
+
 The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
 repository, handler and their tests/mocks, plus `cmd/aeo_runtime.go` and AEO startup tests.
 It excludes schema, shared configuration, middleware, frontend and dependency changes.
