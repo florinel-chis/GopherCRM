@@ -36,12 +36,26 @@ class AEOSelectionTests(unittest.TestCase):
         self.assertIn(('make', 'verify-runner'), v.core_commands([], selected))
 
     def test_main_proof_and_required_roots_use_actual_git_candidates(self):
+        # Reproduce the application fix in the live checkout. The proof matrix
+        # must keep using its frozen input even after the application evolves.
+        with tempfile.TemporaryDirectory() as live_folder:
+            live_root = Path(live_folder)
+            live_main = live_root / 'cmd/main.go'
+            live_main.parent.mkdir()
+            fixture = Path(__file__).parent / 'fixtures/aeo-main.go.txt'
+            live_main.write_text(fixture.read_text().replace(' && len(aeoProviders) > 0', ''))
+            with patch(__name__ + '.ROOT', live_root):
+                self._assert_main_proof_and_required_roots()
+
+    def _assert_main_proof_and_required_roots(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             def git(*args):
                 return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.DEVNULL, text=True).strip()
             git('init'); git('config', 'user.email', 'test@example.test'); git('config', 'user.name', 'Test')
-            source = (ROOT / 'cmd/main.go').read_text()
+            # The application is expected to change these nodes. A live-source
+            # fixture would fail as soon as the boot-credential bug is fixed.
+            source = (Path(__file__).parent / 'fixtures/aeo-main.go.txt').read_text()
             main = root / 'cmd/main.go'; main.parent.mkdir(); main.write_text(source)
             for package, names in v.AEO_REQUIRED_ROOTS.items():
                 file = root / package / 'aeo_runtime_test.go'; file.parent.mkdir(parents=True, exist_ok=True)

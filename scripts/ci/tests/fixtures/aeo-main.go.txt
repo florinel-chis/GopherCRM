@@ -1,0 +1,62 @@
+// Stable syntax fixture for the scope checker. These nodes model the startup
+// and routing boundaries; application compilation is a separate validation gate.
+package main
+
+import (
+	"context"
+	"net/http"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		panic(err)
+	}
+	if err := models.InitDatabase(&cfg.Database); err != nil {
+		panic(err)
+	}
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+	router := setupRouter(backgroundCtx, cfg)
+	srv := &http.Server{Handler: router}
+	utils.Logger.Info("Shutting down server...")
+	stopBackground()
+	ctx := context.Background()
+	shutdownErr := srv.Shutdown(ctx)
+	if shutdownErr == nil {
+		models.CloseDatabase()
+	}
+}
+
+func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine {
+	router := gin.New()
+	router.SetTrustedProxies(cfg.Server.TrustedProxies)
+	api := router.Group(cfg.API.Prefix)
+	{
+		setupDependencies(backgroundCtx, api, cfg)
+	}
+	return router
+}
+
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) {
+	userRepo := repository.NewUserRepository(models.DB)
+	userService := service.NewUserService(userRepo)
+	aeoProviders := aeo.LoadProviders(cfg)
+	aeoEngine := aeo.NewEngine(aeoRepo, aeoProviders, aeo.EngineOptions{})
+	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager)
+	if recovered, err := aeoService.ReconcileRunningRuns(); err != nil {
+		log.Error(err)
+	} else if recovered > 0 {
+		log.Info(recovered)
+	}
+	if cfg.AEO.ScheduleEnabled && len(aeoProviders) > 0 {
+		aeo.StartScheduler(backgroundCtx, aeoService, cfg.AEO.ScheduleHour)
+	}
+	// Public routes with strict rate limiting
+	authRoutes := router.Group("/auth")
+	authRoutes.Use(middleware.RateLimitStrict())
+	authRoutes.POST("/register", middleware.RequireRegistrationEnabled(configService), authHandler.Register)
+	protected := router.Group("")
+	protected.Use(middleware.Auth(authService))
+	handler.SetupUserRoutes(protected, userService)
+}
