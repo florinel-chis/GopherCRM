@@ -566,4 +566,6 @@ scope proofs and six lifecycle roots; other application changes keep their fallb
 See [validation policy](VALIDATION_RELEASE.md) for scope and CI engines. A fresh runner
 policy may enable `validation_review_required` to hold after commit and before checks.
 Inspect the actual diff and complete command plan, then use `confirm-validation`; a
+comment-only `.env.example` edit needs the shared committed proof to retain a bounded
+profile; changing active settings or unsupported syntax retains full fallback. A
 changed candidate needs another inspection. See [operations](../automation/langflow/OPERATIONS.md).

@@ -48,6 +48,12 @@ and unknown paths still select full coverage. A deleted selected
 spec or unavailable trusted base also forces full coverage. Renames include both paths.
 The plan records changed paths, selected specs, policy version and fallback reasons; CI
 artifacts include both commit SHAs and runner journals bind the plan to their candidate.
+The root `.env.example` may accompany a bounded profile when a committed base/head proof
+shows that only comments or blank lines changed. Both versions must be regular non-executable
+files with simple unquoted assignments; active lines and their order must remain identical.
+Quoted, escaped, expanded, multiline or control-character input, value changes, missing files
+and path-only previews cannot grant this exception. It does not narrow another changed path
+or an explicit full/release plan. Documentation review still checks the changed prose.
 Maintainers should explicitly choose full validation for high-risk semantic changes even
 when their paths are mapped; the selector does not infer security impact from issue prose.
 

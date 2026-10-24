@@ -147,6 +147,11 @@ Version 0.8.2 adds this hold and the shared AEO profile in
 [VALIDATION_RELEASE](../../docs/VALIDATION_RELEASE.md). Install only reviewed main, verify
 module identity, then prepare a fresh application state after the prerequisite merges.
 
+Version 0.8.3 adds a committed proof for comment-only edits to the root `.env.example`.
+Include that literal documentation path before freezing when its guidance changes. Active
+settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
+plan before continuing. Install reviewed main and verify module identity as above.
+
 ## Reclaim completed dependencies
 
 ```sh
