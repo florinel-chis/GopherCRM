@@ -70,6 +70,11 @@ Version 0.8.3 lets proven comment-only edits in the root `.env.example` accompan
 bounded profile. Active settings and ambiguous dotenv syntax retain full fallback;
 see [validation policy](../../docs/VALIDATION_RELEASE.md) for the conservative proof.
 
+Version 0.8.5 adds the bounded mailer profile shared by local execution and CI. It requires
+SMTP transport/header/TLS/privacy regressions and affected mail callers, with health smoke.
+Install reviewed main and verify module identity before admitting a fresh mailer task; retain
+every named acceptance check and inspect the committed selection before expensive validation.
+
 ## Use the visual workflow
 
 ```sh

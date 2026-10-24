@@ -1,7 +1,7 @@
 """Deterministic contextual validation shared by CI and the installed runner.
 
 Runner-only changes use runner/hygiene tests and application health smoke.
-Bounded auth/transaction changes use targeted Go checks; unmapped shared app code goes full.
+Bounded backend profiles use targeted Go checks; unmapped shared app code goes full.
 """
 
 import argparse
@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 8
+POLICY_VERSION = 9
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -76,6 +76,10 @@ GO_LEXEME = re.compile(
     r'(?P<word>[^\W\d]\w*)|(?P<symbol>.)', re.DOTALL)
 TRANSACTION_PATH = re.compile(r'internal/utils/transaction(?:\.go|(?:_[a-z0-9_]+)?_test\.go)$')
 AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
+MAILER_FILES = {'internal/mailer/smtp.go', 'internal/mailer/mailer.go', 'internal/mailer/log.go'}
+MAILER_TEST = re.compile(r'internal/mailer/[a-z0-9_]+_test\.go$')
+MAILER_REQUIRED_ROOTS = {'TestSMTPDeadlines', 'TestSMTPHeaders', 'TestSMTPTLSAuth',
+                         'TestSMTPFailureRedaction'}
 
 
 AEO_MAIN_PROOF = r'''
@@ -467,7 +471,7 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
-    persistence_paths = aeo_paths = False
+    persistence_paths = aeo_paths = mailer_paths = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -479,6 +483,9 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
             raise ValueError("Invalid changed path")
         if (name in DOC_FILES or name.startswith("docs/") and name.endswith(".md")
                 or name == '.env.example' and env_comments):
+            continue
+        if name in MAILER_FILES or MAILER_TEST.fullmatch(name):
+            mailer_paths = application_paths = True
             continue
         if (name in AEO_FILES or AEO_PATH.fullmatch(name) or
                 name == 'cmd/main.go' and aeo_main or name == REPOSITORY_INTERFACES and aeo_interface):
@@ -530,6 +537,8 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
             reasons.append(f"unmapped path: {name}")
     if aeo_paths and not aeo_roots:
         reasons.append('required AEO startup/shutdown and database roots are not proved at candidate')
+    if mailer_paths and (aeo_paths or auth_paths or transaction_paths or migration_paths or other_application):
+        reasons.append('mailer transport mixed with other application changes')
     if aeo_paths and (auth_paths or transaction_paths or migration_paths or other_application):
         reasons.append('AEO runtime mixed with other application changes')
     if migration_paths and (auth_paths or transaction_paths or other_application):
@@ -540,14 +549,15 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         reasons.append('auth mixed with other application changes')
     if persistence_paths and not rotation_roots:
         reasons.append('required refresh rotation boundary roots are not proved at candidate')
-    profile = ('full' if reasons else 'aeo' if aeo_paths else 'migration' if migration_paths else 'transaction' if transaction_paths else
+    profile = ('full' if reasons else 'mailer' if mailer_paths else 'aeo' if aeo_paths else 'migration' if migration_paths else 'transaction' if transaction_paths else
                'auth-persistence' if persistence_paths else 'auth' if auth_paths else
                'runner' if runner_paths and not application_paths else 'contextual')
     return {
         "policy_version": POLICY_VERSION,
         "profile": profile,
         "reasons": sorted(set(reasons)) or [
-            'AEO runtime, provider and persistence regressions plus health/provider browsers' if profile == 'aeo'
+            'SMTP transport/header/privacy and mail caller regressions plus health smoke' if profile == 'mailer'
+            else 'AEO runtime, provider and persistence regressions plus health/provider browsers' if profile == 'aeo'
             else 'SQL migrations and SQLite upgrades plus health smoke' if profile == 'migration'
             else 'transaction and caller regressions plus health smoke' if profile == 'transaction'
             else 'auth/session and transaction boundaries on real databases plus auth browsers' if profile == 'auth-persistence'
@@ -561,7 +571,7 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
 
 
 def core_commands(configured, selected, *, explicit_full=False):
-    if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration', 'aeo'}:
+    if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration', 'aeo', 'mailer'}:
         check = (('python3', 'scripts/ci/check-auth.py', '--persistence') if selected['profile'] == 'auth-persistence' else
                  ('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
                  ('python3', 'scripts/ci/check-go.py', selected['profile']))

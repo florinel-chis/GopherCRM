@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A shared bounded mailer validation profile: API build/vet, SMTP transport/header/privacy
+  regressions, focused password-reset/form delivery callers and browser health smoke.
+  Required tests cannot be absent or skipped; mixed application changes and explicit
+  full/release runs retain complete coverage.
+
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
   the administrator's stored keys when a tick is due, so a key saved in Settings is used by the

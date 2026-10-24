@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gophercrm-remediation-runner"
-version = "0.8.4"
+version = "0.8.5"
 description = "Langflow workflows for the GopherCRM remediation queue"
 requires-python = ">=3.12"
 dependencies = []
