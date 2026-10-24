@@ -167,6 +167,11 @@ With no active ticket, a stop request blocks new issue admission. A separate sho
 
 ## Inspected validation misclassification
 
+Policies may set `max_repair_rounds` to zero to validate and review an existing candidate
+without authorizing a repair call. A failed required check or rejected review still blocks
+completion. Fresh continuations must carry forward spent work and remaining allowances as
+described in [the operations runbook](OPERATIONS.md#documentation-decisions-and-rollout).
+
 Failed commands retain complete bounded, redacted diagnostics in private logs. Go assertion
 blocks are included in the repair summary even when later passing tests fill the output.
 When Go reports an assertion failure, JSON and logrus text service records from mocked calls do

@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'automation/langflow'))
 from gophercrm_runner.config import GateError
 from gophercrm_runner.evidence import named_go_tests
+from gophercrm_runner.readiness import verification_environment
 
 TEST = re.compile(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)', re.MULTILINE)
 
@@ -48,15 +49,19 @@ def verify(output, module, names, known_skips):
 
 
 def run(selected, *, root=ROOT, label='Go', known_skips=None):
-    subprocess.run(['go', 'build', './cmd/...'], cwd=root, check=True)
-    subprocess.run(['go', 'vet', *('./' + p for p in selected)], cwd=root, check=True)
+    # Application connection settings belong to browser/server processes. Go
+    # fixtures use TEST_MYSQL_DSN and configuration tests assert unset defaults.
+    # Keep the same isolation locally and in CI (including the MariaDB job).
+    env = verification_environment()
+    subprocess.run(['go', 'build', './cmd/...'], cwd=root, env=env, check=True)
+    subprocess.run(['go', 'vet', *('./' + p for p in selected)], cwd=root, env=env, check=True)
     for package, names in selected.items():
         module = subprocess.check_output(['go', 'list', '-f', '{{.ImportPath}}', './' + package],
-                                         cwd=root, text=True).strip()
+                                         cwd=root, env=env, text=True).strip()
         print(f'{label} checks: {package}: {len(names)} required roots', flush=True)
         command = ['go', 'test', '-race', '-json', '-count=1', '-timeout', '10m', './' + package,
                    '-run', '^(' + '|'.join(names) + ')$']
-        result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
         print(result.stdout, end='', flush=True)
         print(result.stderr, end='', file=sys.stderr, flush=True)
         result.check_returncode()
