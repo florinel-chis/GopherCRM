@@ -42,6 +42,8 @@ def read_json(path):
 
 def policy_hash(config):
     policy = asdict(config)
+    if not config.validation_review_required:
+        policy.pop('validation_review_required')
     if config.documentation_mode == 'legacy':
         policy.pop('documentation_mode')  # Retain prepared v0.5 batch identities.
     return contracts.digest(json.loads(json.dumps(policy, default=str)))

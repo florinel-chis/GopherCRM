@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A shared bounded AEO runtime validation profile with committed startup/interface scope
+  proofs, required lifecycle roots, focused Go checks and health/provider browsers. SQL,
+  MariaDB migration coverage and explicit full/release gates remain mandatory.
+- Opt-in candidate validation inspection through `confirm-validation`; changed candidates
+  need new inspection, and stopped executions retain their spent budgets.
+
 - Runner recovery and Markdown handoff reports, batch-wide audited budget extensions,
   worker heartbeats, installed-module verification and validation-cost previews. Heavy commands
   share a machine lock, record bounded resource observations and enforce wall-clock deadlines

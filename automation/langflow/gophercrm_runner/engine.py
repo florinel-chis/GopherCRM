@@ -44,6 +44,8 @@ class Runner:
         self.store = Store(config.state_dir)
         self.commands = commands or Commands(config.state_dir / 'logs')
         policy = asdict(config)
+        if not config.validation_review_required:
+            policy.pop('validation_review_required')  # Preserve existing execution policies.
         # Queue growth and time limits do not weaken the current ticket's gates.
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds',
                     'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds'):
@@ -698,6 +700,9 @@ class Runner:
         record['validation_forecast']['selection'] = record['validation_plan']
         record['validation_forecast']['commands'] = [list(argv) for _, argv, _ in checks]
         record['validation_forecast']['basis'] = 'Committed candidate and frozen registered checks.'
+        if self.config.validation_review_required:
+            from .validation_review import require_confirmation
+            require_confirmation(self, record, checks)
         completed = record.get('receipts', {})
         if completed:
             try:

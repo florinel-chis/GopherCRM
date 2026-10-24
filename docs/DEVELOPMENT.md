@@ -556,3 +556,14 @@ annotations on the handlers and the general block in `cmd/main.go`. Regenerate i
 `make swagger` (runs the pinned swag CLI via `go run`) after changing a handler or a route; the spec
 is not served by the application, and the router in `internal/handler/` remains the source of truth
 when the two disagree.
+
+### AEO runtime validation and candidate inspection
+
+Bounded AEO backend/runtime work uses `python3 scripts/ci/check-go.py aeo` with
+build/vet, exact uncached race roots and mandatory SQL availability, plus health/provider
+browsers and migration gates. Startup and shared-interface exceptions require committed
+scope proofs and six lifecycle roots; other application changes keep their fallback.
+See [validation policy](VALIDATION_RELEASE.md) for scope and CI engines. A fresh runner
+policy may enable `validation_review_required` to hold after commit and before checks.
+Inspect the actual diff and complete command plan, then use `confirm-validation`; a
+changed candidate needs another inspection. See [operations](../automation/langflow/OPERATIONS.md).

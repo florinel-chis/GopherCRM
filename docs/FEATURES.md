@@ -513,3 +513,10 @@ previous version of this document listed it in the wrong directory.
 | `components/Loading.test.tsx` | 4 | Loading |
 | `routes/index.test.tsx` | 3 | Route table |
 | **Total** | **142** | 16 files |
+
+The bounded AEO runtime validation profile selects startup, service, provider, persistence
+and transaction regressions with health/provider browsers. It requires committed startup
+and interface scope proofs and six lifecycle roots; this policy does not itself deliver
+the queued runtime fix. Optional candidate inspection stops the runner before checks until
+the operator records the exact plan. See [validation](VALIDATION_RELEASE.md) and
+[operations](../automation/langflow/OPERATIONS.md).

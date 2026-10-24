@@ -69,6 +69,15 @@ def main():
         if name in {'abandon-pr', 'recover-pr'}:
             command.add_argument('--processes-stopped', action='store_true',
                                  help='Confirm all orphaned provider processes were inspected and stopped')
+    confirm = sub.add_parser('confirm-validation', help='Record inspection of an exact committed validation plan')
+    confirm.add_argument('--config', type=Path, required=True)
+    target = confirm.add_mutually_exclusive_group(required=True)
+    target.add_argument('--issue', type=int)
+    target.add_argument('--pr', type=int)
+    confirm.add_argument('--head', required=True)
+    confirm.add_argument('--plan-hash', required=True)
+    confirm.add_argument('--reason', required=True)
+    confirm.add_argument('--batch')
     run = sub.add_parser('run', help='Run the Langflow workflow (preview by default)')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--limit', type=int, default=1)
@@ -215,6 +224,12 @@ def main():
         else:
             result = runner.abandon(args.batch, args.reason)
         print(json.dumps(result, indent=2))
+    elif args.command == 'confirm-validation':
+        from .config import Config
+        from .validation_review import confirm
+        print(json.dumps(run_async(confirm(Config.load(args.config), args.pr or args.issue,
+            head=args.head, plan_hash=args.plan_hash, reason=args.reason, batch=args.batch,
+            pull_request=args.pr is not None)), indent=2))
     elif args.command == 'complete-pr':
         from .flows import run_pr_flow
         result = run_async(run_pr_flow(args.config, number=args.pr, head=args.head,
