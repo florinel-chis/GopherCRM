@@ -664,6 +664,9 @@ func (suite *AEOHandlerTestSuite) TestCreateRun_SentinelMappings() {
 		{"run in progress", apperrors.ErrRunInProgress, http.StatusConflict, utils.ErrCodeConflict},
 		{"profile missing", apperrors.ErrProfileNotConfigured, http.StatusConflict, utils.ErrCodeConflict},
 		{"no providers", apperrors.ErrNoProvidersConfigured, http.StatusServiceUnavailable, "PROVIDERS_UNAVAILABLE"},
+		// A run asked for while the process drains is refused, not started and
+		// cancelled: the client retries against the restarted process.
+		{"shutting down", service.ErrAEOShuttingDown, http.StatusServiceUnavailable, "SHUTTING_DOWN"},
 		{"no active prompts", fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound), http.StatusNotFound, utils.ErrCodeNotFound},
 		{"unclassified", errors.New("db down"), http.StatusInternalServerError, utils.ErrCodeInternal},
 	}

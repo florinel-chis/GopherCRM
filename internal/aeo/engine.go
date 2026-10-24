@@ -18,6 +18,13 @@ const (
 	// defaultQueryTimeout is the per-query deadline. Answer engines that search
 	// the web (Perplexity) are routinely slow, so this is generous.
 	defaultQueryTimeout = 60 * time.Second
+	// defaultCleanupTimeout bounds the terminal status write of a run whose
+	// context has already been cancelled. Finalization runs on a fresh context
+	// — the cancelled one would abort the very write that records the
+	// interruption — but it must not hold shutdown hostage either, so a
+	// database that stays blocked past this deadline leaves the row in
+	// "running" for the startup reconciliation to recover.
+	defaultCleanupTimeout = 5 * time.Second
 )
 
 // Executor runs one batch of AEO queries. The service depends on this interface
@@ -46,6 +53,10 @@ var _ ProviderSetExecutor = (*Engine)(nil)
 type EngineOptions struct {
 	Concurrency  int
 	QueryTimeout time.Duration
+
+	// CleanupTimeout bounds the finalizing status write once the run context
+	// is gone. See defaultCleanupTimeout.
+	CleanupTimeout time.Duration
 }
 
 // Engine executes a run: every active prompt against every configured provider,
@@ -63,6 +74,9 @@ func NewEngine(repo repository.AEORepository, providers []Provider, opts EngineO
 	}
 	if opts.QueryTimeout <= 0 {
 		opts.QueryTimeout = defaultQueryTimeout
+	}
+	if opts.CleanupTimeout <= 0 {
+		opts.CleanupTimeout = defaultCleanupTimeout
 	}
 	return &Engine{repo: repo, providers: providers, opts: opts}
 }
@@ -86,8 +100,18 @@ type engineTask struct {
 }
 
 // Execute runs the batch to completion and finalizes the run row. It is meant to
-// be called on a background goroutine with a background context — never with a
-// request context, which would be cancelled the moment the HTTP handler returns.
+// be called on a background goroutine with the run context the service owns —
+// never with a request context, which would be cancelled the moment the HTTP
+// handler returns.
+//
+// Cancelling ctx interrupts the run: no further query is dispatched, every
+// in-flight provider call and answer write is cancelled, and the row is
+// finalized on a bounded cleanup context (CleanupTimeout) that is independent
+// of ctx. Queries that were cut short or never dispatched count as failed but
+// are not recorded as answer rows — a cancelled call is not evidence about the
+// brand — so the run ends "failed" when nothing had been recorded and "partial"
+// otherwise, with completed_at stamped. Execute then returns ctx.Err() wrapped,
+// which the caller logs as an interruption rather than a fault.
 //
 // A panic anywhere in the batch is recovered and the run is marked failed: this
 // goroutine has no caller to propagate to, and a run stuck in "running" would
@@ -95,6 +119,9 @@ type engineTask struct {
 func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []models.AEOPrompt, profile *models.AEOProfile) (err error) {
 	if run == nil {
 		return fmt.Errorf("aeo: cannot execute a nil run")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	defer func() {
@@ -107,16 +134,9 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 				"failure_category": FailurePanic,
 			}).Error("AEO run panicked")
 			total := len(prompts) * len(e.providers)
-			e.finalize(run, total, total)
 			// runStatus would call a zero-query run "completed"; a panicked run
 			// is failed regardless of how far it got.
-			run.Status = RunStatusFailed
-			if updateErr := e.repo.UpdateRun(run); updateErr != nil {
-				logProvider().WithFields(map[string]any{
-					"run_id": run.ID,
-					"error":  updateErr.Error(),
-				}).Error("could not finalize panicked AEO run")
-			}
+			e.finalize(run, total, total, RunStatusFailed)
 		}
 	}()
 
@@ -134,6 +154,11 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 		"queries":   len(tasks),
 	}).Info("AEO run started")
 
+	// Every answer write of this run is bound to the run context, so a write
+	// blocked in the database is released by the same cancellation that
+	// releases the provider calls.
+	writes := e.repo.WithContext(ctx)
+
 	var (
 		mu       sync.Mutex
 		failed   int
@@ -141,16 +166,38 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 		slots    = make(chan struct{}, e.opts.Concurrency)
 		started  = time.Now()
 		recorded = 0
+		skipped  = 0
 	)
 
 	for _, task := range tasks {
+		// Stop dispatching the moment the run is cancelled. A task that never
+		// ran is a lost query, counted below. The check comes before the slot
+		// acquisition because select picks at random among ready cases: with a
+		// free slot and a cancelled context it would otherwise dispatch half the
+		// batch of an already-cancelled run.
+		if ctx.Err() != nil {
+			skipped++
+			continue
+		}
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			skipped++
+			continue
+		}
+		if ctx.Err() != nil {
+			// Cancelled while waiting for the slot, and the select still handed
+			// it out. Give it back and count the task as lost.
+			<-slots
+			skipped++
+			continue
+		}
 		wg.Add(1)
-		slots <- struct{}{}
 		go func(task engineTask) {
 			defer wg.Done()
 			defer func() { <-slots }()
 
-			taskErr := e.runTask(ctx, run, task, profile)
+			taskErr := e.runTask(ctx, writes, run, task, profile)
 
 			mu.Lock()
 			recorded++
@@ -162,16 +209,23 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 	}
 	wg.Wait()
 
-	e.finalize(run, len(tasks), failed)
+	failed += skipped
+	e.finalize(run, len(tasks), failed, "")
 
-	logProvider().WithFields(map[string]any{
+	fields := map[string]any{
 		"run_id":   run.ID,
 		"queries":  len(tasks),
 		"recorded": recorded,
 		"failed":   failed,
 		"status":   run.Status,
 		"duration": time.Since(started).String(),
-	}).Info("AEO run finished")
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		fields["skipped"] = skipped
+		logProvider().WithFields(fields).Warn("AEO run interrupted")
+		return fmt.Errorf("aeo: run %d interrupted: %w", run.ID, ctxErr)
+	}
+	logProvider().WithFields(fields).Info("AEO run finished")
 
 	return nil
 }
@@ -179,7 +233,12 @@ func (e *Engine) Execute(ctx context.Context, run *models.AEORun, prompts []mode
 // runTask performs one provider call and persists exactly one answer row,
 // whether the call succeeded or not. It returns a non-nil error when the query
 // failed, which the caller counts towards FailedQueries.
-func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTask, profile *models.AEOProfile) (taskErr error) {
+//
+// writes is the repository bound to the run context. When the run is cancelled
+// while the call is in flight, the query is reported failed but no answer row
+// is written: the cancelled context would abort the write anyway, and a row
+// saying "request canceled" would only be noise in the transcript.
+func (e *Engine) runTask(ctx context.Context, writes repository.AEORepository, run *models.AEORun, task engineTask, profile *models.AEOProfile) (taskErr error) {
 	// Last-resort guard. SafeQuery already contains a panicking provider; this
 	// covers anything else in the task so one bad answer cannot abort the run.
 	// The panic value is never logged: it may be provider-controlled.
@@ -216,13 +275,23 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 
 	var citations []models.AEOCitation
 	if queryErr != nil {
+		// SafeQuery has already reduced the failure to a bounded category and
+		// status; sanitizing again keeps this boundary safe on its own.
+		safeErr := SanitizeProviderError(providerName, queryErr)
+		taskErr = safeErr
+		if ctx.Err() != nil {
+			// The run was cancelled under this call. Count it, do not record it.
+			logProvider().WithFields(map[string]any{
+				"run_id":           run.ID,
+				"prompt_id":        task.prompt.ID,
+				"provider":         providerName,
+				"failure_category": ProviderFailureCategory(safeErr),
+			}).Info("AEO provider query interrupted")
+			return taskErr
+		}
 		// A failed call is recorded, never dropped: the citations and
 		// visibility views need to know a query was attempted and lost.
-		// SafeQuery has already reduced it to a bounded category and status;
-		// sanitizing again keeps this boundary safe on its own.
-		safeErr := SanitizeProviderError(providerName, queryErr)
 		row.Error = safeErr.Error()
-		taskErr = safeErr
 		logProvider().WithFields(map[string]any{
 			"run_id":           run.ID,
 			"prompt_id":        task.prompt.ID,
@@ -244,13 +313,20 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 		}))
 	}
 
-	if err := e.repo.CreateAnswerWithCitations(&row, citations); err != nil {
-		logProvider().WithFields(map[string]any{
+	if err := writes.CreateAnswerWithCitations(&row, citations); err != nil {
+		fields := map[string]any{
 			"run_id":    run.ID,
 			"prompt_id": task.prompt.ID,
 			"provider":  task.provider.Name(),
 			"error":     err.Error(),
-		}).Error("could not persist AEO answer")
+		}
+		if ctx.Err() != nil {
+			// The write was cut short by the run's cancellation. The paid
+			// answer is lost; the counters below say so.
+			logProvider().WithFields(fields).Warn("AEO answer write interrupted")
+		} else {
+			logProvider().WithFields(fields).Error("could not persist AEO answer")
+		}
 		// A write failure is a lost query too — count it, so the run does not
 		// report itself as fully successful.
 		if taskErr == nil {
@@ -261,19 +337,33 @@ func (e *Engine) runTask(ctx context.Context, run *models.AEORun, task engineTas
 	return taskErr
 }
 
-// finalize writes the terminal status and counters on the run row.
-func (e *Engine) finalize(run *models.AEORun, total, failed int) {
+// finalize writes the terminal status and counters on the run row. status
+// overrides the computed classification when non-empty (a panicked run is
+// failed whatever its counters say).
+//
+// The write runs on a fresh context bounded by CleanupTimeout rather than on
+// the run context: by the time an interrupted run finalizes, that context is
+// already cancelled and would abort the one write that records the
+// interruption. A database that stays blocked past the bound leaves the row in
+// "running"; the next StartRun sweep or the startup reconciliation recovers it.
+func (e *Engine) finalize(run *models.AEORun, total, failed int, status string) {
 	completedAt := time.Now()
 	run.TotalQueries = total
 	run.FailedQueries = failed
 	run.CompletedAt = &completedAt
 	run.Status = runStatus(total, failed)
+	if status != "" {
+		run.Status = status
+	}
 
-	if err := e.repo.UpdateRun(run); err != nil {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), e.opts.CleanupTimeout)
+	defer cancel()
+	if err := e.repo.WithContext(cleanupCtx).UpdateRun(run); err != nil {
 		logProvider().WithFields(map[string]any{
 			"run_id": run.ID,
+			"status": run.Status,
 			"error":  err.Error(),
-		}).Error("could not finalize AEO run")
+		}).Error("could not finalize AEO run; left for stale-run recovery")
 	}
 }
 

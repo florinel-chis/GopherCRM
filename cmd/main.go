@@ -76,11 +76,14 @@ func main() {
 
 	// Background workers (currently the AEO scheduler) live for as long as the
 	// process serves traffic. Cancelling this context is what stops them, and it
-	// happens on the same signal that shuts the HTTP server down.
+	// happens on the same signal that shuts the HTTP server down. stopAEO is
+	// the drain handle: it closes run admission, cancels and joins the
+	// scheduler and every active run, so the database is closed only once
+	// nothing can still write to it.
 	backgroundCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 
-	router := setupRouter(backgroundCtx, cfg)
+	router, stopAEO := setupRouter(backgroundCtx, cfg)
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Address(),
@@ -100,28 +103,34 @@ func main() {
 
 	utils.Logger.Info("Shutting down server...")
 
-	// Stop the background workers first so no new AEO run starts while the
-	// server is draining.
+	// Stop the background workers and drain the AEO runtime first: admission
+	// closes, so no new run starts while the server is draining, and every
+	// scheduled, manual or single-prompt run already in flight is cancelled
+	// and joined under aeoDrainTimeout. A request that asks for a run from here
+	// on is answered 503.
 	stopBackground()
+	drainErr := drainAEO(stopAEO, aeoDrainTimeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	shutdownErr := srv.Shutdown(ctx)
 
-	if shutdownErr != nil {
-		// The drain deadline expired, so handlers may still be running queries.
-		// sql.DB.Close() waits for every in-flight query with no deadline of its
-		// own, which would hang the process well past the timeout it just blew.
-		// Skip the close and exit: the WAL is recovered on the next open, so at
-		// worst we forfeit the checkpoint, never the committed data.
-		utils.Logger.Warn("Skipping database close: shutdown timed out with requests still in flight")
-		log.Fatal("Server forced to shutdown:", shutdownErr)
+	if shutdownErr != nil || drainErr != nil {
+		// A drain deadline expired, so handlers or a run may still be running
+		// queries. sql.DB.Close() waits for every in-flight query with no
+		// deadline of its own, which would hang the process well past the
+		// timeout it just blew. Skip the close and exit: the WAL is recovered on
+		// the next open, so at worst we forfeit the checkpoint, never the
+		// committed data, and a run left in "running" is failed by the next
+		// boot's reconciliation.
+		utils.Logger.Warn("Skipping database close: shutdown timed out with work still in flight")
+		log.Fatal("Server forced to shutdown:", shutdownFailure(shutdownErr, drainErr))
 	}
 
-	// Reached only after a clean drain, so no request can still be in flight,
-	// and before any fatal exit: on SQLite the final close is what checkpoints
-	// the write-ahead log into the database file.
+	// Reached only after a clean drain, so neither a request nor a run can
+	// still be in flight, and before any fatal exit: on SQLite the final close
+	// is what checkpoints the write-ahead log into the database file.
 	if err := models.CloseDatabase(); err != nil {
 		utils.Logger.Errorf("Failed to close database: %v", err)
 	}
@@ -129,7 +138,7 @@ func main() {
 	utils.Logger.Info("Server exiting")
 }
 
-func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine {
+func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine, func(context.Context) error) {
 	if cfg.Server.Mode == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -161,14 +170,14 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) *gin.Engine 
 	})
 
 	api := router.Group(cfg.API.Prefix)
-	{
-		setupDependencies(backgroundCtx, api, cfg)
-	}
+	stopAEO := setupDependencies(backgroundCtx, api, cfg)
 
-	return router
+	return router, stopAEO
 }
 
-func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) {
+// setupDependencies wires every repository, service and handler onto the API
+// group and returns the function that drains the AEO runtime at shutdown.
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
 	// Erasing a customer must also erase the lead it was converted from: the
@@ -220,12 +229,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// no provider key still boots — the module then answers 503 on run creation
 	// instead of recording runs that can never produce an answer. The status
 	// roster is separate because it must also name the engines that are missing
-	// a key.
+	// a key. The runtime owns every run the service starts; its Stop is the
+	// drain handle this function returns.
 	aeoProviders := aeo.LoadProviders(cfg)
 	aeoEngine := aeo.NewEngine(aeoRepo, aeoProviders, aeo.EngineOptions{
 		QueryTimeout: time.Duration(cfg.AEO.QueryTimeoutSeconds) * time.Second,
 	})
-	aeoService := service.NewAEOService(aeoRepo, aeoEngine, aeoProviders, txManager,
+	aeoRuntime := newAEORuntime(service.NewAEORuntime(aeoRepo, aeoEngine, aeoProviders, txManager,
 		service.WithAEOProviderStatuses(aeo.ProviderStatuses(cfg)),
 		// Admin-stored provider keys win over the environment, resolved freshly
 		// at each run start and status read so a key saved in the settings UI
@@ -239,7 +249,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 				return ""
 			}
 			return engine
-		}))
+		})))
+	aeoService := aeoRuntime.runs.Service()
 
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
 		txManager, cfg.Forms, cfg.API.Prefix)
@@ -275,11 +286,14 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			Warn("Recovered AEO runs left behind by a previous process")
 	}
 
-	// The daily run is opt-out. It is skipped entirely when no engine is
-	// configured, because every tick would otherwise log the same 503-shaped
-	// failure.
-	if cfg.AEO.ScheduleEnabled && len(aeoProviders) > 0 {
-		aeo.StartScheduler(backgroundCtx, aeoService, cfg.AEO.ScheduleHour)
+	// The daily run is opt-out. It is armed whenever scheduling is enabled,
+	// whatever the boot-time roster: provider keys are administrator-editable,
+	// so the engines are resolved when a tick is due and a key stored through
+	// the settings UI is picked up by the next scheduled run without a restart.
+	// A tick that finds the module unconfigured is logged once at info level
+	// and the loop sleeps until the next day. Disabled scheduling arms nothing.
+	if cfg.AEO.ScheduleEnabled {
+		aeoRuntime.startScheduler(backgroundCtx, cfg.AEO.ScheduleHour)
 	} else {
 		utils.Logger.WithFields(map[string]interface{}{
 			"enabled":   cfg.AEO.ScheduleEnabled,
@@ -339,4 +353,6 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			protectedAuth.POST("/change-password", authHandler.ChangePassword)
 		}
 	}
+
+	return aeoRuntime.Stop
 }

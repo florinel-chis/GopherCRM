@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
+  on, even when no provider key exists at boot: engines are resolved from the environment plus
+  the administrator's stored keys when a tick is due, so a key saved in Settings is used by the
+  next scheduled run without a restart. A tick that finds the module unconfigured is
+  logged once at info level and the loop sleeps until the next day. At shutdown the process
+  closes run admission (a run requested while draining answers 503 `SHUTTING_DOWN`), cancels
+  the scheduler and every manual, scheduled or single-prompt run in flight — cancellation
+  reaches provider calls and repository writes — joins them, and only then closes the database.
+  When cleanup can persist it, an interrupted run is finalized as `failed` (or `partial` when answers were already recorded)
+  with `completed_at` set; queries cut short are counted as failed and not recorded as answers.
+  The drain waits at most 15 seconds; if a provider or database write still has not released by
+  then, the process exits without closing the database and the next boot's reconciliation fails
+  the row, as after a crash. (#111)
+
 - Shared Go validation isolates application database variables while retaining the disposable
   `TEST_MYSQL_DSN`, so configuration defaults are tested consistently locally and in MariaDB CI.
   Runner policies can explicitly allow zero repair rounds for a continuation whose repair

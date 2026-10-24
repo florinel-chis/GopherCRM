@@ -8,11 +8,12 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 **Sources**
 
 - `internal/models/aeo.go`, `internal/models/database.go`
-- `internal/handler/aeo_handler.go`, `internal/handler/aeo_routes.go`, `cmd/main.go`
-- `internal/service/aeo_service.go`, `internal/service/interfaces.go`
+- `internal/handler/aeo_handler.go`, `internal/handler/aeo_routes.go`, `cmd/main.go`,
+  `cmd/aeo_runtime.go`
+- `internal/service/aeo_service.go`, `internal/service/aeo_runtime.go`, `internal/service/interfaces.go`
 - `internal/repository/aeo_repository.go`, `internal/repository/interfaces.go`
 - `internal/aeo/` — `provider.go`, `anthropic.go`, `openai_compat.go`, `egress.go`, `errors.go`,
-  `analysis.go`, `engine.go`, `scheduler.go`
+  `analysis.go`, `engine.go`, `scheduler.go`, `runtime.go`
 - `internal/errors/errors.go`, `internal/config/config.go`, `internal/config/aeo_egress.go`
 - [AEO_SECURITY.md](../AEO_SECURITY.md) — egress policy and sanitized failure contract
 - `gocrm-ui/src/pages/aeo/AEODashboard.tsx`, `AEOPrompts.tsx`, `AEOCitations.tsx`,
@@ -289,7 +290,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Steps:**
   1. Press **Run now** on `/aeo/settings`.
   2. Poll `GET /api/v1/aeo/runs`.
-- **Expected:** `POST /api/v1/aeo/runs` returns **202** immediately with the run row: `status` `running`, `trigger` `manual`, `total_queries` = active prompts × configured providers, `triggered_by_id` = the caller. The response does not wait for the engine — the executor runs on a background context so cancelling the request cannot abort a run that is already writing answers. The run later settles to `completed`, `partial` or `failed` with `completed_at` and `failed_queries` filled in.
+- **Expected:** `POST /api/v1/aeo/runs` returns **202** immediately with the run row: `status` `running`, `trigger` `manual`, `total_queries` = active prompts × configured providers, `triggered_by_id` = the caller. The response does not wait for the engine — the executor runs on the service-owned run context, never the request's, so cancelling the request cannot abort a run that is already writing answers (`TestAEORunLifecycle*` "an accepted run is not coupled to the request context"). The run later settles to `completed`, `partial` or `failed` with `completed_at` and `failed_queries` filled in. While the process is shutting down the same request answers 503 with `error.code` `SHUTTING_DOWN` (TC-AEO-048).
 - **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts` (stub provider only — see the cost constraint).
 
 ### TC-AEO-024 — A second run is refused while one is running
@@ -319,7 +320,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Steps:**
   1. Restart the backend and read its startup log.
   2. `POST /api/v1/aeo/runs`.
-- **Expected:** Startup reconciliation flips every `running` row to `failed` with `completed_at` stamped and logs "Recovered AEO runs left behind by a previous process"; the subsequent run starts normally. Without a restart the same row is swept lazily by the next `StartRun` once it is older than 6 h (`aeoRunStaleAfter`), so a crash cannot block the daily scheduled run either.
+- **Expected:** Startup reconciliation flips every `running` row to `failed` with `completed_at` stamped and logs "Recovered AEO runs left behind by a previous process"; the subsequent run starts normally. Without a restart the same row is swept lazily by the next `StartRun` once it is older than 6 h (`aeoRunStaleAfter`), so a crash cannot block the daily scheduled run either. Since #111 a graceful SIGTERM no longer produces such a row in the ordinary case — the run is cancelled and finalized before the database closes (TC-AEO-047) — so reconciliation at boot now covers an actual crash, a kill, or a drain that hit its 15 s deadline.
 - **Known issue:** Fixed 2026-08-11. Before that there was no reconciliation anywhere: the executor is in-process and `finalize` never ran after a crash, so a single stranded row made every later run answer 409 and every scheduled run log "skipped" **forever**, until an operator ran `UPDATE aeo_runs SET status='failed'` by hand. Regression-tested by `internal/service/aeo_service_test.go` "TestReconcileRunningRuns" / "TestStartRun_SweepsRunsStrandedByACrash" and `internal/repository/aeo_repository_test.go` "TestAEORepository_MarkStaleRunsFailed".
 - **Automation:** planned — backend-level; a Playwright case can only assert the second half (run starts after restart).
 
@@ -529,3 +530,39 @@ Anthropic call).
 - **Steps:** Run prompts and prompt generation against providers that fail with reflected keys, headers, prompts, raw bodies, transport/TLS/DNS errors, timeouts and panics, and capture the logs.
 - **Expected:** `AEOAnswer.Error`, logs and the generation API response contain only the engine name, a fixed category and the numeric HTTP status, at most 160 characters. Panic values are never logged. Failed answers are still persisted and counted; successful answers and native citations are unchanged.
 - **Automation:** `TestAEOFailureSanitization`, `TestAEOFailurePersistence`, `TestAEOGenerationFailureSanitization`.
+
+### TC-AEO-047 — Graceful shutdown cancels, joins and finalizes active runs
+- **Priority:** P0
+- **Type:** regression / operational
+- **Preconditions:** A saved profile, one active prompt and one configured engine whose endpoint holds the request (a stub that never answers, or a real engine under load). Backend on SQLite or MySQL.
+- **Steps:**
+  1. Start a run (`POST /aeo/runs`, a single-prompt run, or wait for the scheduled tick) and confirm the provider request is in flight.
+  2. Send SIGTERM and read the shutdown log.
+  3. Read the run row and its answers after the process has exited.
+- **Expected:** The log shows `Shutting down server...`, `AEO scheduler stopped`, `AEO run interrupted by shutdown`, `AEO background work drained` and finally `Server exiting`. The provider request is aborted (the stub sees its request context cancelled). The run row is `failed` — or `partial` when some answers had already been recorded — with `completed_at` and `failed_queries` set before the database closes; the interrupted queries are **not** stored as answers. Starting the process again logs no "Recovered AEO runs" line because nothing was left in `running`. A `POST /aeo/runs` issued during the drain answers 503 `SHUTTING_DOWN`. Repeating the drain (the stop handle is idempotent) changes nothing.
+- **Limit:** The drain waits 15 s. A provider or database write that ignores cancellation produces `AEO background work did not drain before the shutdown deadline`, `Skipping database close`, a non-zero exit, and a row still `running` that the next boot reconciles (TC-AEO-026). This is the documented crash policy, not a defect. A failed finalizing write can also leave a row for reconciliation even when all work drains successfully.
+- **Automation:** automated (backend) — `cmd/aeo_runtime_test.go` "TestAEORuntimeShutdown" (real `setupRouter` wiring over a SQLite file and a loopback stub authorized through `AEO_EGRESS_LOCAL_ORIGINS`-style policy: cancelled request, joined scheduler, terminal row before close, deadline against a held SQLite connection, cancellation of scheduled admission waiting for that connection before joining the scheduler, `drainAEO`/`shutdownFailure`), `internal/service/aeo_runtime_test.go` "TestAEORunLifecycleSQLite" / "TestAEORunLifecycleMySQL" (interrupted manual, scheduled and single-prompt runs persist `failed`/`partial`; cancellation observed by the provider gate and by a blocked answer write; finalization on a live bounded context; a failing finalization is recovered by `ReconcileRunningRuns`; a blocked finalization reports active work at the deadline then drains; no write after a successful join), `internal/aeo/engine_test.go` (`TestEngineHonoursACancelledParentContext`, `TestEngineCancellationReachesProviderAndWrites`, `TestEngineFinalizationIsBoundedWhenTheDatabaseBlocks`). The MySQL root needs `TEST_MYSQL_DSN`; configured but unreachable fails.
+
+### TC-AEO-048 — Concurrent starts and shutdown never admit duplicate or post-shutdown work
+- **Priority:** P0
+- **Type:** regression / concurrency
+- **Preconditions:** A saved profile and one active prompt; a configured engine behind a gate.
+- **Steps:**
+  1. Fire several `POST /aeo/runs` and scheduled starts at once, then shut down.
+  2. Shut down while one start is blocked inside a database call, then release the database.
+  3. After shutdown, request another run.
+  4. Call the drain repeatedly and from several goroutines.
+- **Expected:** Step 1: exactly one run row, the rest 409; after the drain the row is terminal and nothing is `running`. Step 2: the drain returns at its deadline reporting the active count instead of waiting on the overlap-guard mutex; when the database releases, the blocked start returns 503 `SHUTTING_DOWN` — a row inserted before the cancellation is failed by bounded cleanup, a row whose insert the cancellation aborted never exists — and a second drain succeeds. Step 3: 503 `SHUTTING_DOWN`, no row inserted, no provider call. Step 4: every call returns success once the work has drained; cancellation reaches the run exactly once.
+- **Automation:** automated (backend) — `internal/service/aeo_runtime_test.go` "TestAEOConcurrentShutdownSQLite" / "TestAEOConcurrentShutdownMySQL" (run under `-race`; barriers and channels, no timing-only assertions), `internal/handler/aeo_handler_test.go` "TestCreateRun_SentinelMappings" (`SHUTTING_DOWN` mapping).
+
+### TC-AEO-049 — Scheduling starts without boot-time keys and resolves credentials when due
+- **Priority:** P1
+- **Type:** functional / configuration
+- **Preconditions:** `AEO_SCHEDULE_ENABLED=true`, no provider key in the environment, a saved profile and an active prompt.
+- **Steps:**
+  1. Start the backend and read the startup log.
+  2. Save a provider key in Settings > AEO while the process runs.
+  3. Wait for `AEO_SCHEDULE_HOUR` (or, in the Go root, fire the manual clock).
+  4. Repeat from a fresh database with no profile; then repeat with `AEO_SCHEDULE_ENABLED=false`.
+- **Expected:** Step 1: `AEO providers loaded` with an empty roster **and** `AEO scheduler started` — the empty roster no longer disables the schedule. Step 3: a `scheduled` run executes against the engine whose key was stored after boot; the provider request carries that key; the run completes and the scheduler re-arms for the next day. Step 4 (unconfigured): the tick logs one info line `AEO scheduled run skipped: the module is not fully configured` naming the reason, no error-level line, no run row, and the loop re-arms — there is no retry inside the day. Step 4 (disabled): `AEO scheduler not started`, no timer is ever armed, and shutdown is immediate.
+- **Automation:** automated (backend) — `cmd/aeo_runtime_test.go` "TestAEORuntimeStartup", `internal/aeo/runtime_test.go` (`TestSchedulerFiresWhenDueAndRearms`, `TestSchedulerWaitJoinsAStartInProgress`, `TestTriggerScheduledRunIsQuietOnIncompleteConfiguration`). The `aeo-providers` browser spec covers runtime credentials on the settings page but not the scheduled start.

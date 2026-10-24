@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -1016,6 +1017,33 @@ func TestAEORepository_WithTx(t *testing.T) {
 	count, err = repo.CountPrompts(false)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+// WithContext binds every statement to the caller's context: a cancelled
+// context aborts the statement before it reaches the database, which is how
+// shutdown releases a run's blocked write instead of letting it outlive the
+// process. A nil context keeps the receiver.
+func TestAEORepository_WithContext(t *testing.T) {
+	db := setupAEOTestDB(t)
+	repo := NewAEORepository(db)
+
+	live, cancelLive := context.WithCancel(context.Background())
+	defer cancelLive()
+	require.NoError(t, repo.WithContext(live).CreatePrompt(&models.AEOPrompt{Text: "Bound", IsActive: true}))
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	bound := repo.WithContext(cancelled)
+	assert.ErrorIs(t, bound.CreatePrompt(&models.AEOPrompt{Text: "Never", IsActive: true}), context.Canceled)
+	_, err := bound.CountRunsByStatus(models.AEORunStatusRunning)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.ErrorIs(t, bound.CreateAnswerWithCitations(&models.AEOAnswer{RunID: 1, PromptID: 1, Provider: "x", Model: "m", FirstMentionPos: -1}, nil), context.Canceled)
+
+	count, err := repo.CountPrompts(false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count, "the cancelled write never reached the database")
+
+	assert.Equal(t, repo, repo.WithContext(nil), "a nil context keeps the existing session")
 }
 
 // TestAEORepository_SQLIsPortable guards the dual-database constraint from the

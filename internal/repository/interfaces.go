@@ -448,6 +448,12 @@ type AEORepository interface {
 	CountAnswersWithCitations(from, to time.Time) (int64, error)
 
 	WithTx(tx *gorm.DB) AEORepository
+	// WithContext returns a repository whose statements run under ctx, so
+	// cancelling ctx aborts a blocked read or write instead of letting it
+	// outlive the run that issued it. The run engine binds its writes to the
+	// run context and its finalization to a short, independent cleanup
+	// context; a nil ctx returns the receiver unchanged.
+	WithContext(ctx context.Context) AEORepository
 }
 
 // FormRepository backs the forms module: the form definitions, the submissions

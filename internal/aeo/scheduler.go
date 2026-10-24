@@ -41,40 +41,34 @@ func NextRunAt(now time.Time, hour int) time.Time {
 	return next
 }
 
-// StartScheduler launches the daily run scheduler and returns immediately. The
-// goroutine exits when ctx is cancelled.
-func StartScheduler(ctx context.Context, starter RunStarter, hour int) {
+// StartScheduler launches the daily run scheduler on the system clock and
+// returns its handle, which shutdown uses to join the goroutine. The goroutine
+// exits when ctx is cancelled. A nil starter arms nothing and returns nil.
+func StartScheduler(ctx context.Context, starter RunStarter, hour int) *Scheduler {
 	if starter == nil {
 		logScheduler().Warn("AEO scheduler not started: no run starter")
-		return
+		return nil
 	}
-	go schedulerLoop(ctx, starter, hour)
+	scheduler := NewScheduler(starter, hour)
+	scheduler.Start(ctx)
+	return scheduler
 }
 
+// schedulerLoop runs the loop synchronously on the system clock until ctx is
+// cancelled.
 func schedulerLoop(ctx context.Context, starter RunStarter, hour int) {
-	logScheduler().WithField("hour", hour).Info("AEO scheduler started")
-
-	for {
-		next := NextRunAt(time.Now(), hour)
-		logScheduler().WithField("next_run_at", next.Format(time.RFC3339)).
-			Debug("AEO scheduler sleeping")
-
-		timer := time.NewTimer(time.Until(next))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			logScheduler().Info("AEO scheduler stopped")
-			return
-		case <-timer.C:
-		}
-
-		triggerScheduledRun(ctx, starter)
-	}
+	NewScheduler(starter, hour).run(ctx)
 }
 
 // triggerScheduledRun starts one scheduled run. Every outcome — including a
 // panic inside the service — is contained here so the loop always survives to
 // schedule tomorrow.
+//
+// Incomplete configuration is an ordinary state of a scheduled deployment, not
+// a fault: a profile not saved yet, no engine with credentials, or no active
+// prompt. Each is logged once at info level and the loop sleeps until the next
+// day; there is no retry and no error-level line, so an unconfigured module
+// cannot flood the log a tick at a time.
 func triggerScheduledRun(ctx context.Context, starter RunStarter) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -89,6 +83,13 @@ func triggerScheduledRun(ctx context.Context, starter RunStarter) {
 		// A manual run is still going. Skipping is correct: the overlap guard
 		// exists precisely to keep provider spend bounded.
 		logScheduler().Info("AEO scheduled run skipped: a run is already in progress")
+	case errors.Is(err, ErrShuttingDown):
+		logScheduler().Info("AEO scheduled run skipped: the runtime is shutting down")
+	case errors.Is(err, apperrors.ErrProfileNotConfigured),
+		errors.Is(err, apperrors.ErrNoProvidersConfigured),
+		apperrors.IsNotFound(err):
+		logScheduler().WithField("reason", err.Error()).
+			Info("AEO scheduled run skipped: the module is not fully configured")
 	case err != nil:
 		logScheduler().WithField("error", err.Error()).Error("AEO scheduled run failed to start")
 	case run != nil:

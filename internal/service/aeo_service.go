@@ -123,6 +123,10 @@ type aeoService struct {
 	// would need a database-level claim, and that is called out in the spec.
 	startMu sync.Mutex
 
+	// lifecycle owns every run this service starts: admission, the shared run
+	// context and the join at shutdown. See aeo_runtime.go.
+	lifecycle *aeoRunOwner
+
 	// providerStatuses is the full engine roster, including the ones with no
 	// credentials. The service cannot derive it from providers — an engine with
 	// no key is simply absent there — so main.go supplies it.
@@ -198,12 +202,21 @@ func (s *aeoService) currentExecutor(providers []aeo.Provider) aeo.Executor {
 // that actually have credentials — an empty list makes StartRun fail fast with
 // apperrors.ErrNoProvidersConfigured instead of recording a run that can never
 // produce an answer.
+//
+// The service owns the runs it starts; a process that must drain them at
+// shutdown wires NewAEORuntime instead, which exposes the same service plus
+// Shutdown.
 func NewAEOService(repo repository.AEORepository, executor aeo.Executor, providers []aeo.Provider, txManager repository.TransactionManager, opts ...AEOServiceOption) AEOService {
+	return newAEOService(repo, executor, providers, txManager, opts...)
+}
+
+func newAEOService(repo repository.AEORepository, executor aeo.Executor, providers []aeo.Provider, txManager repository.TransactionManager, opts ...AEOServiceOption) *aeoService {
 	s := &aeoService{
 		repo:      repo,
 		executor:  executor,
 		providers: providers,
 		txManager: txManager,
+		lifecycle: newAEORunOwner(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -638,8 +651,8 @@ func cleanGeneratedPromptText(raw string) string {
 // ------------------------------------------------------------------- runs ---
 
 func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error) {
-	return s.startRun(ctx, trigger, triggeredByID, func() ([]models.AEOPrompt, error) {
-		prompts, err := s.repo.ListActivePrompts()
+	return s.startRun(ctx, trigger, triggeredByID, func(repo repository.AEORepository) ([]models.AEOPrompt, error) {
+		prompts, err := repo.ListActivePrompts()
 		if err != nil {
 			return nil, err
 		}
@@ -656,8 +669,8 @@ func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID
 // before it joins the daily run. Everything else — the overlap guard, the
 // stale-run sweep, background execution — matches a full manual run.
 func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error) {
-	return s.startRun(ctx, aeoTriggerManual, triggeredByID, func() ([]models.AEOPrompt, error) {
-		prompt, err := s.repo.GetPromptByID(promptID)
+	return s.startRun(ctx, aeoTriggerManual, triggeredByID, func(repo repository.AEORepository) ([]models.AEOPrompt, error) {
+		prompt, err := repo.GetPromptByID(promptID)
 		if err != nil {
 			if isNotFound(err) {
 				return nil, fmt.Errorf("prompt %d not found: %w", promptID, apperrors.ErrNotFound)
@@ -668,7 +681,15 @@ func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggere
 	})
 }
 
-func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID *uint, selectPrompts func() ([]models.AEOPrompt, error)) (*models.AEORun, error) {
+// startRun admits, records and launches one run.
+//
+// The caller's ctx is deliberately not used for anything the run depends on. A
+// manual run is asked for by an HTTP request that returns 202 as soon as the
+// row exists; cancelling that request must not abort a run already writing
+// answers, and the scheduler's context is the process lifetime anyway. Every
+// read and write below, and the executor itself, run on the lifecycle context
+// the service owns, so shutdown is the one thing that cancels them.
+func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *uint, selectPrompts func(repo repository.AEORepository) ([]models.AEOPrompt, error)) (*models.AEORun, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "aeo_run"), "AEOService", "StartRun")
 
 	trigger = strings.ToLower(strings.TrimSpace(trigger))
@@ -680,13 +701,36 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 	}
 	logger = logger.WithField("trigger", trigger)
 
+	// Admission comes before the first database call: from here until the
+	// executor releases it, this start is owned work that shutdown joins (or
+	// times out on) instead of closing the database underneath. A start that
+	// fails anywhere below releases on return; a start that launches hands the
+	// release to the executor goroutine.
+	release, err := s.lifecycle.admit()
+	if err != nil {
+		logger.Info("Refusing to start an AEO run: the runtime is shutting down")
+		return nil, err
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
+
+	runCtx := s.lifecycle.ctx
+	repo := s.repo.WithContext(runCtx)
+
 	// Order matters: the caller gets the most actionable reason first. A missing
 	// profile means mention detection has nothing to look for, so it outranks
 	// "no providers", which outranks the overlap guard.
-	profile, err := s.repo.GetProfile()
+	profile, err := repo.GetProfile()
 	if err != nil {
 		if isNotFound(err) {
 			return nil, apperrors.ErrProfileNotConfigured
+		}
+		if runCtx.Err() != nil {
+			return nil, ErrAEOShuttingDown
 		}
 		utils.LogServiceResponse(logger, err)
 		return nil, err
@@ -711,7 +755,14 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 
-	if swept, err := s.repo.MarkStaleRunsFailed(time.Now().UTC().Add(-aeoRunStaleAfter)); err != nil {
+	// A start that queued on the mutex behind a slow one may find the runtime
+	// gone by the time it gets in; nothing below should touch the database then.
+	if runCtx.Err() != nil {
+		logger.Info("Refusing to start an AEO run: the runtime is shutting down")
+		return nil, ErrAEOShuttingDown
+	}
+
+	if swept, err := repo.MarkStaleRunsFailed(time.Now().UTC().Add(-aeoRunStaleAfter)); err != nil {
 		// A failed sweep is not a reason to refuse the run: fall through to the
 		// guard, which is still correct, just less forgiving.
 		logger.WithError(utils.LogError(err)).Warn("Could not sweep stale AEO runs")
@@ -719,8 +770,11 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 		logger.WithField("stale_runs", swept).Warn("Failed AEO runs left running by an earlier process")
 	}
 
-	running, err := s.repo.CountRunsByStatus(aeoRunStatusRunning)
+	running, err := repo.CountRunsByStatus(aeoRunStatusRunning)
 	if err != nil {
+		if runCtx.Err() != nil {
+			return nil, ErrAEOShuttingDown
+		}
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
@@ -729,8 +783,11 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 		return nil, apperrors.ErrRunInProgress
 	}
 
-	prompts, err := selectPrompts()
+	prompts, err := selectPrompts(repo)
 	if err != nil {
+		if runCtx.Err() != nil && !apperrors.IsNotFound(err) {
+			return nil, ErrAEOShuttingDown
+		}
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
@@ -742,15 +799,29 @@ func (s *aeoService) startRun(ctx context.Context, trigger string, triggeredByID
 		TotalQueries:  len(prompts) * len(providers),
 		TriggeredByID: triggeredByID,
 	}
-	if err := s.repo.CreateRun(run); err != nil {
+	if err := repo.CreateRun(run); err != nil {
+		if runCtx.Err() != nil {
+			// The insert may or may not have landed before the cancellation
+			// reached it; if it did, fail the row now rather than leave it to
+			// the stale sweep.
+			s.failInterruptedRun(run, logger)
+			return nil, ErrAEOShuttingDown
+		}
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
+	if runCtx.Err() != nil {
+		// Shutdown won the race with the insert. The row exists and nothing
+		// will execute it, so it is failed here, on a bounded fresh context.
+		s.failInterruptedRun(run, logger)
+		return nil, ErrAEOShuttingDown
+	}
 
-	// The run outlives the HTTP request that asked for it, so the executor gets
-	// a fresh background context. Cancelling the request must not abort a run
-	// that is already writing answers.
-	go executor.Execute(context.Background(), run, prompts, profile)
+	// The run outlives the HTTP request that asked for it: it executes on the
+	// lifecycle context, which only shutdown cancels, and the executor
+	// goroutine now owns the admission taken above.
+	handedOff = true
+	go s.runInBackground(runCtx, executor, run, prompts, profile, release, logger)
 
 	logger.WithFields(map[string]interface{}{
 		"run_id":        run.ID,
