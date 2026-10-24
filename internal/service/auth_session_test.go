@@ -103,8 +103,14 @@ func sessionActiveUser(id uint, password string) *models.User {
 	}
 }
 
+// The mock-based rotation cases pin the call sequence: lookup, conditional
+// claim, owner read, successor insert, access token — all on the
+// transaction-bound repositories. Whether the writes really share one
+// transaction on SQL, and what concurrent callers see, is proven by the real
+// database roots in auth_refresh_rotation_regression_test.go.
 func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	d := newSessionAuthService(t)
+	d.expectTransactionBoundRepos()
 	user := sessionActiveUser(1, "OldPass123!")
 
 	raw := "raw-refresh-token-value"
@@ -118,8 +124,8 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	}
 
 	d.refreshRepo.On("GetByTokenHash", hash).Return(stored, nil)
+	d.refreshRepo.On("ClaimForRotation", uint(5)).Return(nil)
 	d.userRepo.On("GetByID", uint(1)).Return(user, nil)
-	d.refreshRepo.On("RevokeByTokenHash", hash).Return(nil)
 
 	var newStored *models.RefreshToken
 	d.refreshRepo.On("Create", mock.MatchedBy(func(rt *models.RefreshToken) bool {
@@ -136,8 +142,13 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	assert.NotEqual(t, raw, tokens.RefreshToken, "rotation must mint a new opaque token")
 	assert.Equal(t, user, tokens.User)
 
-	// The presented token must be revoked as part of the rotation.
-	d.refreshRepo.AssertCalled(t, "RevokeByTokenHash", hash)
+	// The presented token is spent by the conditional claim, not by the
+	// unconditional logout revocation, and every call went through the
+	// transaction-bound repositories.
+	d.refreshRepo.AssertCalled(t, "ClaimForRotation", uint(5))
+	d.refreshRepo.AssertNotCalled(t, "RevokeByTokenHash", mock.Anything)
+	d.refreshRepo.AssertCalled(t, "WithTx", mock.Anything)
+	d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
 
 	// Only the hash of the new token is persisted, never the raw value.
 	assert.NotNil(t, newStored)
@@ -153,6 +164,7 @@ func TestAuthService_RefreshAccessToken_UnknownRevokedOrExpired(t *testing.T) {
 	// The repository lookup already filters revoked and expired rows, so all
 	// three cases surface identically as a record-not-found.
 	d := newSessionAuthService(t)
+	d.expectTransactionBoundRepos()
 	hash := hashOpaqueToken("dead-token", sessionTestSecret)
 	d.refreshRepo.On("GetByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
 
@@ -160,32 +172,133 @@ func TestAuthService_RefreshAccessToken_UnknownRevokedOrExpired(t *testing.T) {
 
 	assert.Nil(t, tokens)
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+	d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
 }
 
-func TestAuthService_RefreshAccessToken_InactiveOwnerRejectedAndRevoked(t *testing.T) {
+func TestAuthService_RefreshAccessToken_LostClaimIsRejectedBeforeAnySuccessor(t *testing.T) {
+	// Both requests read the token as live; this one lost the claim. It must
+	// be rejected generically without reading the owner or minting anything.
 	d := newSessionAuthService(t)
-	raw := "orphan-token"
+	d.expectTransactionBoundRepos()
+	raw := "contended-token"
 	hash := hashOpaqueToken(raw, sessionTestSecret)
 	stored := &models.RefreshToken{
-		BaseModel: models.BaseModel{ID: 7},
-		UserID:    2,
+		BaseModel: models.BaseModel{ID: 11},
+		UserID:    1,
 		TokenHash: hash,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
-	inactive := sessionActiveUser(2, "OldPass123!")
-	inactive.IsActive = false
-
 	d.refreshRepo.On("GetByTokenHash", hash).Return(stored, nil)
-	d.userRepo.On("GetByID", uint(2)).Return(inactive, nil)
-	d.refreshRepo.On("RevokeByTokenHash", hash).Return(nil)
+	d.refreshRepo.On("ClaimForRotation", uint(11)).Return(gorm.ErrRecordNotFound)
 
 	tokens, err := d.svc.RefreshAccessToken(raw)
 
 	assert.Nil(t, tokens)
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
-	d.refreshRepo.AssertCalled(t, "RevokeByTokenHash", hash)
+	d.userRepo.AssertNotCalled(t, "GetByID", mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
+	d.refreshRepo.AssertNotCalled(t, "RevokeByTokenHash", mock.Anything)
+}
+
+func TestAuthService_RefreshAccessToken_InactiveOwnerRejectedAndRevoked(t *testing.T) {
+	inactive := sessionActiveUser(2, "OldPass123!")
+	inactive.IsActive = false
+	for name, owner := range map[string]struct {
+		user *models.User
+		err  error
+	}{
+		"inactive": {user: inactive},
+		"missing":  {err: gorm.ErrRecordNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newSessionAuthService(t)
+			d.expectTransactionBoundRepos()
+			raw := "orphan-token"
+			hash := hashOpaqueToken(raw, sessionTestSecret)
+			stored := &models.RefreshToken{
+				BaseModel: models.BaseModel{ID: 7},
+				UserID:    2,
+				TokenHash: hash,
+				ExpiresAt: time.Now().Add(24 * time.Hour),
+			}
+
+			d.refreshRepo.On("GetByTokenHash", hash).Return(stored, nil)
+			d.refreshRepo.On("ClaimForRotation", uint(7)).Return(nil)
+			d.userRepo.On("GetByID", uint(2)).Return(owner.user, owner.err)
+
+			tokens, err := d.svc.RefreshAccessToken(raw)
+
+			assert.Nil(t, tokens)
+			assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+			// The claim is the containment revocation of the dead account's
+			// token; no successor is ever created for it.
+			d.refreshRepo.AssertCalled(t, "ClaimForRotation", uint(7))
+			d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
+		})
+	}
+}
+
+func TestAuthService_RefreshAccessToken_FailuresAfterTheClaimReturnNoCredentials(t *testing.T) {
+	raw := "fragile-token"
+	hash := hashOpaqueToken(raw, sessionTestSecret)
+	stored := func() *models.RefreshToken {
+		return &models.RefreshToken{
+			BaseModel: models.BaseModel{ID: 13},
+			UserID:    1,
+			TokenHash: hash,
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+	}
+	injected := errors.New("injected failure")
+
+	t.Run("the successor insert fails", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		d.refreshRepo.On("GetByTokenHash", hash).Return(stored(), nil)
+		d.refreshRepo.On("ClaimForRotation", uint(13)).Return(nil)
+		d.userRepo.On("GetByID", uint(1)).Return(sessionActiveUser(1, "OldPass123!"), nil)
+		d.refreshRepo.On("Create", mock.Anything).Return(injected)
+
+		tokens, err := d.svc.RefreshAccessToken(raw)
+
+		assert.Nil(t, tokens)
+		assert.ErrorIs(t, err, injected, "the failure is returned as it is")
+		assert.NotErrorIs(t, err, ErrInvalidRefreshToken)
+	})
+
+	t.Run("the access token cannot be signed", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		d.svc.(*authService).signAccessToken = func(*models.User) (string, error) { return "", injected }
+		d.refreshRepo.On("GetByTokenHash", hash).Return(stored(), nil)
+		d.refreshRepo.On("ClaimForRotation", uint(13)).Return(nil)
+		d.userRepo.On("GetByID", uint(1)).Return(sessionActiveUser(1, "OldPass123!"), nil)
+		d.refreshRepo.On("Create", mock.Anything).Return(nil)
+
+		tokens, err := d.svc.RefreshAccessToken(raw)
+
+		assert.Nil(t, tokens)
+		assert.ErrorIs(t, err, injected)
+		assert.NotErrorIs(t, err, ErrInvalidRefreshToken)
+	})
+
+	t.Run("without a transaction manager the rotation is refused rather than run unsafely", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.svc = NewAuthServiceWithSessions(
+			d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, nil, d.mailer,
+			sessionTestJWTConfig, "http://localhost:5173", "")
+		d.refreshRepo.On("GetByTokenHash", hash).Return(stored(), nil)
+
+		tokens, err := d.svc.RefreshAccessToken(raw)
+
+		assert.Nil(t, tokens)
+		assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+		d.refreshRepo.AssertNotCalled(t, "GetByTokenHash", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "RevokeByTokenHash", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
+	})
 }
 
 func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {

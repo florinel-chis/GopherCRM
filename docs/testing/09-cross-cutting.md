@@ -325,7 +325,11 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   successful refresh (TC-XCUT-016), then restore the **old** refresh token into storage.
 - **Steps:** Expire the access token again and navigate to any list page.
 - **Expected:** `POST /auth/refresh` returns **401** because rotation is strict and the presented
-  token is already dead; the interceptor clears both storages and hard-redirects to `/login`.
+  token is already dead; the interceptor clears both storages and hard-redirects to `/login`. The
+  replay neither adds a refresh token row nor touches the successor issued by the earlier
+  refresh: the rotation claims the presented token by a conditional update inside the transaction
+  that inserts the successor, so a spent token can never produce a second one (#103; backend
+  coverage in `docs/testing/01-authentication.md` TC-AUTH-033a).
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
 
 ### TC-XCUT-019 — A 401 from /auth/login does not trigger the refresh path
@@ -350,7 +354,10 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   token once it arrives.
 - **Known issue:** If the refresh **fails**, the queued subscribers are never invoked or rejected —
   their promises never settle. The hard redirect to `/login` masks it in practice. Recorded in
-  `docs/ROADMAP.md` as "Concurrent-refresh stampede".
+  `docs/ROADMAP.md` as "Concurrent-refresh stampede". Should the client ever send the same refresh
+  token twice at once (a second tab, a race the interceptor's flag does not cover), the backend
+  commits exactly one successor and answers the other request with the generic 401 (#103); the
+  losing tab is logged out, which is the client-side coalescing still deferred to #115.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
 
 ### TC-XCUT-021 — Logout revokes the refresh token and clears both storages

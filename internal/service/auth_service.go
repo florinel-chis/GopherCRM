@@ -54,10 +54,10 @@ type authService struct {
 	apiKeyRepo       repository.APIKeyRepository
 	refreshTokenRepo repository.RefreshTokenRepository
 	resetTokenRepo   repository.PasswordResetTokenRepository
-	// txManager binds the password reset confirmation into one transaction:
-	// token claim, password and lockout update, and session revocation. It is
-	// required for that flow; without it the confirmation is refused rather
-	// than run as separate writes.
+	// txManager binds the password reset confirmation and the refresh token
+	// rotation into one transaction each: token claim, owner check and the
+	// dependent writes. It is required for both flows; without it they are
+	// refused rather than run as separate writes.
 	txManager    repository.TransactionManager
 	mailer       mailer.Mailer
 	jwtConfig    config.JWTConfig
@@ -65,6 +65,11 @@ type authService struct {
 	appBaseURL   string
 	// loginTime is an instance-local clock for lockout decisions; nil uses wall time.
 	loginTime func() time.Time
+	// signAccessToken is an instance-local seam for the access token issued
+	// by a rotation; nil means GenerateJWT. Tests inject a failing signer on
+	// one instance to prove the rollback, instead of mutating the global
+	// signing methods under concurrent callers.
+	signAccessToken func(user *models.User) (string, error)
 }
 
 func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig, apiKeySecret ...string) AuthService {
@@ -84,10 +89,11 @@ func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.AP
 // session lifecycle enabled: refresh token rotation, logout revocation and the
 // password reset flow. The transaction manager must be built on the same
 // database handle as the repositories: the reset confirmation claims the
-// token, writes the password and revokes the sessions through the
-// transaction-bound repositories it yields. NewAuthService (above) remains for
-// callers that only need stateless JWT auth — on such an instance the session
-// methods reject every token with the generic sentinels instead of panicking.
+// token, writes the password and revokes the sessions, and the rotation claims
+// the presented token and inserts its successor, through the transaction-bound
+// repositories it yields. NewAuthService (above) remains for callers that only
+// need stateless JWT auth — on such an instance the session methods reject
+// every token with the generic sentinels instead of panicking.
 func NewAuthServiceWithSessions(
 	userRepo repository.UserRepository,
 	apiKeyRepo repository.APIKeyRepository,
@@ -338,7 +344,7 @@ func (s *authService) LoginWithTokens(email, password string) (*AuthTokens, erro
 	// the response contract marks refresh_token as optional, and locking a
 	// user out because the token table hiccuped would be the worse trade.
 	if s.refreshTokenRepo != nil {
-		refreshToken, err := s.issueRefreshToken(user.ID)
+		refreshToken, err := s.issueRefreshToken(s.refreshTokenRepo, user.ID)
 		if err != nil {
 			utils.Logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).
 				Warn("Failed to issue refresh token at login; continuing with access token only")
@@ -385,10 +391,11 @@ func generateOpaqueToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// issueRefreshToken mints, hashes and persists a refresh token for the user,
-// returning the raw value for the client. Lifetime comes from
-// REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays).
-func (s *authService) issueRefreshToken(userID uint) (string, error) {
+// issueRefreshToken mints, hashes and persists a refresh token for the user
+// through the given repository — the root one at login, the transaction-bound
+// one during a rotation — returning the raw value for the client. Lifetime
+// comes from REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays).
+func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, userID uint) (string, error) {
 	raw, err := generateOpaqueToken()
 	if err != nil {
 		return "", err
@@ -404,70 +411,180 @@ func (s *authService) issueRefreshToken(userID uint) (string, error) {
 		TokenHash: hashOpaqueToken(raw, s.sessionTokenSecret()),
 		ExpiresAt: time.Now().Add(time.Duration(days) * 24 * time.Hour),
 	}
-	if err := s.refreshTokenRepo.Create(token); err != nil {
+	if err := repo.Create(token); err != nil {
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
 	}
 	return raw, nil
 }
 
+// accessTokenFor signs the access token of a rotation through the
+// instance-local seam when one is installed, GenerateJWT otherwise.
+func (s *authService) accessTokenFor(user *models.User) (string, error) {
+	if s.signAccessToken != nil {
+		return s.signAccessToken(user)
+	}
+	return s.GenerateJWT(user)
+}
+
+// errRefreshOwnerRejected marks a rotation refused because of its owner —
+// inactive, erased or missing — after the presented token was already
+// claimed. It is internal to RefreshAccessToken: the claim is committed as
+// containment and the caller receives the generic ErrInvalidRefreshToken.
+var errRefreshOwnerRejected = fmt.Errorf("refresh token owner rejected: %w", ErrInvalidRefreshToken)
+
 // RefreshAccessToken validates the presented refresh token and rotates it:
 // the presented token is revoked and a fresh JWT + refresh token are issued.
 // Every rejection maps to ErrInvalidRefreshToken so callers cannot learn
 // whether the token was unknown, revoked, expired, or orphaned.
+//
+// The rotation is one transaction. The presented token is claimed by a
+// conditional update that revokes it only while it is still not revoked and
+// strictly unexpired and must affect exactly one row, so two requests that
+// both read the token as live cannot both rotate it: the second claim finds
+// nothing to revoke and is rejected before any successor exists. The owner is
+// then read with a locking read, the successor is inserted and its access
+// token is signed, all inside the same transaction. A failure of the successor
+// insert or of the signing rolls the claim back with it, so the presented
+// token stays usable and no credentials are returned; nothing is left half
+// rotated. An inactive, erased or missing owner is the one rejection that
+// commits: the claim stands as the containment revocation of a token whose
+// account is dead, no successor is inserted, and the public error is the same
+// generic one.
 func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, error) {
-	if s.refreshTokenRepo == nil || refreshToken == "" {
+	// Every dependency of the transactional flow is required. Running the old
+	// sequence of independent writes when one is missing would reintroduce
+	// the double-successor and stranded-session failures this flow prevents.
+	if s.refreshTokenRepo == nil || s.txManager == nil || refreshToken == "" {
 		return nil, fmt.Errorf("refresh not available: %w", ErrInvalidRefreshToken)
 	}
 
 	hash := hashOpaqueToken(refreshToken, s.sessionTokenSecret())
 
-	// The repository lookup already excludes revoked and expired rows.
-	stored, err := s.refreshTokenRepo.GetByTokenHash(hash)
-	if err != nil {
-		if apperrors.IsNotFound(err) {
-			return nil, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+	var (
+		tokens        *AuthTokens
+		ownerRejected bool
+		tokenOwnerID  uint
+	)
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
 		}
-		return nil, fmt.Errorf("refresh token lookup failed: %w", err)
-	}
-
-	// Defence in depth in case a repository implementation stops filtering.
-	if stored.Revoked || stored.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
-	}
-
-	// A token must never outlive or outrank its owner. The scoped lookup makes
-	// an erased (soft-deleted) owner a not-found. Revoke the presented token on
-	// this path so a dead account cannot keep probing with it.
-	user, err := s.userRepo.GetByID(stored.UserID)
-	if err != nil || !user.IsActive {
-		if revokeErr := s.refreshTokenRepo.RevokeByTokenHash(hash); revokeErr != nil {
-			utils.Logger.WithError(utils.LogError(revokeErr)).WithField("user_id", stored.UserID).
-				Warn("Failed to revoke refresh token of inactive or missing user")
+		// The owner repository is bound to a locking handle so its read is
+		// `SELECT ... FOR UPDATE` on MySQL (SQLite drops the clause). The
+		// handle must be a fresh Session: Clauses alone returns a statement
+		// that GORM keeps reusing, and its state would leak into the
+		// successor insert that follows on the same transaction.
+		rotated, ownerID, err := s.rotateRefreshTokenInTransaction(
+			s.refreshTokenRepo.WithTx(tx),
+			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			hash)
+		tokenOwnerID = ownerID
+		if errors.Is(err, errRefreshOwnerRejected) {
+			// Commit the containment: the claim has revoked a token whose
+			// owner is gone or disabled, and that revocation must survive
+			// the rejection rather than be rolled back with it.
+			ownerRejected = true
+			return nil
 		}
-		utils.Logger.WithField("user_id", stored.UserID).
+		if err != nil {
+			return err
+		}
+		tokens = rotated
+		return nil
+	})
+	if ownerRejected {
+		if err != nil {
+			// The containment did not commit; the token is still live and the
+			// next presentation will try again. The caller still learns only
+			// that the token was rejected.
+			utils.Logger.WithError(utils.LogError(err)).WithField("user_id", tokenOwnerID).
+				Warn("Failed to commit revocation of refresh token with inactive or missing owner")
+		}
+		utils.Logger.WithField("user_id", tokenOwnerID).
 			Warn("Rejected refresh token whose owner is missing or inactive")
 		return nil, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
 	}
-
-	// Rotate: kill the presented token before minting its successor. If the
-	// revocation fails the rotation is aborted — failing open here would let a
-	// stolen token be replayed indefinitely.
-	if err := s.refreshTokenRepo.RevokeByTokenHash(hash); err != nil {
-		return nil, fmt.Errorf("failed to revoke refresh token during rotation: %w", err)
-	}
-
-	newRefreshToken, err := s.issueRefreshToken(user.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	accessToken, err := s.GenerateJWT(user)
+	utils.Logger.WithField("user_id", tokens.User.ID).Info("Refresh token rotated")
+	return tokens, nil
+}
+
+// rotateRefreshTokenInTransaction performs the rotation on transaction-bound
+// repositories: lookup, conditional claim, locking owner read, successor
+// insert and access token signing. It returns the owner id it learned from
+// the token, if any, so the caller can log a rejection. Any error other than
+// errRefreshOwnerRejected discards every write, the claim included.
+func (s *authService) rotateRefreshTokenInTransaction(
+	refreshRepo repository.RefreshTokenRepository,
+	userRepo repository.UserRepository,
+	hash string,
+) (*AuthTokens, uint, error) {
+	// The lookup already excludes revoked and expired tokens; the claim below
+	// re-applies both predicates as part of its own UPDATE.
+	stored, err := refreshRepo.GetByTokenHash(hash)
 	if err != nil {
-		return nil, err
+		if apperrors.IsNotFound(err) {
+			return nil, 0, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+		}
+		return nil, 0, fmt.Errorf("refresh token lookup failed: %w", err)
 	}
 
-	utils.Logger.WithField("user_id", user.ID).Info("Refresh token rotated")
-	return &AuthTokens{AccessToken: accessToken, RefreshToken: newRefreshToken, User: user}, nil
+	// Defence in depth in case a repository implementation stops filtering.
+	if stored.Revoked || !stored.ExpiresAt.After(time.Now()) {
+		return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+	}
+
+	// Claim the token before reading anything else. The claim is the one
+	// write competing requests contend on: whoever revokes the row first owns
+	// the rotation, and every other request finds no row to revoke — even one
+	// that passed the lookup a moment ago, or one whose token expired or was
+	// revoked between the lookup and this statement.
+	if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+		}
+		return nil, stored.UserID, fmt.Errorf("failed to claim refresh token for rotation: %w", err)
+	}
+
+	// A token must never outlive or outrank its owner. The owner is read with
+	// a locking read: on MySQL a plain SELECT inside this REPEATABLE READ
+	// transaction would answer from the snapshot taken at the token lookup,
+	// so an account deactivated or erased a moment after that lookup would
+	// still look active and receive a fresh session. The locking read returns
+	// the current committed row. The scoped lookup makes an erased
+	// (soft-deleted) owner a not-found; a deactivated one is refused the same
+	// way. Both are reported as errRefreshOwnerRejected so the caller commits
+	// the claim as containment; a lookup failure is a plain error and rolls
+	// the claim back, leaving the token usable once the database recovers.
+	user, err := userRepo.GetByID(stored.UserID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, stored.UserID, errRefreshOwnerRejected
+		}
+		return nil, stored.UserID, fmt.Errorf("refresh token owner lookup failed: %w", err)
+	}
+	if !user.IsActive {
+		return nil, stored.UserID, errRefreshOwnerRejected
+	}
+
+	// The successor is inserted and its access token signed inside the
+	// transaction, so a failure of either rolls the claim back: the presented
+	// token stays usable and the caller receives no credentials at all.
+	newRefreshToken, err := s.issueRefreshToken(refreshRepo, user.ID)
+	if err != nil {
+		return nil, stored.UserID, err
+	}
+
+	accessToken, err := s.accessTokenFor(user)
+	if err != nil {
+		return nil, stored.UserID, fmt.Errorf("failed to sign access token during rotation: %w", err)
+	}
+
+	return &AuthTokens{AccessToken: accessToken, RefreshToken: newRefreshToken, User: user}, stored.UserID, nil
 }
 
 // InvalidateRefreshToken revokes the presented token unconditionally.

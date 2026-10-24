@@ -283,7 +283,18 @@ type APIKeyRepository interface {
 
 type RefreshTokenRepository interface {
 	Create(token *models.RefreshToken) error
+	// GetByTokenHash returns the token only while it is still live: not
+	// revoked and unexpired. Anything else is a not-found.
 	GetByTokenHash(tokenHash string) (*models.RefreshToken, error)
+	// ClaimForRotation revokes the token only while it is still not revoked
+	// and strictly unexpired, and succeeds only when exactly one row was
+	// affected; otherwise it reports gorm.ErrRecordNotFound. It is the
+	// single-use claim of the rotation and runs inside the transaction that
+	// inserts the successor.
+	ClaimForRotation(id uint) error
+	// RevokeByTokenHash revokes unconditionally and idempotently: the logout
+	// and invalidation primitive. It is not a claim and never fails because
+	// the token was already revoked, expired or unknown.
 	RevokeByTokenHash(tokenHash string) error
 	RevokeAllForUser(userID uint) error
 	DeleteExpired() error

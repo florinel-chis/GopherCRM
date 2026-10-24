@@ -115,6 +115,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Refresh token rotation is atomic and single-use (#103).**
+  `POST /auth/refresh` used to read the presented token, revoke it with an unconditional update
+  and insert its replacement as independent writes: two simultaneous requests could both pass the
+  lookup and both mint a successor, and a failure after the revocation stranded the session with
+  no usable token. The rotation is now one transaction through the transaction manager and the
+  `WithTx` repositories: the token is claimed by a new conditional
+  `RefreshTokenRepository.ClaimForRotation` (not revoked, strictly unexpired, exactly one affected
+  row), the owner is re-read with the same locking read as the password reset (so an account
+  disabled by another MySQL connection right after the token lookup is refused instead of served
+  from the stale snapshot), the successor is inserted and its access JWT signed before the commit.
+  A failure of the insert or of the signing rolls the claim back, so the presented token stays
+  usable, no extra row exists and no credentials are returned; competing refreshes of one token
+  commit exactly one successor and the losers and any later replay receive the generic 401
+  without touching the winner. An inactive, erased or missing owner is still refused generically
+  and still has the presented token revoked: that containment revocation is committed with the
+  rejection and no successor is created. Logout keeps its unconditional, idempotent
+  `RevokeByTokenHash`; a rotation is refused rather than run as separate writes when the
+  transaction manager is not wired. Public errors and API responses are unchanged. Regressions run
+  on SQLite and on a disposable MySQL schema
+  (`TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}`), with the insert fault
+  injected through the transaction-bound repository and the signing fault through an
+  instance-local seam; see `docs/testing/01-authentication.md` TC-AUTH-033a. The client-side
+  refresh coalescing stays deferred (#115).
 - **Password reset confirmation is atomic and single-use (#102).**
   `POST /auth/password-reset/confirm` used to mark the token used by an unconditional update
   before hashing and writing the password, and revoked sessions only best-effort afterwards: a

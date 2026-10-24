@@ -19,7 +19,9 @@ file, not by trusting the coverage matrix.
   `gocrm-ui/src/layouts/MainLayout.tsx`
 - `internal/handler/auth_handler.go`, `internal/handler/routes.go`,
   `internal/service/auth_service.go`, `internal/repository/password_reset_token_repository.go`,
-  `internal/service/auth_password_reset_regression_test.go`, `internal/middleware/rate_limit.go`,
+  `internal/repository/refresh_token_repository.go`,
+  `internal/service/auth_password_reset_regression_test.go`,
+  `internal/service/auth_refresh_rotation_regression_test.go`, `internal/middleware/rate_limit.go`,
   `cmd/main.go`
 - `gocrm-ui/e2e/tests/login.spec.ts`, `gocrm-ui/e2e/tests/registration.spec.ts`,
   `gocrm-ui/e2e/pages/login.page.ts`, `gocrm-ui/e2e/pages/register.page.ts`,
@@ -498,6 +500,65 @@ file, not by trusting the coverage matrix.
   `sessionStorage.getItem(REFRESH_TOKEN_KEY) === null`, so a non-remembered session is not silently
   promoted to a persistent one.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new)
+
+### TC-AUTH-033a — Refresh rotation is atomic and single-use
+- **Priority:** P0
+- **Type:** regression
+- **Expected:** `POST /auth/refresh` rotates in one transaction (`internal/service/auth_service.go`
+  `RefreshAccessToken`, `internal/repository/refresh_token_repository.go` `ClaimForRotation`). The
+  presented token is looked up, then claimed by a conditional update that revokes the row only
+  while it is still not revoked and strictly unexpired and must affect exactly one row; the owner
+  is re-read with a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL, a
+  plain read on SQLite); the successor row is inserted and its access JWT signed, all before the
+  commit. A failure of the successor insert or of the signing rolls everything back, the claim
+  included: the presented token stays usable, no extra row exists, no credentials are returned,
+  and the same token rotates once the fault is gone. An unknown, revoked or expired token, one
+  that expires or is revoked between the lookup and the claim, and a missing transaction manager
+  all return the same generic **401** `Invalid or expired refresh token` and leave the committed
+  state unchanged. An inactive, erased (soft-deleted) or missing owner — including one deactivated
+  by another connection after the token lookup, which the locking read sees and a plain read under
+  REPEATABLE READ would not — is refused with the same 401, no successor is created and the claim
+  is committed as the containment revocation of that token: reactivating the account does not
+  bring it back, while the owner's other sessions are untouched. Competing refreshes presenting
+  one token commit exactly one successor: the winner receives a working access token and the
+  only live successor, every loser gets the generic 401 and no credentials, and a later replay
+  neither adds a row nor invalidates the winner. Logout stays idempotent around a rotation: logging
+  out with the spent token, an unknown token or someone else's token is a no-op success, logging
+  out with the successor revokes exactly that session and a second logout still succeeds.
+- **Known issue:** several parallel 401s in the SPA still each send a refresh; the backend rejects
+  all but one and the client-side coalescing is deferred (`docs/ROADMAP.md`, "Concurrent-refresh
+  stampede", #115). A JWT issued before a rotation or logout stays valid until it expires.
+- **Automation:** `internal/service/auth_refresh_rotation_regression_test.go` runs every scenario
+  on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
+  created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
+  skips, which the named acceptance checks reject). `TestRefreshRotationValidation{SQLite,MySQL}`:
+  unknown/empty/revoked/expired tokens, expiry and revocation between lookup and claim through
+  the transaction's own handle (rejected, rolled back, same token rotates afterwards), inactive,
+  erased, soft-deleted-with-surviving-token and missing owners, an owner deactivated or
+  soft-deleted through the transaction's handle between the lookup and the owner check, on MySQL
+  (two connections) an owner deactivated by a second connection after the token lookup, refusal
+  without a transaction manager, and a committed rotation with the logout idempotence cases.
+  `TestRefreshRotationAtomicity{SQLite,MySQL}`: an injected successor-insert failure (through the
+  transaction-bound repository) and an injected signing failure (an instance-local seam of the
+  service under test) leave the presented token live with no extra row and no returned
+  credentials, then the same token rotates; a committed rotation yields a validating access
+  token, a chain of successors keeps exactly one live, the sibling session and a bystander are
+  untouched; an inactive owner's token is contained and stays revoked after reactivation.
+  `TestRefreshRotationConcurrent{SQLite,MySQL}`: three competitors presenting one token — held
+  after the lookup on MySQL's multi-connection pool, serialised by the single connection on
+  SQLite — produce one success, one committed successor, two generic rejections without
+  credentials, a rejected replay that leaves the winner live, and a winner that rotates again,
+  under the race detector with every wait bounded. The conditional claim itself is pinned by
+  `internal/repository/refresh_token_repository_test.go`
+  (`TestRefreshTokenRepository_ClaimForRotation_ClaimsOnlyLiveTokens`,
+  `_RollsBackWithTheTransaction`, `TestRefreshTokenRepository_RevokeByTokenHash_IsUnconditionalAndIdempotent`);
+  the call sequence, the lost claim, the post-claim failures and the refusal without a
+  transaction manager by `internal/service/auth_session_test.go`
+  `TestAuthService_RefreshAccessToken_*`.
+- **Validation:** the three `refresh-rotation-*` named acceptance checks run the six roots with
+  `-race` and reject skipped evidence. `scripts/ci/check-auth.py` discovers these roots from the
+  `auth*_test.go` pattern, so the bounded auth profile needs `TEST_MYSQL_DSN` for them as it
+  already does for the reset roots.
 
 ---
 

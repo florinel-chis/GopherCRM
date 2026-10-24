@@ -212,6 +212,35 @@ variable and fail when it points at an unreachable server; because the auth chec
 its roots from `auth*_test.go` and rejects skips, the bounded auth profile needs `TEST_MYSQL_DSN`
 as well.
 
+A refresh token is rotated by the same kind of unit of work (#103). `RefreshAccessToken` runs one
+transaction through the transaction manager and the `WithTx` repositories: the presented token is
+looked up, then claimed by `RefreshTokenRepository.ClaimForRotation`, a conditional update
+(`is_revoked = false AND expires_at > now`, exactly one affected row, else the generic rejection),
+the owner is re-read with the same locking read as the reset flow (`FOR UPDATE` on MySQL, a plain
+read on SQLite), the successor row is inserted and its access JWT is signed. A failure of the
+successor insert or of the signing rolls the claim back with it, so the presented token stays
+usable, no extra row exists and no credentials are returned; the same token succeeds once the
+fault is gone. Two requests presenting one token therefore commit exactly one successor: the loser's
+claim finds nothing to revoke and is rejected before it could insert anything, and a later replay
+cannot invalidate the winner. The one rejection that commits is a dead owner: when the locking read
+finds the account inactive, erased or missing, the claim stands as the containment revocation of
+that token and the caller still receives the generic `ErrInvalidRefreshToken`. The locking read is
+what makes a deactivation committed by another connection after the token lookup visible on MySQL;
+a plain read in the REPEATABLE READ transaction would still show the account as active and issue it
+a fresh session. `RevokeByTokenHash` stays unconditional and idempotent for logout and
+invalidation; it is not the rotation claim. Like the reset, the rotation is refused rather than run
+as separate writes when the transaction manager is not wired. Regression roots:
+`TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}` in
+`internal/service/auth_refresh_rotation_regression_test.go` (the same one-connection SQLite and
+disposable MySQL schema as the reset roots; the MySQL validation root uses two connections for the
+owner-deactivated-after-lookup case, the MySQL concurrent root one connection per competitor plus
+one for verification; the insert fault is injected through the transaction-bound repository and
+the signing fault through an instance-local seam of the service under test, never a global), plus
+the claim tests in `internal/repository/refresh_token_repository_test.go` and the call-sequence
+cases in `internal/service/auth_session_test.go`. The frontend still sends several refreshes when
+parallel requests see a 401 at once; the backend now rejects all but one of them, and coalescing
+them client-side is tracked separately (#115).
+
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
 tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It

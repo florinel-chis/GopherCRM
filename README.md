@@ -492,7 +492,10 @@ returns the unified envelope `{ success, data, error, meta }`.
   (`{"enabled": bool}`), for the login/register screens; no authentication required.
 - `POST /api/v1/auth/login` - User login. Returns an access token and a rotating refresh token.
 - `POST /api/v1/auth/refresh` - Exchange a refresh token for a new token pair. Rotation is strict:
-  the presented token is revoked, replaying it returns `401`.
+  the presented token is revoked, replaying it returns `401`. The revocation is a single-use claim
+  inside the transaction that stores the successor and signs the access token, so a presented
+  token yields at most one successor even under concurrent requests, and a failed rotation leaves
+  it usable instead of stranding the session.
 - `POST /api/v1/auth/password-reset` - Request a password-reset email. Always answers `200`
   whether or not the account exists (anti-enumeration). Delivery goes through SMTP when
   `SMTP_HOST` is configured, otherwise a logging fallback.
