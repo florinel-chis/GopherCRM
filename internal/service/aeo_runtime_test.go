@@ -196,6 +196,11 @@ type aeoRepoHooks struct {
 	beforeUpdateRun    func(ctx context.Context, run *models.AEORun) error
 	beforeCreateAnswer func(ctx context.Context) error
 
+	// profileReads counts completed GetProfile calls. A start's profile read
+	// is its last cancellable step before it queues on the overlap guard, so
+	// a scenario that needs a start parked on the guard waits for this count
+	// rather than for the admission alone.
+	profileReads  atomic.Int32
 	createRuns    atomic.Int32
 	updateRunCtxs []error
 	writes        atomic.Int32
@@ -240,6 +245,12 @@ func (r *hookedAEORepo) WithContext(ctx context.Context) repository.AEORepositor
 
 func (r *hookedAEORepo) WithTx(tx *gorm.DB) repository.AEORepository {
 	return &hookedAEORepo{AEORepository: r.AEORepository.WithTx(tx), hooks: r.hooks, ctx: r.ctx}
+}
+
+func (r *hookedAEORepo) GetProfile() (*models.AEOProfile, error) {
+	profile, err := r.AEORepository.GetProfile()
+	r.hooks.profileReads.Add(1)
+	return profile, err
 }
 
 func (r *hookedAEORepo) CreateRun(run *models.AEORun) error {
@@ -740,17 +751,23 @@ func runAEOConcurrentShutdownScenarios(t *testing.T, open func(t *testing.T) *go
 			t.Fatal("the start never reached the insert")
 		}
 		// A second start queues on the overlap guard behind the blocked one.
+		// Admission alone does not prove it is parked there: its profile read
+		// runs on the run context and would simply fail if shutdown cancelled
+		// it first. Once that read has returned, the only step left before the
+		// guard is in-memory, so the start is committed to the mutex.
 		second := make(chan error, 1)
 		go func() {
 			_, err := f.service.StartRun(context.Background(), aeoTriggerScheduled, nil)
 			second <- err
 		}()
-		require.Eventually(t, func() bool { return f.runtime.ActiveRuns() == 2 }, aeoRuntimeTimeout, time.Millisecond)
+		require.Eventually(t, func() bool {
+			return f.runtime.ActiveRuns() == 2 && f.hooks.profileReads.Load() == 2
+		}, aeoRuntimeTimeout, time.Millisecond, "the second start must be queued on the guard before shutdown")
 
 		started := time.Now()
 		err := f.shutdownWithin(aeoRuntimeShortDeadline)
 		require.ErrorIs(t, err, context.DeadlineExceeded, "shutdown must not wait on the guard mutex")
-		assert.Contains(t, err.Error(), "2 run(s) still active")
+		assert.Contains(t, err.Error(), "2 run(s) still active", "the start blocked in its insert and the one queued on the guard are both owned work")
 		assert.Less(t, time.Since(started), 5*time.Second)
 
 		unblock()
