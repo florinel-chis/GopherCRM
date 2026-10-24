@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then, the process exits without closing the database and the next boot's reconciliation fails
   the row, as after a crash. (#111)
 
+- Shared Go validation isolates application database variables while retaining the disposable
+  `TEST_MYSQL_DSN`, so configuration defaults are tested consistently locally and in MariaDB CI.
+  Runner policies can explicitly allow zero repair rounds for a continuation whose repair
+  allowance is exhausted; validation, independent review and CI remain required.
+
 - A conservative committed proof for comment-only `.env.example` edits, allowing required
   configuration guidance to accompany bounded validation without relaxing active-setting,
   mixed-scope or explicit full/release gates.

@@ -144,8 +144,10 @@ class Config:
             raise GateError('make verify must remain registered for application and full validation')
         if not set(REQUIRED_CHECKS).issubset(self.required_checks):
             raise GateError('All six repository checks must remain required')
+        if type(self.max_repair_rounds) is not int or self.max_repair_rounds < 0:
+            raise GateError('max_repair_rounds must be a nonnegative integer')
         for name in ('agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
-                     'ci_poll_seconds', 'max_repair_rounds', 'min_free_disk_mb',
+                     'ci_poll_seconds', 'min_free_disk_mb',
                      'max_provider_calls', 'issue_timeout_seconds'):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise GateError(f'{name} must be a positive integer')
