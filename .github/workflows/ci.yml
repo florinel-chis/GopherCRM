@@ -148,7 +148,13 @@ jobs:
         if: needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'auth-persistence'
         env:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py transaction --storage-only
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          if [ "$VALIDATION_PROFILE" = full ]; then
+            python3 scripts/ci/check-go.py transaction
+          else
+            python3 scripts/ci/check-go.py transaction --storage-only
+          fi
       - name: Migration-profile API build and vet
         if: needs.plan.outputs.profile == 'migration'
         run: |
@@ -278,7 +284,13 @@ jobs:
         if: (needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && matrix.db.id == 'mariadb1011'
         env:
           TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py transaction --storage-only
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          if [ "$VALIDATION_PROFILE" = full ]; then
+            python3 scripts/ci/check-go.py transaction
+          else
+            python3 scripts/ci/check-go.py transaction --storage-only
+          fi
       - name: Generate a per-run JWT secret
         run: echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> "$GITHUB_ENV"
       # The same script as `make e2e` locally: reset gocrm_e2e (or, on the

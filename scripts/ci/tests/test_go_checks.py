@@ -72,7 +72,9 @@ class GoChecksTests(unittest.TestCase):
         self.assertTrue(selected['internal/config'])
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):
             profiles.run('aeo')
+        without_runtime = dict(selected, cmd=['TestHealthPayloadReportsTheBuildRevision'])
         with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
+             patch.object(go_checks, 'discover', return_value=without_runtime), \
              self.assertRaisesRegex(go_checks.GateError, 'Missing required AEO'):
             profiles.run('aeo')
         for package, names in profiles.AEO_REQUIRED_ROOTS.items():

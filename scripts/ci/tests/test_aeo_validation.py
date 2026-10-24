@@ -92,6 +92,19 @@ class AEOSelectionTests(unittest.TestCase):
                 # Invalid references fail before probing tools.
                 self.assertFalse(v.aeo_main_only('HEAD', base, cwd=root))
 
+    def test_explicit_full_keeps_sql_callers_without_narrowing_or_future_root_bypass(self):
+        selected = v.plan(['cmd/main.go'], full=True)
+        self.assertEqual(selected['profile'], 'full')
+        self.assertEqual(selected['specs'], [])
+        checks = v.core_commands([], selected, explicit_full=True)
+        self.assertEqual(checks, [('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction')])
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertEqual(workflow.count('if [ "$VALIDATION_PROFILE" = full ]; then'), 2)
+        self.assertEqual(workflow.count('            python3 scripts/ci/check-go.py transaction\n'), 2)
+        self.assertIn("full: true", (ROOT / '.github/workflows/release.yml').read_text())
+        # Legacy callers remain registered exactly as before.
+        self.assertEqual(v.core_commands([], selected), [('make', 'verify')])
+
     def test_shared_interface_mask_does_not_hide_other_declarations(self):
         source = 'package repository\ntype Other interface { Read() }\ntype AEORepository interface { Get() }\n'
         mask = lambda value: v.without_refresh_interface_body(value, 'AEORepository')

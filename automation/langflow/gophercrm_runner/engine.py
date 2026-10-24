@@ -327,7 +327,8 @@ class Runner:
     async def validation_checks(self, record, paths=None):
         frozen = contracts.load_contract(self.config, record['issue'])
         paths = paths if paths is not None else await self.validate_agent_paths(record)
-        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths))
+        commands = validation.core_commands(self.config.test_commands, self.validation_selection(record, paths),
+                                             explicit_full=self.config.validation_mode == 'full')
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
         database = self.browser_validation_checks(
             record, paths, frozen['validation_profile'] == 'backend-database')

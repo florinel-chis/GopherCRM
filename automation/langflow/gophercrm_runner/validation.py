@@ -521,7 +521,7 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
     }
 
 
-def core_commands(configured, selected):
+def core_commands(configured, selected, *, explicit_full=False):
     if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration', 'aeo'}:
         check = (('python3', 'scripts/ci/check-auth.py', '--persistence') if selected['profile'] == 'auth-persistence' else
                  ('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
@@ -539,7 +539,10 @@ def core_commands(configured, selected):
                     ('npm', 'ci', '--prefix', 'gocrm-ui')]
         return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
                            and tuple(c) not in commands]
-    return [('make', 'verify')] + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')]
+    commands = [('make', 'verify')]
+    if explicit_full:
+        commands.append(('python3', 'scripts/ci/check-go.py', 'transaction'))
+    return commands + [tuple(c) for c in configured if tuple(c) not in commands]
 
 
 def browser_command(command, selected):

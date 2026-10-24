@@ -131,7 +131,10 @@ descendants fail. CI runs this checker on MySQL and MariaDB, retains migration j
 frontend build health, and runs the two browser specs on all three engines. The provider
 browser covers runtime credentials but does not replace scheduled-start acceptance.
 No unrelated entity browsers or full frontend unit suite is added. Explicit full/release
-gates remain complete.
+gates remain complete: explicit full local validation and full/release CI run the
+transaction caller profile, which discovers all AEO service/repository roots, on configured
+SQL engines (MySQL locally; MySQL and MariaDB in CI). Every discovered SQL root must pass,
+including future lifecycle roots; this also works before those new roots land.
 
 The bounded `transaction` profile covers only `internal/utils/transaction.go` and its
 `transaction*_test.go` tests, with accompanying docs and runner changes. It runs hygiene,
