@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused after `valid_until`. Only drafts are editable. `POST /quotes/{id}/email` sends a
   plaintext rendering of a sent or accepted quote to the linked customer's current address with a
   fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
-  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. The SMTP mailer refuses a
+  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. Without `SMTP_HOST` the
+  quote email takes the same logging fallback as the password reset: it is logged, not delivered,
+  and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
   recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
   the code of a relay reply without the text, which can echo the recipient. Quotes copy no personal
   data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:

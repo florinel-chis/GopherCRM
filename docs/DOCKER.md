@@ -98,9 +98,11 @@ Notes on the wiring:
   can indicate provider capacity: inspect the saved answer error before
   changing endpoints. A model appearing in a provider's catalog does not
   guarantee access for your account.
-- Password-reset emails: `SMTP_HOST` is unset, so the mailer logs deliveries
-  instead of sending. Add the `SMTP_*` variables to the backend environment
-  to enable real mail.
+- Outbound email: `SMTP_HOST` is unset, so the mailer logs deliveries
+  instead of sending — password-reset links, forms mail and quote emails
+  alike. A quote email in this mode still answers 200 and stamps the quote's
+  `last_emailed_at` although nothing was delivered. Add the `SMTP_*` variables
+  to the backend environment to enable real mail.
 
 ## SQLite flavor (no database server)
 

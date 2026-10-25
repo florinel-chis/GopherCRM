@@ -296,7 +296,10 @@ went out would predate it — even one followed by a fresh send, which the statu
 tell apart, matches no row, and the call answers 409 `ErrQuoteChangedDuringSend` with
 `last_emailed_at` unchanged. Keep the marker read before the quote read: the other order leaves a
 window in which a stale rendering is recorded as the last email. A `Mailer` failure is 502
-`MAIL_DELIVERY_FAILED` and stamps nothing. The subject is fixed (`Quote Q-000042 from GopherCRM`),
+`MAIL_DELIVERY_FAILED` and stamps nothing. The development `LogMailer` (no `SMTP_HOST`) is not a
+failure: its `Send` logs and returns nil, so the quote is stamped although nothing was delivered —
+the same fallback the password reset and the forms mail already share, documented in the README's
+known limitations. The subject is fixed (`Quote Q-000042 from GopherCRM`),
 the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
 `customer_id` only — a transport error that quotes the address is returned, not logged. Roots:
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)

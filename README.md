@@ -647,7 +647,9 @@ authentication and live on the moderate tier:
 - `POST /api/v1/quotes/:id/email` - Email a sent or accepted quote as plaintext to the linked
   customer's current address *(fixed subject `Quote Q-000042 from GopherCRM`; 409 without a live
   customer or when the quote was revised during the send; 502 `MAIL_DELIVERY_FAILED` when the mailer
-  fails; `last_emailed_at` is set on success)*
+  fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
+  password reset applies: the mail is logged, not delivered, and the call still answers 200 and
+  stamps `last_emailed_at`)*
 - `GET /api/v1/deals/:id/quotes` - The deal's quotes, paginated *(sales: its own deals and its own quotes only)*
 - `GET /api/v1/customers/:id/quotes` - The customer's quotes, paginated *(sales sees only its own)*
 
@@ -805,8 +807,11 @@ gophercrm/
 - **Access tokens cannot be revoked before expiry.** Logout and the refresh-token rotation revoke
   the *refresh* tokens, but an already-issued JWT stays valid until `JWT_EXPIRY_HOURS` elapses —
   there is no token blocklist.
-- **Password-reset email needs SMTP configuration.** Without `SMTP_HOST` set, reset links go to the
-  application log (redacted) instead of a mailbox — fine for development, useless in production.
+- **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
+  password-reset link (redacted), the forms mail and the quote email — goes to the application log
+  instead of a mailbox, and the sending code cannot tell: `POST /api/v1/quotes/:id/email` still
+  answers `200` and stamps `last_emailed_at` although nothing was delivered. Fine for development,
+  useless in production.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.
