@@ -3,6 +3,7 @@ package mailer
 import (
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,7 +50,13 @@ func TestSMTPMailerRejectsHeaderInjection(t *testing.T) {
 			assert.True(t, errors.Is(err, ErrInvalidHeader), "Send: %v", err)
 			assert.NotContains(t, err.Error(), injected, "the injected value is not echoed")
 
-			// SendPasswordReset owns its subject; only the recipient is input.
+			// SendPasswordReset owns its subject; only the recipient is input,
+			// so it is exercised for the tainted recipients only. With a clean
+			// recipient it would be a legitimate message and dial the listener,
+			// which nothing accepts until the control below.
+			if !strings.ContainsAny(tc.to, "\r\n") {
+				return
+			}
 			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, ErrInvalidHeader), "SendPasswordReset: %v", err)
