@@ -398,6 +398,10 @@ missing or skipped required coverage. Their artifacts include the tested revisio
 results, and the required Backend check depends on both jobs. Changes confined to this workflow
 and its checker use targeted migration regressions and health smoke; see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
 
+The same runner also hosts the feature analysis workflow (`gophercrm-runner analyze`, see the
+[runner guide](../automation/langflow/README.md#analyse-a-feature-request)), which writes a
+gitignored `docs/specs/` document and never changes tracked files.
+
 Runner changes require `make verify-runner` and the focused checks selected by the policy.
 Install `automation/langflow[flows]`
 in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpreter is not
