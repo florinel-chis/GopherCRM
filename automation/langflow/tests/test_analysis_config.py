@@ -45,6 +45,8 @@ class AnalysisConfigTests(unittest.TestCase):
         tuned = replace(plain, analysis_output_dir='docs/plans', analysis_max_calls=2,
                         analysis_context_refs=('AGENTS.md',), analysis_rules_dir=str(self.root))
         self.assertEqual(Runner(plain).policy, Runner(tuned).policy)
+        from gophercrm_runner.batches import policy_hash
+        self.assertEqual(policy_hash(plain), policy_hash(tuned))
 
     def test_analysis_validation(self):
         plain = Config.load(policy(self.root))
