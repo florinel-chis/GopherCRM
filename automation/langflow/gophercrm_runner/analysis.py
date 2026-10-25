@@ -299,3 +299,284 @@ def cited_line(worktree: Path, file: str, line) -> str | None:
     except OSError:
         return None
     return None
+
+
+# --- Stage schemas (strict: every property required, nothing else accepted) -----------------
+
+def strict(properties: dict, required=None) -> dict:
+    return {'type': 'object', 'additionalProperties': False,
+            'required': list(required if required is not None else properties), 'properties': properties}
+
+
+def strings(description=''):
+    item = {'type': 'string'}
+    return {'type': 'array', 'items': item, **({'description': description} if description else {})}
+
+
+def listed(schema: dict) -> dict:
+    return {'type': 'array', 'items': schema}
+
+
+STRING = {'type': 'string'}
+INTEGER = {'type': 'integer'}
+BOOLEAN = {'type': 'boolean'}
+
+BRIEF_SCHEMA = strict({
+    'title': {'type': 'string', 'description': 'Short imperative title, under 80 characters'},
+    'slug': {'type': 'string', 'description': 'lowercase-hyphenated identifier, 3 to 40 characters'},
+    'restatement': {'type': 'string', 'description': 'The request restated in the project\'s own terms'},
+    'project_terms': listed(strict({'term': STRING, 'meaning': STRING, 'paths': strings()})),
+    'in_scope': strings(), 'out_of_scope': strings(), 'assumptions': strings(), 'open_questions': strings(),
+})
+
+CITATION = {'file': {'type': 'string', 'description': 'path relative to the repository root'},
+            'line': {'type': 'integer', 'description': '1-based line that supports the claim'}}
+RESEARCH_SCHEMA = strict({
+    'summary': {'type': 'string', 'description': 'What exists today and what is missing, in three to six sentences'},
+    'repository_findings': listed(strict({'claim': STRING, **CITATION})),
+    'conventions': listed(strict({'constraint': STRING, **CITATION})),
+    'external_findings': listed(strict({'claim': STRING, 'url': STRING, 'title': STRING})),
+    'prior_art': listed(strict({'name': STRING, 'url': STRING, 'summary': STRING, 'relevance': STRING})),
+    'gaps': strings('What could not be established, and why'),
+})
+
+COMMENT_DISPOSITION = strict({'id': STRING, 'disposition': {'type': 'string', 'enum': ['applied', 'declined', 'deferred']},
+                              'note': STRING})
+ANALYSIS_SCHEMA = strict({
+    'problem': STRING,
+    'users': listed(strict({'role': STRING, 'need': STRING})),
+    'proposal': STRING, 'in_scope': strings(), 'out_of_scope': strings(),
+    'main_flow': strings('Ordered steps of the main flow'),
+    'options_considered': listed(strict({'option': STRING, 'why_not': STRING})),
+    'risks': listed(strict({'risk': STRING, 'mitigation': STRING})),
+    'size': strict({'t_shirt': {'type': 'string', 'enum': ['S', 'M', 'L', 'XL']}, 'basis': STRING}),
+    'decision_needed': strings(),
+    'comment_dispositions': listed(COMMENT_DISPOSITION),
+})
+
+MANIFEST_SCHEMA = strict({
+    'schema_version': INTEGER, 'repository': STRING, 'issue': INTEGER, 'objective': STRING,
+    'non_goals': strings(), 'scope_paths': strings('glob patterns relative to the repository root'),
+    'dependencies': listed(strict({'issue': INTEGER, 'pr': INTEGER, 'merge_commit': STRING})),
+    'validation_profile': {'type': 'string', 'enum': ['backend', 'backend-database']},
+    'context_refs': strings(),
+    'acceptance': listed(strict({'id': STRING, 'requirement': STRING,
+                                 'verification': strict({'kind': {'type': 'string', 'enum': ['automated']},
+                                                         'check_id': STRING})})),
+})
+SPECIFICATION_SCHEMA = strict({
+    'manifest': MANIFEST_SCHEMA,
+    'acceptance_checks': listed(strict({'check_id': STRING, 'argv': strings(),
+                                        'tests': listed(strict({'package': STRING, 'name': STRING}))})),
+    'ui_criteria': listed(strict({'id': STRING, 'requirement': STRING,
+                                  'verification': strict({'kind': {'type': 'string', 'enum': ['vitest', 'browser', 'manual']},
+                                                          'detail': STRING})})),
+    'data_model': strict({
+        'entities': listed(strict({'name': STRING, 'table': STRING,
+                                   'columns': listed(strict({'name': STRING, 'type': STRING, 'nullable': BOOLEAN, 'note': STRING})),
+                                   'indexes': strings(), 'relations': strings()})),
+        'auto_migrate': strings('GORM model changes for AutoMigrate'),
+        'sql_migration': strict({'name': STRING, 'up': strings(), 'down': strings()}),
+    }),
+    'api': listed(strict({'method': STRING, 'path': STRING, 'roles': strings(), 'request': STRING,
+                          'response': STRING, 'errors': strings()})),
+    'screens': listed(strict({'route': STRING, 'page': STRING, 'purpose': STRING, 'elements': strings()})),
+    'permissions': listed(strict({'role': STRING, 'actions': strings()})),
+    'diagrams': listed(strict({'title': STRING, 'kind': {'type': 'string', 'enum': ['er', 'sequence', 'state', 'flow']},
+                               'mermaid': STRING})),
+    'test_plan': listed(strict({'level': {'type': 'string', 'enum': ['go', 'vitest', 'e2e']}, 'name': STRING, 'proves': STRING})),
+    'docs_to_update': listed(strict({'path': STRING, 'change': STRING})),
+    'open_questions': strings(),
+    'comment_dispositions': listed(COMMENT_DISPOSITION),
+})
+
+REVIEW_SCHEMA = strict({
+    'verdict': {'type': 'string', 'enum': ['approve', 'revise']},
+    'summary': STRING,
+    'findings': listed(strict({'severity': {'type': 'string', 'enum': ['P0', 'P1', 'P2']}, 'section': STRING,
+                               'finding': STRING, 'fix': STRING})),
+    'criteria': listed(strict({'id': STRING, 'observable': BOOLEAN, 'verifiable': BOOLEAN, 'note': STRING})),
+})
+
+REVISION_SCHEMA = strict({
+    'analysis': ANALYSIS_SCHEMA, 'specification': SPECIFICATION_SCHEMA,
+    'finding_dispositions': listed(strict({'id': STRING, 'disposition': {'type': 'string', 'enum': ['fixed', 'declined']},
+                                           'note': STRING})),
+})
+
+BRIEF_WORD_CAP = 400
+ONE_PAGER_WORD_CAP = 500
+MERMAID_KEYWORDS = {'erDiagram', 'sequenceDiagram', 'stateDiagram', 'stateDiagram-v2', 'flowchart', 'graph', 'classDiagram'}
+FRONTEND_PREFIXES = ('gocrm-ui/', 'internal/handler/assets/')
+
+
+# --- Deterministic checks: what code can decide, recorded as notes ------------------------
+
+def derive_slug(text: str) -> str:
+    words = re.findall(r'[a-z0-9]+', text.lower())
+    slug = '-'.join(words)[:40].strip('-')
+    return slug if SLUG.fullmatch(slug) else 'feature'
+
+
+def check_brief(brief: dict, worktree: Path) -> list[str]:
+    from .analysis_render import render_brief, word_count
+    notes = []
+    if not SLUG.fullmatch(brief['slug']):
+        proposed, brief['slug'] = brief['slug'], derive_slug(brief['title'])
+        notes.append(f'slug replaced: agent proposed {proposed!r}')
+    for term in brief['project_terms']:
+        existing = [p for p in term['paths'] if inside_checkout(worktree, p)]
+        dropped = [p for p in term['paths'] if p not in existing]
+        if dropped:
+            notes.append(f'dropped non-existent paths for {term["term"]!r}: {dropped}')
+        term['paths'] = existing
+    count = word_count(render_brief(brief, ''))
+    if count > BRIEF_WORD_CAP:
+        notes.append(f'rule broken: brief is {count} words, cap {BRIEF_WORD_CAP}')
+    return notes
+
+
+def check_research(research: dict, worktree: Path) -> list[str]:
+    notes, moved = [], 0
+    for key, label in (('repository_findings', 'claim'), ('conventions', 'constraint')):
+        kept = []
+        for finding in research[key]:
+            text = cited_line(worktree, finding['file'], finding['line'])
+            if text is None:
+                research['gaps'].append(f'(uncited) {finding[label]}')
+                moved += 1
+            else:
+                kept.append({**finding, 'text': text})
+        research[key] = kept
+    if moved:
+        notes.append(f'{moved} citation(s) moved to gaps: the cited line does not resolve at the base commit')
+    if not research['repository_findings']:
+        raise GateError('research produced no repository finding with a resolvable citation')
+    for finding in research['external_findings'] + research['prior_art']:
+        if not re.fullmatch(r'https?://\S+', finding['url']):
+            raise GateError(f'external citation is not an absolute http(s) URL: {finding["url"]!r}')
+    return notes
+
+
+def disposition_notes(dispositions: list[dict], comment_ids: list[str], *, require=False) -> list[str]:
+    notes = []
+    known = set(comment_ids)
+    unknown = [d['id'] for d in dispositions if d['id'] not in known]
+    if unknown:
+        notes.append(f'dispositions for unknown comments dropped: {unknown}')
+        dispositions[:] = [d for d in dispositions if d['id'] in known]
+    if require:
+        missing = [c for c in comment_ids if c not in {d['id'] for d in dispositions}]
+        if missing:
+            notes.append(f'comments without a disposition: {missing}')
+    return notes
+
+
+def check_analysis(analysis: dict, comment_ids: list[str]) -> list[str]:
+    from .analysis_render import render_one_pager, word_count
+    notes = disposition_notes(analysis['comment_dispositions'], comment_ids)
+    count = word_count(render_one_pager(analysis))
+    if count > ONE_PAGER_WORD_CAP:
+        notes.append(f'rule broken: one-pager is {count} words, cap {ONE_PAGER_WORD_CAP}')
+    return notes
+
+
+def registry(specification: dict) -> dict:
+    """The emitted acceptance checks as the policy's registry shape."""
+    result = {}
+    for check in specification['acceptance_checks']:
+        result[check['check_id']] = {'argv': list(check['argv']), 'tests': [dict(t) for t in check['tests']]}
+    return result
+
+
+def check_specification(spec: dict, config, worktree: Path, comment_ids: list[str]) -> list[str]:
+    from types import SimpleNamespace
+    from .config import validate_acceptance_checks
+    notes = disposition_notes(spec['comment_dispositions'], comment_ids, require=True)
+    checks = registry(spec)
+    if len(checks) != len(spec['acceptance_checks']):
+        notes.append('duplicate check_id in acceptance_checks')
+    try:
+        validate_acceptance_checks(checks)
+    except GateError as exc:
+        notes.append(f'acceptance_checks: {exc}')
+    probe = SimpleNamespace(repository=config.repository, database_test_commands=config.database_test_commands,
+                            acceptance_checks=checks)
+    try:
+        contracts.validate_manifest(probe, spec['manifest'], 0)
+    except GateError as exc:
+        notes.append(f'manifest: {exc}')
+    ids = [c['id'] for c in spec['manifest']['acceptance']]
+    if ids != [f'AC-{n}' for n in range(1, len(ids) + 1)]:
+        notes.append(f'acceptance ids are not contiguous from AC-1: {ids}')
+    frontend = [p for p in spec['manifest']['scope_paths'] if p.startswith(FRONTEND_PREFIXES)]
+    if frontend:
+        notes.append(f'frontend paths belong to UI criteria, not the manifest scope: {frontend}')
+    named = set()
+    for check_id, check in checks.items():
+        argv = check['argv']
+        pattern = argv[argv.index('-run') + 1] if '-run' in argv and argv.index('-run') + 1 < len(argv) else None
+        for test in check['tests']:
+            named.add(test['name'])
+            if pattern is not None:
+                try:
+                    matched = re.search(pattern, test['name']) is not None
+                except re.error:
+                    matched = False
+                if not matched:
+                    notes.append(f'check {check_id}: test {test["name"]} does not match its -run pattern {pattern!r}')
+    planned = {t['name'] for t in spec['test_plan'] if t['level'] == 'go'}
+    if planned - named:
+        notes.append(f'go tests in the test plan without a registry entry: {sorted(planned - named)}')
+    if named - planned:
+        notes.append(f'registry tests missing from the test plan: {sorted(named - planned)}')
+    for document in spec['docs_to_update']:
+        document['status'] = 'exists' if inside_checkout(worktree, document['path']) else 'new'
+    for diagram in spec['diagrams']:
+        first = next((line.strip() for line in diagram['mermaid'].splitlines() if line.strip()), '')
+        keyword = first.split()[0] if first else ''
+        if keyword not in MERMAID_KEYWORDS:
+            notes.append(f'diagram {diagram["title"]!r} does not start with a recognised Mermaid keyword')
+    return notes
+
+
+def check_review(review: dict, criterion_ids: list[str], runner_findings: list[str]) -> list[str]:
+    notes = []
+    known = list(criterion_ids)
+    assessed = [c for c in review['criteria'] if c['id'] in known]
+    unknown = [c['id'] for c in review['criteria'] if c['id'] not in known]
+    if unknown:
+        notes.append(f'reviewer assessed unknown criteria, dropped: {unknown}')
+    seen = {c['id'] for c in assessed}
+    for cid in known:
+        if cid not in seen:
+            assessed.append({'id': cid, 'observable': False, 'verifiable': False, 'note': 'not assessed by the reviewer'})
+            notes.append(f'criterion {cid} was not assessed; recorded as not observable')
+    review['criteria'] = assessed
+    findings = [dict(f, id=f'F-{n}') for n, f in enumerate(review['findings'], 1)]
+    for text in runner_findings:
+        findings.append({'id': f'F-{len(findings) + 1}', 'severity': 'P1', 'section': 'runner',
+                         'finding': text, 'fix': 'Satisfy the deterministic check'})
+    review['findings'] = findings
+    open_blockers = [f['id'] for f in findings if f['severity'] in {'P0', 'P1'}]
+    if review['verdict'] == 'approve' and open_blockers:
+        review['verdict'] = 'revise'
+        notes.append(f'reviewer approval overruled: open P0/P1 findings {open_blockers}')
+    return notes
+
+
+def check_revision(revision: dict, findings: list[dict]) -> list[str]:
+    notes = []
+    severity = {f['id']: f['severity'] for f in findings}
+    dispositions = revision['finding_dispositions']
+    unknown = [d['id'] for d in dispositions if d['id'] not in severity]
+    if unknown:
+        notes.append(f'dispositions for unknown findings dropped: {unknown}')
+        dispositions[:] = [d for d in dispositions if d['id'] in severity]
+    missing = [fid for fid in severity if fid not in {d['id'] for d in dispositions}]
+    if missing:
+        notes.append(f'findings without a disposition: {missing}')
+    declined = [d['id'] for d in dispositions if d['disposition'] == 'declined' and severity[d['id']] == 'P0']
+    if declined:
+        notes.append(f'declined P0 findings remain unresolved: {declined}')
+    return notes
