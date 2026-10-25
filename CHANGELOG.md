@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
+  integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
+  quotes linked to a deal and/or a customer (`/quotes`, `/deals/{id}/quotes`,
+  `/customers/{id}/quotes`; admin and sales, sales narrowed to its own quotes inside the query).
+  Lines copy the product's name and price when they are added, take a per-line discount in basis
+  points, and the server recomputes the totals with round-half-up on every line change; the line
+  gross and the quote total are capped at 10^12 minor units and a quote holds at most 100 lines.
+  The lifecycle is draft → sent → accepted/rejected/expired (sent → draft to revise): each
+  transition is a conditional claim plus one `quote_status_changes` row in a single transaction,
+  draft → sent reads the line count after the claim and refuses an empty quote, and acceptance is
+  refused after `valid_until`. Only drafts are editable. `POST /quotes/{id}/email` sends a
+  plaintext rendering of a sent or accepted quote to the linked customer's current address with a
+  fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
+  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. The SMTP mailer refuses a
+  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`). Quotes copy no personal
+  data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:
+  AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
+  frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
+  (#158)
+
 - **Feature analysis workflow (runner 0.9.0).** `automation/langflow/flows/analysis.json` and
   `gophercrm-runner analyze` turn one feature request into a gitignored
   `docs/specs/<date>-<slug>.md`: a one-page summary, then acceptance criteria in the task

@@ -88,7 +88,8 @@ func TestQuoteColumnWidthsMatchConstants(t *testing.T) {
 	for _, field := range []string{"Position", "Quantity", "UnitPriceCents", "DiscountBP", "LineTotalCents"} {
 		assert.Empty(t, columnDefault(t, &QuoteLine{}, field), "QuoteLine.%s", field)
 	}
-	assert.Equal(t, "'draft'", columnDefault(t, &Quote{}, "Status"))
+	// GORM strips the quotes of a string default when it parses the tag.
+	assert.Equal(t, "draft", columnDefault(t, &Quote{}, "Status"))
 }
 
 // Every status has to fit the column it is stored in, and the list is the five

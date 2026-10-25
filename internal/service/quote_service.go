@@ -378,14 +378,16 @@ func (s *quoteService) AddLine(quoteID uint, input models.QuoteLineInput) (*mode
 		if input.Description != nil && strings.TrimSpace(*input.Description) != "" {
 			line.Description = strings.TrimSpace(*input.Description)
 		}
-		if err := computeLine(line); err != nil {
-			return err
-		}
+		// The position is assigned before the line is computed: computeLine
+		// re-checks every bound of the assembled line, position included.
 		position, err := repo.NextLinePosition(quoteID)
 		if err != nil {
 			return err
 		}
 		line.Position = position
+		if err := computeLine(line); err != nil {
+			return err
+		}
 		if err := repo.CreateLine(line); err != nil {
 			return err
 		}
