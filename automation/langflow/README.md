@@ -329,6 +329,79 @@ and retained execution evidence, separates delivered fixes from remaining gaps, 
 prioritized improvements to recovery, resource management, browser reliability and reporting.
 Its proposals do not change current execution or validation policy.
 
+## Analyse a feature request
+
+The feature analysis workflow turns one request into one Markdown document the owner reviews in
+one sitting: a one-page summary first, the implementation detail after it. Import
+[analysis.json](flows/analysis.json) for seven nodes, one per stage, each re-runnable on its own:
+
+```mermaid
+flowchart LR
+  Intake --> Research --> Analysis --> Specification --> Review --> Revision --> Document
+```
+
+Type the request into the Intake node (optional reference links, one absolute http(s) URL per
+line, at most ten) and run the Document node. The CLI runs the identical serialized graph:
+
+```sh
+gophercrm-runner analyze --config "$HOME/.local/share/gophercrm-runner/config.json" \
+  --wish 'Follow-up automation: rules that react to lead and deal events' \
+  --link https://frappe.io/crm/follow-ups-automation
+```
+
+Every agent stage runs the `claude` CLI in safe mode and restricted mode with the read-only tools
+`Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`, in a detached worktree at `origin/main` under
+the private state directory; file tools cannot leave that worktree, and the agent never writes a
+file. Guidance (`AGENTS.md` from the checkout, the other `analysis_context_refs` at the base
+commit) is inlined into every prompt because safe mode disables discovery. Intake writes the brief;
+Research establishes the current state with `file:line` citations that the runner resolves (an
+unresolvable citation moves to the gaps) and the external context the agent chooses to read
+(reported by the agent; the runner does not verify web citations); Analysis writes the one-pager
+(500 words, breaches are reported); Specification writes the acceptance criteria in the task
+manifest shape of `freeze --manifest` plus the check registry entries they name, UI criteria for
+the frontend slice the backend MVP cannot execute, the data model with both migration halves, the
+API, screens, permissions, Mermaid diagrams, the test plan and the documentation to update; Review
+is a second, independent process that returns severity-graded findings and is overruled when it
+approves with an open P0 or P1; Revision addresses every finding by id, once. Deterministic checks
+(manifest validity through the same validators as `freeze`, contiguous `AC` ids, registry test
+names matching their `-run` pattern, Mermaid keywords, word budgets) are recorded as rules-check
+notes, given to the reviewer as runner findings, and listed at the end of the document.
+
+Document writes `<checkout>/docs/specs/<date>-<slug>.md` only after `git check-ignore` confirms
+the path is ignored, never overwrites, and keeps a private copy (`feature-analysis.md`), the
+`manifest.json` and the `acceptance_checks.json` fragment under
+`state_dir/analysis/<run id>/` together with `run.json` (the call ledger with provider-reported
+usage and cost, which is not a billing figure) and every prompt and raw result under `calls/`.
+The document header states the base commit, the number of agent calls, the cost and duration from
+that ledger, and the models observed. From approval to execution: create the GitHub issue, set
+`issue` in the manifest, merge the registry fragment into the private policy, then
+`gophercrm-runner freeze --manifest`.
+
+To refine, write comments (blank lines separate them; the runner numbers them `C-1`, `C-2`, …)
+and start a new run from the Intake node with the previous run id, or:
+
+```sh
+gophercrm-runner analyze --config "$HOME/.local/share/gophercrm-runner/config.json" \
+  --refine RUN_ID --comments-file /absolute/private/comments.txt --from research
+```
+
+A refinement keeps the parent's request, links and base commit, inherits the stages before
+`--from` by reading the journals of the run that recorded them in place (verified against the
+parent's document journal, so a chain r1 → r2 → r3 keeps every citation), re-runs the rest with
+the comments, requires a disposition for every comment, and writes `<parent name>-r<revision>.md`.
+Comments and `--from` are refused without a previous run id, and a second refinement of the same
+parent is refused at Intake before any agent call because its document name already exists:
+refine the latest revision instead. A run that stops before Document (a failed stage, or one the
+owner abandons after reading the brief) keeps its directory under `state_dir/analysis/<run id>/`
+and, except after a failed Intake, its registered worktree; remove it with
+`git worktree remove --force <state_dir>/analysis/<run id>/worktree` (then `git worktree prune`
+for a directory deleted by hand). Nothing cleans these up automatically. Each stage reloads the run from its private journal under
+the node's own configuration and verifies the digests of what the previous stage consumed; a
+re-run stage invalidates every later journal of its run. Configuration: `analysis_output_dir`
+(`docs/specs`), `analysis_max_calls` (8 per run), `analysis_context_refs`, `analysis_rules_dir`
+(operator Markdown appended to the packaged stage rules); none of them is part of the execution
+policy hash. `agent_model` and `agent_timeout_seconds` apply to analysis calls as well.
+
 ## Maintain and test the runner
 
 Install the `flows` extra in the active Python environment before validation.
@@ -346,6 +419,7 @@ make e2e E2E_DB_DRIVER=sqlite SPECS='e2e/tests/health-smoke.spec.ts'
 gophercrm-runner export automation/langflow/flows/remediation.json
 gophercrm-runner export --pr automation/langflow/flows/pr-completion.json
 gophercrm-runner export --batch automation/langflow/flows/batch.json
+gophercrm-runner export --analysis automation/langflow/flows/analysis.json
 ```
 
 Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.

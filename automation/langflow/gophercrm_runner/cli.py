@@ -27,6 +27,16 @@ def main():
     export.add_argument('path', type=Path)
     export.add_argument('--pr', action='store_true', help='Export the existing-PR completion workflow')
     export.add_argument('--batch', action='store_true', help='Export the prepared-batch workflow')
+    export.add_argument('--analysis', action='store_true', help='Export the feature analysis workflow')
+    analyze = sub.add_parser('analyze', help='Run the feature analysis workflow: one request in, one docs/specs document out')
+    analyze.add_argument('--config', type=Path, required=True)
+    analyze.add_argument('--wish', default='', help='The feature request; blank in a refinement')
+    analyze.add_argument('--link', action='append', default=[], help='Reference link (repeatable, at most ten)')
+    analyze.add_argument('--refine', default='', metavar='RUN_ID', help='Refine the document of this previous run')
+    analyze.add_argument('--comments-file', type=Path, help='Refinement comments, blank lines between comments')
+    analyze.add_argument('--from', dest='refine_from', default='research',
+                         choices=('intake', 'research', 'analysis', 'specification'),
+                         help='Refinement only: first stage to re-run (earlier stages are inherited)')
     for name in ('prepare-batch', 'run-batch', 'start-batch', 'status-batch', 'stop-batch', 'abandon-batch', 'recover-batch', 'extend-batch-budget', '_batch-worker'):
         command = sub.add_parser(name)
         command.add_argument('--config', type=Path, required=True)
@@ -156,14 +166,26 @@ def main():
             command.add_argument('--plan-hash')
     args = parser.parse_args()
     if args.command == 'export':
-        from .flows import export_flow, build_pr_flow, build_batch_flow
-        if args.pr and args.batch:
+        from .flows import export_flow, build_pr_flow, build_batch_flow, build_analysis_flow
+        if sum((args.pr, args.batch, args.analysis)) > 1:
             parser.error('Choose one workflow export')
-        if args.pr or args.batch:
+        if args.pr or args.batch or args.analysis:
             args.path.parent.mkdir(parents=True, exist_ok=True)
-            args.path.write_text(json.dumps(build_batch_flow() if args.batch else build_pr_flow(), indent=2) + '\n')
+            build = build_batch_flow if args.batch else build_pr_flow if args.pr else build_analysis_flow
+            args.path.write_text(json.dumps(build(), indent=2) + '\n')
         else:
             export_flow(args.path)
+    elif args.command == 'analyze':
+        from .flows import run_analysis_flow
+        comments = args.comments_file.read_text() if args.comments_file else ''
+        if args.refine and not comments.strip():
+            parser.error('--refine requires --comments-file with at least one comment')
+        if not args.refine and (comments.strip() or args.refine_from != 'research'):
+            parser.error('--comments-file and --from apply to --refine only')
+        result = run_async(run_analysis_flow(args.config, wish=args.wish, links='\n'.join(args.link), comments=comments,
+                                             previous_run_id=args.refine, refine_from=args.refine_from))
+        from .flows import document_text
+        print(document_text(result))
     elif args.command in {'handoff', 'history', 'validation-preview', 'retention'}:
         from .config import Config, GateError
         from . import operations

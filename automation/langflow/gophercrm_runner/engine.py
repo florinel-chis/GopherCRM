@@ -48,7 +48,8 @@ class Runner:
             policy.pop('validation_review_required')  # Preserve existing execution policies.
         # Queue growth and time limits do not weaken the current ticket's gates.
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds',
-                    'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds'):
+                    'ci_timeout_seconds', 'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds',
+                    'analysis_output_dir', 'analysis_max_calls', 'analysis_context_refs', 'analysis_rules_dir'):
             policy.pop(key)
         if config.validation_mode == 'legacy':
             policy.pop('validation_mode')  # Keep v0.3 journal compatibility.

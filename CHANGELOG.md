@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Feature analysis workflow (runner 0.9.0).** `automation/langflow/flows/analysis.json` and
+  `gophercrm-runner analyze` turn one feature request into a gitignored
+  `docs/specs/<date>-<slug>.md`: a one-page summary, then acceptance criteria in the task
+  manifest shape, the data model with both migration halves, API, screens, permissions, Mermaid
+  diagrams, test plan, documentation to update, cited research notes, an independent review with
+  one bounded revision and the open questions. Agents are read-only and restricted to a detached
+  worktree at `origin/main`; the runner writes the file, records provider-reported cost and
+  duration per call, and verifies a digest chain between stages. Refinements re-enter with
+  numbered owner comments and inherit the parent run's journals. See the
+  [runner guide](automation/langflow/README.md#analyse-a-feature-request).
+
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
   the administrator's stored keys when a tick is due, so a key saved in Settings is used by the
