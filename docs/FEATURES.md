@@ -194,7 +194,7 @@ not change its deal; expiry is manual (acceptance is refused after `valid_until`
 read quotes; sending is refused when the quote has no live customer. The frontend slice (product
 and quote pages, the DealDetail section, the print page and the email dialog) is a separate
 follow-up task. Catalog cases in `docs/testing/15-products-quotes.md`; API contract in
-`api/swagger.yaml` under `/products` and `/quotes` once regenerated.
+`api/swagger.yaml` under `/products` and `/quotes` (regenerated with this change).
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|

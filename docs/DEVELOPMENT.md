@@ -286,13 +286,16 @@ MySQL root creates a disposable schema on `TEST_MYSQL_DSN`, skips without it and
 unreachable) and `TestQuoteRepository_LockingReadsCarryForUpdateOnMySQLOnly`.
 
 **Quote email: no transaction during SMTP, a conditional stamp after it** — `QuoteService.Email`
-reads the quote, the customer's *current* address and the latest `quote_status_changes` id, hands
-the plaintext rendering to the `Mailer` with no transaction held, and then stamps `last_emailed_at`
-with one conditional update (`StampEmailed`): `WHERE id = ? AND status IN ('sent','accepted') AND
-NOT EXISTS (a history row of the quote with to_status = 'draft' and an id above the marker)`. A
-`sent → draft` revision that commits while the mail is in flight — even one followed by a fresh
-send, which the status alone could not tell apart — matches no row, and the call answers 409
-`ErrQuoteChangedDuringSend` with `last_emailed_at` unchanged; a `Mailer` failure is 502
+reads the latest `quote_status_changes` id *first*, then the quote and the customer's *current*
+address, hands the plaintext rendering to the `Mailer` with no transaction held, and then stamps
+`last_emailed_at` with one conditional update (`StampEmailed`): `WHERE id = ? AND status IN
+('sent','accepted') AND NOT EXISTS (a history row of the quote with to_status = 'draft' and an id
+above the marker)`. A `sent → draft` revision that commits after the marker was read — while the
+mail is in flight, or between the marker read and the read of the quote, where the rendering that
+went out would predate it — even one followed by a fresh send, which the status alone could not
+tell apart, matches no row, and the call answers 409 `ErrQuoteChangedDuringSend` with
+`last_emailed_at` unchanged. Keep the marker read before the quote read: the other order leaves a
+window in which a stale rendering is recorded as the last email. A `Mailer` failure is 502
 `MAIL_DELIVERY_FAILED` and stamps nothing. The subject is fixed (`Quote Q-000042 from GopherCRM`),
 the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
 `customer_id` only — a transport error that quotes the address is returned, not logged. Roots:

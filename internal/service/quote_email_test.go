@@ -291,4 +291,66 @@ func TestQuoteEmailRevisedDuringSend(t *testing.T) {
 		require.NoError(t, err, "the draft row is older than the marker read before the send")
 		assert.NotNil(t, emailed.LastEmailedAt)
 	})
+
+	// The marker is read before the quote. A revision that commits between
+	// the two reads — sent→draft, a new line, draft→sent — leaves a stale
+	// rendering in the mail, and the stamp must refuse it exactly as it
+	// refuses a revision during the send. With the reads the other way round
+	// the marker would be past the revision and the stale mail would be
+	// recorded as the quote's last email.
+	t.Run("a revision between the marker read and the quote read is refused", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		staleTotal := quote.TotalCents
+		hooked := &revisingReadRepository{QuoteRepository: env.repo}
+		hooked.revise = func() {
+			_, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusDraft, env.owner.ID)
+			require.NoError(t, err)
+			_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 5})
+			require.NoError(t, err)
+			_, err = env.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, env.owner.ID)
+			require.NoError(t, err)
+		}
+		env.mailer.reset(nil, nil)
+		racy := env.service(hooked)
+
+		_, err := racy.Email(quote.ID)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, apperrors.ErrQuoteChangedDuringSend), "the stale rendering must not be stamped: %v", err)
+		require.True(t, hooked.fired, "the revision must have committed right after the quote was read")
+
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1, "the mail did go out")
+		assert.Contains(t, messages[0].Body, "Total: "+FormatMinorUnits(staleTotal, "EUR"), "with the rendering read before the revision")
+
+		committed := env.quote(quote.ID)
+		assert.Nil(t, committed.LastEmailedAt, "last_emailed_at stays unchanged")
+		assert.Equal(t, models.QuoteStatusSent, committed.Status)
+		assert.Greater(t, committed.TotalCents, staleTotal, "the committed quote carries the revision")
+
+		// Emailed again, with nothing racing, the fresh rendering is stamped.
+		env.mailer.reset(nil, nil)
+		emailed, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, emailed.LastEmailedAt)
+		assert.Contains(t, env.mailer.messages()[0].Body, "Total: "+FormatMinorUnits(committed.TotalCents, "EUR"))
+	})
+}
+
+// revisingReadRepository runs revise once, right after the first plain read of
+// the quote returns, standing in for a writer that committed between the
+// service's read of the history marker and its read of the quote. The read
+// holds no transaction, so the revision commits through the ordinary service.
+type revisingReadRepository struct {
+	repository.QuoteRepository
+	revise func()
+	fired  bool
+}
+
+func (r *revisingReadRepository) GetByID(id uint) (*models.Quote, error) {
+	quote, err := r.QuoteRepository.GetByID(id)
+	if err == nil && !r.fired {
+		r.fired = true
+		r.revise()
+	}
+	return quote, err
 }

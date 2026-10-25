@@ -12,8 +12,8 @@ repositories; every automated case names the exact Go test that pins it. As in
 [11-aeo.md](11-aeo.md), "automated" here means automated at the Go level: there is no Playwright
 spec behind this section yet.
 
-22 cases: 14 automated (Go), 8 planned (the UI slice, against `gocrm-ui/e2e/tests/admin-quotes.spec.ts`
-and the Vitest files named in each case), 0 blocked. Priorities: 12 P0, 8 P1, 2 P2.
+22 cases: 17 automated (Go), 5 planned (the UI slice, against `gocrm-ui/e2e/tests/admin-quotes.spec.ts`
+and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 P2.
 
 **Sources**
 
@@ -282,14 +282,19 @@ and the Vitest files named in each case), 0 blocked. Priorities: 12 P0, 8 P1, 2 
 ### TC-PQ-014 — A revision during the send is detected
 - **Priority:** P0
 - **Type:** regression
-- **Preconditions:** A sent quote; a mailer whose `Send` commits a transition before returning.
+- **Preconditions:** A sent quote; a mailer whose `Send` commits a transition before returning; a
+  wrapped repository that commits a revision right after the quote is read.
 - **Steps:**
   1. During the send move the quote sent→draft; then sent→draft→sent; then sent→accepted.
-- **Expected:** The first two answer **409** `CONFLICT` (`ErrQuoteChangedDuringSend`) with
+  2. Between the service's read of the history marker and its read of the quote, commit
+     sent→draft, add a line and draft→sent.
+- **Expected:** Step 1: the first two answer **409** `CONFLICT` (`ErrQuoteChangedDuringSend`) with
   `last_emailed_at` unchanged — the stamp's `NOT EXISTS` on history rows with `to_status = 'draft'`
   and an id above the marker read before sending is what tells the re-sent quote apart from an
   untouched one; the third succeeds, because acceptance is not a revision. An older revision does
-  not block a later send.
+  not block a later send. Step 2: the mail that went out carries the pre-revision total and the
+  call is **409** with `last_emailed_at` unchanged, because the marker is read before the quote;
+  a second send with nothing racing is stamped with the revised rendering.
 - **Automation:** automated — `quote_email_test.go` `TestQuoteEmailRevisedDuringSend`;
   `quote_repository_test.go` `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
 

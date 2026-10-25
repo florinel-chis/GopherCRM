@@ -28,8 +28,8 @@ that the test was executed as part of writing this catalog.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
-| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration; UI planned | 22 | 12 | 8 | 2 | 14 | 8 | 0 |
-| **Total** | | **573** | **173** | **254** | **146** | **154** | **335** | **84** |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration; UI planned | 22 | 13 | 7 | 2 | 17 | 5 | 0 |
+| **Total** | | **573** | **174** | **253** | **146** | **157** | **332** | **84** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -72,9 +72,9 @@ chart); the blocked ones are the sales and support role cases (lesson 8)
 and the UTC month boundary, which needs a controllable clock and is pinned in Go.
 
 [15-products-quotes.md](15-products-quotes.md) was added 2026-10-26 with the products and quotes
-API (issue #158). Like 11-aeo it has no Playwright spec behind it yet: fourteen cases are automated
+API (issue #158). Like 11-aeo it has no Playwright spec behind it yet: seventeen cases are automated
 at the Go level by the named acceptance roots (handler, service, repository, integration, mailer
-and migration tests, the MySQL ones on a disposable `TEST_MYSQL_DSN` schema), and the eight UI cases
+and migration tests, the MySQL ones on a disposable `TEST_MYSQL_DSN` schema), and the five UI cases
 are planned against the Vitest files and the `gocrm-ui/e2e/tests/admin-quotes.spec.ts` that the
 separate frontend follow-up will add. Nothing is blocked: the role cases are pinned in Go.
 

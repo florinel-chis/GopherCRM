@@ -15,14 +15,28 @@ func QuoteEmailSubject(quoteID uint) string {
 	return fmt.Sprintf("Quote %s from GopherCRM", models.QuoteNumber(quoteID))
 }
 
-// Email is the flow of the design. The quote and the latest history id are
-// read first; the recipient is the linked customer's address as it is now,
+// Email is the flow of the design. The latest history id is read first, then
+// the quote; the recipient is the linked customer's address as it is now,
 // never a copy; the mail goes out with no transaction held; then one
 // conditional update stamps last_emailed_at, and matches nothing if a
-// revision to draft committed in between. The logs carry the quote id and the
-// customer id only: never the address, the name or the body.
+// revision to draft committed after the marker was read. Reading the marker
+// before the quote means a revision that commits between the two reads is
+// also refused: the rendering that went out may predate it. The logs carry
+// the quote id and the customer id only: never the address, the name or the
+// body.
 func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("quote_id", id), "QuoteService", "Email")
+
+	// The marker read before everything else: a sent→draft row with a higher
+	// id means the quote was revised after this point, whether while the
+	// mail was in flight or between this read and the read of the quote. A
+	// quote that does not exist has no history, so the marker is 0 and the
+	// read of the quote answers not found as before.
+	latestHistoryID, err := s.quoteRepo.LatestStatusChangeID(id)
+	if err != nil {
+		utils.LogServiceResponse(logger, err)
+		return nil, err
+	}
 
 	quote, err := s.GetByID(id)
 	if err != nil {
@@ -56,14 +70,6 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	if to == "" {
 		err := fmt.Errorf("customer %d of quote %d has no email address: %w", customer.ID, id, apperrors.ErrQuoteNoRecipient)
 		logger.WithError(utils.LogError(err)).Warn("Quote email refused")
-		return nil, err
-	}
-
-	// The marker read before the send: a sent→draft row with a higher id
-	// means the quote was revised while the mail was in flight.
-	latestHistoryID, err := s.quoteRepo.LatestStatusChangeID(id)
-	if err != nil {
-		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
 
