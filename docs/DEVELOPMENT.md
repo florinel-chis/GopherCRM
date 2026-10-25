@@ -262,6 +262,52 @@ to true in production.
 **Sort validation** — all repository sort queries validate `sortBy` against per-entity column
 allowlists via `utils.ValidateSort()` to prevent SQL injection.
 
+**Quotes: conditional claims, one transaction each** — every write to a quote or its lines runs in
+one transaction that starts with a locking read of the quote (`QuoteRepository.GetByIDForUpdate`,
+`SELECT … FOR UPDATE` on MySQL, a plain read on SQLite where the dialector drops the clause) and
+refuses anything but a draft with `apperrors.ErrQuoteLocked`; the totals are recomputed from the
+lines inside that transaction and written by a conditional update `WHERE status = 'draft'`
+(`UpdateTotals`, exactly one row, else the whole write rolls back). A status transition
+(`QuoteService.ChangeStatus`) claims the row with `UPDATE … WHERE id = ? AND status = <from>`
+(`ClaimStatus`; exactly one row, else `ErrInvalidQuoteTransition`, which is also the lost-race
+answer), then — for `draft → sent` only — counts the lines with a locking read *after* the claim
+(`CountLinesForUpdate`; zero rolls the claim back with `ErrQuoteHasNoLines`), and appends the
+`quote_status_changes` row in the same transaction. The line count is read after the claim on
+purpose: a plain count before it would answer from the REPEATABLE READ snapshot on MySQL and miss
+a line deleted by a competing transaction. Two competing transitions therefore commit exactly one,
+and a line write racing the send is either inside the sent quote's totals or refused as locked; no
+committed sent quote has zero lines. The conditional updates re-check their own conditions when
+the MySQL driver reports zero rows for an update that wrote the values the row already held.
+Accepting a quote never touches its deal (owner decision). Regression roots:
+`TestQuoteStatusTransitionMatrix`, `TestQuoteLineLimitsRejectedWithoutWrites`,
+`TestQuoteCreateWritesQuoteAndHistoryTogether` (`internal/service/quote_service_test.go`),
+`TestQuoteStatusConcurrent{SQLite,MySQL}` (`internal/service/quote_status_regression_test.go`; the
+MySQL root creates a disposable schema on `TEST_MYSQL_DSN`, skips without it and fails when it is
+unreachable) and `TestQuoteRepository_LockingReadsCarryForUpdateOnMySQLOnly`.
+
+**Quote email: no transaction during SMTP, a conditional stamp after it** — `QuoteService.Email`
+reads the quote, the customer's *current* address and the latest `quote_status_changes` id, hands
+the plaintext rendering to the `Mailer` with no transaction held, and then stamps `last_emailed_at`
+with one conditional update (`StampEmailed`): `WHERE id = ? AND status IN ('sent','accepted') AND
+NOT EXISTS (a history row of the quote with to_status = 'draft' and an id above the marker)`. A
+`sent → draft` revision that commits while the mail is in flight — even one followed by a fresh
+send, which the status alone could not tell apart — matches no row, and the call answers 409
+`ErrQuoteChangedDuringSend` with `last_emailed_at` unchanged; a `Mailer` failure is 502
+`MAIL_DELIVERY_FAILED` and stamps nothing. The subject is fixed (`Quote Q-000042 from GopherCRM`),
+the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
+`customer_id` only — a transport error that quotes the address is returned, not logged. Roots:
+`TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
+and `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
+
+**The SMTP transport refuses CR/LF in headers** — `SMTPMailer.Send` and `SendPasswordReset` return
+an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipient or subject that
+contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
+let the remainder inject further headers (an extra recipient, a forged subject). The check is
+repeated inside the private `send`, so no future caller can bypass it. The generic `Send` failure
+log now carries the subject and the transport error but not the recipient; the password-reset
+failure line and the development `LogMailer` still record the recipient as before. Root:
+`TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`).
+
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
 only valid when the rows are ordered by id; under any other ordering it skips and repeats rows

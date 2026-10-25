@@ -36,6 +36,14 @@ var AllowedSortColumns = map[string]map[string]bool{
 		"id": true, "title": true, "stage": true, "amount_cents": true, "probability": true,
 		"expected_close_date": true, "closed_at": true, "created_at": true, "updated_at": true,
 	},
+	"products": {
+		"id": true, "name": true, "sku": true, "unit_price_cents": true, "currency": true,
+		"is_active": true, "created_at": true, "updated_at": true,
+	},
+	"quotes": {
+		"id": true, "title": true, "status": true, "total_cents": true, "currency": true,
+		"valid_until": true, "sent_at": true, "created_at": true, "updated_at": true,
+	},
 }
 
 // ValidateSort checks that sortBy is in the allowlist for the given entity and

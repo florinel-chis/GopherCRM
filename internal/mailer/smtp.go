@@ -32,6 +32,11 @@ func NewSMTPMailer(cfg config.SMTPConfig) *SMTPMailer {
 
 func (m *SMTPMailer) SendPasswordReset(to, resetURL string) error {
 	subject := "Reset your GopherCRM password"
+	if err := validateHeaders(to, subject); err != nil {
+		// The offending value is not logged: it is the injection attempt.
+		log().WithError(err).Warn("Refused to send password reset email with an invalid header")
+		return fmt.Errorf("send password reset mail: %w", err)
+	}
 	body := strings.Join([]string{
 		"A password reset was requested for your GopherCRM account.",
 		"",
@@ -54,12 +59,22 @@ func (m *SMTPMailer) SendPasswordReset(to, resetURL string) error {
 	return nil
 }
 
-// Send delivers an arbitrary plaintext message.
+// Send delivers an arbitrary plaintext message. A recipient or subject that
+// contains CR or LF is refused with ErrInvalidHeader before any relay is
+// contacted.
 func (m *SMTPMailer) Send(to, subject, body string) error {
+	if err := validateHeaders(to, subject); err != nil {
+		// The offending value is not logged: it is the injection attempt.
+		log().WithError(err).Warn("Refused to send email with an invalid header")
+		return fmt.Errorf("send mail: %w", err)
+	}
 	if err := m.send(to, subject, body); err != nil {
-		// Recipient and subject only: the body may carry a single-use link.
+		// Subject only. The body may carry a single-use link, and the recipient
+		// is a person's address: the quote email in particular promises that
+		// no log line of the call carries it, so the generic failure line
+		// keeps the fixed subject (every caller passes a constant) and the
+		// transport error, whose SMTP code is what a diagnosis needs.
 		log().WithError(err).
-			WithField("to", to).
 			WithField("subject", subject).
 			Error("Failed to send email")
 		return fmt.Errorf("send mail: %w", err)
@@ -69,8 +84,12 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 
 // send composes a plaintext RFC 822 message and submits it to the relay. It
 // deliberately does not log: only the caller knows which parts of the body are
-// sensitive, so the log line belongs there.
+// sensitive, so the log line belongs there. The header check is repeated here
+// so that no future caller of send can bypass it.
 func (m *SMTPMailer) send(to, subject, body string) error {
+	if err := validateHeaders(to, subject); err != nil {
+		return err
+	}
 	msg := strings.Join([]string{
 		"From: " + m.from,
 		"To: " + to,

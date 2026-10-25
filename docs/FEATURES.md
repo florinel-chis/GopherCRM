@@ -177,6 +177,39 @@ sales sees and edits its own. Deals hold no personal data and are not erased. Ca
 
 ---
 
+## 4d. Products & Quotes (2026-10)
+
+A product catalogue (name, SKU, integer price in minor units next to an ISO 4217 code, active
+flag) and quotes that belong to a customer and/or a deal. A quote has lines (a product, a quantity
+and a per-line discount in basis points); the line copies the product's name and price when it is
+added, and the line and quote totals are computed on the server with round-half-up. Every quote
+moves through `draft → sent → accepted | rejected | expired`, with `sent → draft` to revise; each
+move is claimed by a conditional update and writes a status-history row in the same transaction,
+and only a draft is editable. Quotes use the deal role guard (admin and sales; sales sees only the
+quotes it owns, narrowed inside the query). A sent or accepted quote can be emailed as a plaintext
+rendering (not the printable document, and not a PDF) to the linked customer's current address
+with a fixed subject; the mailer refuses CR/LF in headers. Quotes copy no personal data, so the
+erasure cascade and the PII sweep stay correct. Decided for this release: accepting a quote does
+not change its deal; expiry is manual (acceptance is refused after `valid_until`); support cannot
+read quotes; sending is refused when the quote has no live customer. The frontend slice (product
+and quote pages, the DealDetail section, the print page and the email dialog) is a separate
+follow-up task. Catalog cases in `docs/testing/15-products-quotes.md`; API contract in
+`api/swagger.yaml` under `/products` and `/quotes` once regenerated.
+
+| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+|---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
+| 4d.1 | **Product catalogue** | `GET/POST /products`, `GET/PUT/DELETE /products/{id}`: admin writes, admin and sales read, support and customer 403, unauthenticated 401; name 1–200 trimmed, SKU ≤ 64 (indexed, not unique), `unit_price_cents` 0 to 10^12, currency `^[A-Z]{3}$` defaulting to `deals.default_currency`, `is_active` default true; the list goes through `utils.ParseOffsetLimit` (limit 0 → 20, capped at 100), filters `search` (name or SKU), `is_active`, `currency`, `sort_by` allowlist (`id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, unknown → 400 `BAD_REQUEST` with no data rows); delete is a soft delete and quote lines keep their copied values | -- (frontend slice pending) | `product_handler_test.go`: TestProductPriceBindingTagMatchesTheModel, TestProductHandler_*; `product_service_test.go`: TestProductService_*; `product_test.go`: TestProductColumnWidthsMatchConstants; `sort_test.go`: TestValidateSortProductsAndQuotes | -- (pending) | `product_repository_test.go`: TestProductRepository_*; `product_integration_test.go`: TestProductRoutesRoleMatrix, TestProductListPaginationSortAndFilters, TestProductDeleteKeepsQuoteLines | **covered** (API) | Search is case-sensitive on SQLite only. No UI yet |
+| 4d.2 | **Create quote** | `POST /quotes`: at least one of `deal_id`/`customer_id` (400 otherwise); with only the deal the customer is taken from it (possibly none); a customer that is not the deal's is 400 `VALIDATION_ERROR`; unknown deal, customer or owner is 400 `INVALID_REFERENCE`; a won or lost deal is 409 (`ErrDealClosed`); sales may only quote its own deals and own the quote itself (403), admin may name any owner; currency defaults to `deals.default_currency`; the quote starts as a draft with totals 0 and one history row (`from_status` null) written in the same transaction; the JSON adds `number` (`Q-000042`) and summaries of customer, deal and owner | -- | `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors, TestQuoteHandler_CreateAndUpdateBodies; `quote_service_test.go`: TestQuoteCreateWritesQuoteAndHistoryTogether; `quote_test.go`: TestQuoteJSONAddsTheNumberAndSummaries, TestQuoteColumnWidthsMatchConstants | -- | `quote_integration_test.go`: TestQuoteCreateLinksAndDefaults | **covered** (API) | A deal with only a lead or a company gives a quote with no recipient; the email then refuses it (4d.7) |
+| 4d.3 | **Lines and totals** | `POST /quotes/{id}/lines`, `PUT`/`DELETE /quotes/{id}/lines/{lineId}`: the product's name and price are copied (overridable), `quantity` 1–1,000,000, `discount_bp` 0–10000, `unit_price_cents` 0–10^12, quantity × price and the quote total at most 10^12, at most 100 lines (all 400 `VALIDATION_ERROR`, nothing written; the gross is checked before the discount so nothing overflows); another currency is 400, an inactive or deleted product 400 `INVALID_REFERENCE`, a line of another quote 404; `line_total = (gross × (10000 − bp) + 5000) / 10000`, totals recomputed from the lines in the same transaction and written `WHERE status = 'draft'` | -- | `quote_test.go`: TestQuoteLineTotalRoundsHalfUp, TestQuoteTotalsSumLines; `quote_service_test.go`: TestQuoteLineLimitsRejectedWithoutWrites; `quote_handler_test.go`: TestQuoteLineBindingTagsMatchTheModel | -- | `quote_repository_test.go`: TestQuoteRepository_LinesBelongToTheirQuote, _DraftWritesAreConditional; `quote_integration_test.go`: TestQuoteLineSnapshotsProductPrice, TestQuoteLockedOutsideDraft | **covered** (API) | Discounts are per line and percentage only (no quote-level or fixed-amount discount); no tax |
+| 4d.4 | **Status lifecycle with history** | `POST /quotes/{id}/status`: exactly draft→sent, sent→accepted/rejected/expired, sent→draft; any other pair or a lost race is 400 `INVALID_STATUS_TRANSITION`; the row is claimed by `UPDATE … WHERE id = ? AND status = <from>`, draft→sent then counts the lines with a locking read (zero → 409 `ErrQuoteHasNoLines`, claim rolled back), accepted after `valid_until` is 409 `ErrQuoteExpired`; `sent_at` set on sent, `closed_at` on the three final statuses, both cleared on sent→draft; one history row per move; `GET /quotes/{id}/history` oldest first; two concurrent transitions commit exactly one, a line write racing the send is included or refused | -- | `quote_handler_test.go`: TestQuoteStatusBindingTagsMatchTheModel; `quote_test.go`: TestQuoteTransitionsAreExactlyTheFiveAllowedMoves; `quote_service_test.go`: TestQuoteStatusTransitionMatrix; `quote_status_regression_test.go`: TestQuoteStatusConcurrentSQLite, TestQuoteStatusConcurrentMySQL (needs `TEST_MYSQL_DSN`) | -- | `quote_repository_test.go`: TestQuoteRepository_ClaimStatusIsConditional, _StatusChangesOldestFirstAndLatestID, _LockingReadsCarryForUpdateOnMySQLOnly; `quote_integration_test.go`: TestQuoteLockedOutsideDraft | **covered** | Expiry is manual: nothing moves a quote to `expired` at `valid_until`. Accepting a quote does not change its deal (owner decision) |
+| 4d.5 | **Visibility and roles** | Admin and sales only (support and customer 403 on every quote route); `GET /quotes`, `GET /deals/{id}/quotes` and `GET /customers/{id}/quotes` are narrowed to the sales caller inside the query, so `meta.total` counts only its quotes and `owner_id` cannot widen it; every per-quote route on another owner's quote is 403, decided before the service; another owner's deal is 403 on its sub-list | -- | `quote_handler_test.go`: TestQuoteHandler_SalesIsScopedToItsOwnQuotes; `routes_test.go`: TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter | -- | `quote_repository_test.go`: TestQuoteRepository_ListScopesOwnerBeforePaginationAndDeleteIsSoft; `quote_integration_test.go`: TestQuoteVisibilityForSales | **covered** | Role cases are Go-only until a sales/support e2e login helper exists |
+| 4d.6 | **Delete** | `DELETE /quotes/{id}`: a sales owner deletes its own drafts (204) and gets 409 on a non-draft; admin deletes any quote; a deleted quote is 404 and absent from lists; lines and history stay in their tables; `DELETE /products/{id}` keeps existing quote lines readable with their copied description and price | -- | `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors | -- | `quote_integration_test.go`: TestQuoteDeleteRules; `product_integration_test.go`: TestProductDeleteKeepsQuoteLines | **covered** | Not an erasure: nothing personal is stored |
+| 4d.7 | **Plaintext email** | `POST /quotes/{id}/email` on a sent or accepted quote calls `Mailer.Send` once: recipient = the customer's current address, subject exactly `Quote Q-000042 from GopherCRM`, body lists number, title, every line (description, quantity, unit price, discount, line total), subtotal, discount, total with currency, `valid_until` and notes; no transaction is held during SMTP; `last_emailed_at` is stamped by one conditional update (still sent/accepted and no newer `to_status = 'draft'` history row than the id read before sending), else 409 `ErrQuoteChangedDuringSend`; draft/rejected/expired, no customer, or a soft-deleted/erased customer → 409 with no mail; a mailer error → 502 `MAIL_DELIVERY_FAILED` with nothing stamped; the logs carry `quote_id` and `customer_id` only; `SMTPMailer.Send`/`SendPasswordReset` refuse CR/LF in the recipient or subject (`mailer.ErrInvalidHeader`) before any relay is dialled | -- | `quote_email_test.go`: TestQuoteEmailDelivery, TestQuoteEmailLogsOmitPersonalData, TestQuoteEmailRevisedDuringSend; `mailer/header_injection_test.go`: TestSMTPMailerRejectsHeaderInjection | -- | `quote_repository_test.go`: TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft | **covered** | The email is a rendering of the quote, not the printable document, and there is no PDF attachment. The development `LogMailer` still logs the recipient of every message it stands in for, as it always did |
+| 4d.8 | **Schema, migration and erasure** | `products`, `quotes`, `quote_lines`, `quote_status_changes` in AutoMigrate and in `migrations/20261026120000_add_products_and_quotes` (four `CREATE TABLE IF NOT EXISTS`, names identical to AutoMigrate's, no existing table altered, so the SQLite upgrade path rebuilds nothing); the PII sweep covers the four tables; erasing a customer with a deal-linked quote leaves the quote, its `customer_id`, its lines and its history in place and the sweep finds nothing of the person | -- | `cmd/migrate/products_quotes_migration_test.go`: TestProductsAndQuotesMigration (fresh and AutoMigrate-first on MySQL/MariaDB, schema parity, ErrNoChange, Steps(-1)); `cmd/migrate/main_test.go` version and table assertions | -- | `erasure_pii_sweep_test.go`: TestThePersonalDataSweepCoversQuoteTables, TestCustomerErasureWithQuotesLeavesNoPersonalData | **covered** | The MySQL roots skip without a reachable server; the migration CI runs them on MySQL 8 and MariaDB 10.11 |
+| 4d.9 | **Products and quotes UI** | `/products` list and form (admin writes), `/quotes` list, detail with lines and status actions, DealDetail "Quotes" section, `/quotes/{id}/print` print layout, email confirmation dialog, nav entries and role guards | -- | -- | -- | -- | **planned** | Separate follow-up task (UI-1 to UI-10 of the feature analysis of 2026-10-25); the API above is complete without it |
+
+---
+
 ## 5. Ticket Management
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
@@ -448,6 +481,15 @@ test --list` reports 100.
 | `service/bulk_operation_service_test.go` | 4 | Service |
 | `service/auth_service_test.go` | 4 (16 subtests) | Service |
 | `service/form_confirmation_regression_test.go` | 6 (SQLite and MySQL roots, + subtests) | Service |
+| `service/quote_service_test.go` | 3 (+ subtests, on SQLite) | Service |
+| `service/quote_status_regression_test.go` | 2 (SQLite and MySQL roots, + subtests) | Service |
+| `service/quote_email_test.go` | 3 (+ subtests, on SQLite) | Service |
+| `service/product_service_test.go` | 3 (+ subtests) | Service |
+| `handler/quote_handler_test.go` | 5 (+ subtests) | Handler |
+| `handler/product_handler_test.go` | 5 | Handler |
+| `mailer/header_injection_test.go` | 1 (+ subtests) | Mailer |
+| `repository/quote_repository_test.go` | 7 | Repository |
+| `repository/product_repository_test.go` | 3 | Repository |
 | `middleware/rate_limit_test.go` | 7 (+ subtests) | Middleware |
 | `middleware/auth_test.go` | 12 | Middleware |
 | `middleware/error_handler_test.go` | 6 | Middleware |
@@ -474,7 +516,10 @@ test --list` reports 100.
 | `test/integration/erasure_test.go` | 27 | Erasure (users, customers) |
 | `test/integration/lead_erasure_test.go` | 14 | Erasure (leads, conversion cascade) |
 | `test/integration/erasure_atomicity_test.go` | 11 | Erasure atomicity and rollback |
-| `test/integration/erasure_pii_sweep_test.go` | 8 | Cross-table PII sweep |
+| `test/integration/erasure_pii_sweep_test.go` | 10 | Cross-table PII sweep (quote tables included) |
+| `test/integration/quote_integration_test.go` | 5 | Quotes over HTTP (create, lines, lock, visibility, delete) |
+| `test/integration/product_integration_test.go` | 3 | Products over HTTP (roles, list, delete) |
+| `cmd/migrate/products_quotes_migration_test.go` | 1 (MySQL/MariaDB, + subtests) | Products and quotes migration |
 | `test/integration/bulk_erasure_test.go` | 8 | Bulk erasure |
 | `test/integration/bulk_erasure_isolation_test.go` | 4 | Bulk savepoint isolation |
 | `test/integration/soft_delete_email_reuse_test.go` | 9 | Duplicate-email semantics, 409s |

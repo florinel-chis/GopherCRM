@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -16,9 +17,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -31,6 +32,57 @@ type BaseIntegrationTestSuite struct {
 	server      *httptest.Server
 	client      *http.Client
 	baseURL     string
+	mailer      *recordingMailer
+}
+
+// sentMail is one message the recording mailer was asked to deliver.
+type sentMail struct {
+	To, Subject, Body string
+}
+
+// recordingMailer stands in for the SMTP transport: it records every message
+// and fails when err is set, so the quote email can be asserted end to end
+// without a relay.
+type recordingMailer struct {
+	mu   sync.Mutex
+	sent []sentMail
+	err  error
+}
+
+func (m *recordingMailer) SendPasswordReset(to, resetURL string) error {
+	return m.Send(to, "password reset", resetURL)
+}
+
+func (m *recordingMailer) Send(to, subject, body string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.sent = append(m.sent, sentMail{To: to, Subject: subject, Body: body})
+	return nil
+}
+
+// fail makes every following Send return err; nil restores delivery.
+func (m *recordingMailer) fail(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+// messages returns a copy of what was sent so far.
+func (m *recordingMailer) messages() []sentMail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]sentMail, len(m.sent))
+	copy(out, m.sent)
+	return out
+}
+
+func (m *recordingMailer) reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent, m.err = nil, nil
 }
 
 func (suite *BaseIntegrationTestSuite) SetupSuite() {
@@ -84,7 +136,14 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	configRepo := repository.NewConfigurationRepository(suite.db)
 	suite.Require().NoError(configRepo.InitializeDefaults())
 	configService := service.NewConfigurationService(configRepo, utils.NewSecretBox("test-secret-key", "configuration-secret"))
-	dealService := service.NewDealService(repository.NewDealRepository(suite.db), companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
+	dealRepo := repository.NewDealRepository(suite.db)
+	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
+	productRepo := repository.NewProductRepository(suite.db)
+	productService := service.NewProductService(productRepo, configService)
+	// The suite records every quote email instead of delivering it; a test
+	// that needs a failing mailer swaps suite.mailer.err before the call.
+	suite.mailer = &recordingMailer{}
+	quoteService := service.NewQuoteService(repository.NewQuoteRepository(suite.db), productRepo, dealRepo, customerRepo, userRepo, configService, suite.mailer, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db))
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
@@ -96,6 +155,8 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	customerHandler := handler.NewCustomerHandler(customerService)
 	companyHandler := handler.NewCompanyHandler(companyService)
 	dealHandler := handler.NewDealHandler(dealService)
+	productHandler := handler.NewProductHandler(productService)
+	quoteHandler := handler.NewQuoteHandler(quoteService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
@@ -111,7 +172,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 
 	// Setup routes
 	api := suite.router.Group("/api/v1")
-	
+
 	// Auth routes (public)
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/login", authHandler.Login)
@@ -119,12 +180,14 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	// Protected routes
 	protected := api.Group("")
 	protected.Use(middleware.Auth(suite.authService))
-	
+
 	handler.SetupUserRoutes(protected, userHandler)
 	handler.SetupLeadRoutes(protected, leadHandler)
 	handler.SetupCustomerRoutes(protected, customerHandler)
 	handler.SetupCompanyRoutes(protected, companyHandler)
 	handler.SetupDealRoutes(protected, dealHandler)
+	handler.SetupProductRoutes(protected, productHandler)
+	handler.SetupQuoteRoutes(protected, quoteHandler)
 	handler.SetupConfigurationRoutes(protected, configHandler)
 	handler.SetupTicketRoutes(protected, ticketHandler)
 	handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
@@ -148,13 +211,13 @@ func (suite *BaseIntegrationTestSuite) CreateUser(email, password string, role m
 	suite.Require().NoError(err)
 
 	user := &models.User{
-		Email:        email,
-		Password:     string(hashedPassword),
-		Role:         role,
-		IsActive:     true,
-		FirstName:    "Test",
-		LastName:     "User",
-		LastLoginAt:  nil,
+		Email:       email,
+		Password:    string(hashedPassword),
+		Role:        role,
+		IsActive:    true,
+		FirstName:   "Test",
+		LastName:    "User",
+		LastLoginAt: nil,
 	}
 
 	err = suite.db.Create(user).Error
