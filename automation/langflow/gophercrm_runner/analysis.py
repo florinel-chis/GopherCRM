@@ -193,6 +193,13 @@ def recall(run: RunRef, stage: str) -> dict:
             raise GateError(f'stage {stage} consumed a {earlier} journal that has since changed; re-run from {earlier}')
     entry['sha256'] = digest(raw)
     entry['owner'] = owner
+    if stage in run.inherited:
+        # The parent's document journal consumed every parent stage: verifying it proves the
+        # inherited journal is still the one the parent's document was rendered from.
+        parent = RunRef(run.parent, run.checkout, run.state_dir, run.base)
+        parent_document = recall(parent, 'document')
+        if parent_document['consumed'].get(stage, {}).get('sha256') != entry['sha256']:
+            raise GateError(f'inherited {stage} journal differs from the one the parent document consumed')
     return entry
 
 
@@ -775,7 +782,7 @@ class Analysis:
 
     # -- stages ------------------------------------------------------------------------
 
-    async def intake(self, *, wish: str, links: str = '', comments: str = '', previous_run_id: str = '',
+    async def intake(self, *, wish: str = '', links: str = '', comments: str = '', previous_run_id: str = '',
                      refine_from: str = 'research') -> StageOutput:
         from .analysis_render import render_brief
         wish = (wish or '').strip()
@@ -941,3 +948,61 @@ class Analysis:
             markdown = render_one_pager(result['analysis']) + '\n'.join(render_specification(result['specification'])) + '\n'
             record(run, 'revision', result, markdown, notes, consumed_of(*journals.values()))
             return StageOutput('revision', run, result, markdown, tuple(notes))
+
+    # -- document ----------------------------------------------------------------------
+
+    async def document(self, run_id: str) -> StageOutput:
+        from .analysis_render import cost_summary, document_name
+        run = load_run(self.config, run_id)
+        with run_lock(run):
+            journals = self.journals(run, 'intake', 'research', 'analysis', 'specification')
+            reviewed = (run.directory / 'review.json').exists()
+            if reviewed and not (run.directory / 'revision.json').exists():
+                raise GateError('a review is recorded without its revision; re-run Revision, or remove the '
+                                'review journal deliberately to publish the unreviewed draft')
+            if reviewed:
+                journals.update(self.journals(run, 'review', 'revision'))
+            run_record = read_run(run)
+            parent_document = read_run(load_run(self.config, run.parent))['document'] if run.parent else None
+            relative = f'{self.config.analysis_output_dir}/{document_name(run_record, self.today(), parent_document)}'
+            code, _ = await run_command(self.commands, ('git', 'check-ignore', '-q', relative),
+                                        cwd=self.config.checkout, check=False)
+            if code != 0:
+                raise GateError(f'{relative} is not ignored by git; the document would be committable')
+            target = safe_artifact(self.config.checkout, relative)
+            if target.exists() or target.is_symlink():
+                raise GateError(f'{relative} already exists; a document is never overwritten')
+            ahead = None
+            code, _ = await run_command(self.commands, ('git', 'fetch', 'origin', 'main'),
+                                        cwd=self.config.checkout, check=False)
+            if code == 0:
+                code, count = await run_command(self.commands, ('git', 'rev-list', '--count', f'{run.base}..origin/main'),
+                                                cwd=self.config.checkout, check=False)
+                ahead = int(count) if code == 0 and count.isdigit() else None
+            text = self.draft_document(run, journals, ahead=ahead)
+            final = journals['revision']['data'] if reviewed else {
+                'specification': journals['specification']['data']['specification']}
+            spec = final['specification']
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, 'x', encoding='utf-8') as out:
+                out.write(text)
+            private_bytes(run.directory / 'feature-analysis.md', text.encode())
+            private_bytes(run.directory / 'manifest.json', dump(spec['manifest']).encode() + b'\n')
+            private_bytes(run.directory / 'acceptance_checks.json',
+                          dump({'acceptance_checks': registry(spec)}).encode() + b'\n')
+            update_run(run, document=str(target))
+            await remove_worktree(self.commands, run)
+            summary = cost_summary(run_record['calls'])
+            data = {'path': str(target), 'private_copy': str(run.directory / 'feature-analysis.md'),
+                    'manifest': str(run.directory / 'manifest.json'),
+                    'acceptance_checks': str(run.directory / 'acceptance_checks.json'),
+                    'cost_usd': summary['usd'], 'cost_status': summary['status'],
+                    'duration_seconds': summary['duration_seconds'], 'calls': summary['calls'],
+                    'models': summary['models'], 'ahead': ahead}
+            cost = f'USD {summary["usd"]:.2f} ({summary["status"]})' if summary['usd'] is not None else summary['status']
+            markdown = (f'Document written to {target}\n\nAgent calls: {summary["calls"]}; cost {cost}; '
+                        f'duration {int(summary["duration_seconds"])} s; models observed: '
+                        f'{", ".join(summary["models"]) or "unknown"}.\n'
+                        f'Private copy (feature-analysis.md), manifest.json and acceptance_checks.json: {run.directory}\n')
+            record(run, 'document', data, markdown, [], consumed_of(*journals.values()))
+            return StageOutput('document', run, data, markdown)

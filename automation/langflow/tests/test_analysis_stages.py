@@ -243,5 +243,121 @@ class MiddleStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.commands.calls), 1)
 
 
+class DocumentAndRefinementTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.checkout = make_checkout(self.root)
+        self.config = make_config(self.root, self.checkout)
+        self.commands = FakeCommands(self.root)
+        self.runner = analysis.Analysis(self.config, self.commands)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    async def complete(self, runner=None, **intake):
+        runner = runner or self.runner
+        run = (await runner.intake(**intake)).run
+        for name in ('research', 'analysis', 'specification', 'review', 'revision'):
+            await getattr(runner, name)(run.run_id)
+        return run, await runner.document(run.run_id)
+
+    async def test_document_writes_ignored_path_private_copy_and_removes_worktree(self):
+        run, output = await self.complete(wish='Add follow-up automation')
+        path = Path(output.data['path'])
+        self.assertEqual(path.parent, self.config.checkout / 'docs' / 'specs')
+        self.assertRegex(path.name, r'^\d{4}-\d{2}-\d{2}-follow-up-automation\.md$')
+        text = path.read_text()
+        self.assertTrue(text.startswith('# Follow-up automation — feature analysis\n'))
+        self.assertIn(f'GopherCRM main @ {run.base}', text)
+        self.assertIn('Agent calls: 6 · cost USD 1.50 (provider-reported)', text)
+        self.assertIn('models observed: model-a', text)
+        self.assertEqual((run.directory / 'feature-analysis.md').read_text(), text)
+        self.assertEqual(output.data['private_copy'], str(run.directory / 'feature-analysis.md'))
+        manifest = json.loads((run.directory / 'manifest.json').read_text())
+        self.assertEqual(manifest['issue'], 0)
+        self.assertEqual(set(manifest), analysis.contracts.MANIFEST_FIELDS)
+        checks = json.loads((run.directory / 'acceptance_checks.json').read_text())
+        self.assertEqual(list(checks['acceptance_checks']), ['followup-rules'])
+        self.assertEqual(output.data['cost_usd'], 1.5)
+        self.assertEqual(output.data['calls'], 6)
+        self.assertFalse((run.directory / 'worktree').exists())
+        self.assertNotIn('worktree', git(self.checkout, 'worktree', 'list'))
+        self.assertEqual(analysis.read_run(run)['document'], str(path))
+        self.assertEqual(git(self.checkout, 'status', '--porcelain'), '')
+
+    async def test_document_refuses_unignored_output_dir(self):
+        runner = analysis.Analysis(replace(self.config, analysis_output_dir='docs/tracked'), self.commands)
+        with self.assertRaisesRegex(GateError, 'ignored'):
+            await self.complete(runner=runner, wish='Add follow-up automation')
+        self.assertFalse((self.checkout / 'docs' / 'tracked').exists())
+
+    async def test_document_refuses_overwrite(self):
+        run, output = await self.complete(wish='Add follow-up automation')
+        again = (await self.runner.intake(wish='Add follow-up automation')).run
+        for name in ('research', 'analysis', 'specification'):
+            await getattr(self.runner, name)(again.run_id)
+        with self.assertRaisesRegex(GateError, 'exists'):
+            await self.runner.document(again.run_id)
+
+    async def test_document_refuses_review_without_revision_and_recreates_worktree(self):
+        run = (await self.runner.intake(wish='Add follow-up automation')).run
+        for name in ('research', 'analysis', 'specification', 'review'):
+            await getattr(self.runner, name)(run.run_id)
+        with self.assertRaisesRegex(GateError, 'revision'):
+            await self.runner.document(run.run_id)
+        (run.directory / 'review.json').unlink()
+        (run.directory / 'review.md').unlink()
+        await analysis.remove_worktree(self.commands, run)
+        output = await self.runner.document(run.run_id)
+        self.assertIn('(no review recorded)', Path(output.data['path']).read_text())
+        self.assertFalse((run.directory / 'worktree').exists())
+
+    async def test_refinement_inherits_parent_and_numbers_comments(self):
+        parent, _ = await self.complete(wish='Add follow-up automation')
+        calls = len(self.commands.calls)
+        output = await self.runner.intake(wish='', comments='Add mail steps.\n\nDrop the dry run.',
+                                          previous_run_id=parent.run_id)
+        run = output.run
+        self.assertEqual((run.revision, run.parent, run.inherited, run.slug), (2, parent.run_id, ('intake',), parent.slug))
+        self.assertEqual(run.base, parent.base)
+        self.assertEqual(len(self.commands.calls), calls)
+        self.assertIn('inherited', output.notes[0])
+        self.assertEqual([c['id'] for c in analysis.read_run(run)['comments']], ['C-1', 'C-2'])
+        self.commands.outputs['analysis'] = dict(fixtures.analysis_output(),
+                                                 comment_dispositions=[dict(id='C-1', disposition='applied', note='mail added')])
+        for name in ('research', 'analysis', 'specification', 'review', 'revision'):
+            await getattr(self.runner, name)(run.run_id)
+        prompt = next(c['prompt'] for c in self.commands.calls[calls:] if c['stage'] == 'research')
+        self.assertIn('C-1: Add mail steps.', prompt)
+        self.assertIn('previous revision of this stage', prompt)
+        review = analysis.recall(run, 'review')['data']
+        self.assertTrue(any('C-2' in f for f in review['runner_findings']))
+        document = await self.runner.document(run.run_id)
+        path = Path(document.data['path'])
+        self.assertTrue(path.name.endswith('-follow-up-automation-r2.md'))
+        text = path.read_text()
+        self.assertLess(text.index('## Revision notes'), text.index('## Acceptance criteria'))
+        self.assertIn('revision 2 · parent ' + parent.run_id, text)
+
+    async def test_refinement_refuses_changed_parent_journal(self):
+        parent, _ = await self.complete(wish='Add follow-up automation')
+        run = (await self.runner.intake(comments='More.', previous_run_id=parent.run_id)).run
+        path = parent.directory / 'intake.json'
+        path.write_text(path.read_text().replace('Follow-up automation', 'Something else'))
+        with self.assertRaises(GateError):
+            await self.runner.research(run.run_id)
+
+    async def test_refinement_refuses_wish_mismatch_and_unfinished_parent(self):
+        parent, _ = await self.complete(wish='Add follow-up automation')
+        with self.assertRaisesRegex(GateError, 'request'):
+            await self.runner.intake(wish='Something else', comments='More.', previous_run_id=parent.run_id)
+        with self.assertRaisesRegex(GateError, 'comment'):
+            await self.runner.intake(comments='   ', previous_run_id=parent.run_id)
+        unfinished = (await self.runner.intake(wish='Add follow-up automation')).run
+        with self.assertRaisesRegex(GateError, 'document'):
+            await self.runner.intake(comments='More.', previous_run_id=unfinished.run_id)
+
+
 if __name__ == '__main__':
     unittest.main()

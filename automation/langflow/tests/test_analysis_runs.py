@@ -127,6 +127,7 @@ class RunModelTests(unittest.IsolatedAsyncioTestCase):
         parent = analysis.new_run(self.config, base=self.base, wish='w', links=[], comments='')
         analysis.record(parent, 'intake', {'brief': 1}, '# Brief\n', [], {})
         parent_intake = analysis.recall(parent, 'intake')
+        analysis.record(parent, 'document', {'path': 'x'}, 'written\n', [], {'intake': parent_intake['sha256']})
         child = analysis.new_run(self.config, base=self.base, wish='w', links=[], comments='change it',
                                  parent=parent, refine_from='research')
         self.assertEqual((child.revision, child.parent, child.inherited), (2, parent.run_id, ('intake',)))
