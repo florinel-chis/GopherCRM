@@ -166,5 +166,82 @@ class StageTests(unittest.IsolatedAsyncioTestCase):
             await self.runner.intake(wish='Add follow-up automation')
 
 
+class MiddleStageTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.checkout = make_checkout(self.root)
+        self.config = make_config(self.root, self.checkout)
+        self.commands = FakeCommands(self.root)
+        self.runner = analysis.Analysis(self.config, self.commands)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    async def through(self, stage):
+        run = (await self.runner.intake(wish='Add follow-up automation')).run
+        outputs = {'intake': None}
+        for name in ('research', 'analysis', 'specification', 'review', 'revision'):
+            if analysis.STAGES.index(name) > analysis.STAGES.index(stage):
+                break
+            outputs[name] = await getattr(self.runner, name)(run.run_id)
+        return run, outputs
+
+    async def test_analysis_notes_one_pager_over_budget(self):
+        self.commands.outputs['analysis'] = fixtures.analysis_output(words=' '.join(['word'] * 520))
+        run, outputs = await self.through('analysis')
+        self.assertTrue(any('500' in note for note in outputs['analysis'].notes))
+        entry = analysis.recall(run, 'analysis')
+        self.assertEqual(set(entry['consumed']), {'intake', 'research'})
+        prompt = self.commands.calls[-1]['prompt']
+        self.assertTrue(prompt.startswith('STAGE: analysis\n'))
+        self.assertIn('### research', prompt)
+
+    async def test_specification_checks_manifest_and_registry(self):
+        run, outputs = await self.through('specification')
+        self.assertEqual(outputs['specification'].notes, ())
+        self.assertEqual(outputs['specification'].data['specification']['docs_to_update'][0]['status'], 'exists')
+        self.commands.outputs['specification'] = fixtures.specification()
+        self.commands.outputs['specification']['manifest']['scope_paths'].append('gocrm-ui/src/*')
+        again = await self.runner.specification(run.run_id)
+        self.assertTrue(any('frontend' in note for note in again.notes))
+        self.assertFalse((run.directory / 'review.json').exists())
+
+    async def test_review_receives_draft_and_runner_findings(self):
+        self.commands.outputs['analysis'] = fixtures.analysis_output(words=' '.join(['word'] * 520))
+        run, outputs = await self.through('review')
+        prompt = self.commands.calls[-1]['prompt']
+        self.assertTrue(prompt.startswith('STAGE: review\n'))
+        self.assertIn('## Summary', prompt)
+        self.assertIn('## Acceptance criteria', prompt)
+        self.assertIn('one-pager is', prompt)
+        review = outputs['review'].data['review']
+        self.assertEqual(review['verdict'], 'revise')
+        self.assertEqual([f['id'] for f in review['findings']], ['F-1', 'F-2'])
+        self.assertEqual(review['findings'][1]['section'], 'runner')
+        self.assertIn('one-pager is', review['findings'][1]['finding'])
+        self.assertEqual(set(analysis.recall(run, 'review')['consumed']),
+                         {'intake', 'research', 'analysis', 'specification'})
+
+    async def test_revision_requires_every_finding_disposition(self):
+        self.commands.outputs['analysis'] = fixtures.analysis_output(words=' '.join(['word'] * 520))
+        run, outputs = await self.through('revision')
+        revision = outputs['revision']
+        self.assertTrue(any('F-2' in note for note in revision.notes))
+        self.assertEqual(set(analysis.recall(run, 'revision')['consumed']),
+                         {'intake', 'research', 'analysis', 'specification', 'review'})
+        self.assertIn('### review', self.commands.calls[-1]['prompt'])
+        self.assertEqual(revision.data['analysis']['problem'], 'Sales forgets to follow up.')
+        self.assertEqual(len(analysis.read_run(run)['calls']), 6)
+
+    async def test_stage_refuses_missing_upstream(self):
+        run = (await self.runner.intake(wish='Add follow-up automation')).run
+        for stage, missing in (('analysis', 'research'), ('specification', 'research'),
+                               ('review', 'research'), ('revision', 'research')):
+            with self.subTest(stage=stage), self.assertRaisesRegex(GateError, missing):
+                await getattr(self.runner, stage)(run.run_id)
+        self.assertEqual(len(self.commands.calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

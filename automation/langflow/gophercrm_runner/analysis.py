@@ -654,7 +654,7 @@ class Analysis:
     # -- shared -----------------------------------------------------------------------
 
     def prompt_for(self, stage: str, run: RunRef, *, rules: str, guidance: list[dict], upstream: dict,
-                   inputs: dict, instruction: str) -> str:
+                   inputs: dict, instruction: str, sections: dict | None = None) -> str:
         parts = [f'STAGE: {stage}',
                  f'You are the {stage} stage of the feature analysis workflow for the repository '
                  f'{self.config.repository}. Your working directory is a read-only detached checkout of '
@@ -667,6 +667,8 @@ class Analysis:
         parts += [f'### {d["path"]}\n{d["content"].rstrip()}\n' for d in guidance]
         parts += ['## Outputs of earlier stages (verified by the runner)', '']
         parts += [f'### {name}\n{dump(value)}\n' for name, value in upstream.items()]
+        for name, text in (sections or {}).items():
+            parts += [f'## {name}', '', text.rstrip(), '']
         parts += ['## Untrusted inputs', '']
         parts += [f'### {name}\n{value}\n' for name, value in inputs.items()]
         parts += [instruction, '']
@@ -757,7 +759,8 @@ class Analysis:
         except GateError:
             return None
 
-    async def run_stage(self, run: RunRef, stage: str, *, schema: dict, upstream: dict, instruction: str):
+    async def run_stage(self, run: RunRef, stage: str, *, schema: dict, upstream: dict, instruction: str,
+                        sections: dict | None = None):
         worktree = await ensure_worktree(self.commands, run)
         guidance = await self.guidance(run)
         run_record = read_run(run)
@@ -765,7 +768,8 @@ class Analysis:
         if previous is not None:
             upstream = dict(upstream, **{'previous revision of this stage': previous})
         prompt = self.prompt_for(stage, run, rules=load_rules(self.config, stage), guidance=guidance,
-                                 upstream=upstream, inputs=self.inputs_for(run_record), instruction=instruction)
+                                 upstream=upstream, inputs=self.inputs_for(run_record), instruction=instruction,
+                                 sections=sections)
         structured, notes, _ = await self.call(run, stage, schema=schema, prompt=prompt, cwd=worktree)
         return worktree, structured, notes
 
@@ -832,3 +836,108 @@ class Analysis:
             markdown = render_research(research)
             record(run, 'research', data, markdown, notes, consumed_of(intake))
             return StageOutput('research', run, data, markdown, tuple(notes))
+
+    # -- middle stages -----------------------------------------------------------------
+
+    def comment_ids(self, run: RunRef) -> list[str]:
+        return [c['id'] for c in read_run(run)['comments']]
+
+    def today(self) -> str:
+        return time.strftime('%Y-%m-%d', time.localtime(self.clock()))
+
+    def journals(self, run: RunRef, *stages) -> dict:
+        return {stage: recall(run, stage) for stage in stages}
+
+    def draft_document(self, run: RunRef, journals: dict, *, ahead=None) -> str:
+        from .analysis_render import render_document
+        notes = {stage: entry['notes'] for stage, entry in journals.items() if entry['notes']}
+        return render_document(read_run(run), journals, notes, ahead=ahead, date=self.today())
+
+    def runner_findings(self, run: RunRef, journals: dict) -> list[str]:
+        """Deterministic defects the reviewer must weigh and the revision must repair."""
+        findings = [n for n in journals['analysis']['notes'] if n.startswith('rule broken')]
+        findings += [n for n in journals['specification']['notes'] if not n.startswith('comments without')]
+        answered = {d['id'] for d in journals['analysis']['data']['analysis']['comment_dispositions']}
+        answered |= {d['id'] for d in journals['specification']['data']['specification']['comment_dispositions']}
+        missing = [c for c in self.comment_ids(run) if c not in answered]
+        if missing:
+            findings.append(f'owner comments without a disposition in the analysis or the specification: {missing}')
+        return findings
+
+    async def analysis(self, run_id: str) -> StageOutput:
+        from .analysis_render import render_one_pager
+        run = load_run(self.config, run_id)
+        with run_lock(run):
+            journals = self.journals(run, 'intake', 'research')
+            _, result, notes = await self.run_stage(
+                run, 'analysis', schema=ANALYSIS_SCHEMA,
+                upstream={'brief': journals['intake']['data']['brief'],
+                          'research': journals['research']['data']['research']},
+                instruction='Write the one-page summary as structured output.')
+            notes += check_analysis(result, self.comment_ids(run))
+            data = {'analysis': result}
+            markdown = render_one_pager(result)
+            record(run, 'analysis', data, markdown, notes, consumed_of(*journals.values()))
+            return StageOutput('analysis', run, data, markdown, tuple(notes))
+
+    async def specification(self, run_id: str) -> StageOutput:
+        from .analysis_render import render_specification
+        run = load_run(self.config, run_id)
+        with run_lock(run):
+            journals = self.journals(run, 'intake', 'research', 'analysis')
+            worktree, result, notes = await self.run_stage(
+                run, 'specification', schema=SPECIFICATION_SCHEMA,
+                upstream={'brief': journals['intake']['data']['brief'],
+                          'research': journals['research']['data']['research'],
+                          'analysis': journals['analysis']['data']['analysis']},
+                instruction='Write the specification as structured output, with the manifest in the '
+                            'task-manifest shape and every check registry entry the criteria name.')
+            notes += check_specification(result, self.config, worktree, self.comment_ids(run))
+            data = {'specification': result}
+            markdown = '\n'.join(render_specification(result)).lstrip('\n') + '\n'
+            record(run, 'specification', data, markdown, notes, consumed_of(*journals.values()))
+            return StageOutput('specification', run, data, markdown, tuple(notes))
+
+    async def review(self, run_id: str) -> StageOutput:
+        from .analysis_render import render_review
+        run = load_run(self.config, run_id)
+        with run_lock(run):
+            journals = self.journals(run, 'intake', 'research', 'analysis', 'specification')
+            spec = journals['specification']['data']['specification']
+            ids = [c['id'] for c in spec['manifest']['acceptance']] + [c['id'] for c in spec['ui_criteria']]
+            findings = self.runner_findings(run, journals)
+            _, result, notes = await self.run_stage(
+                run, 'review', schema=REVIEW_SCHEMA,
+                upstream={'runner findings (deterministic checks the draft failed)': findings,
+                          'criterion ids to assess': ids},
+                sections={'Draft document under review': self.draft_document(run, journals)},
+                instruction='Review the draft and return the structured verdict. Assess every criterion id listed.')
+            notes += check_review(result, ids, findings)
+            data = {'review': result, 'runner_findings': findings}
+            markdown = '\n'.join(['# Review', '', *render_review(result, [])]) + '\n'
+            record(run, 'review', data, markdown, notes, consumed_of(*journals.values()))
+            return StageOutput('review', run, data, markdown, tuple(notes))
+
+    async def revision(self, run_id: str) -> StageOutput:
+        from .analysis_render import render_one_pager, render_specification
+        run = load_run(self.config, run_id)
+        with run_lock(run):
+            journals = self.journals(run, 'intake', 'research', 'analysis', 'specification', 'review')
+            review = journals['review']['data']['review']
+            worktree, result, notes = await self.run_stage(
+                run, 'revision', schema=REVISION_SCHEMA,
+                upstream={'brief': journals['intake']['data']['brief'],
+                          'research': journals['research']['data']['research'],
+                          'analysis': journals['analysis']['data']['analysis'],
+                          'specification': journals['specification']['data']['specification'],
+                          'review': review},
+                instruction='Return the revised analysis and specification as structured output, with a '
+                            'disposition for every finding id.')
+            comment_ids = self.comment_ids(run)
+            notes += check_revision(result, review['findings'])
+            notes += [f'analysis: {n}' for n in check_analysis(result['analysis'], comment_ids)]
+            notes += [f'specification: {n}' for n in check_specification(result['specification'], self.config,
+                                                                          worktree, comment_ids)]
+            markdown = render_one_pager(result['analysis']) + '\n'.join(render_specification(result['specification'])) + '\n'
+            record(run, 'revision', result, markdown, notes, consumed_of(*journals.values()))
+            return StageOutput('revision', run, result, markdown, tuple(notes))
