@@ -93,7 +93,9 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   server can no longer mint two sessions or strand one. What remains is client-side: a shared
   in-flight refresh promise so only one request is sent (#115).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
-  `SMTP_*` is configured.
+  `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
+  email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment
+  check (refuse to start, or refuse to stamp, without a configured transport) is a candidate.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
   hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
 

@@ -91,6 +91,46 @@ func SetupDealRoutes(router *gin.RouterGroup, handler *DealHandler) {
 	router.GET("/customers/:id/deals", guard, handler.ListByCustomer)
 }
 
+// SetupProductRoutes mounts the catalogue endpoints. Reading is open to admin
+// and sales, the roles that quote; writing is admin only. Support and customer
+// have no access at all.
+func SetupProductRoutes(router *gin.RouterGroup, handler *ProductHandler) {
+	products := router.Group("/products")
+	products.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales))
+	{
+		products.POST("", middleware.RequireRole(models.RoleAdmin), handler.Create)
+		products.GET("", handler.List)
+		products.GET("/:id", handler.Get)
+		products.PUT("/:id", middleware.RequireRole(models.RoleAdmin), handler.Update)
+		products.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+	}
+}
+
+// SetupQuoteRoutes mounts the quotes endpoints under the deals guard: admin
+// and sales only, with the handler narrowing sales to its own quotes. The two
+// sub-lists live under the deal and customer paths but are registered here,
+// with the same guard, so the other Setup* signatures stay as they are.
+func SetupQuoteRoutes(router *gin.RouterGroup, handler *QuoteHandler) {
+	guard := middleware.RequireRole(models.RoleAdmin, models.RoleSales)
+	quotes := router.Group("/quotes")
+	quotes.Use(guard)
+	{
+		quotes.POST("", handler.Create)
+		quotes.GET("", handler.List)
+		quotes.GET("/:id", handler.Get)
+		quotes.PUT("/:id", handler.Update)
+		quotes.DELETE("/:id", handler.Delete)
+		quotes.POST("/:id/lines", handler.AddLine)
+		quotes.PUT("/:id/lines/:lineId", handler.UpdateLine)
+		quotes.DELETE("/:id/lines/:lineId", handler.DeleteLine)
+		quotes.POST("/:id/status", handler.ChangeStatus)
+		quotes.GET("/:id/history", handler.History)
+		quotes.POST("/:id/email", handler.Email)
+	}
+	router.GET("/deals/:id/quotes", guard, handler.ListByDeal)
+	router.GET("/customers/:id/quotes", guard, handler.ListByCustomer)
+}
+
 func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
 	tickets := router.Group("/tickets")
 	{

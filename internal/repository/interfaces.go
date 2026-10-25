@@ -269,6 +269,125 @@ type DealRepository interface {
 	WithTx(tx *gorm.DB) DealRepository
 }
 
+// ProductListFilter narrows ProductRepository.List. A nil IsActive and an
+// empty string mean "no filter"; Search matches name and SKU. SortBy is
+// checked against utils.AllowedSortColumns["products"] and an empty one means
+// newest first.
+type ProductListFilter struct {
+	Search    string
+	IsActive  *bool
+	Currency  string
+	SortBy    string
+	SortOrder string
+}
+
+// ProductRepository backs the catalogue. Products hold no personal data, so
+// nothing here takes part in the erasure; Delete is a plain soft delete and
+// quote lines keep referencing the row.
+type ProductRepository interface {
+	Create(product *models.Product) error
+	// GetByID returns the live product; a soft-deleted one is a not-found.
+	GetByID(id uint) (*models.Product, error)
+	// Update saves every column of the product, zero values included.
+	Update(product *models.Product) error
+	// Delete soft-deletes the product and reports gorm.ErrRecordNotFound when
+	// no live row matched.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same filter.
+	List(offset, limit int, filter ProductListFilter) ([]models.Product, int64, error)
+	WithTx(tx *gorm.DB) ProductRepository
+}
+
+// QuoteListFilter narrows QuoteRepository.List. Every pointer that is nil and
+// every empty string means "no filter". SortBy is checked against
+// utils.AllowedSortColumns["quotes"] and an empty one means newest first.
+type QuoteListFilter struct {
+	Status     models.QuoteStatus
+	DealID     *uint
+	CustomerID *uint
+	OwnerID    *uint
+	SortBy     string
+	SortOrder  string
+}
+
+// QuoteStatusStamps are the timestamps a status claim writes next to the new
+// status: sent_at and closed_at, both written as given (nil clears).
+type QuoteStatusStamps struct {
+	SentAt   *time.Time
+	ClosedAt *time.Time
+}
+
+// QuoteRepository backs the quotes module. Quotes copy no personal data, so
+// nothing here takes part in the erasure; the status history is append-only.
+//
+// The conditional updates (UpdateDraft, UpdateTotals, ClaimStatus,
+// StampEmailed) report how many rows matched their WHERE clause. On MySQL the
+// driver counts changed rows rather than matched rows, so each of them
+// re-checks its own conditions when the driver reports zero and answers 1
+// when the row already held exactly the written values.
+type QuoteRepository interface {
+	Create(quote *models.Quote) error
+	// GetByID returns the live quote with Owner, Customer, Deal and Lines
+	// (ordered by position) preloaded.
+	GetByID(id uint) (*models.Quote, error)
+	// GetByIDForUpdate is the locking read of a write transaction: the bare
+	// row, `SELECT ... FOR UPDATE` on MySQL and a plain read on SQLite, where
+	// the single connection serialises writers anyway.
+	GetByIDForUpdate(id uint) (*models.Quote, error)
+	// UpdateDraft writes every scalar column of the quote WHERE the stored
+	// status is still draft and returns the matched row count (0 or 1).
+	UpdateDraft(quote *models.Quote) (int64, error)
+	// UpdateTotals writes the three totals WHERE the status is still draft
+	// and returns the matched row count.
+	UpdateTotals(id uint, subtotal, discount, total int64) (int64, error)
+	// ClaimStatus moves the quote from one status to another with one
+	// conditional update (WHERE id = ? AND status = from), writing the stamps
+	// with it, and returns the matched row count: exactly one row is a
+	// successful claim, zero means another transition got there first.
+	ClaimStatus(id uint, from, to models.QuoteStatus, stamps QuoteStatusStamps) (int64, error)
+	// StampEmailed sets last_emailed_at WHERE the status is sent or accepted
+	// and no history row moved the quote to draft after afterHistoryID, and
+	// returns the matched row count.
+	StampEmailed(id uint, afterHistoryID uint, at time.Time) (int64, error)
+	// Delete soft-deletes the quote and reports gorm.ErrRecordNotFound when no
+	// live row matched. Lines and history rows stay.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same filter, without
+	// lines but with Owner, Customer and Deal.
+	List(offset, limit int, filter QuoteListFilter) ([]models.Quote, int64, error)
+
+	CreateLine(line *models.QuoteLine) error
+	// GetLine returns the line only when it belongs to the quote; a line of
+	// another quote is gorm.ErrRecordNotFound.
+	GetLine(quoteID, lineID uint) (*models.QuoteLine, error)
+	// UpdateLine saves every column of the line, zero values included.
+	UpdateLine(line *models.QuoteLine) error
+	// DeleteLine removes the line when it belongs to the quote and reports
+	// gorm.ErrRecordNotFound otherwise. Lines are not soft-deleted.
+	DeleteLine(quoteID, lineID uint) error
+	// ListLines returns the quote's lines ordered by position, then id.
+	ListLines(quoteID uint) ([]models.QuoteLine, error)
+	// CountLines counts the quote's lines with a plain read.
+	CountLines(quoteID uint) (int64, error)
+	// CountLinesForUpdate counts the quote's lines with a locking read (FOR
+	// UPDATE on MySQL, plain on SQLite), so inside a transaction it sees every
+	// committed line and no uncommitted one.
+	CountLinesForUpdate(quoteID uint) (int64, error)
+	// NextLinePosition is max(position) + 1 over the quote's lines, 1 for the
+	// first line.
+	NextLinePosition(quoteID uint) (int64, error)
+
+	// CreateStatusChange appends one history row.
+	CreateStatusChange(change *models.QuoteStatusChange) error
+	// ListStatusChanges returns the quote's history oldest first with
+	// ChangedBy preloaded.
+	ListStatusChanges(quoteID uint) ([]models.QuoteStatusChange, error)
+	// LatestStatusChangeID is the highest history id of the quote, 0 when it
+	// has none; the marker StampEmailed compares against.
+	LatestStatusChangeID(quoteID uint) (uint, error)
+	WithTx(tx *gorm.DB) QuoteRepository
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)

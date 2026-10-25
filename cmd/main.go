@@ -23,7 +23,7 @@ import (
 
 // @title GopherCRM API
 // @version 1.2.0
-// @description CRM API for managing users, leads, customers, companies, tickets, tasks and API keys.
+// @description CRM API for managing users, leads, customers, companies, deals, products, quotes, tickets, tasks and API keys.
 // @BasePath /api/v1
 
 // @securityDefinitions.apikey BearerAuth
@@ -191,6 +191,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	labelRepo := repository.NewLabelRepository(models.DB)
 	companyRepo := repository.NewCompanyRepository(models.DB)
 	dealRepo := repository.NewDealRepository(models.DB)
+	productRepo := repository.NewProductRepository(models.DB)
+	quoteRepo := repository.NewQuoteRepository(models.DB)
 	apiKeyRepo := repository.NewAPIKeyRepository(models.DB)
 	configRepo := repository.NewConfigurationRepository(models.DB)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(models.DB)
@@ -220,6 +222,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	configService := service.NewConfigurationService(configRepo,
 		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
+	// Products take the deals' default currency; quotes email through the
+	// same mailer as the password reset and the forms.
+	productService := service.NewProductService(productRepo, configService)
+	quoteService := service.NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager)
 	bulkService := service.NewBulkOperationService(
 		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
 		taskRepo, ticketRepo, txManager, utils.Logger,
@@ -264,6 +270,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	labelHandler := handler.NewLabelHandler(labelService)
 	companyHandler := handler.NewCompanyHandler(companyService)
 	dealHandler := handler.NewDealHandler(dealService)
+	productHandler := handler.NewProductHandler(productService)
+	quoteHandler := handler.NewQuoteHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService)
@@ -337,6 +345,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupCustomerRoutes(protected, customerHandler)
 		handler.SetupCompanyRoutes(protected, companyHandler)
 		handler.SetupDealRoutes(protected, dealHandler)
+		handler.SetupProductRoutes(protected, productHandler)
+		handler.SetupQuoteRoutes(protected, quoteHandler)
 		handler.SetupTicketRoutes(protected, ticketHandler)
 		handler.SetupTaskRoutes(protected, taskHandler)
 		handler.SetupLabelRoutes(protected, labelHandler)

@@ -261,6 +261,87 @@ type DealService interface {
 	DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error)
 }
 
+// ProductService drives the catalogue. Create and Update trim the name,
+// require it (1 to 200 characters), bound the SKU, the description and the
+// price (0 to models.QuoteAmountCentsMax) and require the currency to be three
+// upper-case letters, defaulting it to the deals.default_currency setting on
+// create. Validation failures unwrap to apperrors.ErrValidation; a missing
+// product is apperrors.ErrProductNotFound.
+type ProductService interface {
+	// Create writes the product. is_active is reported as given; the handler
+	// defaults an absent flag to true.
+	Create(product *models.Product) error
+	GetByID(id uint) (*models.Product, error)
+	// Update saves the product as given. Existing quote lines are not touched:
+	// they copied the name and the price when they were added.
+	Update(product *models.Product) error
+	// Delete soft-deletes the product; quote lines keep their copied values.
+	Delete(id uint) error
+	// List returns one page plus the total matching the filter; the sort
+	// column is checked against the products allowlist.
+	List(offset, limit int, filter repository.ProductListFilter) ([]models.Product, int64, error)
+}
+
+// QuoteService drives the quotes module. The line input and patch types live
+// in models (models.QuoteLineInput, models.QuoteLinePatch) so the shared mock
+// in internal/mocks can name them without importing this package. Every write to a quote or its lines
+// runs in one transaction that starts with a locking read of the quote (FOR
+// UPDATE on MySQL, a plain read on SQLite) and refuses anything but a draft
+// with apperrors.ErrQuoteLocked; the totals are recomputed from the lines in
+// that transaction and written by a conditional update WHERE status = 'draft'.
+// Every status transition is a conditional claim (WHERE status = from) plus
+// one history row in one transaction; a lost race or a disallowed pair is
+// apperrors.ErrInvalidQuoteTransition. Bound and link failures unwrap to
+// apperrors.ErrValidation or to the matching *NotFound sentinel, which the
+// handler answers with 400 INVALID_REFERENCE.
+type QuoteService interface {
+	// Create writes the quote and its first history row (from_status NULL).
+	// At least one of deal_id and customer_id is required; with only a deal,
+	// the customer is taken from the deal. A deal that is won or lost is
+	// apperrors.ErrDealClosed; a sales caller (role) naming another owner's
+	// deal or another owner is apperrors.ErrForbidden.
+	Create(quote *models.Quote, actorID uint, role models.UserRole) error
+	// GetByID returns the quote with its owner, customer, deal and lines.
+	GetByID(id uint) (*models.Quote, error)
+	// Update saves the editable fields of a draft as given. A currency change
+	// once the quote has lines is apperrors.ErrQuoteCurrencyLocked.
+	Update(quote *models.Quote) error
+	// Delete soft-deletes the quote. With draftOnly (a sales caller) a quote
+	// that is not a draft is apperrors.ErrQuoteLocked.
+	Delete(id uint, draftOnly bool) error
+	// List returns one page plus the total matching the filter; the sort
+	// column is checked against the quotes allowlist.
+	List(offset, limit int, filter repository.QuoteListFilter) ([]models.Quote, int64, error)
+	// ListByDeal and ListByCustomer page through the quotes linked to the
+	// record and report apperrors.ErrNotFound for an unknown deal or
+	// customer. A nil ownerID means every owner; a non-nil one narrows the
+	// rows and the total, and on ListByDeal refuses another owner's deal with
+	// apperrors.ErrForbidden.
+	ListByDeal(dealID uint, ownerID *uint, offset, limit int, sortBy, sortOrder string) ([]models.Quote, int64, error)
+	ListByCustomer(customerID uint, ownerID *uint, offset, limit int, sortBy, sortOrder string) ([]models.Quote, int64, error)
+	// AddLine copies the product's name and price onto a new line (unless
+	// overridden), computes its total and the quote's, and returns the quote.
+	// An inactive or deleted product is apperrors.ErrProductNotFound; another
+	// currency apperrors.ErrQuoteCurrencyMismatch.
+	AddLine(quoteID uint, input models.QuoteLineInput) (*models.Quote, error)
+	// UpdateLine applies the patch to the line and recomputes the totals. A
+	// line of another quote is apperrors.ErrQuoteLineNotFound.
+	UpdateLine(quoteID, lineID uint, patch models.QuoteLinePatch) (*models.Quote, error)
+	// DeleteLine removes the line and recomputes the totals.
+	DeleteLine(quoteID, lineID uint) (*models.Quote, error)
+	// ChangeStatus moves the quote to `to`. draft→sent reads the line count
+	// after the claim and rolls back with apperrors.ErrQuoteHasNoLines on
+	// zero; accepted after valid_until is apperrors.ErrQuoteExpired.
+	ChangeStatus(id uint, to models.QuoteStatus, actorID uint) (*models.Quote, error)
+	// History returns the status changes oldest first with the acting user.
+	History(quoteID uint) ([]models.QuoteStatusChange, error)
+	// Email renders the quote as plaintext and sends it to the linked
+	// customer's current address, then stamps last_emailed_at with a
+	// conditional update. See the sentinels in internal/errors for the
+	// refusals; a mailer failure is apperrors.ErrMailDelivery.
+	Email(id uint) (*models.Quote, error)
+}
+
 type APIKeyService interface {
 	// Generate mints a key for userID. A non-nil expiresAt is stored on the key
 	// and enforced at authentication time by AuthService.ValidateAPIKey.

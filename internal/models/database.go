@@ -56,6 +56,11 @@ func MigrateDatabase() error {
 			&Customer{},
 			&Deal{},
 			&DealStageChange{},
+			// Product and Quote before QuoteLine: the line references both.
+			&Product{},
+			&Quote{},
+			&QuoteLine{},
+			&QuoteStatusChange{},
 			&Ticket{},
 			&TicketComment{},
 			&Label{},

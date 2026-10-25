@@ -6,12 +6,32 @@
 package mailer
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
 )
+
+// ErrInvalidHeader is returned, through errors.Is, when a recipient or a
+// subject contains a carriage return or a line feed. Either would end the
+// header line and let the rest of the value inject further headers (an extra
+// recipient, a forged subject) into the message, so the SMTP transport refuses
+// the message before it contacts any relay.
+var ErrInvalidHeader = errors.New("mail header contains a line break")
+
+// validateHeaders refuses header values that contain CR or LF.
+func validateHeaders(to, subject string) error {
+	for name, value := range map[string]string{"recipient": to, "subject": subject} {
+		if strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("%s: %w", name, ErrInvalidHeader)
+		}
+	}
+	return nil
+}
 
 // Mailer delivers transactional mail.
 type Mailer interface {
