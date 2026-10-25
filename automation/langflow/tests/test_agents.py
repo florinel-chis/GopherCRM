@@ -83,3 +83,37 @@ class AgentTests(unittest.TestCase):
             implementation = arguments(config)
             schema = json.loads(implementation[implementation.index('--json-schema') + 1])
             self.assertNotIn('documentation', schema['required'])
+
+
+class ReaderAgentTests(unittest.TestCase):
+    def test_reader_arguments_are_restricted_read_only_with_web(self):
+        from gophercrm_runner.agents import READER_TOOLS, reader_arguments
+        schema = {'type': 'object', 'additionalProperties': False, 'required': ['summary'],
+                  'properties': {'summary': {'type': 'string'}}}
+        self.assertEqual(READER_TOOLS, 'Read,Glob,Grep,WebFetch,WebSearch')
+        argv = reader_arguments(SimpleNamespace(agent_model=''), schema=schema)
+        self.assertEqual(argv[0], 'claude')
+        for flag in ('--safe-mode', '--restricted', '-p', '--no-session-persistence'):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[argv.index('--permission-mode') + 1], 'dontAsk')
+        self.assertEqual(argv[argv.index('--output-format') + 1], 'json')
+        self.assertEqual(argv[argv.index('--tools') + 1], READER_TOOLS)
+        self.assertEqual(argv[argv.index('--allowedTools') + 1], READER_TOOLS)
+        self.assertEqual(json.loads(argv[argv.index('--json-schema') + 1]), schema)
+        joined = ','.join(argv)
+        for forbidden in ('Edit', 'Write', 'Bash'):
+            self.assertNotIn(forbidden, joined)
+        self.assertNotIn('--model', argv)
+        with_model = reader_arguments(SimpleNamespace(agent_model='claude-sonnet-5-5'), schema=schema)
+        self.assertEqual(with_model[with_model.index('--model') + 1], 'claude-sonnet-5-5')
+
+    def test_metadata_matches_parse(self):
+        from gophercrm_runner.agents import metadata, parse
+        raw = dict(is_error=False, structured_output=dict(summary='done', addressed_criteria=['AC-1'], remaining_gaps=[]),
+                   modelUsage={'observed-model': {'inputTokens': 1}, 'helper': {}},
+                   usage={'input_tokens': 10, 'output_tokens': 2, 'bogus': 'x', 'cache_read_input_tokens': -1},
+                   total_cost_usd=0.5)
+        _, parsed = parse(json.dumps(raw), review=False, criteria=[{'id': 'AC-1'}])
+        self.assertEqual(metadata(raw), parsed)
+        self.assertEqual(metadata(raw)['usage'], {'input_tokens': 10, 'output_tokens': 2})
+        self.assertEqual(metadata({})['cost'], {'status': 'unavailable', 'usd': None})
