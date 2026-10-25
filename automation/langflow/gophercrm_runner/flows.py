@@ -130,3 +130,71 @@ async def run_batch_flow(config_path, *, name, execute=False, resume=False, cont
     graph = Graph.from_payload(build_batch_flow(str(config_path), name=name,
         mode='execute' if execute else 'preview', resume=resume, control_snapshot=control_snapshot))
     return await graph.arun(inputs=[{}], outputs=['RunPreparedBatch-main'])
+
+
+ANALYSIS_STAGES = ('intake', 'research', 'analysis', 'specification', 'review', 'revision', 'document')
+ANALYSIS_NODES = tuple(f'Analysis{stage.capitalize()}-main' for stage in ANALYSIS_STAGES)
+ANALYSIS_OUTPUTS = ('brief', 'research', 'analysis', 'specification', 'review', 'revision', 'document')
+
+
+def _normalise_analysis(payload):
+    positions = {node_id: (460 * i, 100) for i, node_id in enumerate(ANALYSIS_NODES)}
+    payload['data']['nodes'].sort(key=lambda node: node['id'])
+    for node in payload['data']['nodes']:
+        x, y = positions[node['id']]
+        node['position'] = {'x': x, 'y': y}
+        node['type'] = 'genericNode'
+        outputs = node['data']['node']['outputs']
+        for output in outputs:
+            output['selected'] = output['types'][0]
+        node['data']['selected_output'] = outputs[0]['name']
+    payload['data']['edges'].sort(key=lambda edge: (
+        edge['source'], edge['target'], edge['data']['sourceHandle']['name'],
+        edge['data']['targetHandle'].get('fieldName', edge['data']['targetHandle'].get('name'))))
+    nodes = {node['id']: node for node in payload['data']['nodes']}
+    for index, edge in enumerate(payload['data']['edges']):
+        source = edge['data']['sourceHandle']
+        output = next(o for o in nodes[edge['source']]['data']['node']['outputs'] if o['name'] == source['name'])
+        source['output_types'] = [output['selected']]
+        target = edge['data']['targetHandle']
+        target['type'] = nodes[edge['target']]['data']['node']['template'][target['fieldName']]['type']
+        edge['id'] = f'analysis-edge-{index}'
+        # The visual editor uses its escaped handle encoding in DOM identifiers.
+        edge['sourceHandle'] = json.dumps(source, sort_keys=True, separators=(',', ':')).replace('"', 'œ')
+        edge['targetHandle'] = json.dumps(target, sort_keys=True, separators=(',', ':')).replace('"', 'œ')
+    return payload
+
+
+def build_analysis_flow(config_path='', *, wish='', links='', comments='', previous_run_id='', refine_from='research'):
+    """Request → brief → research → one-pager → specification → review → revision → document."""
+    from lfx.graph import Graph
+    from .analysis_intake_component import AnalysisIntake
+    from .analysis_research_component import AnalysisResearch
+    from .analysis_analysis_component import AnalysisAnalysis
+    from .analysis_specification_component import AnalysisSpecification
+    from .analysis_review_component import AnalysisReview
+    from .analysis_revision_component import AnalysisRevision
+    from .analysis_document_component import AnalysisDocument
+
+    graph = Graph()
+    graph.add_component(AnalysisIntake(wish=wish, links=links, comments=comments, previous_run_id=previous_run_id,
+                                       refine_from=refine_from, policy_path=config_path), ANALYSIS_NODES[0])
+    for component, node_id in zip((AnalysisResearch, AnalysisAnalysis, AnalysisSpecification, AnalysisReview,
+                                   AnalysisRevision, AnalysisDocument), ANALYSIS_NODES[1:]):
+        graph.add_component(component(policy_path=config_path), node_id)
+    for i in range(len(ANALYSIS_NODES) - 1):
+        graph.add_component_edge(ANALYSIS_NODES[i], (ANALYSIS_OUTPUTS[i], f'from_{ANALYSIS_STAGES[i]}'), ANALYSIS_NODES[i + 1])
+    graph.initialize()
+    payload = graph.dump(name='GopherCRM feature analysis',
+                         description='Feature request → brief → cited research → one-pager → manifest-shaped '
+                                     'specification → independent review → one revision → docs/specs document. '
+                                     'Read-only agents; the runner writes the file.')
+    return _normalise_analysis(payload)
+
+
+async def run_analysis_flow(config_path, *, wish='', links='', comments='', previous_run_id='', refine_from='research'):
+    from lfx.graph import Graph
+
+    graph = Graph.from_payload(build_analysis_flow(str(config_path), wish=wish, links=links, comments=comments,
+                                                   previous_run_id=previous_run_id, refine_from=refine_from))
+    return await graph.arun(inputs=[{}], outputs=[ANALYSIS_NODES[-1]])

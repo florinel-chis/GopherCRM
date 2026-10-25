@@ -1,0 +1,1111 @@
+{
+  "data": {
+    "nodes": [
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_research": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_research",
+                "value": "",
+                "display_name": "Research",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisAnalysis(Component):\n    display_name = 'Analysis: evidence \u2192 one-pager'\n    description = \"Problem, users, proposal, scope, main flow, options, risks, size and the decision needed, within 500 words.\"\n    icon = 'FileText'\n    inputs = [\n        HandleInput(name='from_research', display_name='Research', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='analysis', display_name='Analysis', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).analysis(upstream_run_id(self.from_research))\n        self.status = output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "Problem, users, proposal, scope, main flow, options, risks, size and the decision needed, within 500 words.",
+            "icon": "FileText",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Analysis: evidence \u2192 one-pager",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "analysis",
+                "display_name": "Analysis",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisAnalysis",
+          "id": "AnalysisAnalysis-main",
+          "selected_output": "analysis"
+        },
+        "id": "AnalysisAnalysis-main",
+        "position": {
+          "x": 920,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_revision": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_revision",
+                "value": "",
+                "display_name": "Revision",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.message import Message\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisDocument(Component):\n    display_name = 'Document: write docs/specs/<date>-<slug>.md'\n    description = 'Renders the one-pager, the appendices and the manifest, writes the gitignored document and a private copy, and removes the worktree.'\n    icon = 'FileCheck'\n    inputs = [\n        HandleInput(name='from_revision', display_name='Revision', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='document', display_name='Document', method='publish')]\n\n    async def publish(self) -> Message:\n        from gophercrm_runner.analysis_support import config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).document(upstream_run_id(self.from_revision))\n        self.status = output.markdown\n        return Message(text=output.markdown)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "Renders the one-pager, the appendices and the manifest, writes the gitignored document and a private copy, and removes the worktree.",
+            "icon": "FileCheck",
+            "base_classes": [
+              "Message"
+            ],
+            "display_name": "Document: write docs/specs/<date>-<slug>.md",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Message"
+                ],
+                "selected": "Message",
+                "name": "document",
+                "display_name": "Document",
+                "method": "publish",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisDocument",
+          "id": "AnalysisDocument-main",
+          "selected_output": "document"
+        },
+        "id": "AnalysisDocument-main",
+        "position": {
+          "x": 2760,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import DropdownInput, MultilineInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisIntake(Component):\n    display_name = 'Intake: request \u2192 brief'\n    description = 'Restates a feature request in the repository\\'s own terms from a detached worktree at origin/main. Read-only.'\n    icon = 'MessageSquareText'\n    inputs = [\n        MultilineInput(name='wish', display_name='Feature request', value='',\n                       info='What should exist, in your own words. Blank in a refinement (the parent request is kept).'),\n        MultilineInput(name='links', display_name='Reference links', value='',\n                       info='Optional, one absolute http(s) URL per line, at most ten.'),\n        MultilineInput(name='comments', display_name='Comments on the previous revision', value='',\n                       info='Refinement only: blank lines separate comments; the runner numbers them C-1, C-2, \u2026'),\n        StrInput(name='previous_run_id', display_name='Previous run id', value='',\n                 info='Refinement only: the run whose document the comments answer.'),\n        DropdownInput(name='refine_from', display_name='Refine from stage',\n                      options=['intake', 'research', 'analysis', 'specification'], value='research',\n                      info='Refinement only: earlier stages are inherited from the previous run.'),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='brief', display_name='Brief', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load\n\n        output = await load(config_path(self.policy_path)).intake(\n            wish=str(self.wish or ''), links=str(self.links or ''), comments=str(self.comments or ''),\n            previous_run_id=str(self.previous_run_id or ''), refine_from=str(self.refine_from or 'research'))\n        self.status = f'Run id: {output.run.run_id}\\n\\n' + output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "comments": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "multiline": true,
+                "ai_enabled": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "comments",
+                "value": "",
+                "display_name": "Comments on the previous revision",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "Refinement only: blank lines separate comments; the runner numbers them C-1, C-2, \u2026",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "copy_field": false,
+                "password": false,
+                "type": "str",
+                "_input_type": "MultilineInput"
+              },
+              "links": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "multiline": true,
+                "ai_enabled": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "links",
+                "value": "",
+                "display_name": "Reference links",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "Optional, one absolute http(s) URL per line, at most ten.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "copy_field": false,
+                "password": false,
+                "type": "str",
+                "_input_type": "MultilineInput"
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "previous_run_id": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "previous_run_id",
+                "value": "",
+                "display_name": "Previous run id",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Refinement only: the run whose document the comments answer.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              },
+              "refine_from": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": [
+                  "intake",
+                  "research",
+                  "analysis",
+                  "specification"
+                ],
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "toggle": false,
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "refine_from",
+                "value": "research",
+                "display_name": "Refine from stage",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Refinement only: earlier stages are inherited from the previous run.",
+                "title_case": false,
+                "track_in_telemetry": true,
+                "external_options": {},
+                "type": "str",
+                "_input_type": "DropdownInput"
+              },
+              "wish": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "multiline": true,
+                "ai_enabled": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "wish",
+                "value": "",
+                "display_name": "Feature request",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "What should exist, in your own words. Blank in a refinement (the parent request is kept).",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "copy_field": false,
+                "password": false,
+                "type": "str",
+                "_input_type": "MultilineInput"
+              }
+            },
+            "description": "Restates a feature request in the repository's own terms from a detached worktree at origin/main. Read-only.",
+            "icon": "MessageSquareText",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Intake: request \u2192 brief",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "brief",
+                "display_name": "Brief",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisIntake",
+          "id": "AnalysisIntake-main",
+          "selected_output": "brief"
+        },
+        "id": "AnalysisIntake-main",
+        "position": {
+          "x": 0,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_intake": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_intake",
+                "value": "",
+                "display_name": "Brief",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisResearch(Component):\n    display_name = 'Research: brief \u2192 evidence'\n    description = \"Establishes what exists today and what the links and the wider context say, with citations. Read-only; web tools allowed.\"\n    icon = 'Search'\n    inputs = [\n        HandleInput(name='from_intake', display_name='Brief', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='research', display_name='Research', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).research(upstream_run_id(self.from_intake))\n        self.status = output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "Establishes what exists today and what the links and the wider context say, with citations. Read-only; web tools allowed.",
+            "icon": "Search",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Research: brief \u2192 evidence",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "research",
+                "display_name": "Research",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisResearch",
+          "id": "AnalysisResearch-main",
+          "selected_output": "research"
+        },
+        "id": "AnalysisResearch-main",
+        "position": {
+          "x": 460,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_specification": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_specification",
+                "value": "",
+                "display_name": "Specification",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisReview(Component):\n    display_name = 'Review: draft \u2192 findings'\n    description = \"A second, independent read-only agent challenges the draft document and assesses every criterion.\"\n    icon = 'Scale'\n    inputs = [\n        HandleInput(name='from_specification', display_name='Specification', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='review', display_name='Review', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).review(upstream_run_id(self.from_specification))\n        self.status = output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "A second, independent read-only agent challenges the draft document and assesses every criterion.",
+            "icon": "Scale",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Review: draft \u2192 findings",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "review",
+                "display_name": "Review",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisReview",
+          "id": "AnalysisReview-main",
+          "selected_output": "review"
+        },
+        "id": "AnalysisReview-main",
+        "position": {
+          "x": 1840,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_review": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_review",
+                "value": "",
+                "display_name": "Review",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisRevision(Component):\n    display_name = 'Revision: findings \u2192 revised draft'\n    description = \"One bounded revision addressing every finding by id; declined findings stay visible.\"\n    icon = 'Pencil'\n    inputs = [\n        HandleInput(name='from_review', display_name='Review', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='revision', display_name='Revision', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).revision(upstream_run_id(self.from_review))\n        self.status = output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "One bounded revision addressing every finding by id; declined findings stay visible.",
+            "icon": "Pencil",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Revision: findings \u2192 revised draft",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "revision",
+                "display_name": "Revision",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisRevision",
+          "id": "AnalysisRevision-main",
+          "selected_output": "revision"
+        },
+        "id": "AnalysisRevision-main",
+        "position": {
+          "x": 2300,
+          "y": 100
+        },
+        "type": "genericNode"
+      },
+      {
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "from_analysis": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "from_analysis",
+                "value": "",
+                "display_name": "Analysis",
+                "advanced": false,
+                "api_editable": false,
+                "input_types": [
+                  "Data",
+                  "JSON"
+                ],
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from lfx.custom.custom_component.component import Component\nfrom lfx.inputs import HandleInput, StrInput\nfrom lfx.schema.data import Data\nfrom lfx.template.field.base import Output\n\n\nclass AnalysisSpecification(Component):\n    display_name = 'Specification: one-pager \u2192 detail'\n    description = \"Acceptance criteria in the runner's manifest shape, data model with both migration halves, API, screens, permissions, diagrams, test plan.\"\n    icon = 'ListChecks'\n    inputs = [\n        HandleInput(name='from_analysis', display_name='Analysis', input_types=['Data', 'JSON'], required=True),\n        StrInput(name='policy_path', display_name='Local configuration path', value='',\n                 info='Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.'),\n    ]\n    outputs = [Output(name='specification', display_name='Specification', method='stage_data')]\n\n    async def stage_data(self) -> Data:\n        from gophercrm_runner.analysis_support import as_data, config_path, load, upstream_run_id\n\n        output = await load(config_path(self.policy_path)).specification(upstream_run_id(self.from_analysis))\n        self.status = output.markdown\n        return as_data(output)\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "api_editable": false,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "policy_path": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "override_skip": false,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "policy_path",
+                "value": "",
+                "display_name": "Local configuration path",
+                "advanced": false,
+                "api_editable": false,
+                "dynamic": false,
+                "info": "Blank uses GOPHERCRM_RUNNER_CONFIG from the Langflow server environment.",
+                "title_case": false,
+                "track_in_telemetry": false,
+                "type": "str",
+                "_input_type": "StrInput"
+              }
+            },
+            "description": "Acceptance criteria in the runner's manifest shape, data model with both migration halves, API, screens, permissions, diagrams, test plan.",
+            "icon": "ListChecks",
+            "base_classes": [
+              "JSON"
+            ],
+            "display_name": "Specification: one-pager \u2192 detail",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "JSON"
+                ],
+                "selected": "JSON",
+                "name": "specification",
+                "display_name": "Specification",
+                "method": "stage_data",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "group_outputs": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false
+          },
+          "type": "AnalysisSpecification",
+          "id": "AnalysisSpecification-main",
+          "selected_output": "specification"
+        },
+        "id": "AnalysisSpecification-main",
+        "position": {
+          "x": 1380,
+          "y": 100
+        },
+        "type": "genericNode"
+      }
+    ],
+    "edges": [
+      {
+        "source": "AnalysisAnalysis-main",
+        "target": "AnalysisSpecification-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisAnalysis",
+            "id": "AnalysisAnalysis-main",
+            "name": "analysis",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_analysis",
+            "id": "AnalysisSpecification-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-0",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisAnalysis\u0153,\u0153id\u0153:\u0153AnalysisAnalysis-main\u0153,\u0153name\u0153:\u0153analysis\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_analysis\u0153,\u0153id\u0153:\u0153AnalysisSpecification-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      },
+      {
+        "source": "AnalysisIntake-main",
+        "target": "AnalysisResearch-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisIntake",
+            "id": "AnalysisIntake-main",
+            "name": "brief",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_intake",
+            "id": "AnalysisResearch-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-1",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisIntake\u0153,\u0153id\u0153:\u0153AnalysisIntake-main\u0153,\u0153name\u0153:\u0153brief\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_intake\u0153,\u0153id\u0153:\u0153AnalysisResearch-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      },
+      {
+        "source": "AnalysisResearch-main",
+        "target": "AnalysisAnalysis-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisResearch",
+            "id": "AnalysisResearch-main",
+            "name": "research",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_research",
+            "id": "AnalysisAnalysis-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-2",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisResearch\u0153,\u0153id\u0153:\u0153AnalysisResearch-main\u0153,\u0153name\u0153:\u0153research\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_research\u0153,\u0153id\u0153:\u0153AnalysisAnalysis-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      },
+      {
+        "source": "AnalysisReview-main",
+        "target": "AnalysisRevision-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisReview",
+            "id": "AnalysisReview-main",
+            "name": "review",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_review",
+            "id": "AnalysisRevision-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-3",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisReview\u0153,\u0153id\u0153:\u0153AnalysisReview-main\u0153,\u0153name\u0153:\u0153review\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_review\u0153,\u0153id\u0153:\u0153AnalysisRevision-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      },
+      {
+        "source": "AnalysisRevision-main",
+        "target": "AnalysisDocument-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisRevision",
+            "id": "AnalysisRevision-main",
+            "name": "revision",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_revision",
+            "id": "AnalysisDocument-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-4",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisRevision\u0153,\u0153id\u0153:\u0153AnalysisRevision-main\u0153,\u0153name\u0153:\u0153revision\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_revision\u0153,\u0153id\u0153:\u0153AnalysisDocument-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      },
+      {
+        "source": "AnalysisSpecification-main",
+        "target": "AnalysisReview-main",
+        "data": {
+          "sourceHandle": {
+            "dataType": "AnalysisSpecification",
+            "id": "AnalysisSpecification-main",
+            "name": "specification",
+            "output_types": [
+              "JSON"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "from_specification",
+            "id": "AnalysisReview-main",
+            "inputTypes": [
+              "Data",
+              "JSON"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "analysis-edge-5",
+        "sourceHandle": "{\u0153dataType\u0153:\u0153AnalysisSpecification\u0153,\u0153id\u0153:\u0153AnalysisSpecification-main\u0153,\u0153name\u0153:\u0153specification\u0153,\u0153output_types\u0153:[\u0153JSON\u0153]}",
+        "targetHandle": "{\u0153fieldName\u0153:\u0153from_specification\u0153,\u0153id\u0153:\u0153AnalysisReview-main\u0153,\u0153inputTypes\u0153:[\u0153Data\u0153,\u0153JSON\u0153],\u0153type\u0153:\u0153other\u0153}"
+      }
+    ]
+  },
+  "is_component": false,
+  "name": "GopherCRM feature analysis",
+  "description": "Feature request \u2192 brief \u2192 cited research \u2192 one-pager \u2192 manifest-shaped specification \u2192 independent review \u2192 one revision \u2192 docs/specs document. Read-only agents; the runner writes the file."
+}
