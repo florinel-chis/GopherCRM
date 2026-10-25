@@ -224,8 +224,11 @@ class RenderTests(unittest.TestCase):
                     'analysis': dict(data=dict(analysis=analysis_output())),
                     'specification': dict(data=dict(specification=specification())),
                     'review': dict(data=dict(review=dict(review(), findings=[dict(id='F-1', severity='P1', section='API', finding='No 403', fix='Add it')]))),
-                    'revision': dict(data=revision())}
+                    'revision': dict(data=dict(revision(), specification=dict(
+                        specification(), manifest=dict(sorted(manifest().items())))))}
         text = analysis_render.render_document(record, journals, {'analysis': ['one-pager fine']}, ahead=3, date='2026-10-25')
+        self.assertIn('### Repository findings', text)
+        self.assertNotIn('\n## Repository findings', text)
         self.assertTrue(text.startswith('# Follow-up automation — feature analysis\n'))
         self.assertIn('main has advanced by 3 commits', text)
         self.assertIn('cost USD 1.50', text)
@@ -237,6 +240,8 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn('## Revision notes', text)
         self.assertEqual(text.count('```json'), 2)
         self.assertIn('"check_id": "followup-rules"', text)
+        block = text[text.index('```json') + len('```json\n'):]
+        self.assertTrue(block.startswith('{\n  "schema_version": 1,\n  "repository": "example/repo",\n  "issue": 0,'), block[:120])
         self.assertIn('```mermaid\nstateDiagram-v2', text)
         self.assertIn('F-1', text)
         self.assertIn('fixed', text)

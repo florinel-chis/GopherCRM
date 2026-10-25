@@ -192,6 +192,24 @@ def build_analysis_flow(config_path='', *, wish='', links='', comments='', previ
     return _normalise_analysis(payload)
 
 
+def document_text(run_outputs) -> str:
+    """The Document node's message from lfx's RunOutputs list, whatever the wrapper shape."""
+    from .config import GateError
+
+    for run in run_outputs:
+        for output in getattr(run, 'outputs', None) or []:
+            entry = (getattr(output, 'outputs', None) or {}).get('document')
+            if isinstance(entry, dict) and isinstance(entry.get('message'), dict):
+                entry = {'message': entry['message'].get('markdown')}
+            text = entry.get('message') if isinstance(entry, dict) else None
+            if not isinstance(text, str):
+                message = (getattr(output, 'results', None) or {}).get('document')
+                text = getattr(message, 'text', None)
+            if isinstance(text, str) and text:
+                return text
+    raise GateError('the analysis flow produced no document message')
+
+
 async def run_analysis_flow(config_path, *, wish='', links='', comments='', previous_run_id='', refine_from='research'):
     from lfx.graph import Graph
 

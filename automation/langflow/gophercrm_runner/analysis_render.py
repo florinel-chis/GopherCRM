@@ -73,6 +73,16 @@ def fenced(language: str, body: str) -> list[str]:
     return [f'```{language}', body.rstrip('\n'), '```']
 
 
+MANIFEST_ORDER = ('schema_version', 'repository', 'issue', 'objective', 'non_goals', 'scope_paths', 'dependencies',
+                  'validation_profile', 'context_refs', 'acceptance')
+
+
+def ordered_manifest(manifest: dict) -> dict:
+    """The manifest in the field order of task.example.json, so the fenced block reads like one."""
+    return {**{key: manifest[key] for key in MANIFEST_ORDER if key in manifest},
+            **{key: value for key, value in manifest.items() if key not in MANIFEST_ORDER}}
+
+
 def render_specification(spec: dict) -> list[str]:
     from .analysis import registry
     manifest = spec['manifest']
@@ -83,7 +93,7 @@ def render_specification(spec: dict) -> list[str]:
         v = criterion['verification']
         lines.append(f'- **{criterion["id"]}** {criterion["requirement"]}  \n  verified by {v["kind"]}: {v["detail"]} (frontend slice, outside the runner manifest)')
     lines += ['', 'Manifest (`manifest.json`; set `issue` before `freeze --manifest`):', '']
-    lines += fenced('json', json.dumps(manifest, indent=2))
+    lines += fenced('json', json.dumps(ordered_manifest(manifest), indent=2))
     lines += ['', 'Check registry to merge into the private policy (`acceptance_checks.json`):', '']
     lines += fenced('json', json.dumps({'acceptance_checks': registry(spec)}, indent=2))
     model = spec['data_model']
@@ -179,7 +189,8 @@ def render_document(record: dict, journals: dict, notes_by_stage: dict, *, ahead
         dispositions.update({d['id']: d for d in spec['comment_dispositions']})
         lines += section('Revision notes', render_revision_notes(record.get('comments', []), dispositions))
     lines += render_specification(spec)
-    lines += section('Research notes', render_research(research).split('\n', 2)[2].strip('\n').splitlines())
+    research_body = render_research(research).split('\n', 2)[2].strip('\n').splitlines()
+    lines += section('Research notes', [('#' + line) if line.startswith('## ') else line for line in research_body])
     lines += section('Review', render_review(review, final['finding_dispositions']))
     lines += section('Open questions', bullets([*brief['open_questions'], *spec['open_questions']]))
     rules = []

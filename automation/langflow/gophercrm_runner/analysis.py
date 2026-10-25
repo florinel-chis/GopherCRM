@@ -987,7 +987,9 @@ class Analysis:
             with open(target, 'x', encoding='utf-8') as out:
                 out.write(text)
             private_bytes(run.directory / 'feature-analysis.md', text.encode())
-            private_bytes(run.directory / 'manifest.json', dump(spec['manifest']).encode() + b'\n')
+            from .analysis_render import ordered_manifest
+            private_bytes(run.directory / 'manifest.json',
+                          json.dumps(ordered_manifest(spec['manifest']), indent=2).encode() + b'\n')
             private_bytes(run.directory / 'acceptance_checks.json',
                           dump({'acceptance_checks': registry(spec)}).encode() + b'\n')
             update_run(run, document=str(target))

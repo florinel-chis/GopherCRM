@@ -84,5 +84,18 @@ class AnalysisFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/tmp/x.md', message.text)
 
 
+    def test_document_text_reads_the_lfx_run_outputs(self):
+        from types import SimpleNamespace
+        from gophercrm_runner.flows import document_text
+        entry = SimpleNamespace(outputs=[SimpleNamespace(
+            results={}, outputs={'document': {'message': 'Document written to /tmp/x.md\n', 'type': 'text'}})])
+        self.assertEqual(document_text([entry]), 'Document written to /tmp/x.md\n')
+        nested = SimpleNamespace(outputs=[SimpleNamespace(
+            results={}, outputs={'document': {'message': {'markdown': 'Document written to /tmp/y.md\n'}}})])
+        self.assertEqual(document_text([nested]), 'Document written to /tmp/y.md\n')
+        with self.assertRaises(Exception):
+            document_text([SimpleNamespace(outputs=[SimpleNamespace(results={}, outputs={})])])
+
+
 if __name__ == '__main__':
     unittest.main()

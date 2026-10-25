@@ -182,19 +182,8 @@ def main():
             parser.error('--refine requires --comments-file with at least one comment')
         result = run_async(run_analysis_flow(args.config, wish=args.wish, links='\n'.join(args.link), comments=comments,
                                              previous_run_id=args.refine, refine_from=args.refine_from))
-        from .flows import ANALYSIS_NODES
-        for item in result:
-            for output in getattr(item, 'outputs', None) or []:
-                message = (getattr(output, 'results', None) or {}).get('document')
-                text = getattr(message, 'text', None)
-                if isinstance(text, str) and text:
-                    print(text)
-                    break
-            else:
-                continue
-            break
-        else:
-            print(json.dumps([item.model_dump(mode='json') for item in result], indent=2))
+        from .flows import document_text
+        print(document_text(result))
     elif args.command in {'handoff', 'history', 'validation-preview', 'retention'}:
         from .config import Config, GateError
         from . import operations
