@@ -386,9 +386,16 @@ gophercrm-runner analyze --config "$HOME/.local/share/gophercrm-runner/config.js
 ```
 
 A refinement keeps the parent's request, links and base commit, inherits the stages before
-`--from` by reading the parent's journals in place (verified against the parent's document
-journal), re-runs the rest with the comments, requires a disposition for every comment, and
-writes `<parent name>-r<revision>.md`. Each stage reloads the run from its private journal under
+`--from` by reading the journals of the run that recorded them in place (verified against the
+parent's document journal, so a chain r1 → r2 → r3 keeps every citation), re-runs the rest with
+the comments, requires a disposition for every comment, and writes `<parent name>-r<revision>.md`.
+Comments and `--from` are refused without a previous run id, and a second refinement of the same
+parent is refused at Intake before any agent call because its document name already exists:
+refine the latest revision instead. A run that stops before Document (a failed stage, or one the
+owner abandons after reading the brief) keeps its directory under `state_dir/analysis/<run id>/`
+and, except after a failed Intake, its registered worktree; remove it with
+`git worktree remove --force <state_dir>/analysis/<run id>/worktree` (then `git worktree prune`
+for a directory deleted by hand). Nothing cleans these up automatically. Each stage reloads the run from its private journal under
 the node's own configuration and verifies the digests of what the previous stage consumed; a
 re-run stage invalidates every later journal of its run. Configuration: `analysis_output_dir`
 (`docs/specs`), `analysis_max_calls` (8 per run), `analysis_context_refs`, `analysis_rules_dir`

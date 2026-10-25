@@ -180,6 +180,8 @@ def main():
         comments = args.comments_file.read_text() if args.comments_file else ''
         if args.refine and not comments.strip():
             parser.error('--refine requires --comments-file with at least one comment')
+        if not args.refine and (comments.strip() or args.refine_from != 'research'):
+            parser.error('--comments-file and --from apply to --refine only')
         result = run_async(run_analysis_flow(args.config, wish=args.wish, links='\n'.join(args.link), comments=comments,
                                              previous_run_id=args.refine, refine_from=args.refine_from))
         from .flows import document_text

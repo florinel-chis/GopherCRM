@@ -72,7 +72,7 @@ class RunModelTests(unittest.IsolatedAsyncioTestCase):
         run = analysis.new_run(self.config, base=self.base, wish='Add quotes', links=['https://x.test/a'],
                                comments='')
         self.assertRegex(run.run_id, '^[0-9a-f]{32}$')
-        self.assertEqual((run.revision, run.parent, run.inherited, run.base), (1, None, (), self.base))
+        self.assertEqual((run.revision, run.parent, run.inherited, run.base), (1, None, {}, self.base))
         loaded = analysis.load_run(self.config, run.run_id)
         self.assertEqual(loaded, run)
         record = analysis.read_run(run)
@@ -130,7 +130,7 @@ class RunModelTests(unittest.IsolatedAsyncioTestCase):
         analysis.record(parent, 'document', {'path': 'x'}, 'written\n', [], {'intake': parent_intake['sha256']})
         child = analysis.new_run(self.config, base=self.base, wish='w', links=[], comments='change it',
                                  parent=parent, refine_from='research')
-        self.assertEqual((child.revision, child.parent, child.inherited), (2, parent.run_id, ('intake',)))
+        self.assertEqual((child.revision, child.parent, child.inherited), (2, parent.run_id, {'intake': parent.run_id}))
         self.assertEqual(analysis.read_run(child)['comments'], [{'id': 'C-1', 'text': 'change it'}])
         inherited = analysis.recall(child, 'intake')
         self.assertEqual(inherited['data'], {'brief': 1})
@@ -140,10 +140,22 @@ class RunModelTests(unittest.IsolatedAsyncioTestCase):
         analysis.record(child, 'research', {'r': 1}, '# R\n', [],
                         {'intake': {'run_id': parent.run_id, 'sha256': inherited['sha256']}})
         self.assertEqual(analysis.recall(child, 'research')['data'], {'r': 1})
+        analysis.record(child, 'document', {'path': 'y'}, 'written\n', [],
+                        {'intake': {'run_id': parent.run_id, 'sha256': inherited['sha256']},
+                         'research': analysis.recall(child, 'research')['sha256']})
+        grandchild = analysis.new_run(self.config, base=self.base, wish='w', links=[], comments='again',
+                                      parent=child, refine_from='analysis')
+        self.assertEqual(grandchild.revision, 3)
+        self.assertEqual(grandchild.inherited, {'intake': parent.run_id, 'research': child.run_id})
+        self.assertEqual(analysis.recall(grandchild, 'intake')['data'], {'brief': 1})
+        self.assertEqual(analysis.recall(grandchild, 'research')['data'], {'r': 1})
+        self.assertEqual(analysis.load_run(self.config, grandchild.run_id).inherited, grandchild.inherited)
         path = parent.directory / 'intake.json'
         path.write_text(path.read_text().replace('"brief": 1', '"brief": 2'))
         with self.assertRaisesRegex(GateError, 'changed'):
             analysis.recall(child, 'research')
+        with self.assertRaises(GateError):
+            analysis.recall(grandchild, 'intake')
 
     def test_run_lock_is_exclusive(self):
         run = analysis.new_run(self.config, base=self.base, wish='w', links=[], comments='')

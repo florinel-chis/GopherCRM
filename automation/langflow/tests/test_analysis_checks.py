@@ -166,6 +166,8 @@ class CheckTests(unittest.TestCase):
             'unregistered check id': lambda s: s['manifest']['acceptance'][0]['verification'].update(check_id='ghost'),
             'bad argv': lambda s: s['acceptance_checks'][0]['argv'].remove('-json'),
             'database profile without commands': lambda s: s['manifest'].update(validation_profile='backend-database'),
+            'registry test outside -run= form': lambda s: (
+                s['acceptance_checks'][0].update(argv=['go', 'test', '-json', '-count=1', './internal/service', '-run=^TestFollowUpRuleFires$'])),
         }
         for name, mutate in cases.items():
             with self.subTest(name=name):

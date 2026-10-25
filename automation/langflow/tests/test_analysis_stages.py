@@ -319,7 +319,7 @@ class DocumentAndRefinementTests(unittest.IsolatedAsyncioTestCase):
         output = await self.runner.intake(wish='', comments='Add mail steps.\n\nDrop the dry run.',
                                           previous_run_id=parent.run_id)
         run = output.run
-        self.assertEqual((run.revision, run.parent, run.inherited, run.slug), (2, parent.run_id, ('intake',), parent.slug))
+        self.assertEqual((run.revision, run.parent, run.inherited, run.slug), (2, parent.run_id, {'intake': parent.run_id}, parent.slug))
         self.assertEqual(run.base, parent.base)
         self.assertEqual(len(self.commands.calls), calls)
         self.assertIn('inherited', output.notes[0])
@@ -339,6 +339,51 @@ class DocumentAndRefinementTests(unittest.IsolatedAsyncioTestCase):
         text = path.read_text()
         self.assertLess(text.index('## Revision notes'), text.index('## Acceptance criteria'))
         self.assertIn('revision 2 · parent ' + parent.run_id, text)
+
+    async def test_refinement_chain_reaches_revision_three(self):
+        parent, _ = await self.complete(wish='Add follow-up automation')
+        second, _ = await self.complete(comments='Tighten the scope.', previous_run_id=parent.run_id)
+        third, document = await self.complete(comments='One more pass.', previous_run_id=second.run_id,
+                                              refine_from='specification')
+        self.assertEqual(third.revision, 3)
+        self.assertEqual(third.inherited, {'intake': parent.run_id, 'research': second.run_id, 'analysis': second.run_id})
+        self.assertTrue(Path(document.data['path']).name.endswith('-follow-up-automation-r3.md'))
+        self.assertEqual(analysis.recall(third, 'intake')['owner'], parent.run_id)
+        self.assertEqual(analysis.recall(third, 'analysis')['owner'], second.run_id)
+        fourth, _ = await self.complete(comments='Default entry.', previous_run_id=third.run_id)
+        self.assertEqual((fourth.revision, fourth.inherited), (4, {'intake': parent.run_id}))
+
+    async def test_refinement_refuses_sibling_name_collision_before_any_call(self):
+        parent, _ = await self.complete(wish='Add follow-up automation')
+        await self.complete(comments='First refinement.', previous_run_id=parent.run_id)
+        runs = len(list((self.config.state_dir / 'analysis').iterdir()))
+        calls = len(self.commands.calls)
+        with self.assertRaisesRegex(GateError, 'exists'):
+            await self.runner.intake(comments='Second refinement of the same parent.', previous_run_id=parent.run_id)
+        self.assertEqual(len(list((self.config.state_dir / 'analysis').iterdir())), runs)
+        self.assertEqual(len(self.commands.calls), calls)
+
+    async def test_first_revision_refuses_comments_and_refine_from(self):
+        with self.assertRaisesRegex(GateError, 'previous run'):
+            await self.runner.intake(wish='Add follow-up automation', comments='Stray comment')
+        with self.assertRaisesRegex(GateError, 'previous run'):
+            await self.runner.intake(wish='Add follow-up automation', refine_from='analysis')
+        self.assertEqual(self.commands.calls, [])
+
+    async def test_failed_intake_leaves_no_worktree(self):
+        self.commands.fail_stage = 'intake'
+        with self.assertRaises(GateError):
+            await self.runner.intake(wish='Add follow-up automation')
+        self.assertNotIn('worktree', git(self.checkout, 'worktree', 'list'))
+        runs = list((self.config.state_dir / 'analysis').iterdir())
+        self.assertFalse((runs[0] / 'worktree').exists())
+
+    async def test_prompt_labels_earlier_outputs_as_integrity_verified_data(self):
+        run = (await self.runner.intake(wish='Add follow-up automation')).run
+        await self.runner.research(run.run_id)
+        prompt = self.commands.calls[-1]['prompt']
+        self.assertIn('integrity-verified by the runner', prompt)
+        self.assertNotIn('(verified by the runner)', prompt)
 
     async def test_refinement_refuses_changed_parent_journal(self):
         parent, _ = await self.complete(wish='Add follow-up automation')
