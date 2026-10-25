@@ -275,9 +275,13 @@ and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 
   `valid_until` and notes; **200** with `last_emailed_at` set by a conditional update. Step 2:
   **409** `CONFLICT` each time and no mail. Step 3: **502** `MAIL_DELIVERY_FAILED` and
   `last_emailed_at` unchanged. No log line of the call contains the recipient, the customer's name
-  or the body — a transport error that quotes the address is returned, not logged.
+  or the body — a transport error that quotes the address is returned, not logged: the service
+  does not log it, and the SMTP mailer's own failure line keeps the reply code without its text.
 - **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailDelivery`,
-  `TestQuoteEmailLogsOmitPersonalData`; `quote_handler_test.go` `TestQuoteHandlerMapsServiceErrors`.
+  `TestQuoteEmailLogsOmitPersonalData`; `quote_handler_test.go` `TestQuoteHandlerMapsServiceErrors`;
+  `internal/mailer/smtp_relay_reply_test.go` `TestSMTPMailerSendLogOmitsTheRelayReply` (a stub relay
+  answers `RCPT TO` with a 550 that echoes the address; the log line carries `smtp_code=550` and not
+  the address).
 
 ### TC-PQ-014 — A revision during the send is detected
 - **Priority:** P0

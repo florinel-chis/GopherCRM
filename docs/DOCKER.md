@@ -200,7 +200,9 @@ start again. The 1.2.0 image still opens the upgraded file — it ignores the
 extra tables and columns — so the image can be rolled back even though the
 schema is not. The deals release adds the `deals` and `deal_stage_changes`
 tables only: it rebuilds no existing table, and the previous image still opens
-the file.
+the file. The quotes release does the same with `products`, `quotes`,
+`quote_lines` and `quote_status_changes`: four new tables, no existing table
+touched, and the previous image still opens the file.
 
 ## Rebuilding after code changes
 

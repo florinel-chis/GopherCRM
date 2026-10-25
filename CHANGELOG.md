@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plaintext rendering of a sent or accepted quote to the linked customer's current address with a
   fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
   send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. The SMTP mailer refuses a
-  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`). Quotes copy no personal
+  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
+  the code of a relay reply without the text, which can echo the recipient. Quotes copy no personal
   data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:
   AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
   frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.

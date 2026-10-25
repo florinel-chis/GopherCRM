@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
 // SMTPMailer sends mail through a real SMTP relay using net/smtp.
@@ -73,8 +74,12 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 		// is a person's address: the quote email in particular promises that
 		// no log line of the call carries it, so the generic failure line
 		// keeps the fixed subject (every caller passes a constant) and the
-		// transport error, whose SMTP code is what a diagnosis needs.
-		log().WithError(err).
+		// transport error sanitised by utils.LogError. A relay that rejects a
+		// recipient normally echoes the address in its reply text ("550 5.1.1
+		// <who@example.com>: Recipient address rejected"), so the log keeps the
+		// SMTP code, which is what a diagnosis needs, and drops the text. The
+		// raw error is still returned for errors.As.
+		log().WithError(utils.LogError(err)).
 			WithField("subject", subject).
 			Error("Failed to send email")
 		return fmt.Errorf("send mail: %w", err)

@@ -307,9 +307,14 @@ an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipien
 contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
 let the remainder inject further headers (an extra recipient, a forged subject). The check is
 repeated inside the private `send`, so no future caller can bypass it. The generic `Send` failure
-log now carries the subject and the transport error but not the recipient; the password-reset
-failure line and the development `LogMailer` still record the recipient as before. Root:
-`TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`).
+log carries the subject and the transport error passed through `utils.LogError`, and not the
+recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
+recipient normally echoes the address in that text (`550 5.1.1 <who@example.com>: Recipient address
+rejected`). The raw error is still returned for `errors.As`. The password-reset failure line and
+the development `LogMailer` still record the recipient as before. Roots:
+`TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`) and
+`TestSMTPMailerSendLogOmitsTheRelayReply` (`internal/mailer/smtp_relay_reply_test.go`), whose stub
+relay answers `RCPT TO` with a 550 that quotes the address.
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
