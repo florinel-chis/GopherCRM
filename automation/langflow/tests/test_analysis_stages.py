@@ -207,6 +207,12 @@ class MiddleStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('frontend' in note for note in again.notes))
         self.assertFalse((run.directory / 'review.json').exists())
 
+    async def test_specification_checks_context_refs_against_the_base_worktree(self):
+        self.commands.outputs['specification'] = fixtures.specification()
+        self.commands.outputs['specification']['manifest']['context_refs'].append('docs/datamodel.md')
+        run, outputs = await self.through('specification')
+        self.assertIn("context_refs missing at the base commit: ['docs/datamodel.md']", outputs['specification'].notes)
+
     async def test_review_receives_draft_and_runner_findings(self):
         self.commands.outputs['analysis'] = fixtures.analysis_output(words=' '.join(['word'] * 520))
         run, outputs = await self.through('review')
@@ -233,6 +239,14 @@ class MiddleStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('### review', self.commands.calls[-1]['prompt'])
         self.assertEqual(revision.data['analysis']['problem'], 'Sales forgets to follow up.')
         self.assertEqual(len(analysis.read_run(run)['calls']), 6)
+
+    async def test_revision_notes_a_one_pager_it_did_not_shrink(self):
+        long = fixtures.analysis_output(words=' '.join(['word'] * 520))
+        self.commands.outputs['analysis'] = long
+        self.commands.outputs['revision'] = dict(fixtures.revision(), analysis=long)
+        run, outputs = await self.through('revision')
+        self.assertTrue(any(n.startswith('analysis: revision did not shrink the one-pager') for n in outputs['revision'].notes),
+                        outputs['revision'].notes)
 
     async def test_stage_refuses_missing_upstream(self):
         run = (await self.runner.intake(wish='Add follow-up automation')).run
@@ -278,7 +292,7 @@ class DocumentAndRefinementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manifest['issue'], 0)
         self.assertEqual(set(manifest), analysis.contracts.MANIFEST_FIELDS)
         checks = json.loads((run.directory / 'acceptance_checks.json').read_text())
-        self.assertEqual(list(checks['acceptance_checks']), ['followup-rules'])
+        self.assertEqual(list(checks['acceptance_checks']), ['followup-rules', 'migrations'])
         self.assertEqual(output.data['cost_usd'], 1.5)
         self.assertEqual(output.data['calls'], 6)
         self.assertFalse((run.directory / 'worktree').exists())

@@ -424,6 +424,13 @@ BRIEF_WORD_CAP = 400
 ONE_PAGER_WORD_CAP = 500
 MERMAID_KEYWORDS = {'erDiagram', 'sequenceDiagram', 'stateDiagram', 'stateDiagram-v2', 'flowchart', 'graph', 'classDiagram'}
 FRONTEND_PREFIXES = ('gocrm-ui/', 'internal/handler/assets/')
+# A test-plan Go name is one bare test function, optionally with one subtest path.
+GO_TEST_NAME = re.compile(r'Test[A-Za-z0-9_]+(?:/[^\s,{}]+)?')
+# The runner's migration coverage gate (gates.migration_coverage) runs on every check whose
+# argument array contains this package, and requires both tests to pass.
+MIGRATION_PACKAGE = './cmd/migrate'
+MIGRATION_TESTS = ('TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema')
+MIGRATION_TEST_FILE = 'cmd/migrate/main_test.go'
 
 
 # --- Deterministic checks: what code can decide, recorded as notes ------------------------
@@ -488,12 +495,40 @@ def disposition_notes(dispositions: list[dict], comment_ids: list[str], *, requi
     return notes
 
 
-def check_analysis(analysis: dict, comment_ids: list[str]) -> list[str]:
+def one_pager_words(analysis: dict) -> int:
     from .analysis_render import render_one_pager, word_count
+    return word_count(render_one_pager(analysis))
+
+
+def one_pager_fields(analysis: dict) -> dict:
+    """Words per one-pager field, counted as the runner counts the rendered summary."""
+    from .analysis_render import word_count
+    joined = {
+        'problem': analysis['problem'], 'proposal': analysis['proposal'],
+        'users': ' '.join(f'{u["role"]} {u["need"]}' for u in analysis['users']),
+        'in_scope': ' '.join(analysis['in_scope']), 'out_of_scope': ' '.join(analysis['out_of_scope']),
+        'main_flow': ' '.join(analysis['main_flow']),
+        'options_considered': ' '.join(f'{o["option"]} {o["why_not"]}' for o in analysis['options_considered']),
+        'risks': ' '.join(f'{r["risk"]} {r["mitigation"]}' for r in analysis['risks']),
+        'size': analysis['size']['basis'], 'decision_needed': ' '.join(analysis['decision_needed']),
+    }
+    return {name: word_count(text) for name, text in joined.items()}
+
+
+def check_analysis(analysis: dict, comment_ids: list[str], *, previous: dict | None = None) -> list[str]:
+    """``previous`` is the draft a revision replaces; a revised one-pager over the cap must be shorter."""
     notes = disposition_notes(analysis['comment_dispositions'], comment_ids)
-    count = word_count(render_one_pager(analysis))
+    count = one_pager_words(analysis)
     if count > ONE_PAGER_WORD_CAP:
-        notes.append(f'rule broken: one-pager is {count} words, cap {ONE_PAGER_WORD_CAP}')
+        largest = sorted(one_pager_fields(analysis).items(), key=lambda item: -item[1])[:3]
+        notes.append(f'rule broken: one-pager is {count} words, cap {ONE_PAGER_WORD_CAP}; cut at least '
+                     f'{count - ONE_PAGER_WORD_CAP} words (largest fields: '
+                     + ', '.join(f'{name} {words}' for name, words in largest) + ')')
+        if previous is not None:
+            draft = one_pager_words(previous)
+            if count >= draft:
+                notes.append(f'revision did not shrink the one-pager: draft {draft} words, revised {count} words, '
+                             f'cap {ONE_PAGER_WORD_CAP}')
     return notes
 
 
@@ -505,7 +540,93 @@ def registry(specification: dict) -> dict:
     return result
 
 
-def check_specification(spec: dict, config, worktree: Path, comment_ids: list[str]) -> list[str]:
+def run_pattern(argv: list[str]) -> str | None:
+    pattern = None
+    for index, arg in enumerate(argv):
+        if arg == '-run' and index + 1 < len(argv):
+            pattern = argv[index + 1]
+        elif arg.startswith('-run='):
+            pattern = arg[len('-run='):]
+    return pattern
+
+
+def pattern_matches(pattern: str | None, name: str) -> bool:
+    if pattern is None:
+        return True
+    try:
+        return re.search(pattern, name) is not None
+    except re.error:
+        return False
+
+
+def context_ref_notes(refs: list[str], config, base_checkout: Path | None) -> list[str]:
+    """Context references as the runner freezes them: Markdown files that exist at the base
+    commit (AGENTS.md may be operator-local in the checkout), within the guidance cap."""
+    notes = []
+    markdown = [r for r in refs if r.endswith('.md')]
+    if len(markdown) != len(refs):
+        notes.append(f'context_refs must be Markdown files; not Markdown: {[r for r in refs if r not in markdown]}')
+    if base_checkout is None:
+        return notes
+    documents, missing = [], []
+    for ref in markdown:
+        if inside_checkout(base_checkout, ref) and (base_checkout / ref).is_file():
+            documents.append({'path': ref, 'origin': 'git', 'content': (base_checkout / ref).read_text(errors='replace')})
+        elif ref == 'AGENTS.md' and inside_checkout(config.checkout, ref) and (config.checkout / ref).is_file():
+            documents.append({'path': ref, 'origin': 'operator-local',
+                              'content': (config.checkout / ref).read_text(errors='replace')})
+        else:
+            missing.append(ref)
+    if missing:
+        notes.append(f'context_refs missing at the base commit: {missing}')
+    total = len(json.dumps(documents).encode())
+    if total > contracts.MAX_CONTEXT_BYTES:
+        sizes = sorted(((d['path'], len(d['content'].encode())) for d in documents), key=lambda item: -item[1])
+        notes.append(f'context_refs total {total} bytes as the runner serialises them, cap '
+                     f'{contracts.MAX_CONTEXT_BYTES} bytes (128 KiB); select fewer or smaller documents: '
+                     + ', '.join(f'{path} {size}' for path, size in sizes))
+    return notes
+
+
+def migration_notes(spec: dict, checks: dict) -> list[str]:
+    """The runner's migration coverage gate and the scope a migration pair needs."""
+    import fnmatch
+    notes = []
+    required = list(MIGRATION_TESTS)
+    for check_id, check in checks.items():
+        if MIGRATION_PACKAGE not in check['argv']:
+            continue
+        pattern = run_pattern(check['argv'])
+        names = {t['name'] for t in check['tests']}
+        unmatched = [t for t in required if not pattern_matches(pattern, t)]
+        unnamed = [t for t in required if t not in names]
+        if not unmatched and not unnamed:
+            continue
+        problems = ([f'pattern does not match: {unmatched}'] if unmatched else []) + (
+            [f'tests do not name: {unnamed}'] if unnamed else [])
+        notes.append(f"check {check_id} runs {MIGRATION_PACKAGE}, so the runner's migration coverage gate requires "
+                     f'its -run pattern to match and its tests to name both {required}; ' + '; '.join(problems))
+    manifest = spec['manifest']
+    sql = spec['data_model']['sql_migration']
+    if sql['up'] or sql['down'] or any(p.startswith('migrations/') for p in manifest['scope_paths']):
+        named = {c['verification']['check_id'] for c in manifest['acceptance']}
+        runs_migrate = {cid for cid, check in checks.items() if MIGRATION_PACKAGE in check['argv']}
+        if not named & runs_migrate:
+            notes.append(f'the change adds a SQL migration pair: an acceptance criterion must name a registry entry '
+                         f'whose package argument is {MIGRATION_PACKAGE} and whose -run pattern and tests cover {required}')
+        if not any(fnmatch.fnmatchcase(MIGRATION_TEST_FILE, scope) for scope in manifest['scope_paths']):
+            notes.append('the change adds a SQL migration pair: scope_paths must cover the migration tests '
+                         f'(cmd/migrate/*_test.go or {MIGRATION_TEST_FILE})')
+    if (any(d['path'] == 'CHANGELOG.md' for d in spec['docs_to_update'])
+            and not any(fnmatch.fnmatchcase('CHANGELOG.md', scope) for scope in manifest['scope_paths'])):
+        notes.append('docs_to_update names CHANGELOG.md: scope_paths must list CHANGELOG.md')
+    return notes
+
+
+def check_specification(spec: dict, config, worktree: Path, comment_ids: list[str], *,
+                        base_checkout: Path | None = None) -> list[str]:
+    """``base_checkout`` is the detached checkout at the base commit; without it the context
+    references are checked for their file type only, not for existence and size."""
     from types import SimpleNamespace
     from .config import validate_acceptance_checks
     notes = disposition_notes(spec['comment_dispositions'], comment_ids, require=True)
@@ -528,29 +649,28 @@ def check_specification(spec: dict, config, worktree: Path, comment_ids: list[st
     frontend = [p for p in spec['manifest']['scope_paths'] if p.startswith(FRONTEND_PREFIXES)]
     if frontend:
         notes.append(f'frontend paths belong to UI criteria, not the manifest scope: {frontend}')
-    named = set()
+    notes += context_ref_notes(spec['manifest']['context_refs'], config, base_checkout)
+    named, owners = set(), {}
     for check_id, check in checks.items():
-        argv = check['argv']
-        pattern = None
-        for index, arg in enumerate(argv):
-            if arg == '-run' and index + 1 < len(argv):
-                pattern = argv[index + 1]
-            elif arg.startswith('-run='):
-                pattern = arg[len('-run='):]
+        pattern = run_pattern(check['argv'])
         for test in check['tests']:
             named.add(test['name'])
-            if pattern is not None:
-                try:
-                    matched = re.search(pattern, test['name']) is not None
-                except re.error:
-                    matched = False
-                if not matched:
-                    notes.append(f'check {check_id}: test {test["name"]} does not match its -run pattern {pattern!r}')
-    planned = {t['name'] for t in spec['test_plan'] if t['level'] == 'go'}
+            owners.setdefault(test['name'], set()).add(check_id)
+            if not pattern_matches(pattern, test['name']):
+                notes.append(f'check {check_id}: test {test["name"]} does not match its -run pattern {pattern!r}')
+    go_names = [t['name'] for t in spec['test_plan'] if t['level'] == 'go']
+    not_bare = [n for n in go_names if not GO_TEST_NAME.fullmatch(n)]
+    if not_bare:
+        notes.append(f'go test-plan names must be bare test identifiers (TestX or TestX/subtest), one per entry: {not_bare}')
+    planned = {n.split('/', 1)[0] for n in go_names if GO_TEST_NAME.fullmatch(n)}
     if planned - named:
         notes.append(f'go tests in the test plan without a registry entry: {sorted(planned - named)}')
     if named - planned:
         notes.append(f'registry tests missing from the test plan: {sorted(named - planned)}')
+    shared = {n: sorted(owners[n]) for n in sorted(planned & named) if len(owners[n]) > 1}
+    if shared:
+        notes.append(f'go tests in the test plan named by more than one registry entry: {shared}')
+    notes += migration_notes(spec, checks)
     for document in spec['docs_to_update']:
         document['status'] = 'exists' if inside_checkout(worktree, document['path']) else 'new'
     for diagram in spec['diagrams']:
@@ -934,7 +1054,8 @@ class Analysis:
                           'analysis': journals['analysis']['data']['analysis']},
                 instruction='Write the specification as structured output, with the manifest in the '
                             'task-manifest shape and every check registry entry the criteria name.')
-            notes += check_specification(result, self.config, worktree, self.comment_ids(run))
+            notes += check_specification(result, self.config, worktree, self.comment_ids(run),
+                                         base_checkout=worktree)
             data = {'specification': result}
             markdown = '\n'.join(render_specification(result)).lstrip('\n') + '\n'
             record(run, 'specification', data, markdown, notes, consumed_of(*journals.values()))
@@ -977,9 +1098,10 @@ class Analysis:
                             'disposition for every finding id.')
             comment_ids = self.comment_ids(run)
             notes += check_revision(result, review['findings'])
-            notes += [f'analysis: {n}' for n in check_analysis(result['analysis'], comment_ids)]
+            notes += [f'analysis: {n}' for n in check_analysis(result['analysis'], comment_ids,
+                                                               previous=journals['analysis']['data']['analysis'])]
             notes += [f'specification: {n}' for n in check_specification(result['specification'], self.config,
-                                                                          worktree, comment_ids)]
+                                                                          worktree, comment_ids, base_checkout=worktree)]
             markdown = render_one_pager(result['analysis']) + '\n'.join(render_specification(result['specification'])) + '\n'
             record(run, 'revision', result, markdown, notes, consumed_of(*journals.values()))
             return StageOutput('revision', run, result, markdown, tuple(notes))
