@@ -178,6 +178,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The remediation runner waits for an in-progress workflow run before it collects failed-job
+  logs.** A required check that failed while other jobs of the same run were still running made
+  the runner request the run's failed-job logs, which `gh` refuses until the run completes; the
+  ticket or PR completion then stopped on that refusal instead of entering its repair loop. The
+  runner now waits, within the CI deadline, until every failed run has completed and then fetches
+  the logs once.
 - **Sorted customer CSV exports no longer lose rows (#105).** `GET /customers/export` read the
   book in 500-row primary-key batches through GORM's `FindInBatches` while also applying the
   requested `sort_by`. The batch continuation is `id > last id of the previous batch`, which is
