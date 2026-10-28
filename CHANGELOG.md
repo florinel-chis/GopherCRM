@@ -247,6 +247,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its disposition in `check_dispositions`. A Vitest receipt now records the validation checkout
   that produced it and is verified against that checkout, so a receipt reused across two
   interrupted resumes no longer fails the exact-path match and discards every retained check.
+  A failed `gh` invocation (for example a TLS handshake timeout against the GitHub API) is now
+  an environment failure: validation stops at its stage, records the attempt as `environment`
+  and is resumed by the same command, instead of treating the failure as a test failure and
+  spending a provider call and a repair round on an agent with nothing to change.
 - **The remediation runner no longer strands an implementation that changes a path outside the
   frozen task scope.** Finalization checked the frozen scope before committing, so a single
   out-of-scope edit left the agent's work uncommitted at `finalize_implementation`, where `run`

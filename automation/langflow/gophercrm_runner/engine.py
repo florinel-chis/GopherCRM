@@ -172,7 +172,17 @@ class Runner:
         return output.rstrip('\n')
 
     async def gh(self, *args):
-        return await self.command('gh', *args, '--repo', self.config.repository)
+        """Read or change GitHub state; a failed `gh` process is an environment failure.
+
+        Transport and API failures (TLS or network timeouts, rate limits, outages)
+        cannot be repaired by a coding agent, so they never reach a repair loop.
+        Resuming the same command retries the step.
+        """
+        try:
+            return await self.command('gh', *args, '--repo', self.config.repository)
+        except CommandError as exc:
+            detail = (exc.stderr or '').strip() or str(exc)
+            raise EnvironmentError('GitHub command failed: ' + redact(detail)[-2000:]) from exc
 
     async def issue(self, number):
         self.config.allows(number)
