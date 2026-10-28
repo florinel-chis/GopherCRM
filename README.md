@@ -59,7 +59,7 @@ If it's useful, a star helps others find it.
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
-- 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email (API; the UI is a follow-up)
+- 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email; the UI has the products list and admin form, the quotes list and detail with draft-only line editing and status actions, an email confirmation, a print page and a Quotes section on each deal
 - ⏱️ **Follow-up Automation**: Admin-defined rules that start on lead or deal events, or on a daily UTC schedule, and run ordered steps — wait, condition, create task, assign owner, staff email, in-app notification — as persisted runs that survive a restart, with a dry run that writes, sends and notifies nothing (API; the UI is a follow-up)
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment

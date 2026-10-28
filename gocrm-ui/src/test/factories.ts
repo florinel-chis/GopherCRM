@@ -9,6 +9,10 @@ import type {
   Company,
   Deal,
   DealStageChange,
+  Product,
+  Quote,
+  QuoteLine,
+  QuoteStatusChange,
 } from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
@@ -167,5 +171,68 @@ export const createMockDealStageChange = (
   changed_by_id: 1,
   changed_by: { id: 1, first_name: 'Test', last_name: 'User', email: 'test@example.com' },
   changed_at: '2026-09-29T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockProduct = (overrides?: Partial<Product>): Product => ({
+  id: 1,
+  name: 'Widget',
+  sku: 'SKU-001',
+  description: 'A standard widget',
+  unit_price_cents: 1250,
+  currency: 'EUR',
+  is_active: true,
+  created_at: '2026-10-26T08:00:00Z',
+  updated_at: '2026-10-26T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockQuoteLine = (overrides?: Partial<QuoteLine>): QuoteLine => ({
+  id: 1,
+  quote_id: 42,
+  product_id: 1,
+  position: 1,
+  description: 'Widget',
+  quantity: 2,
+  unit_price_cents: 1250,
+  discount_bp: 0,
+  line_total_cents: 2500,
+  created_at: '2026-10-26T08:00:00Z',
+  updated_at: '2026-10-26T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockQuote = (overrides?: Partial<Quote>): Quote => ({
+  id: 42,
+  number: 'Q-000042',
+  title: 'Website redesign quote',
+  status: 'draft',
+  currency: 'EUR',
+  subtotal_cents: 0,
+  discount_cents: 0,
+  total_cents: 0,
+  valid_until: null,
+  notes: '',
+  sent_at: null,
+  closed_at: null,
+  last_emailed_at: null,
+  owner_id: 1,
+  owner: { id: 1, first_name: 'Test', last_name: 'User' },
+  lines: [],
+  created_at: '2026-10-26T08:00:00Z',
+  updated_at: '2026-10-26T08:00:00Z',
+  ...overrides,
+});
+
+export const createMockQuoteStatusChange = (
+  overrides?: Partial<QuoteStatusChange>
+): QuoteStatusChange => ({
+  id: 1,
+  quote_id: 42,
+  from_status: null,
+  to_status: 'draft',
+  changed_by_id: 1,
+  changed_by: { id: 1, first_name: 'Test', last_name: 'User' },
+  changed_at: '2026-10-26T08:00:00Z',
   ...overrides,
 });

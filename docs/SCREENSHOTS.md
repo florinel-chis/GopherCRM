@@ -273,6 +273,9 @@ Screens with no image because the UI does not exist yet:
   exist (see [ROADMAP.md](ROADMAP.md)).
 - **Bulk status updates** (FEATURES.md section 10) — the endpoints are routed, but no frontend
   screen drives them.
+- **Products and quotes** (FEATURES.md 4d.9) — the `/products`, `/quotes`, `/quotes/{id}` and
+  `/quotes/{id}/print` screens and the deal page's Quotes section exist since 2026-10-28 (#167),
+  but the screenshot suite has no spec for them yet; the captures are made after that merge.
 
 The `settings/` file numbering skips `03`: the suite defines three settings captures, named
 `01-profile`, `02-api-keys` and `04-configuration`. Nothing is missing between them.

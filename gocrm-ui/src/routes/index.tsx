@@ -160,6 +160,56 @@ export const router = createBrowserRouter([
         ],
       },
       {
+        // Products and quotes share the deal guard on the API: admin and
+        // sales only, support and customer get 403 on everything. The product
+        // writes are admin only, so the form routes sit under a nested,
+        // narrower guard, as the company forms do. Same pathless-layout shape
+        // as the admin block — a static `element` on the children themselves
+        // would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'products',
+            lazy: () => import('@/pages/products/ProductList'),
+          },
+          {
+            element: (
+              <ProtectedRoute requiredRole="admin">
+                <Outlet />
+              </ProtectedRoute>
+            ),
+            children: [
+              {
+                path: 'products/new',
+                lazy: () => import('@/pages/products/ProductForm'),
+              },
+              {
+                path: 'products/:id/edit',
+                lazy: () => import('@/pages/products/ProductForm'),
+              },
+            ],
+          },
+          {
+            path: 'quotes',
+            lazy: () => import('@/pages/quotes/QuoteList'),
+          },
+          {
+            path: 'quotes/:id',
+            lazy: () => import('@/pages/quotes/QuoteDetail'),
+          },
+          {
+            // A print-styled route inside the shell: the layout hides its
+            // chrome under @media print.
+            path: 'quotes/:id/print',
+            lazy: () => import('@/pages/quotes/QuotePrint'),
+          },
+        ],
+      },
+      {
         path: 'tickets',
         lazy: () => import('@/pages/tickets/TicketList'),
       },

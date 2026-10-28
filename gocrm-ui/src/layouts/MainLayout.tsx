@@ -36,6 +36,8 @@ import {
   AccountCircle,
   ContactPhone,
   Handshake,
+  Inventory2,
+  RequestQuote,
   ChevronLeft,
   Tune,
   LocalOffer,
@@ -75,6 +77,21 @@ const navItems: NavItem[] = [
     title: 'Deals',
     path: '/deals',
     icon: <Handshake />,
+    roles: ['admin', 'sales'],
+  },
+  {
+    // The catalogue is read by admin and sales (the API group guard); only
+    // admin writes it, which the page itself narrows.
+    title: 'Products',
+    path: '/products',
+    icon: <Inventory2 />,
+    roles: ['admin', 'sales'],
+  },
+  {
+    // Quotes share the deal guard: admin and sales only.
+    title: 'Quotes',
+    path: '/quotes',
+    icon: <RequestQuote />,
     roles: ['admin', 'sales'],
   },
   {
@@ -277,14 +294,20 @@ export const MainLayout: React.FC = () => {
     </Box>
   );
 
+  // The application chrome (app bar, navigation drawers, breadcrumbs) is
+  // hidden under `@media print` so that a print-styled page such as
+  // /quotes/:id/print prints its content alone. `displayPrint` is the MUI
+  // system shorthand for exactly that media query.
   return (
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
       <AppBar
         position="fixed"
+        data-testid="app-bar"
         sx={{
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           ml: { sm: `${drawerWidth}px` },
+          displayPrint: 'none',
         }}
       >
         <Toolbar>
@@ -345,7 +368,7 @@ export const MainLayout: React.FC = () => {
       </AppBar>
       <Box
         component="nav"
-        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
+        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 }, displayPrint: 'none' }}
         aria-label="mailbox folders"
       >
         <Drawer
@@ -357,6 +380,7 @@ export const MainLayout: React.FC = () => {
           }}
           sx={{
             display: { xs: 'block', sm: 'none' },
+            displayPrint: 'none',
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
         >
@@ -364,8 +388,10 @@ export const MainLayout: React.FC = () => {
         </Drawer>
         <Drawer
           variant="permanent"
+          data-testid="app-navigation"
           sx={{
             display: { xs: 'none', sm: 'block' },
+            displayPrint: 'none',
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
           open
@@ -381,10 +407,13 @@ export const MainLayout: React.FC = () => {
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           minHeight: '100vh',
           backgroundColor: 'background.default',
+          '@media print': { p: 0, width: '100%', minHeight: 'auto', backgroundColor: 'transparent' },
         }}
       >
-        <Toolbar />
-        <Breadcrumbs />
+        <Toolbar sx={{ displayPrint: 'none' }} />
+        <Box sx={{ displayPrint: 'none' }}>
+          <Breadcrumbs />
+        </Box>
         <Outlet />
       </Box>
     </Box>

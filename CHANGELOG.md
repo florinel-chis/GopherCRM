@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
+  sales; name, SKU, price with currency, active chip, search, active filter, server pagination and
+  sorting) with an admin-only form at `/products/new` and `/products/{id}/edit` (name ≤ 200,
+  SKU ≤ 64, price in major units sent as `unit_price_cents`, currency defaulting to
+  `deals.default_currency`, active switch); `/quotes` (number, title, status, customer, deal,
+  total, valid until; status filter, server pagination) with a create dialog (title, deal and
+  customer pickers, currency, valid until, notes); `/quotes/{id}` with the lines table, add/edit/
+  delete of lines and an edit dialog while the quote is a draft and no edit control otherwise,
+  the server's subtotal, discount and total, status buttons for the valid transitions only (the
+  server message on `INVALID_STATUS_TRANSITION` and `CONFLICT`), a Print link, an "Email quote"
+  confirmation on sent and accepted quotes that names the customer and distinguishes a 409 from a
+  502, and the status history; `/quotes/{id}/print`, a print-styled route whose app chrome is
+  hidden under `@media print` and whose Print button calls `window.print()`; a "Quotes" section on
+  the deal detail page with "New quote" prefilled with the deal and hidden on won or lost deals;
+  Products and Quotes navigation entries and routes for admin and sales only, the product form
+  routes for admin only. Discounts are typed as percentages and sent as basis points; totals are
+  never recomputed in the browser. New endpoint modules `src/api/endpoints/products.ts` and
+  `quotes.ts`; Vitest coverage per screen and the Playwright spec
+  `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (product → deal → quote → line → sent → print →
+  accepted, with print-media emulation). No new dependency. (#167)
+
 - **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
   start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
   (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
