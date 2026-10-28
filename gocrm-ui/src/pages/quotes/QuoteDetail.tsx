@@ -378,15 +378,20 @@ export const Component: React.FC = () => {
               setEditOpen(false);
             }}
           />
+          {/*
+            Closing keeps the line: the dialog stays mounted through its exit
+            transition and would otherwise retitle itself "Add line" while the
+            page behind it is still aria-hidden. Opening always sets both.
+          */}
           <QuoteLineDialog
             open={lineDialog.open}
             quote={quote}
             line={lineDialog.line}
-            onClose={() => setLineDialog({ open: false, line: null })}
+            onClose={() => setLineDialog((prev) => ({ ...prev, open: false }))}
             onSaved={(updated) => {
               showSuccess(lineDialog.line ? 'Line updated' : 'Line added');
               storeQuote(updated);
-              setLineDialog({ open: false, line: null });
+              setLineDialog((prev) => ({ ...prev, open: false }));
             }}
           />
           <ConfirmDialog
