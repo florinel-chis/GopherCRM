@@ -471,6 +471,53 @@ type AEOService interface {
 	Providers() []models.AEOProviderStatus
 }
 
+// AutomationService drives the follow-up automation API: the admin-only rule
+// CRUD and dry run, and the run history that follows lead and deal
+// visibility. Rule validation failures unwrap to apperrors.ErrValidation
+// (400 INVALID_INPUT); a step naming an unknown, inactive or non-staff user
+// unwraps to apperrors.ErrAssigneeNotFound (400 INVALID_REFERENCE); a
+// missing rule or run is the matching *NotFound sentinel.
+type AutomationService interface {
+	// CreateRule validates the rule and writes it with its steps numbered
+	// 1..n in the given order, version 1. An invalid rule writes nothing.
+	CreateRule(rule *models.AutomationRule, actorID uint) error
+	GetRule(id uint) (*models.AutomationRule, error)
+	ListRules(offset, limit int, filter repository.AutomationRuleListFilter) ([]models.AutomationRule, int64, error)
+	// UpdateRule replaces the rule in one transaction: version + 1, steps
+	// replaced, pending/waiting/running runs cancelled with rule_changed.
+	UpdateRule(id uint, rule *models.AutomationRule) (*models.AutomationRule, error)
+	// SetEnabled flips the switch; disabling cancels the active runs with
+	// rule_disabled in the same transaction.
+	SetEnabled(id uint, enabled bool) (*models.AutomationRule, error)
+	// DeleteRule soft-deletes the rule and cancels its active runs with
+	// rule_deleted.
+	DeleteRule(id uint) error
+	// DryRun simulates the rule against a record of the rule's entity type
+	// and writes, sends and notifies nothing. A record of another entity
+	// type is apperrors.ErrValidation; a missing record apperrors.ErrNotFound.
+	DryRun(ruleID uint, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
+
+	// ListRuns and GetRun apply the viewer's role scope inside the query: an
+	// admin sees every run, a sales user only runs whose lead or deal it owns
+	// (a run outside the scope is apperrors.ErrAutomationRunNotFound), and
+	// support and customer callers get apperrors.ErrForbidden before any query.
+	ListRuns(viewer LeadViewer, offset, limit int, filter repository.AutomationRunListFilter) ([]models.AutomationRun, int64, error)
+	GetRun(viewer LeadViewer, id uint) (*models.AutomationRun, error)
+	// CancelRun cancels a pending, waiting or running run with cancel_reason
+	// manual; a finished run is apperrors.ErrAutomationRunFinished.
+	CancelRun(id uint) (*models.AutomationRun, error)
+}
+
+// NotificationService drives a user's own in-app notifications. Every call
+// is keyed by the caller's id; a notification of another user is
+// apperrors.ErrNotificationNotFound.
+type NotificationService interface {
+	List(userID uint, unreadOnly bool, offset, limit int) ([]models.Notification, int64, error)
+	UnreadCount(userID uint) (int64, error)
+	MarkRead(userID, id uint) (*models.Notification, error)
+	MarkAllRead(userID uint) (int64, error)
+}
+
 // FormService drives the forms module: the CRM-side definitions, the public
 // rendering and submission pipeline, and the double-opt-in confirmation.
 //

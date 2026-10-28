@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
+  start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
+  (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
+  schedule, and run ordered steps: `wait`, `condition` (allowlisted fields and operators, `else`
+  stop or forward jump, `amount_cents` only in the deal's currency), `create_task`, `assign_owner`,
+  `send_email` to a staff user and `notify` (in-app). Every lead and deal write path — the lead
+  service, form submissions, bulk status/assign/convert, conversion, and deal create/update/stage —
+  records an outbox event inside the transaction that commits the write; automation-originated
+  writes record `origin=automation` events that start no run. A worker (`AUTOMATION_ENABLED`,
+  `AUTOMATION_POLL_INTERVAL_SECONDS`, see `.env.example`) claims events with a conditional update,
+  starts one run per enabled matching rule (`clause.OnConflict{DoNothing: true}` on the dedupe
+  key, so a duplicate is neither an error nor a row on SQLite or MySQL), executes each step in one
+  transaction behind a locking read of the record and a conditional advance of the run row, parks
+  waits in `resume_at` so they survive a restart, continues schedule passes from a persisted
+  cursor (500 records per tick, one pass per UTC day, same-day catch-up, no backfill) and
+  reconciles interrupted runs at boot (a `send_email` left in `sending` is failed with
+  `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
+  neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
+  step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
+  only the non-personal placeholders (`lead.id`, `lead.status`, `lead.source`, the `deal.*`
+  fields) because a task survives the erasure of its lead; the name, email, phone, company and
+  owner placeholders stay available to the email and notification text, which does not outlive
+  the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
+  `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
+  run (`POST /automation/rules/{id}/dry-run`) reports each step's would-be outcome and writes,
+  sends and notifies nothing. The run history (`/automation/runs`) follows lead and deal
+  visibility inside the query; `/notifications` serves a staff user's own notifications. Lead
+  erasure cancels the lead's active runs (`record_deleted`) and hard-deletes its notifications,
+  before the scrub; user erasure hard-deletes the user's notifications. Logs carry ids, statuses,
+  step types, outcomes and error codes only. Schema: AutoMigrate plus the MySQL/MariaDB migration
+  `20261028120000_add_follow_up_automation` (six new tables, nothing altered). The worker assumes a
+  single API replica and no retention pruning exists yet. The frontend (rule, run and notification
+  screens, the lead and deal detail sections) is a separate follow-up. (#164)
+
 - **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
   integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
   quotes linked to a deal and/or a customer (`/quotes`, `/deals/{id}/quotes`,

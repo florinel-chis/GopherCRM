@@ -65,7 +65,17 @@ func leadErasurePlan() erasurePlan {
 			"external_id": "",
 		},
 		AfterScrub: scrubLeadFormSubmissions,
+		// The automation state of the lead ends before the row is touched; see
+		// erasurePlan.BeforeScrub for why the order matters under MySQL.
+		BeforeScrub: cancelLeadAutomation,
 	}
+}
+
+// cancelLeadAutomation cancels the lead's pending, waiting and running
+// automation runs with record_deleted and hard-deletes the notifications
+// whose entity is the lead, inside the erasure transaction.
+func cancelLeadAutomation(tx *gorm.DB, leadID uint) error {
+	return cancelAutomationForEntity(tx, models.AutomationEntityLead, leadID)
 }
 
 // scrubLeadFormSubmissions extends a lead's erasure to the form submissions

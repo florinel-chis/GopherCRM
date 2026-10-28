@@ -116,6 +116,24 @@ candidate follow-up, not an accident:
 - **Field-definition migrations** — editing a form's fields does not rewrite historical
   submission data; renamed fields simply start a new key in `data`.
 
+## Follow-up automation — deliberate v1 cuts
+
+The automation subsystem (#164) shipped its backend and API with these decided out, each a
+candidate follow-up:
+
+- **The screens** — rule list and form, dry-run dialog, run list and detail, the lead and deal
+  "Automation" sections and the notification bell are the separate `follow-up-automation-ui`
+  task; the API is complete without them.
+- **Email to leads and customers** — `send_email` reaches staff users only until a consent and
+  opt-out model exists.
+- **Multi-replica leases** — the worker assumes one API replica: runs are recovered at boot, not
+  by a lease timeout on `claimed_at`, so two workers would double-execute.
+- **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
+  sweep is a retention decision, not an erasure one (the rows hold ids only).
+- **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer,
+  ticket and company triggers, a `deal_id` on tasks** — none of them exist; a deal run links its
+  task to the deal's customer, else its lead.
+
 ## Sensitive settings — follow-ups
 
 - **reCAPTCHA and SMTP credentials** are the next candidates for the sensitive-configuration

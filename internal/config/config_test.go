@@ -32,6 +32,8 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		// Database driver selection, so a developer shell pointing at SQLite
 		// cannot flip the default-value assertions.
 		"DB_DRIVER", "DB_PATH",
+		// Automation worker settings, for the same reason as the AEO ones.
+		"AUTOMATION_ENABLED", "AUTOMATION_POLL_INTERVAL_SECONDS",
 	}
 
 	// Save originals.
@@ -138,6 +140,38 @@ func TestLoad_DevelopmentCookieSecureDefault(t *testing.T) {
 		assert.False(t, cfg.JWT.CookieSecure,
 			"Load() in development should set CookieSecure=false by default")
 	})
+}
+
+func TestLoad_AutomationDefaultsAndClamp(t *testing.T) {
+	withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.True(t, cfg.Automation.Enabled, "the worker is on by default")
+		assert.Equal(t, AutomationPollIntervalDefault, cfg.Automation.PollIntervalSeconds)
+	})
+
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"0", AutomationPollIntervalMin},
+		{"-5", AutomationPollIntervalMin},
+		{"7", 7},
+		{"3600", AutomationPollIntervalMax},
+		{"99999", AutomationPollIntervalMax},
+		{"garbage", AutomationPollIntervalDefault},
+	} {
+		withCleanEnv(t, map[string]string{
+			"JWT_SECRET":                       validSecret(),
+			"AUTOMATION_ENABLED":               "false",
+			"AUTOMATION_POLL_INTERVAL_SECONDS": tc.raw,
+		}, func() {
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.False(t, cfg.Automation.Enabled)
+			assert.Equalf(t, tc.want, cfg.Automation.PollIntervalSeconds, "AUTOMATION_POLL_INTERVAL_SECONDS=%s", tc.raw)
+		})
+	}
 }
 
 func TestLoad_MissingJWTSecret(t *testing.T) {

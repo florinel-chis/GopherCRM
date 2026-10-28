@@ -336,6 +336,217 @@ definitions:
       user_id:
         type: integer
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunReport:
+    properties:
+      entity_id:
+        type: integer
+      entity_type:
+        type: string
+      rule_id:
+        type: integer
+      rule_version:
+        type: integer
+      simulated_end:
+        type: string
+      simulated_start:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunStep'
+        type: array
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunStep:
+    properties:
+      details:
+        additionalProperties: true
+        type: object
+      error_code:
+        type: string
+      outcome:
+        type: string
+      position:
+        type: integer
+      simulated_at:
+        type: string
+      step_type:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationRule:
+    properties:
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/gorm.DeletedAt'
+      description:
+        type: string
+      enabled:
+        type: boolean
+      entity_type:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      schedule_completed_on:
+        type: string
+      schedule_cursor:
+        type: integer
+      schedule_pass_on:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationStep'
+        type: array
+      trigger:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger'
+      trigger_type:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationRun:
+    properties:
+      attempts:
+        type: integer
+      cancel_reason:
+        type: string
+      claimed_at:
+        type: string
+      created_at:
+        type: string
+      dedupe_key:
+        type: string
+      entity_id:
+        type: integer
+      entity_type:
+        type: string
+      error_code:
+        type: string
+      event_id:
+        type: integer
+      finished_at:
+        type: string
+      id:
+        type: integer
+      next_position:
+        type: integer
+      resume_at:
+        type: string
+      rule:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+      rule_id:
+        type: integer
+      rule_version:
+        type: integer
+      status:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRunStep'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationRunStep:
+    properties:
+      details:
+        additionalProperties: true
+        type: object
+      error_code:
+        type: string
+      executed_at:
+        type: string
+      id:
+        type: integer
+      outcome:
+        type: string
+      position:
+        type: integer
+      run_id:
+        type: integer
+      step_type:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationScheduleFilter:
+    properties:
+      stage:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationStep:
+    properties:
+      config:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationStepConfig'
+      created_at:
+        type: string
+      id:
+        type: integer
+      position:
+        type: integer
+      rule_id:
+        type: integer
+      step_type:
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationStepConfig:
+    properties:
+      body:
+        type: string
+      currency:
+        type: string
+      description:
+        type: string
+      due_in_days:
+        type: integer
+      duration_minutes:
+        description: wait
+        type: integer
+      else:
+        type: string
+      else_position:
+        type: integer
+      field:
+        description: condition
+        type: string
+      operator:
+        type: string
+      priority:
+        type: string
+      recipient:
+        description: |-
+          create_task assignee, send_email and notify recipient: "owner" (the
+          record's owner at execution time) or "user" with UserID. assign_owner
+          always names UserID.
+        type: string
+      subject:
+        description: send_email and notify
+        type: string
+      title:
+        description: create_task and notify
+        type: string
+      user_id:
+        type: integer
+      value:
+        type: object
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger:
+    properties:
+      filters:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationScheduleFilter'
+      from:
+        type: string
+      hour_utc:
+        type: integer
+      stale_days:
+        type: integer
+      to:
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.BulkStatusUpdateResult:
     properties:
       updated:
@@ -905,6 +1116,29 @@ definitions:
     - LeadStatusQualified
     - LeadStatusUnqualified
     - LeadStatusConverted
+  github_com_florinel-chis_gophercrm_internal_models.Notification:
+    properties:
+      body:
+        type: string
+      created_at:
+        type: string
+      entity_id:
+        type: integer
+      entity_type:
+        type: string
+      id:
+        type: integer
+      read_at:
+        type: string
+      run_id:
+        type: integer
+      title:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.Product:
     properties:
       created_at:
@@ -1404,6 +1638,46 @@ definitions:
         type: string
       user:
         $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+    type: object
+  internal_handler.AutomationDryRunRequest:
+    properties:
+      entity_id:
+        minimum: 1
+        type: integer
+      entity_type:
+        enum:
+        - lead
+        - deal
+        type: string
+    required:
+    - entity_id
+    - entity_type
+    type: object
+  internal_handler.AutomationRuleRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        type: boolean
+      entity_type:
+        type: string
+      name:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/internal_handler.AutomationStepRequest'
+        type: array
+      trigger:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger'
+      trigger_type:
+        type: string
+    type: object
+  internal_handler.AutomationStepRequest:
+    properties:
+      config:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationStepConfig'
+      step_type:
+        type: string
     type: object
   internal_handler.BulkLeadStatusRequest:
     properties:
@@ -2055,6 +2329,11 @@ definitions:
       refresh_token:
         type: string
     type: object
+  internal_handler.MarkAllReadResponse:
+    properties:
+      marked:
+        type: integer
+    type: object
   internal_handler.MessageResponse:
     properties:
       message:
@@ -2275,6 +2554,11 @@ definitions:
         type: array
     required:
     - value
+    type: object
+  internal_handler.UnreadCountResponse:
+    properties:
+      unread:
+        type: integer
     type: object
   internal_handler.UpdateAEOPromptRequest:
     properties:
@@ -4760,6 +5044,938 @@ paths:
       summary: Report whether public registration is open
       tags:
       - auth
+  /automation/rules:
+    get:
+      description: 'One page of rules with their steps (admin only). Filters: entity_type,
+        enabled. sort_by must be one of the listed columns (anything else is 400)
+        and defaults to created_at; sort_order defaults to desc. Pagination goes through
+        the shared parser: limit=0 is 20, the cap is 100.'
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Only rules of this entity type
+        enum:
+        - lead
+        - deal
+        in: query
+        name: entity_type
+        type: string
+      - description: Only enabled (true) or disabled (false) rules
+        in: query
+        name: enabled
+        type: boolean
+      - default: created_at
+        description: Sort column
+        enum:
+        - id
+        - name
+        - entity_type
+        - trigger_type
+        - enabled
+        - version
+        - created_at
+        - updated_at
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rules retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: sort_by is not an allowed column or a filter is malformed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List automation rules
+      tags:
+      - automation
+    post:
+      consumes:
+      - application/json
+      description: Create a follow-up automation rule with its ordered steps (admin
+        only). entity_type is lead or deal; trigger_type is lead_created, lead_updated,
+        lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule;
+        trigger carries from/to for a status or stage change and hour_utc, filters
+        and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner,
+        send_email and notify, numbered 1..n in the given order. An invalid trigger
+        or step config, more than 20 steps, more than 90 days of waits, a backward
+        or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT
+        and writes no row; an unknown, inactive or non-staff user id is 400 INVALID_REFERENCE.
+        A new rule is disabled unless enabled is true.
+      parameters:
+      - description: Rule
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AutomationRuleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Rule created with its steps
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+              type: object
+        "400":
+          description: Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: Too many requests - rate limit exceeded
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create an automation rule
+      tags:
+      - automation
+  /automation/rules/{id}:
+    delete:
+      description: Soft-delete the rule (admin only) and cancel its pending, waiting
+        and running runs with cancel_reason rule_deleted, in one transaction. Runs
+        and their logs stay.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Rule deleted
+        "400":
+          description: Invalid rule ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete an automation rule
+      tags:
+      - automation
+    get:
+      description: The rule with its steps in position order (admin only).
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rule retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+              type: object
+        "400":
+          description: Invalid rule ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get an automation rule
+      tags:
+      - automation
+    put:
+      consumes:
+      - application/json
+      description: 'Replace the rule wholesale (admin only): the same body as the
+        create. In one transaction the version is incremented, the steps are replaced
+        and the rule''s pending, waiting and running runs are cancelled with cancel_reason
+        rule_changed. enabled absent keeps the stored switch. The same 400 answers
+        as the create apply and leave the rule untouched.'
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Rule
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AutomationRuleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rule updated with its new version and steps
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+              type: object
+        "400":
+          description: Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update an automation rule
+      tags:
+      - automation
+  /automation/rules/{id}/disable:
+    post:
+      description: Switch the rule off (admin only) and cancel its pending, waiting
+        and running runs with cancel_reason rule_disabled, in one transaction. Returns
+        the rule.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rule disabled
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+              type: object
+        "400":
+          description: Invalid rule ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Disable an automation rule
+      tags:
+      - automation
+  /automation/rules/{id}/dry-run:
+    post:
+      consumes:
+      - application/json
+      description: 'Simulate the rule against one record of its entity type (admin
+        only) and report each step''s would-be outcome: the outcome, the simulated
+        time, the resolved user ids, the task due date and link, the owner from/to
+        and the branch taken. Waits advance the simulated clock without pausing and
+        an earlier simulated assign feeds later conditions. Nothing is written, sent
+        or notified. A record of the wrong entity type is 400 INVALID_INPUT; a missing
+        rule or record is 404.'
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The record to simulate against
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AutomationDryRunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Per-step report
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunReport'
+              type: object
+        "400":
+          description: Invalid body, or a record of the wrong entity type (INVALID_INPUT)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule or record not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Dry-run an automation rule
+      tags:
+      - automation
+  /automation/rules/{id}/enable:
+    post:
+      description: Switch the rule on (admin only). Returns the rule.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rule enabled
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule'
+              type: object
+        "400":
+          description: Invalid rule ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Rule not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Enable an automation rule
+      tags:
+      - automation
+  /automation/runs:
+    get:
+      description: 'One page of runs (admin and sales). The role scope is applied
+        inside the query: an admin sees every run, a sales user only runs whose lead
+        or deal it currently owns, so meta.total counts that set. Filters: status,
+        rule_id, entity_type, entity_id. sort_by is limited to id, created_at, updated_at,
+        status and resume_at (anything else is 400). Support and customer users get
+        403.'
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Only runs in this status
+        enum:
+        - pending
+        - running
+        - waiting
+        - completed
+        - failed
+        - cancelled
+        in: query
+        name: status
+        type: string
+      - description: Only runs of this rule
+        in: query
+        name: rule_id
+        type: integer
+      - description: Only runs on this entity type
+        enum:
+        - lead
+        - deal
+        in: query
+        name: entity_type
+        type: string
+      - description: Only runs on this record (with entity_type)
+        in: query
+        name: entity_id
+        type: integer
+      - default: created_at
+        description: Sort column
+        enum:
+        - id
+        - created_at
+        - updated_at
+        - status
+        - resume_at
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Runs retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRun'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: sort_by is not an allowed column or a filter is malformed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List automation runs
+      tags:
+      - automation
+  /automation/runs/{id}:
+    get:
+      description: The run with its step log (admin and sales). A sales user asking
+        for a run on a record it does not own gets 404. Support and customer users
+        get 403.
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRun'
+              type: object
+        "400":
+          description: Invalid run ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin or sales role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Run not found, or outside the caller's scope
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get an automation run
+      tags:
+      - automation
+  /automation/runs/{id}/cancel:
+    post:
+      description: 'Cancel a pending, waiting or running run with cancel_reason manual
+        (admin only). A completed, failed or cancelled run is 409 INVALID_STATUS_TRANSITION.
+        A running run performs no further step: its next conditional advance affects
+        zero rows.'
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run cancelled
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRun'
+              type: object
+        "400":
+          description: Invalid run ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - admin role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Run not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: The run is already finished (INVALID_STATUS_TRANSITION)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Cancel an automation run
+      tags:
+      - automation
   /companies:
     get:
       description: One page of companies (admin, sales and support roles). data is
@@ -10274,6 +11490,260 @@ paths:
       summary: Update the status of several leads at once
       tags:
       - leads
+  /notifications:
+    get:
+      description: One page of the caller's own notifications, newest first (admin,
+        sales and support; customers get 403). unread=true narrows to the unread ones.
+        Pagination goes through the shared parser.
+      parameters:
+      - description: Page number (1-based); when supplied it overrides offset
+        in: query
+        name: page
+        type: integer
+      - default: 0
+        description: Result offset
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        name: limit
+        type: integer
+      - description: Only unread notifications
+        in: query
+        name: unread
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notifications retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Notification'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: unread is not a boolean
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - staff role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List my notifications
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      description: Mark every unread notification of the caller read and return how
+        many were marked. Nobody else's notifications are touched.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Count of notifications marked read
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.MarkAllReadResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - staff role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Mark all my notifications read
+      tags:
+      - notifications
+  /notifications/unread-count:
+    get:
+      description: The caller's unread notification count (admin, sales and support;
+        customers get 403).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unread count
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.UnreadCountResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - staff role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Count my unread notifications
+      tags:
+      - notifications
+  /notifications/{id}/read:
+    post:
+      description: Mark the caller's own notification read and return it; one that
+        belongs to another user, or does not exist, is 404. Marking an already read
+        notification again is a no-op.
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notification marked read
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Notification'
+              type: object
+        "400":
+          description: Invalid notification ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - staff role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Notification not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Mark a notification read
+      tags:
+      - notifications
   /products:
     get:
       description: 'One page of live products (admin and sales roles). offset and

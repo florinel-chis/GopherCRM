@@ -16,15 +16,49 @@ type leadService struct {
 	customerRepo repository.CustomerRepository
 	companyRepo  repository.CompanyRepository
 	txManager    *utils.TransactionManager
+	// automation records the outbox events of every committed lead write
+	// (issue #164). Nil means no automation: the writes run as before.
+	automation repository.AutomationRepository
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, companyRepo repository.CompanyRepository, txManager *utils.TransactionManager) LeadService {
-	return &leadService{
+// LeadServiceOption configures NewLeadService beyond its required
+// dependencies.
+type LeadServiceOption func(*leadService)
+
+// WithLeadAutomationEvents makes Create, Update and ConvertToCustomer record
+// their automation events inside the transaction that commits the write.
+func WithLeadAutomationEvents(repo repository.AutomationRepository) LeadServiceOption {
+	return func(s *leadService) { s.automation = repo }
+}
+
+func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, companyRepo repository.CompanyRepository, txManager *utils.TransactionManager, opts ...LeadServiceOption) LeadService {
+	s := &leadService{
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
 		companyRepo:  companyRepo,
 		txManager:    txManager,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// writeWithEvents runs write against the lead repository inside one
+// transaction together with the automation events it produces, so an event
+// is never recorded for a write that rolled back. Without automation (or
+// without a transaction manager) the write runs directly, as it always did.
+func (s *leadService) writeWithEvents(write func(leads repository.LeadRepository, events repository.AutomationRepository) error) error {
+	if s.automation == nil || s.txManager == nil {
+		return write(s.leadRepo, nil)
+	}
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		return write(s.leadRepo.WithTx(tx), s.automation.WithTx(tx))
+	})
 }
 
 // checkCompanyLink rejects a company_id that matches no live company with
@@ -56,7 +90,12 @@ func (s *leadService) Create(lead *models.Lead) error {
 		return err
 	}
 
-	err := s.leadRepo.Create(lead)
+	err := s.writeWithEvents(func(leads repository.LeadRepository, events repository.AutomationRepository) error {
+		if err := leads.Create(lead); err != nil {
+			return err
+		}
+		return automationLeadCreated(events, lead.ID, models.AutomationOriginUser, nil)
+	})
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create lead")
 		return err
@@ -125,6 +164,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 		logger.WithError(utils.LogError(err)).Error("Lead not found")
 		return nil, err
 	}
+	previousStatus := lead.Status
 
 	// Apply updates
 	if firstName, ok := updates["first_name"].(string); ok {
@@ -175,7 +215,13 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 		lead.CompanyRecord = nil
 	}
 
-	if err := s.leadRepo.Update(lead); err != nil {
+	err = s.writeWithEvents(func(leads repository.LeadRepository, events repository.AutomationRepository) error {
+		if err := leads.Update(lead); err != nil {
+			return err
+		}
+		return automationLeadUpdated(events, lead.ID, previousStatus, lead.Status, models.AutomationOriginUser, nil)
+	})
+	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
 		return nil, err
 	}
@@ -368,6 +414,12 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		// Update lead status within transaction
 		if err := txLeadRepo.ConvertToCustomer(leadID, customerData.ID); err != nil {
 			logger.WithError(utils.LogError(err)).Error("Failed to update lead status within transaction")
+			return err
+		}
+
+		// The conversion's events ride in the same transaction: lead_updated
+		// and the status change into converted, origin conversion.
+		if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, txLead.Status, models.LeadStatusConverted, models.AutomationOriginConversion, nil); err != nil {
 			return err
 		}
 
