@@ -252,7 +252,9 @@ class PullRequestRunner(Runner):
             raise GateError('Main advanced; explicitly refresh this PR completion before continuing')
         return pr
 
-    async def validate_agent_paths(self, record):
+    async def validate_agent_paths(self, record, *, scope=True):
+        # PR completion has no frozen task scope; `scope` is accepted for the shared
+        # finalization path and has no effect here.
         worktree = Path(record['worktree'])
         if await self.command('git', 'ls-files', '--others', '--ignored', '--exclude-standard', '-z', cwd=worktree):
             raise GateError('PR source worktree contains ignored files')

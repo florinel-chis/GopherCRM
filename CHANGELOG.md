@@ -196,6 +196,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The remediation runner no longer strands an implementation that changes a path outside the
+  frozen task scope.** Finalization checked the frozen scope before committing, so a single
+  out-of-scope edit left the agent's work uncommitted at `finalize_implementation`, where `run`
+  repeated the same refusal, `freeze --refresh` required a revalidation first and `revalidate`
+  refused both the stage and the dirty worktree. Protected and private paths and changed
+  validation gates are still refused before anything is written. The scope check now runs after
+  the commit: the implementation and its claims are kept on the runner branch, `last_error`
+  records the violation and the execution stops at `validate`, where the same check still blocks
+  testing, review and publication. The operator inspects the diff and either widens the scope
+  (`revalidate` when main has advanced, then `freeze --refresh` and `run --execute`, which
+  validates the existing commit without another implementation call) or leaves the execution
+  for an explicit disposition.
 - **Feature analysis checks anticipate the execution gates.** The specification and revision
   stages now report context references that are not Markdown, are missing at the base commit or
   exceed the 128 KiB guidance cap; Go test-plan names that are not bare identifiers or appear in

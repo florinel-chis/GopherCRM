@@ -152,6 +152,39 @@ Include that literal documentation path before freezing when its guidance change
 settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
 plan before continuing. Install reviewed main and verify module identity as above.
 
+### Recover a change outside the frozen scope
+
+An implementation that edits a path outside the frozen `scope_paths` is committed to the
+runner branch and stops at stage `validate` with `last_error` naming the first such path.
+Protected or private paths and changed validation gates are still refused before any commit;
+they leave the worktree uncommitted at `finalize_implementation` and are not recoverable by
+this procedure. Inspect the committed diff against the journal's `base` and `head` in the
+recorded worktree:
+
+```sh
+git -C /absolute/worktree diff --stat BASE_SHA HEAD_SHA
+git -C /absolute/worktree diff BASE_SHA HEAD_SHA -- path/outside/scope
+```
+
+When the acceptance criteria require the path, add it (or a narrow glob) to `scope_paths` in
+the operator manifest, then:
+
+```sh
+# Only when live main has advanced since the journal's base:
+gophercrm-runner revalidate --config /absolute/private/config.json --issue 158
+gophercrm-runner freeze --config /absolute/private/config.json --issue 158 \
+  --manifest /absolute/path/to/task.json --refresh
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+`freeze --refresh` refuses while the journal's base differs from live main, which is why
+`revalidate` comes first in that case; it merges current main into the clean worktree.
+The refreshed execution keeps stage `validate`, spent calls, repair rounds and deadline,
+and validates the existing commit without another implementation call. A refresh that
+leaves the scope unchanged fails validation with the same error. If the change is not
+wanted, do not widen the scope; leave the execution stopped for an explicit disposition.
+For a batch child, resume with `start-batch --batch ID --resume` instead of `run`.
+
 ## Retire a ticket closed outside the runner
 
 A ticket execution remains admitted when its GitHub issue is closed by work this execution
