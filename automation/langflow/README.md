@@ -38,7 +38,10 @@ See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
 If a merged ticket fails documentation verification, inspect its evidence and either restore
 verification prerequisites or explicitly use `abandon-issue` with a reason. This retains the
 unverified result and leaves the queue stopped; it does not close issues or claim a successful
-handoff. Existing PR completions retain their `abandon-pr` recovery path.
+handoff. Existing PR completions retain their `abandon-pr` recovery path. An unfinished ticket
+whose issue GitHub closed outside the runner, for example through a separate `complete-pr`
+merge, is disposed with `retire-issue`; see
+[operations](OPERATIONS.md#retire-a-ticket-closed-outside-the-runner).
 
 Run these commands from the repository root. Use an isolated environment outside the checkout:
 

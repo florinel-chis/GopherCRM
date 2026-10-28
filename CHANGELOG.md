@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numbered owner comments and inherit the parent run's journals. See the
   [runner guide](automation/langflow/README.md#analyse-a-feature-request).
 
+- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
+  closed outside the runner, recording the closure and its closing pull requests as unvalidated
+  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
+
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
   the administrator's stored keys when a tick is due, so a key saved in Settings is used by the

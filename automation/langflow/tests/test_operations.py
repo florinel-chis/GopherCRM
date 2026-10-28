@@ -104,6 +104,28 @@ class OperationalReports(unittest.TestCase):
         self.assertEqual((self.config.state_dir / 'issue-95.json').read_bytes(), before)
         self.assertIn('workflow report', operations.markdown(result))
 
+    def test_retired_execution_is_terminal_in_handoff_markdown_and_history(self):
+        self.assertIn('retired', operations.TERMINAL)
+        disposition = dict(issue_state='CLOSED', state_reason='COMPLETED', validated_by_this_execution=False,
+                           closing_prs=[dict(number=159, state='MERGED', head='later', merge_commit='merge')])
+        Store(self.config.state_dir).write('issue-95', dict(
+            issue=95, stage='retired', head='abc', provider_calls=2, max_provider_calls=8, deadline=1,
+            last_error='Issue was closed without a confirmed runner merge', execution_id='one', policy='same',
+            validation_plan={'profile': 'full'}, remote_disposition=disposition,
+            attempts=[dict(stage='validation', duration_seconds=60, outcome='failed')]))
+        result = operations.handoff(self.config, issue=95)
+        self.assertEqual(result['status'], 'retired')
+        self.assertIsNone(result['active_stop_reason'])
+        self.assertIn('terminal', result['next_action'])
+        self.assertEqual(result['remote_disposition'], disposition)
+        text = operations.markdown(result)
+        self.assertIn('Status: **retired**', text)
+        self.assertIn('Remote disposition: issue CLOSED (COMPLETED); closing PRs #159 MERGED at `later`', text)
+        self.assertIn('not validated by this execution', text)
+        history = operations.measurements(self.config.state_dir)
+        self.assertEqual(history['runs'][0]['status'], 'retired')
+        self.assertEqual(history['groups'], [])
+
     def test_history_ignores_backups_and_does_not_treat_cancelled_as_completed(self):
         store = Store(self.config.state_dir)
         record = dict(issue=95, stage='merged', execution_id='one', policy='same',
