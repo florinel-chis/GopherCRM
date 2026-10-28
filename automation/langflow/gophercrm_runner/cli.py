@@ -130,6 +130,12 @@ def main():
     retire.add_argument('--reason', required=True)
     retire.add_argument('--processes-stopped', action='store_true',
                         help='Confirm unresolved provider processes were inspected and stopped')
+    adopt = sub.add_parser('adopt-commit', help='Adopt an inspected maintainer commit on the ticket branch as the '
+                           'candidate; validation and independent review run again')
+    adopt.add_argument('--config', type=Path, required=True)
+    adopt.add_argument('--issue', type=int, required=True)
+    adopt.add_argument('--head', required=True, help='Full SHA of the maintainer commit checked out in the runner worktree')
+    adopt.add_argument('--reason', required=True)
     for name in ('extend-budget', 'report', 'note'):
         control = sub.add_parser(name)
         control.add_argument('--config', type=Path, required=True)
@@ -293,7 +299,7 @@ def main():
         else:
             local.serve(args.directory, args.port)
     elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note', 'abandon-issue',
-                          'retire-issue'}:
+                          'retire-issue', 'adopt-commit'}:
         from .config import Config
         from .engine import Runner
         runner = Runner(Config.load(args.config))
@@ -303,6 +309,9 @@ def main():
         elif args.command == 'retire-issue':
             print(json.dumps(run_async(runner.retire_issue(args.issue, reason=args.reason,
                 processes_stopped=args.processes_stopped)), indent=2))
+        elif args.command == 'adopt-commit':
+            print(json.dumps(run_async(runner.adopt_commit(args.issue, head=args.head, reason=args.reason)),
+                             indent=2))
         elif args.command == 'report':
             report = runner.report(args.issue)
             if args.markdown:

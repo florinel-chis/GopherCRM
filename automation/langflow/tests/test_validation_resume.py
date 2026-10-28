@@ -317,3 +317,81 @@ class VitestValidationTests(unittest.IsolatedAsyncioTestCase):
         record = self.runner.store.read('issue-95')
         self.assertNotIn('acceptance-ui-deals', record.get('receipts', {}))
         self.assertIsNone(record.get('tested_head'))
+
+
+class VitestReceiptRootTests(unittest.IsolatedAsyncioTestCase):
+    """A Vitest receipt is verified against the checkout that produced it, across resumes."""
+    setUp = fixtures.EngineTests.setUp
+    tearDown = fixtures.EngineTests.tearDown
+
+    async def asyncSetUp(self):
+        await fixtures.EngineTests.asyncSetUp(self)
+        self.checks = [('local-0', ('make', 'verify'), None),
+                       ('acceptance-ui-deals', VITEST, evidence.vitest_identities(VITEST_TESTS)),
+                       ('database-0', SQLITE, None)]
+        self.runner.validation_checks = AsyncMock(side_effect=lambda *args: self.checks)
+        self.vitest_calls, self.browser_failures = [], 2
+        original = self.commands.run
+
+        async def boundary(args, *, cwd, **kwargs):
+            args = tuple(args)
+            if args == INSTALL:
+                return 0, 'Locked frontend dependencies installed'
+            if args == VITEST:
+                self.vitest_calls.append(cwd)
+                return 0, report_in(cwd)
+            if args[:3] == SQLITE:
+                if self.browser_failures:
+                    self.browser_failures -= 1
+                    raise CommandError('connection refused: temporary test environment failure')
+                return 0, 'All browser checks passed'
+            return await original(args, cwd=cwd, **kwargs)
+
+        self.commands.run = boundary
+
+    async def interrupted(self):
+        with self.assertRaisesRegex(GateError, 'environment'):
+            await self.runner.run_issue(95, execute=True)
+        return self.runner.store.read('issue-95')
+
+    def receipt(self, record, check_id):
+        return json.loads((self.config.state_dir / record['receipts'][check_id]['path']).read_bytes())
+
+    async def test_second_resume_reuses_vitest_receipt_from_an_earlier_checkout(self):
+        first = await self.interrupted()
+        producer = Path(first['validation_worktree']).resolve()
+        self.assertEqual(self.vitest_calls, [Path(first['validation_worktree'])])
+        self.assertEqual(self.receipt(first, 'acceptance-ui-deals')['root'], str(producer))
+        # Go and core receipts keep their exact previous fields.
+        self.assertEqual(set(self.receipt(first, 'local-0')), set(evidence.BINDING_KEYS) | {
+            'check_id', 'argv', 'exit_code', 'output_path', 'output_sha256'})
+        second = await self.interrupted()
+        self.assertNotEqual(second['validation_worktree'], first['validation_worktree'])
+        self.assertEqual(second['receipts'], first['receipts'])
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertFalse(final.get('validation_restarts'))
+        self.assertEqual(len(final['validation_resumptions']), 2)
+        self.assertEqual(final['validation_attempt'], first['validation_attempt'])
+        self.assertEqual(final['receipts']['acceptance-ui-deals'], first['receipts']['acceptance-ui-deals'])
+        self.assertEqual((len(self.vitest_calls), self.commands.tests), (1, 1))
+        self.assertEqual(final['head'], final['tested_head'])
+
+    async def test_vitest_receipt_root_outside_validation_checkouts_is_not_reused(self):
+        self.browser_failures = 1
+        record = await self.interrupted()
+        reference = record['receipts']['acceptance-ui-deals']
+        path = self.config.state_dir / reference['path']
+        receipt = json.loads(path.read_bytes())
+        receipt['root'] = str(self.root / 'elsewhere')
+        raw = json.dumps(receipt, sort_keys=True).encode()
+        path.write_bytes(raw)
+        reference['sha256'] = evidence.sha(raw)
+        self.runner.save(record)
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertIn('unexpected validation checkout', final['validation_restarts'][-1]['reason'])
+        self.assertNotEqual(final['validation_attempt'], record['validation_attempt'])
+        self.assertEqual(len(self.vitest_calls), 2)

@@ -80,13 +80,15 @@ def merge_gate(record: dict, pr: dict, required: tuple[str, ...], *, require_app
 
 # Frontend validation inputs: the Vitest and Playwright configuration, the Vitest
 # setup, and the whole browser suite with its helpers, fixtures and page objects.
+# Every `vitest.*` file at the frontend root is included, because Vitest also
+# discovers `vitest.workspace.*` and `vitest.projects.*` there automatically.
 # Changing any of them could narrow or weaken the evidence that `make verify` and
 # the browser matrix produce, so they are existing validation gates for every
 # profile. A newly added top-level browser spec only adds coverage and is admitted;
 # the health smoke, which every bounded profile runs, is never admitted as an addition.
 FRONTEND_GATE_FILES = frozenset({'gocrm-ui/src/test/setup.ts', 'gocrm-ui/src/test/globals.d.ts',
                                  'gocrm-ui/e2e/tests/health-smoke.spec.ts'})
-FRONTEND_GATE_PREFIXES = ('gocrm-ui/vitest.config', 'gocrm-ui/playwright.config', 'gocrm-ui/e2e/')
+FRONTEND_GATE_PREFIXES = ('gocrm-ui/vitest.', 'gocrm-ui/playwright.config', 'gocrm-ui/e2e/')
 NEW_BROWSER_SPEC = re.compile(r'gocrm-ui/e2e/tests/[a-z0-9-]+\.spec\.ts')
 
 

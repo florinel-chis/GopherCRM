@@ -97,6 +97,16 @@ class GateTests(unittest.TestCase):
                     self.assertRaisesRegex(GateError, 'existing validation gate'):
                 validate_paths([name], added={name})
 
+    def test_every_vitest_root_configuration_is_a_protected_gate(self):
+        # Vitest discovers workspace and project files beside its configuration.
+        for name in ['gocrm-ui/vitest.workspace.ts', 'gocrm-ui/vitest.projects.ts',
+                     'gocrm-ui/vitest.workspace.json', 'gocrm-ui/vitest.setup.ts']:
+            for added in (set(), {name}):
+                with self.subTest(name=name, added=bool(added)), \
+                        self.assertRaisesRegex(GateError, 'existing validation gate'):
+                    validate_paths([name], added=added)
+        validate_paths(['gocrm-ui/src/vitest.helpers.ts', 'gocrm-ui/src/pages/Deals.test.tsx'])
+
     def test_only_a_newly_added_browser_spec_is_admitted(self):
         spec = 'gocrm-ui/e2e/tests/deal-board.spec.ts'
         validate_paths([spec, 'gocrm-ui/src/pages/Deals.tsx'], added={spec})

@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
   closed outside the runner, recording the closure and its closing pull requests as unvalidated
   by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
+- **Maintainer-commit adoption for ticket executions (runner).** `gophercrm-runner adopt-commit
+  --issue N --head FULL_SHA --reason ...` continues an unfinished ticket whose repair budget is
+  exhausted, or whose candidate must be corrected by hand, with an inspected maintainer commit on
+  the ticket branch: the counterpart of `complete-pr --refresh --head`. The worktree must be
+  clean at that exact commit, the commit must descend from the recorded head, its diff from the
+  journal base must pass the protected-path and frozen-scope gates, and a recorded pull request
+  must already carry it. Adoption records an `adoptions` entry, invalidates tests and review as
+  `freeze --refresh` does and returns the execution to `validate`; it consumes no repair round
+  and leaves spent calls and the deadline unchanged. See the
+  [operations runbook](automation/langflow/OPERATIONS.md#adopt-a-maintainer-commit).
 
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
@@ -196,6 +206,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Runner recovery and gate gaps.** Every `gocrm-ui/vitest.*` file is now an existing
+  validation gate, because Vitest discovers `vitest.workspace.*` and `vitest.projects.*` beside
+  its configuration; previously only `vitest.config*` was protected. `retire-issue` now also
+  requires `--processes-stopped` when a validation command is recorded as running, and records
+  its disposition in `check_dispositions`. A Vitest receipt now records the validation checkout
+  that produced it and is verified against that checkout, so a receipt reused across two
+  interrupted resumes no longer fails the exact-path match and discards every retained check.
 - **The remediation runner no longer strands an implementation that changes a path outside the
   frozen task scope.** Finalization checked the frozen scope before committing, so a single
   out-of-scope edit left the agent's work uncommitted at `finalize_implementation`, where `run`

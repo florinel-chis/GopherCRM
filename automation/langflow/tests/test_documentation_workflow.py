@@ -278,6 +278,32 @@ class DocumentationTicketTests(fixtures.EngineTests):
         self.assertTrue(final['provider_dispositions'][-1]['processes_stopped'])
         self.assertEqual(final['provider_calls'], record['provider_calls'])
 
+    async def test_retire_requires_acknowledged_running_validation_command(self):
+        record = await self.parked_at_validation()
+        check = dict(id='local-0', command=['make', 'verify'], head=record['head'], started_at=1.0,
+                     outcome='running', pid=4321, process_identity={'pid': 4321, 'started': 'fixture'})
+        record['current_check'] = check
+        record.setdefault('check_attempts', []).append(dict(check))
+        self.runner.save(record)
+        self.assertFalse(any(c['status'] == 'running' for c in record['provider_invocations']))
+        self.install_closure()
+        with self.assertRaisesRegex(GateError, 'processes-stopped'):
+            await self.runner.retire_issue(95, reason='Closed by a maintainer merge.')
+        self.assertEqual(self.runner.store.journal(95), record)
+        self.assertEqual(self.runner.store.read('active'), {'issue': 95})
+        await self.runner.retire_issue(95, reason='Inspected and stopped the test process.',
+                                       processes_stopped=True)
+        final = self.runner.store.journal(95)
+        self.assertEqual(final['stage'], 'retired')
+        self.assertEqual(final['current_check']['outcome'], 'operator-resolved')
+        self.assertIn('ended_at', final['current_check'])
+        self.assertEqual(final['check_attempts'][-1], final['current_check'])
+        self.assertEqual(final['check_dispositions'], [dict(id='local-0', pid=4321,
+            process_identity={'pid': 4321, 'started': 'fixture'}, at=final['check_dispositions'][0]['at'],
+            reason='Inspected and stopped the test process.', processes_stopped=True)])
+        self.assertNotIn('provider_dispositions', final)
+        self.assertEqual(self.runner.store.read('active'), {})
+
     async def test_retire_parked_validation_records_closing_pr_from_github(self):
         before = await self.parked_at_validation()
         self.install_closure(foreign=(7,))

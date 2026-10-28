@@ -185,6 +185,78 @@ leaves the scope unchanged fails validation with the same error. If the change i
 wanted, do not widen the scope; leave the execution stopped for an explicit disposition.
 For a batch child, resume with `start-batch --batch ID --resume` instead of `run`.
 
+## Adopt a maintainer commit
+
+A ticket whose repair budget is exhausted, or whose candidate must be corrected by hand,
+continues only through an audited maintainer commit. `revalidate` refuses a worktree whose
+HEAD differs from the journal, and `freeze --refresh` keeps a `repair_pending` stage that
+still meets the exhausted repair limit; `adopt-commit` is the ticket counterpart of
+`complete-pr --refresh --head`. Inspect the journal (`report --issue N --markdown`) and the
+review findings or failure first, then commit the correction on the ticket branch in the
+recorded runner worktree:
+
+```sh
+git -C /absolute/worktree status --short          # must be clean before committing
+# Edit files within the frozen scope, then:
+git -C /absolute/worktree commit -am 'fix(scope): address the inspected review finding'
+git -C /absolute/worktree rev-parse HEAD           # FULL_SHA
+# Only when the journal records a pull request:
+git -C /absolute/worktree push origin automation/remediate-158
+gophercrm-runner adopt-commit --config /absolute/private/config.json --issue 158 \
+  --head FULL_SHA --reason 'Corrected the rejected edge case after the repair budget was exhausted'
+# Only when the policy sets validation_review_required: the next run records the plan and holds.
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+gophercrm-runner confirm-validation --config /absolute/private/config.json --issue 158 \
+  --head FULL_SHA --plan-hash PLAN_HASH --reason 'Inspected the adopted diff and the complete command plan'
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+The command accepts an unfinished execution under the current policy at stage `validate`,
+`review`, `repair_pending`, `publish`, `ci`, `finalize_implementation`, or `implement` with
+a committed candidate. It refuses `merged`, `pr_ready`, `abandoned` and `retired` journals,
+legacy journals, a different policy, a running provider invocation, a dirty worktree, a HEAD
+other than `--head`, an abbreviated SHA, and a commit that does not descend from the recorded
+head. The diff from the journal's base passes the same protected-path, private-path and
+validation-gate checks as an implementation commit, and the frozen-scope check; an
+out-of-scope path is refused and names `freeze --refresh`, which widens the scope after
+inspection. When the journal records a pull request, it must be open with `--head` as its
+head; push the commit before adopting it.
+
+On success the journal records an `adoptions` entry with `at`, `from_head`, `to_head` and the
+redacted reason, the new `head`, and stage `validate`. `tested_head`, `reviewed_head`,
+`receipts`, `review`, `review_receipt`, `pending_review` and `last_error` are cleared, as by
+`freeze --refresh`. Spent provider calls, repair rounds and the deadline are unchanged, and
+adoption consumes no repair round. The next run validates the adopted commit in a fresh
+checkout and requests a new independent review, which needs one remaining provider call; use
+`extend-budget --calls` after inspection when none remains. A rejected review or a failed
+check with no remaining repair round stops again for another adoption. Repeating the command
+for the already adopted head while it awaits validation returns the recorded adoption without
+a second entry.
+
+When main has advanced, do not merge it into the branch by hand: the diff from the recorded
+base would then contain main's own changes and fail the scope gate. Let `revalidate` merge
+main, which records the new base. A clean merge keeps a `repair_pending` stage and returns
+other stages to `validate`; adopt the maintainer commit before or after it, then run
+`freeze --refresh` for the new base. A conflicting merge records the new base, leaves the
+worktree in conflict and returns the execution to `repair_pending` or `implement`. Resolve the conflict, commit the merge, and adopt the merge commit:
+
+```sh
+gophercrm-runner revalidate --config /absolute/private/config.json --issue 158
+# On "Main has merge conflicts": resolve the files in the runner worktree, then:
+git -C /absolute/worktree add path/with/conflict
+git -C /absolute/worktree commit --no-edit
+gophercrm-runner adopt-commit --config /absolute/private/config.json --issue 158 \
+  --head FULL_MERGE_SHA --reason 'Resolved the main merge conflict after the repair budget was exhausted'
+gophercrm-runner freeze --config /absolute/private/config.json --issue 158 \
+  --manifest /absolute/path/to/task.json --refresh
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+Adoption never modifies GitHub, never pushes, and never grants a repair round. Tests and
+independent review are repeated for the adopted commit and are never inferred from the
+maintainer's own checks. The command takes the runner lock without a batch identity, so it is
+refused while a prepared batch owns the queue.
+
 ## Retire a ticket closed outside the runner
 
 A ticket execution remains admitted when its GitHub issue is closed by work this execution
@@ -203,8 +275,11 @@ Use `retire-issue` only for an unfinished execution (any stage except `merged`, 
 resume it with `run`. A missing journal, a legacy journal or a journal admitted under a
 different policy is refused. Use `abandon-issue` instead for a merged ticket whose post-merge
 documentation verification failed, and `abandon-pr` for an explicit PR completion. A running
-provider invocation requires `--processes-stopped` after the orphaned process has been
-inspected and stopped; the acknowledgement is recorded as for `abandon-issue`.
+provider invocation, or a validation command recorded as running in `current_check` after
+a hard crash, requires `--processes-stopped` after the orphaned process has been inspected
+and stopped. A provider acknowledgement is recorded as for `abandon-issue`; the validation
+command is marked `operator-resolved` with `ended_at`, and a `check_dispositions` entry
+records its check, PID, process identity and the redacted reason.
 
 The command reads `gh issue view --json state,stateReason,closedByPullRequestsReferences` and
 reads each closing pull request of the configured repository, together with any pull request
