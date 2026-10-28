@@ -231,6 +231,17 @@ class Runner:
                                        cwd=worktree)
         return sorted(set(p for p in (tracked + '\0' + untracked).split('\0') if p))
 
+    async def added_paths(self, worktree, base, paths):
+        """Changed paths absent from `base`, considered only where the path gate admits additions."""
+        added = set()
+        for path in paths:
+            if path.startswith(('.github/workflows/', 'gocrm-ui/e2e/tests/')):
+                code, _ = await self.run_command(
+                    ('git', 'cat-file', '-e', f'{base}:{path}'), cwd=worktree, check=False)
+                if code == 128:  # Git reports a missing object/path with exit 128.
+                    added.add(path)
+        return added
+
     async def validate_agent_paths(self, record):
         worktree = Path(record['worktree'])
         ignored = await self.command('git', 'ls-files', '--others', '--ignored', '--exclude-standard',
@@ -238,15 +249,10 @@ class Runner:
         if ignored:
             raise GateError('Agent worktree contains ignored files; inspect them before continuing')
         paths = await self.changed_paths(worktree, record['base'])
-        additions = set()
-        if record['issue'] in self.config.workflow_addition_issues:
-            for path in paths:
-                if path.startswith('.github/workflows/'):
-                    code, _ = await self.run_command(
-                        ('git', 'cat-file', '-e', f'{record["base"]}:{path}'), cwd=worktree, check=False)
-                    if code == 128:  # Git reports a missing object/path with exit 128.
-                        additions.add(path)
-        validate_paths(paths, new_workflows=additions)
+        added = await self.added_paths(worktree, record['base'], paths)
+        additions = ({p for p in added if p.startswith('.github/workflows/')}
+                     if record['issue'] in self.config.workflow_addition_issues else set())
+        validate_paths(paths, new_workflows=additions, added=added)
         contracts.check_scope(contracts.load_contract(self.config, record['issue']), paths)
         return paths
 
@@ -805,7 +811,7 @@ class Runner:
                     if './cmd/migrate' in command:
                         migration_coverage(output)
                     if named_tests:
-                        evidence.named_tests(output, named_tests)
+                        evidence.named_tests(output, named_tests, root=previous.resolve())
             except BudgetError:
                 raise
             except (GateError, OSError) as exc:
@@ -883,7 +889,7 @@ class Runner:
             if './cmd/migrate' in command:
                 migration_coverage(output)
             if named_tests:
-                evidence.named_tests(output, named_tests)
+                evidence.named_tests(output, named_tests, root=worktree.resolve())
             record['receipts'][check_id] = evidence.write_receipt(
                 self.config.state_dir, record, check_id, command, output, 0)
             self.save(record)

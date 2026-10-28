@@ -245,6 +245,12 @@ VITEST = ('npm', '--prefix', 'gocrm-ui', 'test', '--silent', '--', '--run', '--r
 VITEST_TESTS = [{'file': 'src/pages/deals/DealStageChip.test.tsx',
                  'name': 'DealStageChip labels \'qualification\' as "\'Qualification\'"'}]
 REPORT = Path(__file__).with_name('vitest-report.json').read_text()
+REPORT_ROOT = '/runner-state/validation/96-0123456789ab'
+
+
+def report_in(checkout):
+    """The captured report as Vitest prints it from `checkout` (its resolved working directory)."""
+    return REPORT.replace(REPORT_ROOT, str(Path(checkout).resolve()))
 
 
 class VitestValidationTests(unittest.IsolatedAsyncioTestCase):
@@ -270,7 +276,7 @@ class VitestValidationTests(unittest.IsolatedAsyncioTestCase):
                 report = self.reports.pop(0)
                 if isinstance(report, Exception):
                     raise report
-                return 0, report
+                return 0, report.replace(REPORT_ROOT, str(Path(cwd).resolve()))
             return await original(args, cwd=cwd, **kwargs)
 
         self.commands.run = boundary
@@ -293,7 +299,11 @@ class VitestValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.installs, [Path(final['validation_worktree'])])
         self.assertEqual(self.vitest_calls[-1], Path(final['validation_worktree']))
         # The runner passes the command's stdout without its trailing newline.
-        self.assertEqual([call.args for call in vitest.call_args_list], [(REPORT.rstrip('\n'), VITEST_TESTS)])
+        worktree = Path(final['validation_worktree'])
+        self.assertEqual([call.args for call in vitest.call_args_list],
+                         [(report_in(worktree).rstrip('\n'), VITEST_TESTS)])
+        # Named results must carry this checkout's exact path, not merely a matching suffix.
+        self.assertEqual([call.kwargs for call in vitest.call_args_list], [{'root': worktree.resolve()}])
         go.assert_not_called()
 
     async def test_vitest_check_without_a_named_pass_produces_no_receipt(self):

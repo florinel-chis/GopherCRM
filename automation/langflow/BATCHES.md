@@ -18,7 +18,8 @@ See [documentation maintenance](../../docs/DOCUMENTATION_WORKFLOW.md).
 Use the same private configuration and environment as ordinary ticket execution.
 Keep `completion_target: "merge"`. Every issue must already appear in that
 configuration and have an operator-authored task manifest and registered named
-tests. Frontend/manual evidence is unsupported. Dependencies must identify already
+tests. Frontend tickets are admitted with the `frontend` profile and named Vitest
+evidence; manual evidence remains unsupported. Dependencies must identify already
 merged PRs and their full merge SHAs; do not invent merge SHAs for future items.
 
 Create an absolute-path JSON specification outside the repository:
@@ -159,7 +160,7 @@ The runner performs **no automatic cleanup**. The explicit `retention` preview/a
 can reclaim dependencies from verified, inactive merged validation worktrees; it retains
 source, databases, receipts and logs. The existing disk threshold also applies during long checks.
 Disk shortage stops execution for inspection; it never deletes the main
-checkout's dependencies. No frontend evidence, parallel execution, release,
+checkout's dependencies. No manual evidence, parallel execution, release,
 deployment, branch-rule changes or external notifications are included.
 
 Retention preview and apply are refused while a batch owns that state directory, even when
@@ -203,5 +204,6 @@ Lessons from implementation:
 
 Version 0.8.0 adds the heartbeat/process observation, shared heavy-command lock, historical
 phase measurements and explicit completed-dependency cleanup described in [OPERATIONS.md](OPERATIONS.md).
-Measure the live continuation before overlapping CI or expanding execution. Frontend evidence
-support remains separate.
+Measure the live continuation before overlapping CI or expanding execution. Frontend tickets
+are admitted with the `frontend` profile and named Vitest evidence; manual evidence remains
+unsupported.

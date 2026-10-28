@@ -141,6 +141,22 @@ class VitestEvidenceTests(unittest.TestCase):
             with self.subTest(output=output[:40]), self.assertRaises(CommandError):
                 named_vitest_tests(output, self.identities())
 
+    def test_checkout_root_requires_the_exact_result_path(self):
+        from gophercrm_runner.evidence import named_tests, named_vitest_tests, vitest_identities
+        root = '/runner-state/validation/96-0123456789ab'
+        named_vitest_tests(REPORT.read_text(), self.identities(), root=root)
+        named_vitest_tests(REPORT.read_text(), self.identities(), root=Path(root + '/'))
+        named_tests(REPORT.read_text(), vitest_identities(self.identities()), root=root)
+        with self.assertRaisesRegex(CommandError, 'reported no results'):
+            named_vitest_tests(REPORT.read_text(), self.identities(), root='/runner-state/validation/other')
+        # A nested copy whose path merely ends in gocrm-ui/<file> is not the checkout's file.
+        report = self.report()
+        for result in report['testResults']:
+            result['name'] = result['name'].replace(root, root + '/gocrm-ui/vendor')
+        named_vitest_tests(json.dumps(report), self.identities())
+        with self.assertRaisesRegex(CommandError, 'reported no results'):
+            named_vitest_tests(json.dumps(report), self.identities(), root=root)
+
     def test_named_tests_dispatches_by_declared_kind(self):
         from gophercrm_runner.evidence import named_tests, vitest_identities
         named_tests(REPORT.read_text(), vitest_identities(self.identities()))

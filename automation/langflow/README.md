@@ -81,7 +81,7 @@ gophercrm-runner serve --directory "$HOME/.local/share/gophercrm-runner"
 
 Open <http://127.0.0.1:7860>. Log in as `runner`, using the generated password in the private `server.env` file printed by setup. Import `automation/langflow/flows/remediation.json`. The queue component uses `GOPHERCRM_RUNNER_CONFIG` from the server environment when its configuration field is blank. Leave **Mode = preview** for the first run. Set **Maximum tickets** to the desired batch size.
 
-The server binds to loopback, disables signup, and restricts custom component authoring to administrators. Keep it local: this workflow can edit code and merge PRs using the host's credentials. A worktree is not an operating-system sandbox. The implementation agent has Read/Glob/Grep/Edit/Write tools; its independent reviewer has only Read/Glob/Grep. Shell commands and GitHub mutations belong to the runner. Repository and issue text are task data, never command or merge policy. Existing validation commands, workflow files, and the runner itself are protected from agent edits. The local policy explicitly allows issue #121 to add a new workflow for migration coverage; it cannot weaken an existing workflow.
+The server binds to loopback, disables signup, and restricts custom component authoring to administrators. Keep it local: this workflow can edit code and merge PRs using the host's credentials. A worktree is not an operating-system sandbox. The implementation agent has Read/Glob/Grep/Edit/Write tools; its independent reviewer has only Read/Glob/Grep. Shell commands and GitHub mutations belong to the runner. Repository and issue text are task data, never command or merge policy. Existing validation commands, workflow files, the frontend test configuration and browser suite (listed with the `frontend` profile below), and the runner itself are protected from agent edits. The local policy explicitly allows issue #121 to add a new workflow for migration coverage; it cannot weaken an existing workflow.
 
 ## Execute the queue
 
@@ -111,7 +111,9 @@ A manifest's `validation_profile` selects one evidence model for the whole ticke
 | `backend-database` | `go` | `scope_paths`, never `gocrm-ui/` | configured SQLite/MySQL matrix, mandatory |
 | `frontend` | `vitest` | `scope_paths` within `gocrm-ui/`, `docs/`, `README.md` and `CHANGELOG.md` | configured SQLite/MySQL matrix, mandatory |
 
-A manifest that references a check of the other kind is refused, so Go and Vitest evidence never mix inside one ticket. `internal/handler/assets/` is outside every profile. A `frontend` ticket never changes Go code, even when a scope glob would admit it; the protected paths (`gocrm-ui/package.json`, `gocrm-ui/package-lock.json` and the TypeScript, Vite and ESLint configuration) stay protected, so it cannot add a dependency. Its core check is `make verify`, which runs `npm run build`, `npm run lint` with `--max-warnings=0` and the full Vitest suite. Freezing a `frontend` contract requires `database_test_commands` and `TEST_MYSQL_DSN`, as its browser checks are mandatory evidence: the selected specs on SQLite and MySQL (the full browser matrix when the selection falls back to `full`) plus the migration check.
+A manifest that references a check of the other kind is refused, so Go and Vitest evidence never mix inside one ticket. `internal/handler/assets/` is outside every profile. A `frontend` ticket never changes Go code, even when a scope glob would admit it; the protected paths (`gocrm-ui/package.json`, `gocrm-ui/package-lock.json` and the TypeScript, Vite and ESLint configuration) stay protected, so it cannot add a dependency.
+
+The inputs of the frontend evidence are existing validation gates for every profile, so no agent can narrow the Vitest suite or weaken the browser matrix: `gocrm-ui/vitest.config*`, `gocrm-ui/playwright.config*`, `gocrm-ui/src/test/setup.ts`, `gocrm-ui/src/test/globals.d.ts` and every path under `gocrm-ui/e2e/` (existing specs including `tests/health-smoke.spec.ts`, `global-setup.ts`, `global-teardown.ts`, `helpers/`, `fixtures/`, `pages/`, `scripts/`, `screenshots/` and `README.md`). The single exception is a new browser spec: a file absent from the base commit whose path matches `gocrm-ui/e2e/tests/[a-z0-9-]+\.spec\.ts` only adds coverage and is admitted, subject to the ticket's scope. A change to any other of these paths is refused with "Agent changed an existing validation gate", for initial implementations and repairs alike. When the runner checks named Vitest identities, a report result matches a registered file only when its path is exactly `<validation checkout>/gocrm-ui/<file>`, so a nested copy of a test file cannot stand in for it. Its core check is `make verify`, which runs `npm run build`, `npm run lint` with `--max-warnings=0` and the full Vitest suite. Freezing a `frontend` contract requires `database_test_commands` and `TEST_MYSQL_DSN`, as its browser checks are mandatory evidence: the selected specs on SQLite and MySQL (the full browser matrix when the selection falls back to `full`) plus the migration check.
 
 A registry entry may carry `kind`: `"go"` (the default when absent; existing entries and their frozen `checks_hash` are unchanged) or `"vitest"`. A Vitest entry's `argv` is exactly the prefix below followed by one or more unique test files relative to `gocrm-ui`, each matching `^src/.*\.test\.tsx?$`; the runner executes it from the repository root of a fresh validation checkout after `npm ci`. `--silent` keeps npm's script banner off standard output, so the Vitest JSON report is the command's only stdout. Each named test is `{file, name}`: `file` is one of the argv files, `name` is the test's `fullName` exactly as the JSON reporter prints it (the `describe` titles and the test title joined by single spaces). Identities are unique.
 
@@ -391,12 +393,15 @@ unresolvable citation moves to the gaps) and the external context the agent choo
 (reported by the agent; the runner does not verify web citations); Analysis writes the one-pager
 (500 words, breaches are reported); Specification writes the acceptance criteria in the task
 manifest shape of `freeze --manifest` plus the check registry entries they name, UI criteria for
-the frontend slice, each verified by a named Vitest test file and case (executed as a separate
-`frontend` ticket with `vitest` registry entries; the analysis manifest itself remains a backend
-profile), the data model with both migration halves, the
+the frontend slice with their own verification (Vitest, browser, or manual with exact steps), the
+data model with both migration halves, the
 API, screens, permissions, Mermaid diagrams, the test plan and the documentation to update; Review
 is a second, independent process that returns severity-graded findings and is overruled when it
-approves with an open P0 or P1; Revision addresses every finding by id, once. Deterministic checks
+approves with an open P0 or P1; Revision addresses every finding by id, once. Only a UI criterion
+verified by Vitest, naming its test file under `gocrm-ui/src` and the exact full test name, can be
+frozen as a named check of a `frontend` task (a separate ticket with `vitest` registry entries; the
+analysis manifest itself remains a backend profile); browser criteria are proved by the browser
+matrix, and manual criteria are not executable by the runner. Deterministic checks
 (manifest validity through the same validators as `freeze`, contiguous `AC` ids, registry test
 names matching their `-run` pattern, Mermaid keywords, word budgets) are recorded as rules-check
 notes, given to the reviewer as runner findings, and listed at the end of the document. The

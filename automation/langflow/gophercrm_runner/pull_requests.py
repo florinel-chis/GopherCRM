@@ -358,7 +358,9 @@ class PullRequestRunner(Runner):
     async def finalize_implementation(self, record):
         # Initial externally authored changes are explicitly pinned by the operator.
         # A repair agent may never change the runner or validation policy.
-        validate_paths(await self.changed_paths(Path(record['worktree']), record['head']))
+        worktree = Path(record['worktree'])
+        paths = await self.changed_paths(worktree, record['head'])
+        validate_paths(paths, added=await self.added_paths(worktree, record['head'], paths))
         await super().finalize_implementation(record)
 
     async def review(self, issue, record):

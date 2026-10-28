@@ -60,13 +60,17 @@ def acceptance_tests(check):
 IDENTITY_FIELDS = {'go': {'package', 'name'}, 'vitest': {'file', 'name'}}
 
 
-def named_tests(output, tests):
-    """Dispatch to the parser of the check's declared kind; never infer it from the output."""
+def named_tests(output, tests, *, root=None):
+    """Dispatch to the parser of the check's declared kind; never infer it from the output.
+    `root` is the validation checkout; Vitest results must then name its exact file paths."""
     kind = getattr(tests, 'kind', 'go')
     if kind not in IDENTITY_FIELDS or any(
             not isinstance(t, dict) or set(t) != IDENTITY_FIELDS[kind] for t in tests):
         raise GateError('Named-test identities do not match their declared check kind')
-    (named_vitest_tests if kind == 'vitest' else named_go_tests)(output, tests)
+    if kind == 'vitest':
+        named_vitest_tests(output, tests, root=root)
+    else:
+        named_go_tests(output, tests)
 
 
 def vitest_report(output):
@@ -93,13 +97,19 @@ def vitest_report(output):
     raise CommandError('Acceptance check printed no Vitest JSON report')
 
 
-def named_vitest_tests(output, tests):
+def named_vitest_tests(output, tests, *, root=None):
+    """Require each named file/test identity to pass exactly once.
+
+    With `root` (the validation checkout) a result matches a file only when its path
+    equals `<root>/gocrm-ui/<file>`; without it, a path ending in `/gocrm-ui/<file>` matches."""
     required = {(t['file'], t['name']) for t in tests}
     report = vitest_report(output)
+    prefix = None if root is None else str(root).replace('\\', '/').rstrip('/') + '/gocrm-ui/'
     passed = set()
     for file in sorted({file for file, _ in required}):
-        results = [r for r in report['testResults']
-                   if r['name'].replace('\\', '/').endswith('/gocrm-ui/' + file)]
+        names = [(r, r['name'].replace('\\', '/')) for r in report['testResults']]
+        results = [r for r, name in names
+                   if (name == prefix + file if prefix else name.endswith('/gocrm-ui/' + file))]
         if len(results) > 1:
             raise CommandError('Duplicate required acceptance result')
         if not results or not results[0]['assertionResults']:
