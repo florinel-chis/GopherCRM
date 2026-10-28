@@ -152,6 +152,49 @@ Include that literal documentation path before freezing when its guidance change
 settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
 plan before continuing. Install reviewed main and verify module identity as above.
 
+## Retire a ticket closed outside the runner
+
+A ticket execution remains admitted when its GitHub issue is closed by work this execution
+did not merge, for example a maintainer merge or a separate `complete-pr` completion of the
+same branch at a later head. `run` refuses such a journal because no runner merge was
+confirmed, so the active marker and admission slot stay occupied. Inspect the journal, the
+issue and the closing pull requests, then retire the execution:
+
+```sh
+gophercrm-runner retire-issue --config /absolute/private/config.json --issue 158 \
+  --reason 'Closed by PR #159, merged through complete-pr in another state directory'
+```
+
+Use `retire-issue` only for an unfinished execution (any stage except `merged`, `pr_ready`,
+`abandoned` and `retired`) whose issue GitHub reports as `CLOSED`. An open issue is refused;
+resume it with `run`. A missing journal, a legacy journal or a journal admitted under a
+different policy is refused. Use `abandon-issue` instead for a merged ticket whose post-merge
+documentation verification failed, and `abandon-pr` for an explicit PR completion. A running
+provider invocation requires `--processes-stopped` after the orphaned process has been
+inspected and stopped; the acknowledgement is recorded as for `abandon-issue`.
+
+The command reads `gh issue view --json state,stateReason,closedByPullRequestsReferences` and
+reads each closing pull request of the configured repository, together with any pull request
+the journal records, through `gh pr view`. The journal records `stage: retired`,
+`completed_at`, a redacted `retirements` entry and `remote_disposition` with the issue state,
+its state reason and each pull request's number, state, head and merge commit. The disposition
+is marked `validated_by_this_execution: false`: the closing work was not tested, reviewed or
+merged by this execution. The admission slot and active marker are released and the queue is
+stopped; resume it explicitly with `resume-queue`. A repeated call returns the recorded
+disposition without a second entry, and a later `run` reports the retirement.
+
+The command never closes, reopens, comments on or edits issues or pull requests. It never
+deletes the worktree, branch, receipts, artifacts or spent budgets, never refunds provider
+calls and never relabels the execution as merged.
+
+## Maintenance outside executions
+
+Changes to the runner itself, its validation gates and fixes for CI flakes are maintainer work.
+They are prepared as ordinary pull requests and merged through `complete-pr`, never admitted as
+ticket executions, because implementation agents cannot edit the protected runner, workflow and
+validation paths. When such a pull request closes an issue that a ticket execution still holds,
+retire that execution as described above.
+
 ## Reclaim completed dependencies
 
 ```sh

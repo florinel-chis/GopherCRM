@@ -19,7 +19,7 @@ from .state import Store
 
 
 JOURNAL = re.compile(r'(?:issue-[0-9]+|completion-pr-[0-9]+)\.json$')
-TERMINAL = {'merged', 'pr_ready', 'abandoned', 'external_merge'}
+TERMINAL = {'merged', 'pr_ready', 'abandoned', 'external_merge', 'retired'}
 
 
 def runtime_identity(checkout):
@@ -170,7 +170,8 @@ def handoff(config, *, issue=None, pr=None, batch=None):
                    worker=liveness(worker, now),
                    heartbeat_at=heartbeat.get('at') if heartbeat.get('token') == worker.get('token') else None,
                    pending_journal_update=bool(store.read('pending-update')),
-                   validation_plan=record.get('validation_plan'), receipts=[])
+                   validation_plan=record.get('validation_plan'), receipts=[],
+                   remote_disposition=record.get('remote_disposition'))
     summary['current_check'] = record.get('current_check')
     summary['validation_forecast'] = record.get('validation_forecast')
     for check_id, reference in record.get('receipts', {}).items():
@@ -225,6 +226,13 @@ def markdown(value):
     if value.get('receipts'):
         lines += ['', 'Saved receipts (integrity only; resume rechecks eligibility):', '']
         lines.extend(f"- `{r['check']}`: {r['integrity']}" for r in value['receipts'])
+    disposition = value.get('remote_disposition') or {}
+    if 'closing_prs' in disposition:
+        prs = ', '.join(f"#{p['number']} {p.get('state')} at `{p.get('head')}`"
+                        for p in disposition['closing_prs']) or 'none reported'
+        lines += ['', f"Remote disposition: issue {disposition.get('issue_state')} "
+                      f"({disposition.get('state_reason')}); closing PRs {prs}; "
+                      'not validated by this execution.']
     if value.get('active_stop_reason'):
         lines += ['', 'Stop reason: ' + value['active_stop_reason'].replace('\n', ' ')[:1000]]
     lines += ['', 'Recorded evidence is scoped to this candidate. Missing checks and existing skips are not passes.']
