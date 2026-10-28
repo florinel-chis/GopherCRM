@@ -188,6 +188,9 @@ describe('QuoteDetail', () => {
         unit_price_cents: 1250,
       })
     );
+    // The dialog closes once the mutation resolves; the page behind it is aria-hidden until then.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit line' })).not.toBeInTheDocument());
+    expect(showSuccess).toHaveBeenCalledWith('Line updated');
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete line 1' }));
     const confirm = await screen.findByRole('dialog', { name: 'Remove line' });
