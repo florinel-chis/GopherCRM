@@ -3,23 +3,20 @@ package main
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
-// automationDrainTimeout is how long shutdown waits for the automation worker
-// and the step it may be executing. A step transaction is a handful of
-// statements, so an honest drain takes well under this; when the deadline
-// passes anyway, main does not close the database under the work still
-// using it (see main) and the next boot's reconciliation hands the run back
-// to pending.
-const automationDrainTimeout = 15 * time.Second
-
 // automationBackground owns the follow-up automation worker of this process.
-// Stop is what main calls at shutdown, through the handle setupDependencies
-// returns; a nil runtime (AUTOMATION_ENABLED=false) has nothing to stop.
+// Stop is what main calls at shutdown, through the combined handle
+// setupDependencies returns (combineStops: automation first, then AEO), under
+// the one drain deadline main passes, aeoDrainTimeout (15 s). A step
+// transaction is a handful of statements, so an honest drain takes well under
+// that; when the deadline passes anyway, main does not close the database
+// under the work still using it (see main) and the next boot's reconciliation
+// hands the run back to pending. A nil runtime (AUTOMATION_ENABLED=false) has
+// nothing to stop.
 type automationBackground struct {
 	runtime *service.AutomationRuntime
 }

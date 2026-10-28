@@ -729,8 +729,7 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 			break
 		}
 		plan.details["assignee_id"] = assignee.ID
-		owner := loadOwner(users, rec)
-		task := buildAutomationTask(cfg, rec, owner, assignee.ID, now)
+		task := buildAutomationTask(cfg, rec, assignee.ID, now)
 		plan.details["due_date"] = task.DueDate.Format(time.RFC3339)
 		if task.LeadID != nil {
 			plan.details["lead_id"] = *task.LeadID
@@ -812,15 +811,18 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 // buildAutomationTask renders the task of a create_task step: assigned to
 // the resolved user, due due_in_days after execution (UTC), linked to the
 // lead of a lead run, and to the deal's customer, else its lead, never both.
-func buildAutomationTask(cfg models.AutomationStepConfig, rec *automationRecord, owner *models.User, assigneeID uint, now time.Time) *models.Task {
+// The text is rendered through the task allowlist only: a task survives the
+// erasure of its lead, so no name, address, phone or company is ever copied
+// into it.
+func buildAutomationTask(cfg models.AutomationStepConfig, rec *automationRecord, assigneeID uint, now time.Time) *models.Task {
 	due := now.UTC().Add(time.Duration(cfg.DueInDays) * 24 * time.Hour)
 	priority := models.TaskPriority(cfg.Priority)
 	if priority == "" {
 		priority = models.TaskPriorityMedium
 	}
 	task := &models.Task{
-		Title:        truncateRunes(renderPlaceholders(cfg.Title, rec, owner), models.AutomationStepTextMaxLength),
-		Description:  renderPlaceholders(cfg.Description, rec, owner),
+		Title:        truncateRunes(renderTaskPlaceholders(cfg.Title, rec), models.AutomationStepTextMaxLength),
+		Description:  renderTaskPlaceholders(cfg.Description, rec),
 		Status:       models.TaskStatusPending,
 		Priority:     priority,
 		DueDate:      &due,

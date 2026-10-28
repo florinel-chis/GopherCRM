@@ -52,8 +52,13 @@ Priorities: 18 P0, 14 P1, 1 P2.
   Without `SMTP_HOST` the development `LogMailer` logs the recipient and subject and the step is
   `succeeded` with nothing delivered.
 - **Single replica, no retention.** The worker (`AUTOMATION_ENABLED`, default true) assumes one
-  API replica: runs left `running` are recovered at boot, not by a lease. Processed events and
-  finished runs are kept.
+  API replica: runs left `running` are recovered at the boot of the worker process, not by a
+  lease; a process started with the worker off neither executes nor reconciles runs. Processed
+  events and finished runs are kept.
+- **A task never carries the person.** A `create_task` title or description accepts only
+  `lead.id`, `lead.status`, `lead.source` and the `deal.*` placeholders, because the task is kept
+  when its lead is erased; the name, email, phone, company and owner placeholders are refused in
+  it (they stay available to the email and notification text, which does not outlive the person).
 - **Run the MySQL roots with `TEST_MYSQL_DSN`.** Every `*MySQL` root and
   `TestMigrationAutomationSchema` create disposable schemas; they skip without a server and fail
   when it is unreachable. The paused-step races (a cancel, a rule change or an erasure committed
@@ -95,12 +100,15 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Steps:** `POST /automation/rules` with, one at a time: an invalid trigger type for the entity,
   an invalid trigger value, a wait of 0 minutes, an unknown step type, 21 steps, 91 days of waits,
   a backward `else_position`, an out-of-range `else_position`, an unknown `{{lead.password}}`
-  placeholder, no steps.
+  placeholder, a `create_task` whose title carries `{{lead.first_name}}` or whose description
+  carries `{{lead.phone}}` (a task survives the erasure of its lead, so only `lead.id`,
+  `lead.status`, `lead.source` and the `deal.*` placeholders are allowed in it), no steps.
 - **Expected:** **400** `INVALID_INPUT` each time; the rule and step row counts are unchanged.
 - **Automation:** automated — `TestAutomationRuleAPISQLite` ("invalid rules are 400 INVALID_INPUT
   and write nothing"); the condition refusals in `internal/service/automation_condition_test.go`:
   `TestAutomationConditionBranching` ("validation refuses unknown fields, operators and value
-  types").
+  types"); the task placeholder refusals and the task renderer that blanks a personal placeholder
+  in `TestAutomationTaskPlaceholdersExcludePersonalData` (same file).
 
 ### TC-AUT-004 — An unknown, inactive or non-staff user is 400 INVALID_REFERENCE
 - **Priority:** P0
@@ -217,7 +225,8 @@ Priorities: 18 P0, 14 P1, 1 P2.
   `assign_owner` (another sales user), `notify` (that user) and `send_email` (owner).
 - **Steps:** Start a run and execute it.
 - **Expected:** `completed` with four `succeeded` rows; one task assigned to the lead's owner at
-  execution time, due 48 h later (UTC), linked to the lead and not to a customer; the owner
+  execution time, due 48 h later (UTC), linked to the lead and not to a customer, titled with the
+  lead's id and none of the lead's name, email or phone; the owner
   changed, with one `origin=automation` event that starts no run; one notification for the new
   owner; `Mailer.Send` called once, to the new owner's address; the step details carry the task,
   owner and recipient ids.
@@ -423,7 +432,8 @@ Priorities: 18 P0, 14 P1, 1 P2.
   1. Rebuild the engine and reconcile; execute.
   2. Through the real wiring over a SQLite file: seed a stranded run, build the router with
      `AUTOMATION_ENABLED=true`, record an event, wait for the worker, stop under the deadline,
-     record another event, wait. Repeat with `AUTOMATION_ENABLED=false`.
+     record another event, wait. Repeat with `AUTOMATION_ENABLED=false`, again with a stranded
+     run seeded first.
   3. Start a runtime whose first step pauses after its effect; stop it while paused; release.
 - **Expected:** (1) the interrupted run is `pending` at its `next_position` and later completes
   without repeating its first step; the unconfirmed email's row and run are `failed` with
@@ -432,7 +442,9 @@ Priorities: 18 P0, 14 P1, 1 P2.
   says so; "Automation worker started" appears once; the event becomes a completed run with its
   notification; the stop logs "Automation worker stopped", the goroutine count returns to its
   baseline, the later event stays unprocessed and a second stop is a no-op; with the worker off,
-  "Automation worker not started" appears, the event is never dispatched and the stop is
+  "Automation worker not started" appears, the stranded run is *not* reconciled (still `running`,
+  its `sending` row untouched, no recovery log line — a process without the worker owns no run
+  and leaves the worker replica's runs alone), the event is never dispatched and the stop is
   immediate. (3) Stop blocks while the step is in flight, returns once it commits, the run is
   handed back at its next position, the second run was never claimed, and no row changes after
   Stop returned; a second Stop is a no-op even on a context that has already ended, as is Stop on
@@ -465,13 +477,15 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Type:** functional
 - **Preconditions:** `TEST_MYSQL_DSN` for the schema root.
 - **Steps:** Read the pair; on MySQL, migrate to the previous head, optionally AutoMigrate first
-  and insert a rule, run `Up`, compare every table with the AutoMigrate reference, run
-  `MigrateDatabase`, `Up` again, `Steps(-1)`, `Up`.
+  and insert a rule, apply the pair by version (`Migrate(20261028120000)`, so a later pair cannot
+  change what the root exercises), compare every table with the AutoMigrate reference, run
+  `MigrateDatabase`, `Migrate` to the same version again, `Steps(-1)`, `Migrate` again.
 - **Expected:** The up file creates the six tables with the unique keys and the five foreign keys
   and alters nothing; the down file drops the six; `main_test.go`'s expected-table list names
   them; on MySQL the schema equals the AutoMigrate reference column for column, index for index
-  and key for key, the pre-existing row is kept, `MigrateDatabase` changes nothing, the second `Up`
-  is `ErrNoChange`, the rollback drops exactly the six tables and the re-apply restores them.
+  and key for key, the pre-existing row is kept, `MigrateDatabase` changes nothing, the repeated
+  `Migrate` is `ErrNoChange`, the rollback drops exactly the six tables and the re-apply restores
+  them.
 - **Automation:** automated — `cmd/migrate/automation_migration_test.go`:
   `TestMigrationAutomationTablesListed`, `TestMigrationAutomationSchema`;
   `cmd/migrate/main_test.go` version and table assertions.

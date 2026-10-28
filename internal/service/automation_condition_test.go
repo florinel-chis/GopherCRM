@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -169,4 +170,67 @@ func moneyCondition(operator string, amount int64, currency string) models.Autom
 	step := conditionStep("amount_cents", operator, amount, "", 0)
 	step.Config.Currency = currency
 	return step
+}
+
+// A task created by a rule survives the erasure of the lead it links to, so
+// its title and description may carry only the non-personal placeholders:
+// a personal one is refused when the rule is validated, and the renderer
+// blanks it even for a rule stored before the allowlist was narrowed. The
+// email and notification text keeps the wider allowlist: a mail is not
+// stored and a notification is deleted with the lead and with its recipient.
+func TestAutomationTaskPlaceholdersExcludePersonalData(t *testing.T) {
+	env := newAutomationEnv(t, openAutomationSQLite(t))
+	lead := env.createLead(env.sales, models.LeadStatusNew)
+
+	t.Run("the renderer substitutes ids, status and source and blanks the rest", func(t *testing.T) {
+		text := "{{lead.id}}|{{lead.status}}|{{lead.source}}|{{lead.first_name}}|{{lead.last_name}}|{{lead.email}}|{{lead.phone}}|{{lead.company}}|{{owner.first_name}}|{{owner.email}}"
+		rendered := renderTaskPlaceholders(text, recordFromLead(lead))
+		assert.Equal(t, fmt.Sprintf("%d|new|trade_show|||||||", lead.ID), rendered)
+		for _, personal := range []string{automationCanaryFirstName, automationCanaryLastName, automationCanaryPhone, lead.Email, "Canary Works", env.sales.Email} {
+			assert.NotContains(t, rendered, personal)
+		}
+		assert.Equal(t, []string{"lead.first_name", "lead.last_name", "lead.email", "lead.phone", "lead.company", "owner.first_name", "owner.email"},
+			unknownTaskPlaceholders(models.AutomationEntityLead, text))
+		assert.Empty(t, unknownPlaceholders(models.AutomationEntityLead, text), "the email and notification allowlist knows every one of them")
+	})
+
+	t.Run("validation refuses a personal placeholder in a task and accepts it in an email or a notification", func(t *testing.T) {
+		rulesBefore, stepsBefore := env.count(&models.AutomationRule{}), env.count(&models.AutomationStep{})
+		task := func(title, description string) models.AutomationStep {
+			return models.AutomationStep{StepType: models.AutomationStepCreateTask, Config: models.AutomationStepConfig{
+				Recipient: models.AutomationRecipientOwner, Title: title, Description: description, DueInDays: 1,
+			}}
+		}
+		for name, step := range map[string]models.AutomationStep{
+			"first name in the title":         task("Call {{lead.first_name}}", ""),
+			"email in the description":        task("Call", "Write to {{lead.email}}"),
+			"phone in the description":        task("Call", "Dial {{lead.phone}}"),
+			"company in the title":            task("Visit {{lead.company}}", ""),
+			"owner address in the title":      task("Owned by {{owner.email}}", ""),
+			"owner name in the description":   task("Call", "Owner {{owner.first_name}} {{owner.last_name}}"),
+			"unknown placeholder in a task":   task("Call {{lead.password}}", ""),
+			"deal placeholder in a lead task": task("Call about {{deal.title}}", ""),
+		} {
+			t.Run(name, func(t *testing.T) {
+				rule := &models.AutomationRule{Name: "Bad task", EntityType: models.AutomationEntityLead, TriggerType: models.AutomationEventLeadCreated, Steps: []models.AutomationStep{step}}
+				err := env.svc.CreateRule(rule, env.admin.ID)
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, apperrors.ErrValidation), "got %v", err)
+			})
+		}
+		assert.Equal(t, rulesBefore, env.count(&models.AutomationRule{}), "no refused rule wrote a row")
+		assert.Equal(t, stepsBefore, env.count(&models.AutomationStep{}))
+
+		accepted := &models.AutomationRule{Name: "Good", EntityType: models.AutomationEntityLead, TriggerType: models.AutomationEventLeadCreated, Steps: []models.AutomationStep{
+			task("Follow up with lead {{lead.id}}", "Status {{lead.status}}, source {{lead.source}}"),
+			emailStep(models.AutomationRecipientOwner, 0),
+			notifyStep(models.AutomationRecipientOwner, 0),
+		}}
+		require.NoError(t, env.svc.CreateRule(accepted, env.admin.ID), "ids, status and source in a task; the name, email and company in the mail and the notification")
+
+		dealTask := &models.AutomationRule{Name: "Deal task", EntityType: models.AutomationEntityDeal, TriggerType: models.AutomationEventDealCreated, Steps: []models.AutomationStep{
+			dealTaskStep(models.AutomationRecipientOwner, 0, 1),
+		}}
+		require.NoError(t, env.svc.CreateRule(dealTask, env.admin.ID), "every deal placeholder is allowed in a task: deals hold no personal data")
+	})
 }

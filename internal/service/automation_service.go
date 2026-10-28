@@ -200,6 +200,15 @@ func validateStep(entityType string, step *models.AutomationStep, stepCount int)
 		}
 		return nil
 	}
+	// A task outlives the erasure of the lead it links to, so its text is
+	// checked against the narrower task allowlist (no name, address, phone or
+	// company); a personal placeholder is an unknown placeholder here.
+	taskPlaceholders := func(name, value string) error {
+		if unknown := unknownTaskPlaceholders(entityType, value); len(unknown) > 0 {
+			return invalidRule("step %d: %s uses a placeholder not allowed in a task %q", pos, name, unknown[0])
+		}
+		return nil
+	}
 	recipient := func() error {
 		switch cfg.Recipient {
 		case "":
@@ -266,10 +275,10 @@ func validateStep(entityType string, step *models.AutomationStep, stepCount int)
 		if err := recipient(); err != nil {
 			return err
 		}
-		if err := placeholders("title", cfg.Title); err != nil {
+		if err := taskPlaceholders("title", cfg.Title); err != nil {
 			return err
 		}
-		if err := placeholders("description", cfg.Description); err != nil {
+		if err := taskPlaceholders("description", cfg.Description); err != nil {
 			return err
 		}
 	case models.AutomationStepAssignOwner:

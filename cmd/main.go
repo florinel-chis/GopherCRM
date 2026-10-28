@@ -312,11 +312,20 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// assumption: no live executor owns them. A run goes back to pending at
 	// its next position; one whose last step row is an email in sending is
 	// failed with email_unconfirmed, so the mail is never sent twice.
-	if reset, failed, err := automationEngine.Reconcile(); err != nil {
-		utils.Logger.WithError(err).Error("Failed to reconcile stranded automation runs")
-	} else if reset > 0 || failed > 0 {
-		utils.Logger.WithFields(map[string]interface{}{"reset": reset, "failed": failed}).
-			Warn("Recovered automation runs left behind by a previous process")
+	//
+	// Only the process that runs the worker reconciles. A replica started with
+	// AUTOMATION_ENABLED=false owns no run and must not touch the ones the
+	// worker replica is executing: resetting a live running run would make its
+	// next conditional advance fail and the step be re-executed, and failing
+	// an email mid-send would leave the run failed under a step the worker
+	// then marks succeeded.
+	if cfg.Automation.Enabled {
+		if reset, failed, err := automationEngine.Reconcile(); err != nil {
+			utils.Logger.WithError(err).Error("Failed to reconcile stranded automation runs")
+		} else if reset > 0 || failed > 0 {
+			utils.Logger.WithFields(map[string]interface{}{"reset": reset, "failed": failed}).
+				Warn("Recovered automation runs left behind by a previous process")
+		}
 	}
 
 	// Recover runs stranded by the previous process before anything can start a

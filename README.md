@@ -727,7 +727,9 @@ expired, or if its owner has been deactivated or erased.
   `user_id`), `assign_owner` (`user_id`), `send_email` (`subject`, `body`, recipient) and `notify`
   (`title`, `body?`, recipient); an invalid trigger or step, more than 20 steps, more than 90 days
   of waits, a backward or out-of-range `else_position` or an unknown `{{placeholder}}` is 400
-  `INVALID_INPUT` and writes nothing; an unknown, inactive or non-staff user is 400
+  `INVALID_INPUT` and writes nothing; a `create_task` title or description accepts only the
+  non-personal placeholders — `lead.id`, `lead.status`, `lead.source` or the `deal.*` fields —
+  because a task survives the erasure of its lead; an unknown, inactive or non-staff user is 400
   `INVALID_REFERENCE`)*
 - `GET /api/v1/automation/rules/:id` - Get a rule with its steps
 - `PUT /api/v1/automation/rules/:id` - Replace a rule *(one transaction: version + 1, steps replaced,
@@ -860,10 +862,12 @@ gophercrm/
   automation email step is logged as `succeeded`, although nothing was delivered. Fine for
   development, useless in production.
 - **The automation worker assumes a single API replica.** Runs are claimed by conditional updates
-  and recovered only at boot (`AUTOMATION_ENABLED`, see `.env.example`); there is no lease
-  timeout, so a run left `running` by a crashed replica is handed back only when a process
-  restarts. Run the worker on one instance. Processed events and finished runs are kept; there is
-  no retention pruning yet.
+  and recovered only at boot of the worker process (`AUTOMATION_ENABLED`, see `.env.example`);
+  there is no lease timeout, so a run left `running` by a crashed worker is handed back only
+  when that process restarts. Enable the worker on exactly one instance: a replica started with
+  `AUTOMATION_ENABLED=false` serves the API and records events but neither executes runs nor
+  reconciles them at boot, so it leaves the worker replica's runs alone. Processed events and
+  finished runs are kept; there is no retention pruning yet.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.

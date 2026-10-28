@@ -249,9 +249,11 @@ func evaluateCondition(cfg models.AutomationStepConfig, rec *automationRecord) (
 // automationPlaceholderPattern matches {{ name }} in a step's text fields.
 var automationPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.]*)\s*\}\}`)
 
-// automationPlaceholders is the allowlist of placeholders per entity type.
-// The rendered text goes into a task, a notification or a staff email, never
-// into a log line.
+// automationPlaceholders is the allowlist of placeholders per entity type for
+// the text of a send_email and a notify step. The rendered text goes into a
+// staff email, which is not stored, or into a notification, which is
+// hard-deleted with the lead it refers to and with its recipient; it never
+// goes into a log line.
 var automationPlaceholders = map[string]map[string]bool{
 	models.AutomationEntityLead: {
 		"lead.id": true, "lead.first_name": true, "lead.last_name": true, "lead.email": true,
@@ -265,24 +267,67 @@ var automationPlaceholders = map[string]map[string]bool{
 	},
 }
 
-// unknownPlaceholders returns every placeholder of text that the entity type
-// does not know, in order of appearance.
+// automationTaskPlaceholders is the narrower allowlist for the title and
+// description of a create_task step. A task is a business record that
+// survives the erasure of the lead it links to (the link resolves, the person
+// does not), so its text may carry only what the erasure keeps: ids, the
+// lead's status and source, and the deal's fields, which hold no personal
+// data. The lead's name, email, phone and company — scrubbed by the erasure —
+// and the owner's name and address are not available here, so an erased
+// person cannot outlive the erasure through a task the rule created.
+var automationTaskPlaceholders = map[string]map[string]bool{
+	models.AutomationEntityLead: {
+		"lead.id": true, "lead.status": true, "lead.source": true,
+	},
+	models.AutomationEntityDeal: {
+		"deal.id": true, "deal.title": true, "deal.stage": true, "deal.amount": true,
+		"deal.currency": true, "deal.source": true,
+	},
+}
+
+// unknownPlaceholders returns every placeholder of an email or notification
+// text that the entity type does not know, in order of appearance.
 func unknownPlaceholders(entityType, text string) []string {
+	return unknownPlaceholdersIn(automationPlaceholders[entityType], text)
+}
+
+// unknownTaskPlaceholders is unknownPlaceholders for the text of a
+// create_task step, against the narrower task allowlist.
+func unknownTaskPlaceholders(entityType, text string) []string {
+	return unknownPlaceholdersIn(automationTaskPlaceholders[entityType], text)
+}
+
+func unknownPlaceholdersIn(allowed map[string]bool, text string) []string {
 	var unknown []string
 	for _, match := range automationPlaceholderPattern.FindAllStringSubmatch(text, -1) {
-		if !automationPlaceholders[entityType][match[1]] {
+		if !allowed[match[1]] {
 			unknown = append(unknown, match[1])
 		}
 	}
 	return unknown
 }
 
-// renderPlaceholders substitutes the record's and its owner's values. An
-// unknown placeholder (impossible for a validated rule) renders empty.
+// renderPlaceholders substitutes the record's and its owner's values into an
+// email or notification text. An unknown placeholder (impossible for a
+// validated rule) renders empty.
 func renderPlaceholders(text string, rec *automationRecord, owner *models.User) string {
 	return automationPlaceholderPattern.ReplaceAllStringFunc(text, func(match string) string {
 		name := automationPlaceholderPattern.FindStringSubmatch(match)[1]
 		return placeholderValue(name, rec, owner)
+	})
+}
+
+// renderTaskPlaceholders is renderPlaceholders for the text of a task: only
+// the task allowlist is substituted, so a personal placeholder renders empty
+// even in a rule stored before the allowlist was narrowed.
+func renderTaskPlaceholders(text string, rec *automationRecord) string {
+	allowed := automationTaskPlaceholders[rec.entityType]
+	return automationPlaceholderPattern.ReplaceAllStringFunc(text, func(match string) string {
+		name := automationPlaceholderPattern.FindStringSubmatch(match)[1]
+		if !allowed[name] {
+			return ""
+		}
+		return placeholderValue(name, rec, nil)
 	})
 }
 

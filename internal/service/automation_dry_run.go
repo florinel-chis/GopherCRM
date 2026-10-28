@@ -80,7 +80,7 @@ func (e *AutomationEngine) DryRun(rule *models.AutomationRule, entityType string
 				entry.Outcome, entry.ErrorCode = models.AutomationOutcomeSkipped, models.AutomationErrorRecipientUnavailable
 				break
 			}
-			task := buildAutomationTask(cfg, rec, nil, assignee.ID, clock)
+			task := buildAutomationTask(cfg, rec, assignee.ID, clock)
 			entry.Details["assignee_id"] = assignee.ID
 			entry.Details["due_date"] = task.DueDate.Format(time.RFC3339)
 			if task.LeadID != nil {

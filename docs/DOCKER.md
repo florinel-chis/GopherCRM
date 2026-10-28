@@ -107,9 +107,11 @@ Notes on the wiring:
   real mail.
 - Follow-up automation: the worker is on by default (`AUTOMATION_ENABLED`,
   `AUTOMATION_POLL_INTERVAL_SECONDS` in `.env.example`) and assumes a single
-  backend container — do not scale the backend service to several replicas
-  with the worker enabled on each; runs left `running` by a killed container
-  are recovered when the next container boots.
+  backend container. If you scale the backend service, keep the worker
+  enabled on exactly one replica and set `AUTOMATION_ENABLED=false` on the
+  others: those serve the API and record events but neither execute runs nor
+  reconcile them at boot. Runs left `running` by a killed worker container
+  are recovered when the next worker container boots.
 
 ## SQLite flavor (no database server)
 

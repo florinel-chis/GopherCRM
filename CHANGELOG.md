@@ -25,8 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits in `resume_at` so they survive a restart, continues schedule passes from a persisted
   cursor (500 records per tick, one pass per UTC day, same-day catch-up, no backfill) and
   reconciles interrupted runs at boot (a `send_email` left in `sending` is failed with
-  `email_unconfirmed` and never resent). The email step is two transactions around one
-  `Mailer.Send`. Rule updates cancel the rule's active runs with `rule_changed` (disable:
+  `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
+  neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
+  step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
+  only the non-personal placeholders (`lead.id`, `lead.status`, `lead.source`, the `deal.*`
+  fields) because a task survives the erasure of its lead; the name, email, phone, company and
+  owner placeholders stay available to the email and notification text, which does not outlive
+  the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
   `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
   run (`POST /automation/rules/{id}/dry-run`) reports each step's would-be outcome and writes,
   sends and notifies nothing. The run history (`/automation/runs`) follows lead and deal

@@ -165,7 +165,7 @@ func (h *automationAPIHarness) validRuleBody() map[string]interface{} {
 		"steps": []map[string]interface{}{
 			{"step_type": "wait", "config": map[string]interface{}{"duration_minutes": 60}},
 			{"step_type": "condition", "config": map[string]interface{}{"field": "status", "operator": "eq", "value": "qualified", "else": "stop"}},
-			{"step_type": "create_task", "config": map[string]interface{}{"title": "Call {{lead.first_name}}", "due_in_days": 2, "recipient": "owner"}},
+			{"step_type": "create_task", "config": map[string]interface{}{"title": "Call lead {{lead.id}}", "due_in_days": 2, "recipient": "owner"}},
 			{"step_type": "notify", "config": map[string]interface{}{"title": "Lead {{lead.id}} is waiting", "body": "Please follow up", "recipient": "user", "user_id": h.users["sales"].ID}},
 		},
 	}
@@ -248,6 +248,14 @@ func TestAutomationRuleAPISQLite(t *testing.T) {
 			}),
 			"unknown placeholder": h.withSteps(h.validRuleBody(), []map[string]interface{}{
 				{"step_type": "notify", "config": map[string]interface{}{"title": "Hello {{lead.password}}", "recipient": "owner"}},
+			}),
+			// A task survives the erasure of its lead, so a personal placeholder
+			// that an email or notification may use is refused in a task.
+			"personal placeholder in a task title": h.withSteps(h.validRuleBody(), []map[string]interface{}{
+				{"step_type": "create_task", "config": map[string]interface{}{"title": "Call {{lead.first_name}}", "recipient": "owner"}},
+			}),
+			"personal placeholder in a task description": h.withSteps(h.validRuleBody(), []map[string]interface{}{
+				{"step_type": "create_task", "config": map[string]interface{}{"title": "Call", "description": "Dial {{lead.phone}}", "recipient": "owner"}},
 			}),
 			"no steps": h.withSteps(h.validRuleBody(), []map[string]interface{}{}),
 		}

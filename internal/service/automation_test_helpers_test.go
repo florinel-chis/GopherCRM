@@ -262,7 +262,10 @@ func (e *automationEnv) createDeal(owner *models.User, stage models.DealStage, a
 // step builders. The text of a task, an email and a notification carries
 // placeholders of the rule's entity type: the lead builders render lead.*
 // values, the deal builders deal.* values. A placeholder of the other entity
-// type is an unknown placeholder and the rule is refused.
+// type is an unknown placeholder and the rule is refused. A task may only
+// carry the non-personal placeholders (ids, status, source, deal fields): a
+// task survives the erasure of its lead, so the name, email, phone and
+// company placeholders the email and notify builders use are refused in it.
 func waitStep(minutes int64) models.AutomationStep {
 	return models.AutomationStep{StepType: models.AutomationStepWait, Config: models.AutomationStepConfig{DurationMinutes: minutes}}
 }
@@ -276,7 +279,7 @@ func conditionStep(field, operator string, value interface{}, elseBranch string,
 
 func taskStep(recipient string, userID uint, dueInDays int) models.AutomationStep {
 	return models.AutomationStep{StepType: models.AutomationStepCreateTask, Config: models.AutomationStepConfig{
-		Recipient: recipient, UserID: userID, Title: "Follow up with {{lead.first_name}}", Description: "Call {{lead.phone}}", DueInDays: dueInDays,
+		Recipient: recipient, UserID: userID, Title: "Follow up with lead {{lead.id}}", Description: "Status {{lead.status}}, source {{lead.source}}", DueInDays: dueInDays,
 	}}
 }
 

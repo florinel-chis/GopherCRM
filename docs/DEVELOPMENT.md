@@ -555,8 +555,9 @@ settings:
 - `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
 - `DISABLE_RATE_LIMIT` — test-only escape hatch, never enable in production
-- `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker; the API and the
-  event capture work without it, but no run starts or resumes. One replica only.
+- `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker and runs the
+  boot-time reconciliation; the API and the event capture work without it, but no run starts or
+  resumes and no stranded run is touched. Enable it on exactly one replica.
 - `AUTOMATION_POLL_INTERVAL_SECONDS` (default 30, clamped to 1..3600) — how often the worker
   polls for events, due runs and schedule passes; also the granularity of every wait
 
@@ -601,8 +602,14 @@ What happens on `DELETE`:
   (`erasurePlan.BeforeScrub`): every pending, waiting or running run on the lead is cancelled with
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification
   whose entity is the lead is hard-deleted, because a rendered title or body may name the person.
-  Run logs hold ids only and stay. A user erasure hard-deletes the notifications addressed to the
-  user alongside the credential purge. A failure in either step rolls the whole erasure back; a
+  Run logs hold ids only and stay. The tasks a `create_task` step created stay too, as every task
+  does (a business record whose `lead_id` still resolves), and that is safe because their text
+  cannot name the person: a task's title and description accept only the non-personal
+  placeholders (`lead.id`, `lead.status`, `lead.source` and the `deal.*` fields), a personal one
+  (`lead.first_name`, `lead.email`, `lead.phone`, `lead.company`, `owner.*`) is refused when the
+  rule is validated, and the task renderer blanks it even in a rule stored before the allowlist
+  was narrowed. A user erasure hard-deletes the notifications addressed to the user alongside the
+  credential purge. A failure in either step rolls the whole erasure back; a
   table absent from the schema (a fixture that migrates a subset) is skipped by a migrator probe,
   never by swallowing an error. The order matters on MySQL: an automation step holds the lead row
   under `FOR UPDATE` while it runs, so an erasure that reached the lead first would wait on that
@@ -682,7 +689,8 @@ The pieces, and why each is shaped the way it is:
   error and no row for a duplicate on either. The executor claims a run with `UPDATE … SET status =
   'running' WHERE id = ? AND status = <pending|waiting>` (a waiting run only once `resume_at <=
   now`). A schedule batch advances the rule's cursor with `UPDATE … WHERE id = ? AND
-  schedule_pass_on <=> ? AND schedule_cursor = ?`; two workers handing out the same batch commit
+  schedule_cursor = ?` plus `schedule_pass_on IS NULL` before the first pass or `schedule_pass_on
+  = ?` afterwards (`AdvanceScheduleCursor`); two workers handing out the same batch commit
   exactly one. Every one of these changes a column value when it matches, so MySQL's changed-rows
   count is the matched count.
 - **Each step: a locking read of the record, then a conditional advance.** A step other than
@@ -700,7 +708,9 @@ The pieces, and why each is shaped the way it is:
   effect, the log row and the advance back together; the run is handed back to `pending` at the
   same position (`attempts + 1`, the third failure fails it with `step_failed`) and the next
   execution performs the step exactly once. A recipient or assignee that is inactive, erased or not
-  staff is logged as `skipped` with `recipient_unavailable`.
+  staff is logged as `skipped` with `recipient_unavailable`. The task's title and description are
+  rendered through the task placeholder allowlist (ids, status, source, deal fields), never
+  through the wider email and notification one: a task outlives the erasure of its lead.
 - **Email at most once.** `send_email` cannot be one transaction — a relay holds no lock and cannot
   be rolled back — so it is two: the first performs the same locking read and a locking check of
   the run row, then commits a run-step row with outcome `sending` (unique on `run_id, position`, so
@@ -711,11 +721,15 @@ The pieces, and why each is shaped the way it is:
   is failed with `email_unconfirmed` together with the run; the mail is never sent again. A run
   cancelled between the two halves stays cancelled with its row finalized.
 - **Boot reconciliation, single replica.** `AutomationEngine.Reconcile` runs in `setupDependencies`
-  before the worker and the HTTP server start: a run left in `running` goes back to `pending` at
-  its `next_position`; one whose last step row is a `send_email` in `sending` is failed as above.
-  That is only safe because the worker assumes a single API replica: no live executor owns the
-  runs it touches, and there is no lease timeout on `claimed_at`. A second replica with the worker
-  enabled would double-execute; multi-replica leases are a roadmap item.
+  before the worker and the HTTP server start, and only when `AUTOMATION_ENABLED` is true: a run
+  left in `running` goes back to `pending` at its `next_position`; one whose last step row is a
+  `send_email` in `sending` is failed as above. That is only safe because the worker assumes a
+  single API replica: no live executor owns the runs it touches, and there is no lease timeout on
+  `claimed_at`. A process started with the worker off owns no run and therefore reconciles
+  nothing — a restart of such a replica beside the worker replica would otherwise reset the runs
+  the worker is executing (their next conditional advance would fail and the step would be
+  repeated) and fail an email that is mid-send. A second replica with the worker enabled would
+  double-execute; multi-replica leases are a roadmap item.
 - **Waits and schedules survive a restart.** A wait step advances the run to `waiting` with
   `resume_at = now + duration` (written in UTC, compared with a UTC parameter, so SQLite's text
   timestamps order correctly) and `next_position` after the wait; the worker claims it at the first
@@ -736,8 +750,9 @@ The pieces, and why each is shaped the way it is:
 - **The drain.** `AutomationRuntime.Stop` cancels the worker context (so the loop claims no further
   run), closes admission, cancels the owned context and waits for every admitted step to release —
   a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
-  afterwards — then joins the goroutine, all under the deadline main passes (`automationDrainTimeout`,
-  15 s). A drained runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
+  afterwards — then joins the goroutine, all under the one deadline main passes to the combined
+  handle (`aeoDrainTimeout`, 15 s, shared with the AEO drain that runs after it). A drained
+  runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
   even on a context that has already ended: the join and the admission drain check their
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
   the deadline passes: the process exits without closing the database and the next boot reconciles.
@@ -757,7 +772,9 @@ Regression roots, all on SQLite and on a disposable `TEST_MYSQL_DSN` schema unle
 `TestAutomationRuleLifecycle{SQLite,MySQL}` (a fault injected during the step replacement),
 `TestAutomationStepExecution{SQLite,MySQL}` (the MySQL root pauses a step after its first read
 through the engine's instance-local seams and commits a cancel, a rule change and an erasure from
-a second connection), `TestAutomationConditionBranching`, `TestAutomationWaitResume{SQLite,MySQL}`
+a second connection), `TestAutomationConditionBranching`,
+`TestAutomationTaskPlaceholdersExcludePersonalData` (a personal placeholder is refused in a task
+and blanked by the task renderer), `TestAutomationWaitResume{SQLite,MySQL}`
 (a fresh engine on the same database after the clock passes `resume_at`),
 `TestAutomationScheduleTrigger{SQLite,MySQL}` (1,201 records over three ticks, a racing worker),
 `TestAutomationDryRunNoSideEffects{SQLite,MySQL}` (a before/after snapshot of every table),
@@ -766,7 +783,8 @@ a second connection), `TestAutomationConditionBranching`, `TestAutomationWaitRes
 `TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
 repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 `TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);
-`TestAutomationRuntimeLifecycle` (`cmd`, the real wiring over a SQLite file);
+`TestAutomationRuntimeLifecycle` (`cmd`, the real wiring over a SQLite file: the worker replica
+reconciles and runs, a replica with the worker off leaves a stranded run untouched);
 `TestMigrationAutomationSchema` and `TestMigrationAutomationTablesListed` (`cmd/migrate`). The MySQL
 roots skip without the variable and fail when it points at an unreachable server.
 

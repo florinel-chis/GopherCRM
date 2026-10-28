@@ -2,8 +2,11 @@ package main
 
 // AC-15 through the real wiring: setupRouter builds every repository, service
 // and handler over a SQLite file exactly as main does, reconciles stranded
-// runs, starts the automation worker only when AUTOMATION_ENABLED is on and
-// returns the drain handle main calls before closing the database.
+// runs and starts the automation worker only when AUTOMATION_ENABLED is on,
+// and returns the drain handle main calls before closing the database. A
+// process without the worker owns no run, so it must not reconcile either:
+// under the single-replica assumption the worker replica is the only one
+// that may touch a run left in running.
 
 import (
 	"context"
@@ -164,9 +167,10 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 		require.NoError(t, models.CloseDatabase())
 	})
 
-	t.Run("disabled: no worker, no goroutine, the API still serves", func(t *testing.T) {
+	t.Run("disabled: no worker, no reconciliation, no goroutine, the API still serves", func(t *testing.T) {
 		boot := bootAutomation(t, false)
 		rule, lead := seedAutomationFixture(t, boot.repo)
+		stranded := strandedRun(t, boot.repo, rule, lead.ID)
 		backgroundCtx, stopBackground := context.WithCancel(context.Background())
 		t.Cleanup(stopBackground)
 		_, stop := setupRouter(backgroundCtx, boot.cfg)
@@ -178,13 +182,25 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 		assert.Equal(t, 1, boot.logs.count(`"msg":"Automation worker not started"`))
 		assert.Equal(t, 0, boot.logs.count(`"msg":"Automation worker started"`))
 
+		// A replica without the worker owns no run and leaves the worker
+		// replica's runs alone: the run in running with its email in sending
+		// is exactly as it was, and nothing was logged about recovering it.
+		untouched := automationRun(t, stranded.ID)
+		assert.Equal(t, models.AutomationRunRunning, untouched.Status, "a non-worker process does not reconcile")
+		assert.Empty(t, untouched.ErrorCode)
+		var sendingRows int64
+		require.NoError(t, models.DB.Model(&models.AutomationRunStep{}).
+			Where("run_id = ? AND outcome = ?", stranded.ID, models.AutomationOutcomeSending).Count(&sendingRows).Error)
+		assert.EqualValues(t, 1, sendingRows, "the sending row is left for the worker replica to finalize")
+		assert.Equal(t, 0, boot.logs.count(`"msg":"Recovered automation runs left behind by a previous process"`))
+
 		require.NoError(t, boot.repo.RecordEvent(&models.AutomationEvent{EntityType: "lead", EntityID: lead.ID, EventType: "lead_created", Origin: "user"}))
 		time.Sleep(1500 * time.Millisecond)
 		events, err := boot.repo.ListUnprocessedEvents(10)
 		require.NoError(t, err)
 		assert.Len(t, events, 1, "the event is recorded but nothing dispatches it")
 		var runs int64
-		require.NoError(t, models.DB.Model(&models.AutomationRun{}).Where("rule_id = ?", rule.ID).Count(&runs).Error)
+		require.NoError(t, models.DB.Model(&models.AutomationRun{}).Where("rule_id = ? AND id <> ?", rule.ID, stranded.ID).Count(&runs).Error)
 		assert.Zero(t, runs)
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

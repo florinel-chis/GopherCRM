@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -70,7 +71,11 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 		assert.Nil(t, task.CustomerID)
 		require.NotNil(t, task.DueDate)
 		assert.WithinDuration(t, env.clock.Now().UTC().Add(48*time.Hour), *task.DueDate, time.Second, "due due_in_days after execution, UTC")
-		assert.Equal(t, "Follow up with "+automationCanaryFirstName, task.Title)
+		assert.Equal(t, fmt.Sprintf("Follow up with lead %d", lead.ID), task.Title)
+		assert.Equal(t, "Status new, source trade_show", task.Description)
+		for _, personal := range []string{automationCanaryFirstName, automationCanaryLastName, automationCanaryPhone, lead.Email} {
+			assert.NotContains(t, task.Title+" "+task.Description, personal, "a task carries no personal data of the lead")
+		}
 		assert.Equal(t, models.TaskStatusPending, task.Status)
 		assert.EqualValues(t, task.ID, steps[0].Details["task_id"])
 		assert.EqualValues(t, lead.ID, steps[0].Details["lead_id"])

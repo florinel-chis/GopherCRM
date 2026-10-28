@@ -320,14 +320,22 @@ forward `else_position` within the rule, allowlisted condition fields and operat
 of the matching JSON type, known `{{placeholders}}` only, and every named user a live, active
 staff account.
 
-The placeholders a task title or description, an email subject or body and a notification title
-or body may use are scoped to the rule's entity type. A lead rule knows `lead.id`,
-`lead.first_name`, `lead.last_name`, `lead.email`, `lead.phone`, `lead.company`, `lead.status` and
-`lead.source`; a deal rule knows `deal.id`, `deal.title`, `deal.stage`, `deal.amount` (formatted
-with its currency), `deal.currency` and `deal.source`; both know `owner.first_name`,
-`owner.last_name` and `owner.email` of the record's owner at execution time. Anything else,
-including a `lead.*` placeholder in a deal rule, is an unknown placeholder and the rule is refused.
-The rendered text goes into the task, the mail or the notification, never into a log line.
+The placeholders an email subject or body and a notification title or body may use are scoped
+to the rule's entity type. A lead rule knows `lead.id`, `lead.first_name`, `lead.last_name`,
+`lead.email`, `lead.phone`, `lead.company`, `lead.status` and `lead.source`; a deal rule knows
+`deal.id`, `deal.title`, `deal.stage`, `deal.amount` (formatted with its currency),
+`deal.currency` and `deal.source`; both know `owner.first_name`, `owner.last_name` and
+`owner.email` of the record's owner at execution time. Anything else, including a `lead.*`
+placeholder in a deal rule, is an unknown placeholder and the rule is refused. A mail is not
+stored, and a notification is hard-deleted with the lead it refers to and with its recipient, so
+neither rendering outlives the person.
+
+A task title or description is narrower: `lead.id`, `lead.status` and `lead.source` for a lead
+rule, the six `deal.*` placeholders for a deal rule, and nothing of the owner. A task is a
+business record that is kept when its lead is erased (the link resolves, the person does not), so
+the name, email, phone and company placeholders are refused in it when the rule is validated, and
+the task renderer blanks them even in a rule stored before the allowlist was narrowed. The
+rendered text goes into the task, the mail or the notification, never into a log line.
 
 ### Automation Event
 
