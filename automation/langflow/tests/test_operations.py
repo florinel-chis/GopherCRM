@@ -104,6 +104,28 @@ class OperationalReports(unittest.TestCase):
         self.assertEqual((self.config.state_dir / 'issue-95.json').read_bytes(), before)
         self.assertIn('workflow report', operations.markdown(result))
 
+    def test_retired_execution_is_terminal_in_handoff_markdown_and_history(self):
+        self.assertIn('retired', operations.TERMINAL)
+        disposition = dict(issue_state='CLOSED', state_reason='COMPLETED', validated_by_this_execution=False,
+                           closing_prs=[dict(number=159, state='MERGED', head='later', merge_commit='merge')])
+        Store(self.config.state_dir).write('issue-95', dict(
+            issue=95, stage='retired', head='abc', provider_calls=2, max_provider_calls=8, deadline=1,
+            last_error='Issue was closed without a confirmed runner merge', execution_id='one', policy='same',
+            validation_plan={'profile': 'full'}, remote_disposition=disposition,
+            attempts=[dict(stage='validation', duration_seconds=60, outcome='failed')]))
+        result = operations.handoff(self.config, issue=95)
+        self.assertEqual(result['status'], 'retired')
+        self.assertIsNone(result['active_stop_reason'])
+        self.assertIn('terminal', result['next_action'])
+        self.assertEqual(result['remote_disposition'], disposition)
+        text = operations.markdown(result)
+        self.assertIn('Status: **retired**', text)
+        self.assertIn('Remote disposition: issue CLOSED (COMPLETED); closing PRs #159 MERGED at `later`', text)
+        self.assertIn('not validated by this execution', text)
+        history = operations.measurements(self.config.state_dir)
+        self.assertEqual(history['runs'][0]['status'], 'retired')
+        self.assertEqual(history['groups'], [])
+
     def test_history_ignores_backups_and_does_not_treat_cancelled_as_completed(self):
         store = Store(self.config.state_dir)
         record = dict(issue=95, stage='merged', execution_id='one', policy='same',
@@ -124,6 +146,29 @@ class OperationalReports(unittest.TestCase):
         self.assertEqual(result['selection']['profile'], 'full')
         self.assertTrue(result['missing_database_policy'])
         self.assertEqual(result['estimate']['status'], 'unknown')
+
+    def test_preview_of_a_frontend_manifest_includes_the_database_browser_matrix(self):
+        from gophercrm_runner.config import DATABASE_CHECKS
+        from test_contracts import VITEST_CHECK, frontend_manifest
+        config = replace(self.config, validation_mode='contextual', database_test_commands=DATABASE_CHECKS,
+                         acceptance_checks={'ui-deals': VITEST_CHECK})
+        for name in ['health-smoke', 'admin-tickets', 'admin-entity-suite']:
+            spec = self.checkout / 'gocrm-ui/e2e/tests' / (name + '.spec.ts')
+            spec.parent.mkdir(parents=True, exist_ok=True)
+            spec.write_text('// fixture spec\n')
+        paths = ['gocrm-ui/src/pages/tickets/TicketList.tsx']
+        backend = operations.validation_preview(config, paths, manifest=dict(
+            frontend_manifest(), validation_profile='backend'))
+        self.assertEqual(backend['selection']['profile'], 'contextual')
+        self.assertNotIn(list(DATABASE_CHECKS[-1]), backend['commands'])
+        result = operations.validation_preview(config, paths, manifest=frontend_manifest())
+        self.assertIn(VITEST_CHECK['argv'], result['commands'])
+        self.assertEqual(sum(c[:2] == ['make', 'e2e'] for c in result['commands']), 2)
+        self.assertIn(list(DATABASE_CHECKS[-1]), result['commands'])
+        self.assertFalse(result['missing_database_policy'])
+        bare = replace(config, database_test_commands=())
+        self.assertTrue(operations.validation_preview(bare, ['gocrm-ui/src/pages/deals/DealList.tsx'],
+                                                      manifest=frontend_manifest())['missing_database_policy'])
 
     def test_process_identity_mismatch_is_not_liveness(self):
         with patch('gophercrm_runner.resources.process_identity', return_value='new-process'):

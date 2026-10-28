@@ -72,6 +72,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numbered owner comments and inherit the parent run's journals. See the
   [runner guide](automation/langflow/README.md#analyse-a-feature-request).
 
+- **Frontend task profile with named Vitest evidence (runner).** A task manifest may now set
+  `validation_profile: "frontend"`. Its acceptance checks are registry entries of the new
+  optional `kind: "vitest"` (`go` remains the default, so existing entries and frozen contract
+  hashes are unchanged) whose argument array is exactly `npm --prefix gocrm-ui test --silent --
+  --run --reporter=json` followed by test files under `gocrm-ui/src`; each named test is a file
+  and the exact `fullName` the JSON reporter prints, and must report `passed` exactly once.
+  Failed, skipped, pending or todo cases, a required file without results, and duplicates fail
+  acceptance. A frontend ticket changes only `gocrm-ui/`, `docs/`, `README.md` and
+  `CHANGELOG.md`, cannot mix Go and Vitest checks, keeps `make verify` (build, zero-warning lint,
+  unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
+  `database_test_commands` and `TEST_MYSQL_DSN`. For every profile, the Vitest and Playwright
+  configuration, the Vitest setup files and the whole `gocrm-ui/e2e/` suite are now protected
+  validation gates that no agent may change; only a newly added `gocrm-ui/e2e/tests/*.spec.ts`
+  is admitted. See the [runner guide](automation/langflow/README.md#execute-the-queue).
+- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
+  closed outside the runner, recording the closure and its closing pull requests as unvalidated
+  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
+
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
   the administrator's stored keys when a tick is due, so a key saved in Settings is used by the
@@ -207,6 +225,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The remediation runner no longer strands an implementation that changes a path outside the
+  frozen task scope.** Finalization checked the frozen scope before committing, so a single
+  out-of-scope edit left the agent's work uncommitted at `finalize_implementation`, where `run`
+  repeated the same refusal, `freeze --refresh` required a revalidation first and `revalidate`
+  refused both the stage and the dirty worktree. Protected and private paths and changed
+  validation gates are still refused before anything is written. The scope check now runs after
+  the commit: the implementation and its claims are kept on the runner branch, `last_error`
+  records the violation and the execution stops at `validate`, where the same check still blocks
+  testing, review and publication. The operator inspects the diff and either widens the scope
+  (`revalidate` when main has advanced, then `freeze --refresh` and `run --execute`, which
+  validates the existing commit without another implementation call) or leaves the execution
+  for an explicit disposition.
+- **Feature analysis checks anticipate the execution gates.** The specification and revision
+  stages now report context references that are not Markdown, are missing at the base commit or
+  exceed the 128 KiB guidance cap; Go test-plan names that are not bare identifiers or appear in
+  more than one registry entry; `./cmd/migrate` registry entries whose `-run` pattern and tests
+  do not cover `TestMigrationFresh_FullUpAndDown` and
+  `TestMigrationUpgrade_FromMainAutoMigratedSchema`; and migration or CHANGELOG changes whose
+  scope omits `cmd/migrate/*_test.go` or `CHANGELOG.md`. An over-budget one-pager note states
+  the excess and the largest fields, and the revision reports a one-pager it did not shrink. The
+  stage rules state each requirement.
 - **The remediation runner waits for an in-progress workflow run before it collects failed-job
   logs.** A required check that failed while other jobs of the same run were still running made
   the runner request the run's failed-job logs, which `gh` refuses until the run completes; the

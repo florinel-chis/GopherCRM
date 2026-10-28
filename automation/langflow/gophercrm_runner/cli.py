@@ -124,6 +124,12 @@ def main():
     abandon.add_argument('--reason', required=True)
     abandon.add_argument('--processes-stopped', action='store_true',
                          help='Confirm unresolved provider processes were inspected and stopped')
+    retire = sub.add_parser('retire-issue', help='Retire an unfinished ticket whose issue was closed outside this runner')
+    retire.add_argument('--config', type=Path, required=True)
+    retire.add_argument('--issue', type=int, required=True)
+    retire.add_argument('--reason', required=True)
+    retire.add_argument('--processes-stopped', action='store_true',
+                        help='Confirm unresolved provider processes were inspected and stopped')
     for name in ('extend-budget', 'report', 'note'):
         control = sub.add_parser(name)
         control.add_argument('--config', type=Path, required=True)
@@ -286,12 +292,16 @@ def main():
             local.setup(args.checkout, args.directory)
         else:
             local.serve(args.directory, args.port)
-    elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note', 'abandon-issue'}:
+    elif args.command in {'revalidate', 'doctor', 'freeze', 'extend-budget', 'report', 'note', 'abandon-issue',
+                          'retire-issue'}:
         from .config import Config
         from .engine import Runner
         runner = Runner(Config.load(args.config))
         if args.command == 'abandon-issue':
             print(json.dumps(run_async(runner.abandon_issue(args.issue, reason=args.reason,
+                processes_stopped=args.processes_stopped)), indent=2))
+        elif args.command == 'retire-issue':
+            print(json.dumps(run_async(runner.retire_issue(args.issue, reason=args.reason,
                 processes_stopped=args.processes_stopped)), indent=2))
         elif args.command == 'report':
             report = runner.report(args.issue)

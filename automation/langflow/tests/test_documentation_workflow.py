@@ -1,8 +1,13 @@
 """Real Git candidates and merges, deterministic external agent/CI boundaries."""
 
+from contextlib import redirect_stdout
 from dataclasses import replace
+import io
 import json
+from pathlib import Path
 import subprocess
+import sys
+from unittest.mock import AsyncMock, patch
 
 import test_runner as fixtures
 import test_pull_requests as pr_fixtures
@@ -196,6 +201,153 @@ class DocumentationTicketTests(fixtures.EngineTests):
         with self.assertRaises(GateError):
             await self.runner.abandon_issue(95, reason='Not a failed documentation merge.')
         self.assertEqual(self.runner.store.journal(95)['stage'], 'merged')
+
+    def install_closure(self, state='CLOSED', closing=(159,), foreign=()):
+        """Serve the issue closure and its closing PRs as GitHub reports them."""
+        original = self.commands.run
+        self.issue_state, self.closing, self.foreign = state, list(closing), list(foreign)
+        self.remote_prs = {159: dict(number=159, state='MERGED', headRefOid='later-head',
+                                     mergeCommit={'oid': 'external-merge'}, headRefName='automation/remediate-95',
+                                     baseRefName='main', url='https://github.com/example/repo/pull/159')}
+
+        async def boundary(args, **kwargs):
+            argv = tuple(args)
+            if argv[:3] == ('gh', 'issue', 'view') and 'closedByPullRequestsReferences' in ','.join(argv):
+                references = [dict(number=n, url=f'https://github.com/example/repo/pull/{n}',
+                                   repository=dict(name='repo', owner=dict(login='example'))) for n in self.closing]
+                references += [dict(number=n, url=f'https://github.com/other/fork/pull/{n}',
+                                    repository=dict(name='fork', owner=dict(login='other'))) for n in self.foreign]
+                return 0, json.dumps(dict(state=self.issue_state,
+                    stateReason='COMPLETED' if self.issue_state == 'CLOSED' else None,
+                    closedByPullRequestsReferences=references,
+                    url=f'https://github.com/example/repo/issues/{argv[3]}'))
+            if argv[:3] == ('gh', 'pr', 'view') and int(argv[3]) in self.remote_prs:
+                return 0, json.dumps(self.remote_prs[int(argv[3])])
+            if argv[:3] == ('gh', 'pr', 'view') and int(argv[3]) in self.foreign:
+                raise AssertionError('A pull request from another repository must not be read')
+            return await original(args, **kwargs)
+
+        self.commands.run = boundary
+
+    async def parked_at_validation(self):
+        with patch.object(self.runner, 'validate', side_effect=RuntimeError('stop at validation')):
+            with self.assertRaisesRegex(RuntimeError, 'stop at validation'):
+                await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.journal(95)
+        self.assertEqual((record['stage'], record.get('pr')), ('validate', None))
+        self.assertEqual(self.runner.store.read('active'), {'issue': 95})
+        return record
+
+    async def test_retire_refuses_an_open_issue_and_changes_nothing(self):
+        before = await self.parked_at_validation()
+        self.install_closure(state='OPEN', closing=())
+        with self.assertRaisesRegex(GateError, 'still open.*run'):
+            await self.runner.retire_issue(95, reason='Closed elsewhere.')
+        self.assertEqual(self.runner.store.journal(95), before)
+        self.assertEqual(self.runner.store.read('active'), {'issue': 95})
+        self.assertFalse(self.runner.store.read('control').get('stopped'))
+
+    async def test_retire_refuses_missing_mismatched_and_completed_journals(self):
+        self.install_closure()
+        with self.assertRaisesRegex(GateError, 'matching execution journal'):
+            await self.runner.retire_issue(96, reason='No journal exists.')
+        record = await self.parked_at_validation()
+        record['policy'] = 'another-policy'
+        self.runner.save(record)
+        with self.assertRaisesRegex(GateError, 'matching execution journal'):
+            await self.runner.retire_issue(95, reason='Policy differs.')
+        for stage in ('merged', 'pr_ready', 'abandoned'):
+            self.runner.save(dict(record, policy=self.runner.policy, stage=stage))
+            with self.subTest(stage=stage), self.assertRaisesRegex(GateError, 'cannot be retired'):
+                await self.runner.retire_issue(95, reason='Already finished.')
+        with self.assertRaisesRegex(GateError, 'short reason'):
+            await self.runner.retire_issue(95, reason='  ')
+
+    async def test_retire_requires_acknowledged_orphan_processes(self):
+        record = await self.parked_at_validation()
+        record['provider_invocations'].append(dict(id='orphan', status='running', pid=123))
+        self.runner.save(record)
+        self.install_closure()
+        with self.assertRaisesRegex(GateError, 'processes-stopped'):
+            await self.runner.retire_issue(95, reason='Closed by a maintainer merge.')
+        self.assertEqual(self.runner.store.journal(95)['stage'], 'validate')
+        await self.runner.retire_issue(95, reason='Inspected and stopped orphan.', processes_stopped=True)
+        final = self.runner.store.journal(95)
+        self.assertEqual(final['provider_invocations'][-1]['status'], 'operator-resolved')
+        self.assertEqual(final['provider_dispositions'][-1]['id'], 'orphan')
+        self.assertTrue(final['provider_dispositions'][-1]['processes_stopped'])
+        self.assertEqual(final['provider_calls'], record['provider_calls'])
+
+    async def test_retire_parked_validation_records_closing_pr_from_github(self):
+        before = await self.parked_at_validation()
+        self.install_closure(foreign=(7,))
+        result = await self.runner.retire_issue(95, reason='Closed by PR #159 merged through complete-pr.')
+        closing = [dict(number=159, state='MERGED', head='later-head', merge_commit='external-merge')]
+        self.assertEqual(result, dict(issue=95, status='retired', remote_issue_state='CLOSED',
+                                      closing_prs=closing, validated_by_this_execution=False, queue_stopped=True))
+        record = self.runner.store.journal(95)
+        self.assertEqual(record['stage'], 'retired')
+        self.assertEqual(record['remote_disposition'], dict(issue_state='CLOSED', state_reason='COMPLETED',
+            closing_prs=closing, validated_by_this_execution=False))
+        self.assertEqual([r['reason'] for r in record['retirements']],
+                         ['Closed by PR #159 merged through complete-pr.'])
+        self.assertIn('completed_at', record)
+        self.assertEqual((record['head'], record['worktree'], record.get('receipts')),
+                         (before['head'], before['worktree'], before.get('receipts')))
+        self.assertTrue(Path(record['worktree']).is_dir())
+        self.assertEqual(self.runner.store.read('active'), {})
+        self.assertTrue(self.runner.store.read('control')['stopped'])
+        self.assertFalse(any(c[:3] in {('gh', 'issue', 'close'), ('gh', 'pr', 'close'), ('gh', 'pr', 'merge'),
+                                       ('gh', 'issue', 'edit'), ('gh', 'pr', 'edit')} for c in self.commands.calls))
+
+    async def test_retire_includes_recorded_pr_that_github_does_not_list(self):
+        self.commands.fail_ci = True
+        with self.assertRaises(GateError):
+            await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.journal(95)
+        self.assertEqual(record['pr'], 122)
+        self.commands.pr_data.update(state='CLOSED')
+        self.install_closure()
+        result = await self.runner.retire_issue(95, reason='Superseded by PR #159.')
+        self.assertEqual([(p['number'], p['state']) for p in result['closing_prs']],
+                         [(122, 'CLOSED'), (159, 'MERGED')])
+        self.assertEqual(result['closing_prs'][0]['head'], self.commands.pr_data['headRefOid'])
+        self.assertIsNone(result['closing_prs'][0]['merge_commit'])
+
+    async def test_retire_is_idempotent_terminal_and_reconciled_by_run(self):
+        await self.parked_at_validation()
+        self.install_closure()
+        first = await self.runner.retire_issue(95, reason='Closed elsewhere.')
+        after = self.runner.store.journal(95)
+        self.runner.store.write('active', {'issue': 95})
+        repeat = await self.runner.retire_issue(95, reason='Repeat after response loss.')
+        self.assertEqual(repeat, first)
+        final = self.runner.store.journal(95)
+        self.assertEqual(final['retirements'], after['retirements'])
+        self.assertEqual(final['completed_at'], after['completed_at'])
+        self.assertEqual(self.runner.store.read('active'), {})
+        resumed = await self.runner.run_issue(95, execute=True)
+        self.assertEqual((resumed['issue'], resumed['status']), (95, 'retired'))
+        self.assertFalse(resumed['validated_by_this_execution'])
+        self.assertEqual((await self.runner.run_issue(96, execute=True))['status'], 'stopped')
+        with self.assertRaisesRegex(GateError, 'unfinished current execution'):
+            await self.runner.extend_budget(95, seconds=60, reason='Not applicable.')
+        with self.assertRaisesRegex(GateError, 'completed'):
+            await self.runner.freeze(95, self.root / 'manifest-95.json', refresh=True)
+        self.assertEqual(self.runner.report(95)['status'], 'retired')
+
+    def test_retire_issue_cli_passes_acknowledgement(self):
+        from gophercrm_runner import cli
+        argv = ['runner', 'retire-issue', '--config', 'unused', '--issue', '95',
+                '--reason', 'Closed elsewhere.', '--processes-stopped']
+        output = io.StringIO()
+        with patch('gophercrm_runner.config.Config.load', return_value=self.config), \
+                patch.object(Runner, 'retire_issue', new_callable=AsyncMock,
+                             return_value={'issue': 95, 'status': 'retired'}) as retire, \
+                patch.object(sys, 'argv', argv), redirect_stdout(output):
+            cli.main()
+        retire.assert_awaited_once_with(95, reason='Closed elsewhere.', processes_stopped=True)
+        self.assertEqual(json.loads(output.getvalue())['status'], 'retired')
 
     async def test_pr_ready_promotion_keeps_original_documentation_evidence(self):
         self.runner = Runner(replace(self.config, completion_target='pr'), self.commands)

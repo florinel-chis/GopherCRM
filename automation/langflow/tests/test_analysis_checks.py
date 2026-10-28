@@ -41,12 +41,23 @@ def analysis_output(words=None):
 
 def manifest():
     return dict(schema_version=1, repository='example/repo', issue=0, objective='Automate follow-ups.',
-                non_goals=['billing'], scope_paths=['internal/service/*', 'internal/repository/*', 'migrations/*'],
+                non_goals=['billing'], scope_paths=['internal/service/*', 'internal/repository/*', 'migrations/*', 'cmd/migrate/*_test.go'],
                 dependencies=[], validation_profile='backend', context_refs=['AGENTS.md', 'docs/DEVELOPMENT.md'],
                 acceptance=[dict(id='AC-1', requirement='A rule fires on lead creation.',
                                  verification=dict(kind='automated', check_id='followup-rules')),
                             dict(id='AC-2', requirement='A rule never fires twice for one event.',
-                                 verification=dict(kind='automated', check_id='followup-rules'))])
+                                 verification=dict(kind='automated', check_id='followup-rules')),
+                            dict(id='AC-3', requirement='The migration pair applies fresh and on an AutoMigrated schema.',
+                                 verification=dict(kind='automated', check_id='migrations'))])
+
+
+MIGRATION_TESTS = ('TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema')
+
+
+def migration_check(argv_package='./cmd/migrate', pattern='^TestMigration(Fresh_FullUpAndDown|Upgrade_FromMainAutoMigratedSchema)$',
+                    names=MIGRATION_TESTS):
+    return dict(check_id='migrations', argv=['go', 'test', '-json', '-count=1', argv_package, '-run', pattern],
+                tests=[dict(package='example/repo/cmd/migrate', name=name) for name in names])
 
 
 def specification():
@@ -54,7 +65,8 @@ def specification():
                 acceptance_checks=[dict(check_id='followup-rules',
                                         argv=['go', 'test', '-json', '-count=1', './internal/service', '-run', '^TestFollowUpRule(Fires|Once)$'],
                                         tests=[dict(package='example/repo/internal/service', name='TestFollowUpRuleFires'),
-                                               dict(package='example/repo/internal/service', name='TestFollowUpRuleOnce')])],
+                                               dict(package='example/repo/internal/service', name='TestFollowUpRuleOnce')]),
+                                   migration_check()],
                 ui_criteria=[dict(id='UI-1', requirement='Rules page lists rules.', verification=dict(kind='browser', detail='/rules shows the table'))],
                 data_model=dict(entities=[dict(name='FollowUpRule', table='follow_up_rules',
                                                columns=[dict(name='id', type='uint', nullable=False, note='pk')],
@@ -68,6 +80,8 @@ def specification():
                 diagrams=[dict(title='Rule lifecycle', kind='state', mermaid='stateDiagram-v2\n  [*] --> Draft')],
                 test_plan=[dict(level='go', name='TestFollowUpRuleFires', proves='fires on create'),
                            dict(level='go', name='TestFollowUpRuleOnce', proves='idempotent'),
+                           dict(level='go', name='TestMigrationFresh_FullUpAndDown', proves='fresh up and down'),
+                           dict(level='go', name='TestMigrationUpgrade_FromMainAutoMigratedSchema', proves='upgrade'),
                            dict(level='e2e', name='rules.spec.ts', proves='page renders')],
                 docs_to_update=[dict(path='docs/DEVELOPMENT.md', change='describe rules'),
                                 dict(path='docs/testing/15-rules.md', change='new catalog')],
@@ -79,6 +93,7 @@ def review():
                 findings=[dict(severity='P1', section='API', finding='No 403 listed', fix='Add 403 to errors')],
                 criteria=[dict(id='AC-1', observable=True, verifiable=True, note=''),
                           dict(id='AC-2', observable=True, verifiable=True, note=''),
+                          dict(id='AC-3', observable=True, verifiable=True, note=''),
                           dict(id='UI-1', observable=True, verifiable=False, note='browser')])
 
 
@@ -180,13 +195,130 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(value['docs_to_update'][1]['status'], 'new')
         self.assertEqual(value['docs_to_update'][0]['status'], 'exists')
 
+    def spec_notes(self, value, **kwargs):
+        return analysis.check_specification(value, self.config, self.worktree, [], **kwargs)
+
+    def test_check_specification_names_non_markdown_context_refs(self):
+        value = specification()
+        value['manifest']['context_refs'] += ['internal/models/deal.go', 'migrations/20261001120000_deals.up.sql']
+        notes = self.spec_notes(value)
+        self.assertIn("context_refs must be Markdown files; not Markdown: "
+                      "['internal/models/deal.go', 'migrations/20261001120000_deals.up.sql']", notes)
+
+    def test_check_specification_context_refs_exist_at_base_and_fit_the_cap(self):
+        checkout = self.worktree / 'checkout'
+        checkout.mkdir()
+        (checkout / 'AGENTS.md').write_text('Operator guidance.\n')
+        self.config.checkout = checkout
+        # AGENTS.md is untracked: read from the checkout, not the base worktree.
+        self.assertEqual(self.spec_notes(specification(), base_checkout=self.worktree), [])
+        value = specification()
+        value['manifest']['context_refs'] += ['docs/datamodel.md', 'docs/testing/14-deals.md']
+        self.assertIn("context_refs missing at the base commit: ['docs/datamodel.md', 'docs/testing/14-deals.md']",
+                      self.spec_notes(value, base_checkout=self.worktree))
+        (self.worktree / 'docs' / 'FEATURES.md').write_text('x' * (130 * 1024))
+        value = specification()
+        value['manifest']['context_refs'].append('docs/FEATURES.md')
+        notes = self.spec_notes(value, base_checkout=self.worktree)
+        size = [n for n in notes if n.startswith('context_refs total')]
+        self.assertEqual(len(size), 1, notes)
+        self.assertIn('cap 131072 bytes (128 KiB)', size[0])
+        self.assertIn('docs/FEATURES.md 133120', size[0])
+        # Without the base checkout the existence and size checks are skipped.
+        self.assertEqual(self.spec_notes(value), [])
+
+    def test_check_specification_requires_bare_go_test_names(self):
+        value = specification()
+        value['test_plan'] += [dict(level='go', name=name, proves='x') for name in (
+            'migrate.TestMigrationAutomationSchema', 'cmd/migrate TestProductsAndQuotesMigration',
+            'repository.TestAutomationErasure{SQLite,MySQL}', 'TestQuoteLineTotalRoundsHalfUp, TestQuoteTotalsSumLines')]
+        notes = self.spec_notes(value)
+        self.assertIn("go test-plan names must be bare test identifiers (TestX or TestX/subtest), one per entry: "
+                      "['migrate.TestMigrationAutomationSchema', 'cmd/migrate TestProductsAndQuotesMigration', "
+                      "'repository.TestAutomationErasure{SQLite,MySQL}', "
+                      "'TestQuoteLineTotalRoundsHalfUp, TestQuoteTotalsSumLines']", notes)
+        self.assertFalse(any(n.startswith('go tests in the test plan without a registry entry') for n in notes), notes)
+        value = specification()
+        value['test_plan'][0]['name'] = 'TestFollowUpRuleFires/on_create'
+        self.assertEqual(self.spec_notes(value), [])
+
+    def test_check_specification_go_test_in_exactly_one_registry_entry(self):
+        value = specification()
+        value['acceptance_checks'].append(dict(
+            check_id='followup-handler', argv=['go', 'test', '-json', '-count=1', './internal/handler', '-run', '^TestFollowUpRuleFires$'],
+            tests=[dict(package='example/repo/internal/handler', name='TestFollowUpRuleFires')]))
+        self.assertIn("go tests in the test plan named by more than one registry entry: "
+                      "{'TestFollowUpRuleFires': ['followup-handler', 'followup-rules']}", self.spec_notes(value))
+
+    def test_check_specification_migration_coverage(self):
+        required = ("'TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema'")
+        value = specification()
+        value['acceptance_checks'][1] = migration_check(pattern='^TestProductsAndQuotesMigration$',
+                                                        names=('TestProductsAndQuotesMigration',))
+        value['test_plan'][2:4] = [dict(level='go', name='TestProductsAndQuotesMigration', proves='fresh and upgrade')]
+        notes = self.spec_notes(value)
+        self.assertIn(f"check migrations runs ./cmd/migrate, so the runner's migration coverage gate requires its "
+                      f"-run pattern to match and its tests to name both [{required}]; "
+                      f"pattern does not match: [{required}]; tests do not name: [{required}]", notes)
+        self.assertFalse(any(n.startswith('the change adds a SQL migration pair') for n in notes), notes)
+        value = specification()
+        value['acceptance_checks'][1]['tests'].pop()
+        value['test_plan'].pop(3)
+        notes = self.spec_notes(value)
+        self.assertTrue(any("tests do not name: ['TestMigrationUpgrade_FromMainAutoMigratedSchema']" in n
+                            and 'pattern does not match' not in n for n in notes), notes)
+        missing = (f"the change adds a SQL migration pair: an acceptance criterion must name a registry entry whose "
+                   f"package argument is ./cmd/migrate and whose -run pattern and tests cover [{required}]")
+        for name, package in (('import path', 'github.com/example/repo/cmd/migrate'), ('other package', './internal/service')):
+            with self.subTest(name=name):
+                value = specification()
+                value['acceptance_checks'][1]['argv'][4] = package
+                self.assertIn(missing, self.spec_notes(value))
+        value = specification()
+        value['manifest']['acceptance'].pop()
+        self.assertIn(missing, self.spec_notes(value))
+        value = specification()
+        value['manifest']['acceptance'].pop()
+        value['acceptance_checks'].pop()
+        value['test_plan'][2:4] = []
+        value['data_model']['sql_migration'].update(up=[], down=[])
+        value['manifest']['scope_paths'] = ['internal/service/*']
+        self.assertEqual(self.spec_notes(value), [])
+
+    def test_check_specification_scope_covers_migration_tests_and_changelog(self):
+        value = specification()
+        value['manifest']['scope_paths'].remove('cmd/migrate/*_test.go')
+        self.assertIn("the change adds a SQL migration pair: scope_paths must cover the migration tests "
+                      "(cmd/migrate/*_test.go or cmd/migrate/main_test.go)", self.spec_notes(value))
+        value['manifest']['scope_paths'].append('cmd/migrate/main_test.go')
+        self.assertEqual(self.spec_notes(value), [])
+        value = specification()
+        value['docs_to_update'].append(dict(path='CHANGELOG.md', change='Unreleased entry'))
+        self.assertIn("docs_to_update names CHANGELOG.md: scope_paths must list CHANGELOG.md", self.spec_notes(value))
+        value['manifest']['scope_paths'].append('CHANGELOG.md')
+        self.assertEqual(self.spec_notes(value), [])
+
+    def test_check_analysis_reports_excess_and_unshrunk_revision(self):
+        draft = analysis_output(words=' '.join(['word'] * 520))
+        notes = analysis.check_analysis(draft, [])
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith('rule broken: one-pager is '), notes)
+        count = int(notes[0].split()[4])
+        self.assertIn(f'cut at least {count - 500} words', notes[0])
+        self.assertIn('largest fields: problem 520', notes[0])
+        same = analysis.check_analysis(copy.deepcopy(draft), [], previous=draft)
+        self.assertIn(f'revision did not shrink the one-pager: draft {count} words, revised {count} words, cap 500', same)
+        shorter = analysis.check_analysis(analysis_output(words=' '.join(['word'] * 510)), [], previous=draft)
+        self.assertEqual(len(shorter), 1)
+        self.assertEqual(analysis.check_analysis(analysis_output(), [], previous=draft), [])
+
     def test_registry_dict(self):
-        self.assertEqual(list(analysis.registry(specification())), ['followup-rules'])
+        self.assertEqual(list(analysis.registry(specification())), ['followup-rules', 'migrations'])
         self.assertEqual(set(analysis.registry(specification())['followup-rules']), {'argv', 'tests'})
 
     def test_check_review_renumbers_appends_runner_findings_and_overrules(self):
         value = review()
-        notes = analysis.check_review(value, ['AC-1', 'AC-2', 'UI-1'], ['one-pager is 520 words, cap 500'])
+        notes = analysis.check_review(value, ['AC-1', 'AC-2', 'AC-3', 'UI-1'], ['one-pager is 520 words, cap 500'])
         self.assertEqual([f['id'] for f in value['findings']], ['F-1', 'F-2'])
         self.assertEqual((value['findings'][1]['severity'], value['findings'][1]['section']), ('P1', 'runner'))
         self.assertEqual(value['verdict'], 'revise')
@@ -195,9 +327,9 @@ class CheckTests(unittest.TestCase):
         value['findings'] = []
         value['criteria'].append(dict(id='AC-9', observable=True, verifiable=True, note=''))
         value['criteria'].pop(0)
-        notes = analysis.check_review(value, ['AC-1', 'AC-2', 'UI-1'], [])
+        notes = analysis.check_review(value, ['AC-1', 'AC-2', 'AC-3', 'UI-1'], [])
         self.assertEqual(value['verdict'], 'approve')
-        self.assertEqual([c['id'] for c in value['criteria']], ['AC-2', 'UI-1', 'AC-1'])
+        self.assertEqual([c['id'] for c in value['criteria']], ['AC-2', 'AC-3', 'UI-1', 'AC-1'])
         self.assertFalse(value['criteria'][-1]['observable'])
         self.assertEqual(len(notes), 2)
 
@@ -212,6 +344,28 @@ class CheckTests(unittest.TestCase):
         notes = analysis.check_revision(value, findings)
         self.assertTrue(any('P0' in n and 'F-1' in n for n in notes))
         self.assertEqual([d['id'] for d in value['finding_dispositions']], ['F-1', 'F-2'])
+
+
+class RuleTextTests(unittest.TestCase):
+    """The agent is told each requirement the deterministic checks enforce."""
+
+    def test_rules_state_the_checked_requirements(self):
+        from gophercrm_runner.analysis_rules import RULES
+        expected = {
+            'analysis': ['500 words as the runner counts them', 'never report an estimate'],
+            'specification': ['`.md` file that exists at\n   the base commit', '128 KiB (131072 bytes)',
+                              'one bare test identifier, `TestX` or\n   `TestX/subtest`', 'exactly one registry entry',
+                              '`./cmd/migrate`', 'TestMigrationFresh_FullUpAndDown',
+                              'TestMigrationUpgrade_FromMainAutoMigratedSchema', '`cmd/migrate/*_test.go`', 'CHANGELOG.md',
+                              'test file under `gocrm-ui/src`', 'the test title joined by single spaces'],
+            'revision': ['cut at least the reported excess', 'not shorter than the draft', 'fit\n   128 KiB',
+                         'bare Go test names each in exactly one registry entry', '`./cmd/migrate`',
+                         '`cmd/migrate/*_test.go`', 'CHANGELOG.md'],
+        }
+        for stage, phrases in expected.items():
+            for phrase in phrases:
+                with self.subTest(stage=stage, phrase=phrase):
+                    self.assertIn(phrase, RULES[stage])
 
 
 class RenderTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 """Pure, fail-closed predicates used immediately before publication and merge."""
 
 import json
+import re
 from pathlib import PurePosixPath
 
 from .config import GateError
@@ -77,8 +78,35 @@ def merge_gate(record: dict, pr: dict, required: tuple[str, ...], *, require_app
         raise GateError('Every required CI check must succeed')
 
 
-def validate_paths(paths: list[str], *, new_workflows: set[str] | None = None) -> None:
+# Frontend validation inputs: the Vitest and Playwright configuration, the Vitest
+# setup, and the whole browser suite with its helpers, fixtures and page objects.
+# Changing any of them could narrow or weaken the evidence that `make verify` and
+# the browser matrix produce, so they are existing validation gates for every
+# profile. A newly added top-level browser spec only adds coverage and is admitted;
+# the health smoke, which every bounded profile runs, is never admitted as an addition.
+FRONTEND_GATE_FILES = frozenset({'gocrm-ui/src/test/setup.ts', 'gocrm-ui/src/test/globals.d.ts',
+                                 'gocrm-ui/e2e/tests/health-smoke.spec.ts'})
+FRONTEND_GATE_PREFIXES = ('gocrm-ui/vitest.config', 'gocrm-ui/playwright.config', 'gocrm-ui/e2e/')
+NEW_BROWSER_SPEC = re.compile(r'gocrm-ui/e2e/tests/[a-z0-9-]+\.spec\.ts')
+
+
+def frontend_gate(name: str, added: set[str]) -> bool:
+    if name in FRONTEND_GATE_FILES:
+        return True
+    if not name.startswith(FRONTEND_GATE_PREFIXES):
+        return False
+    return not (name in added and NEW_BROWSER_SPEC.fullmatch(name))
+
+
+def validate_paths(paths: list[str], *, new_workflows: set[str] | None = None,
+                   added: set[str] | None = None) -> None:
+    """Refuse protected, private and validation-gate paths.
+
+    `new_workflows` lists workflow files the local policy allows an issue to add;
+    `added` lists paths absent from the base commit (a new browser spec is admitted
+    only when it appears there)."""
     new_workflows = new_workflows or set()
+    added = added or set()
     for name in paths:
         path = PurePosixPath(name)
         if (path.is_absolute() or '..' in path.parts or '.git' in path.parts
@@ -90,7 +118,8 @@ def validate_paths(paths: list[str], *, new_workflows: set[str] | None = None) -
                 or name in {'Makefile', '.gitignore', '.github/release.yml', 'gocrm-ui/package.json', 'gocrm-ui/package-lock.json'}
                 or name.startswith(('scripts/ci/', 'scripts/release/', 'scripts/deploy/', 'scripts/e2e/', 'gocrm-ui/tsconfig',
                                     'gocrm-ui/vite.config', 'gocrm-ui/eslint.config'))
-                or (name.startswith('.github/workflows/') and name not in new_workflows)):
+                or (name.startswith('.github/workflows/') and name not in new_workflows)
+                or frontend_gate(name, added)):
             raise GateError(f'Agent changed an existing validation gate: {name}')
 
 

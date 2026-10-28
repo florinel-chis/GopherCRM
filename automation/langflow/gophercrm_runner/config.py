@@ -38,16 +38,50 @@ class BudgetError(GateError):
     """Durable execution limits prohibit another mutating step or provider call."""
 
 
+CHECK_KINDS = ('go', 'vitest')
+# Run from the repository root. `--silent` keeps npm's script banner off stdout,
+# so the Vitest JSON report is the command's only standard output.
+VITEST_ARGV = ('npm', '--prefix', 'gocrm-ui', 'test', '--silent', '--', '--run', '--reporter=json')
+VITEST_FILE = re.compile(r'src/(?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.test\.tsx?')
+
+
+def check_kind(check):
+    """An entry without `kind` is a Go check, so existing registries keep their hashes."""
+    return check.get('kind', 'go')
+
+
+def validate_vitest_check(argv, tests):
+    files = argv[len(VITEST_ARGV):] if isinstance(argv, list) else []
+    if (not isinstance(argv, list) or tuple(argv[:len(VITEST_ARGV)]) != VITEST_ARGV or not files
+            or any(not isinstance(f, str) or not VITEST_FILE.fullmatch(f) or '..' in f.split('/')
+                   for f in files) or len(set(files)) != len(files)):
+        raise GateError('Vitest acceptance checks require the exact npm JSON reporter argument array '
+                        'and unique test files under gocrm-ui/src')
+    if (not isinstance(tests, list) or not tests or any(
+            not isinstance(t, dict) or set(t) != {'file', 'name'} or t['file'] not in files
+            or not isinstance(t['name'], str) or not t['name'].strip() or '\x00' in t['name']
+            for t in tests)):
+        raise GateError('Vitest acceptance checks require exact file/test identities from their argv files')
+    if len({(t['file'], t['name']) for t in tests}) != len(tests):
+        raise GateError('Duplicate acceptance test identity')
+
+
 def validate_acceptance_checks(registry):
-    """The trusted check registry: uncached go test -json argument arrays with exact test identities."""
+    """The trusted check registry: uncached go test -json argument arrays, or the exact Vitest JSON
+    reporter command, with exact test identities."""
     if not isinstance(registry, dict):
         raise GateError('acceptance_checks must be a trusted check registry')
     for check_id, check in registry.items():
         if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', check_id):
             raise GateError('Invalid acceptance check ID')
-        if not isinstance(check, dict) or set(check) != {'argv', 'tests'}:
+        if not isinstance(check, dict) or set(check) - {'kind'} != {'argv', 'tests'}:
             raise GateError('Acceptance checks require argv and named tests')
+        if check_kind(check) not in CHECK_KINDS:
+            raise GateError('Acceptance check kind must be go or vitest')
         argv, tests = check['argv'], check['tests']
+        if check_kind(check) == 'vitest':
+            validate_vitest_check(argv, tests)
+            continue
         if (not isinstance(argv, list) or any(not isinstance(a, str) or not a or '\x00' in a for a in argv)
                 or argv[:2] != ['go', 'test'] or '-json' not in argv or '-count=1' not in argv):
             raise GateError('MVP acceptance checks require uncached go test -json argument arrays')
