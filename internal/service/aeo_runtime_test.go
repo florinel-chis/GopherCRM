@@ -7,8 +7,8 @@ package service
 // interrupted run is finalized through bounded cleanup, and a finalization that
 // cannot complete leaves the row for startup reconciliation.
 //
-// Every root runs on a real database — in-memory SQLite with the production
-// one-connection pool, and a disposable MySQL schema when TEST_MYSQL_DSN is
+// Every root runs on a real database — file-backed SQLite with the production
+// one-connection pool and pragmas, and a disposable MySQL schema when TEST_MYSQL_DSN is
 // set — through the real repository and the real run engine. Providers are
 // in-process gates, never a network, and every blocked step is a channel the
 // scenario releases, so no assertion depends on a sleep.
@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,11 +64,16 @@ func migrateAEORuntimeSchema(t *testing.T, db *gorm.DB) {
 	))
 }
 
-// openAEORuntimeSQLite is an in-memory database with the pool pinned to one
-// connection, exactly as a SQLite deployment runs.
+// openAEORuntimeSQLite is a file-backed database in a per-test directory with
+// the pool pinned to one connection and the production pragmas, exactly as a
+// SQLite deployment runs. A file, not ":memory:", because database/sql discards
+// the connection of a transaction whose context is cancelled — which shutdown
+// does — and a replacement connection to ":memory:" is a fresh, empty database.
 func openAEORuntimeSQLite(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), aeoRuntimeGormConfig())
+	dsn := filepath.Join(t.TempDir(), "aeo-runtime.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	db, err := gorm.Open(sqlite.Open(dsn), aeoRuntimeGormConfig())
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -986,4 +992,26 @@ func runAEOConcurrentShutdownScenarios(t *testing.T, open func(t *testing.T) *go
 		assertTerminal(t, f.run(run.ID), models.AEORunStatusFailed, 1, 1)
 		assert.Empty(t, f.answers(run.ID), "an answer returned after cancellation is not recorded")
 	})
+}
+
+// TestAEORuntimeSQLiteSurvivesADiscardedConnection pins the fixture to the
+// production reconnect behaviour: when a transaction's context is cancelled,
+// database/sql discards the pooled connection, and the next statement must
+// still see the migrated schema instead of a fresh, empty database.
+func TestAEORuntimeSQLiteSurvivesADiscardedConnection(t *testing.T) {
+	db := openAEORuntimeSQLite(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	cancel()
+	require.Eventually(t, func() bool { return errors.Is(tx.Commit(), sql.ErrTxDone) },
+		aeoRuntimeTimeout, 5*time.Millisecond, "the cancelled transaction is rolled back by database/sql")
+
+	var count int64
+	require.NoError(t, db.Model(&models.AEORun{}).Count(&count).Error,
+		"the schema survives the pool replacing its only connection")
+	assert.Zero(t, count)
 }

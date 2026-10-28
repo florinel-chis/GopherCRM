@@ -530,6 +530,13 @@ MySQL 8 by default and SQLite only by choice. Anything schema- or driver-specifi
 error codes, collation, `ON CONFLICT` versus `ON DUPLICATE KEY` — has to work on both, and a green
 test suite proves only the SQLite half. Both gotchas above are instances of exactly this split.
 
+**Do not pin a `:memory:` database to one connection when the test cancels a transaction.**
+`database/sql` discards the pooled connection of a transaction whose context is cancelled, and
+the replacement connection to `:memory:` is a fresh, empty database — the next statement fails
+with `no such table`. Tests that exercise shutdown or cancellation (the AEO runtime roots in
+`internal/service/aeo_runtime_test.go`) open a file under `t.TempDir()` with the production
+pragmas instead; `TestAEORuntimeSQLiteSurvivesADiscardedConnection` pins that behaviour.
+
 ## Configuration
 
 Environment-based via a `.env` file (loaded by godotenv). See `.env.example` for the full list. Key
