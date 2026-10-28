@@ -2,18 +2,20 @@
 
 Cases for the products and quotes area added 2026-10-26 (issue #158): the product catalogue, quotes
 on deals and customers with lines and server-computed totals, the status lifecycle with history,
-the plaintext quote email, and the erasure and migration guarantees. This release ships the backend
-and API; the frontend slice (list and form pages, the quote detail with its status actions, the
-DealDetail section, the print page, the email dialog, nav entries and route guards) is a separate
-follow-up task, so its cases below are *planned* against spec files that do not exist yet.
+the plaintext quote email, and the erasure and migration guarantees. The frontend slice
+(2026-10-28, issue #167) added the list and form pages, the quote detail with its status actions,
+the DealDetail section, the print page, the email dialog, the nav entries and the route guards;
+its cases are section 15.8.
 
-Every **Expected** states what the build does **today**, traced to the handlers, service and
-repositories; every automated case names the exact Go test that pins it. As in
-[11-aeo.md](11-aeo.md), "automated" here means automated at the Go level: there is no Playwright
-spec behind this section yet.
+Every **Expected** states what the build does **today**, traced to the handlers, service,
+repositories and React pages; every automated case names the exact test that pins it. Sections
+15.1 to 15.7 are automated at the Go level; section 15.8 names its Vitest files and titles and the
+single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin flow from product
+to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
+asserts the core outcome, the rest is pinned in Vitest).
 
-22 cases: 17 automated (Go), 5 planned (the UI slice, against `gocrm-ui/e2e/tests/admin-quotes.spec.ts`
-and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 P2.
+22 cases: 22 automated (17 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 13 P0,
+7 P1, 2 P2.
 
 **Sources**
 
@@ -25,6 +27,9 @@ and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 
 - `internal/repository/product_repository.go`, `internal/repository/quote_repository.go`,
   `internal/utils/sort.go`, `internal/mailer/smtp.go`
 - `migrations/20261026120000_add_products_and_quotes.{up,down}.sql`
+- `gocrm-ui/src/api/endpoints/products.ts`, `quotes.ts`; `gocrm-ui/src/pages/products/`,
+  `gocrm-ui/src/pages/quotes/`, `gocrm-ui/src/pages/deals/DealDetail.tsx`,
+  `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/layouts/MainLayout.tsx`
 - `docs/FEATURES.md` section 4d, `docs/datamodel.md` (Product, Quote, Quote Line, Quote Status Change)
 
 **Constraints**
@@ -346,61 +351,125 @@ and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 
   `TestProductsAndQuotesMigration`; `cmd/migrate/main_test.go` `TestMigrationFiles_PairsAndCompleteness`,
   `TestMigrationUpgrade_FromMainAutoMigratedSchema`, `TestMigrationFresh_FullUpAndDown`.
 
-## 15.8 Frontend (planned — separate follow-up task)
+## 15.8 Frontend (2026-10-28, issue #167)
+
+The React slice over the API above. Every call goes through `gocrm-ui/src/api/endpoints/products.ts`
+and `quotes.ts` (pinned by `products.test.ts`, 8 tests, and `quotes.test.ts`, 15 tests). Money is
+rendered from the server's integer minor units with the quote's currency; a discount is typed as a
+percentage and sent in basis points (`quoteFormat.ts`, 3 tests); the subtotal, discount and total
+are always the server's. The one Playwright test, "admin creates a product, quotes a deal from its
+Quotes section, sends, prints and accepts the quote" in `gocrm-ui/e2e/tests/admin-quotes.spec.ts`,
+runs on SQLite, MySQL and MariaDB like the other admin suites.
 
 ### TC-PQ-018 — Products list and form
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** Admin and sales logged in.
 - **Steps:**
-  1. Open `/products`; as admin open "New", enter `12.50` EUR and save; edit and delete.
-- **Expected:** Name, SKU, formatted price with currency and an active chip, server pagination,
-  sorting and an active filter; New/Edit/Delete render for admin only; the form validates name
-  (required, ≤ 200), SKU (≤ 64), price (≥ 0, converted to `unit_price_cents` 1250) and currency.
-- **Automation:** planned — `gocrm-ui/src/pages/products/ProductList.test.tsx`,
-  `ProductForm.test.tsx`; `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (new).
+  1. Open `/products`; as admin open "New Product", enter `12.50` EUR and save; edit and delete a
+     row with its confirmation; as sales open the list.
+- **Expected:** Name, SKU, the price formatted with its currency and an Active/Inactive chip; the
+  search box, the active filter (All / Active only / Inactive only) and the pager refetch with
+  `search`, `is_active` and `offset`/`limit`; sorting on the allowlisted columns only. "New
+  Product", the row Edit and the row Delete render for admin only. The form validates name
+  (required, ≤ 200), SKU (≤ 64), price (`^\d+(\.\d{1,2})?$`, ≤ 10^12 cents, converted with the
+  existing `decimalToCents` so `12.50` becomes `unit_price_cents` 1250), currency (three
+  letters, upper-cased, defaulting to `deals.default_currency` until edited) and the active
+  switch, and sends the body in cents; the server's `VALIDATION_ERROR` message is shown.
+- **Automation:** automated — `gocrm-ui/src/pages/products/ProductList.test.tsx`: "ProductList
+  renders name, SKU, formatted price and active state from the products response", "ProductList
+  shows the New, Edit and Delete controls for admin and hides them for sales", "ProductList
+  refetches with the active filter and server pagination parameters" (plus the sort/search and
+  the create/edit/delete cases); `ProductForm.test.tsx`: "ProductForm submits unit_price_cents
+  1250 for a price of 12.50 EUR", "ProductForm rejects an empty name and a 201-character name
+  without submitting" (plus SKU/price/currency validation, the configured default currency, a
+  free product, edit mode and the server message); `admin-quotes.spec.ts` (partial: the product
+  step creates `12.50` EUR and checks the list row).
 
 ### TC-PQ-019 — Quotes list and detail
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** Admin logged in; a draft quote.
+- **Preconditions:** Admin logged in; a draft quote with lines.
 - **Steps:**
-  1. Open `/quotes`, filter by status; open the quote, add a line with 12.5 % off, edit and delete it.
-- **Expected:** The list shows the number (`Q-000042`), title, status chip, customer, deal, total and
-  valid-until, refetching with `status=sent` on filter; the detail shows the lines table and the
-  server's subtotal, discount and total; "Add line" sends `discount_bp` 1250 and edit controls are
-  hidden outside draft.
-- **Automation:** planned — `gocrm-ui/src/pages/quotes/QuoteList.test.tsx`, `QuoteDetail.test.tsx`;
-  `admin-quotes.spec.ts`.
+  1. Open `/quotes`, filter by status; open the quote; "Add line" with 12.5 % off; edit a line;
+     delete a line with its confirmation; open a sent quote.
+- **Expected:** The list shows the number (`Q-000042`), title, status chip, customer (name and
+  company), deal title, total with currency and valid-until (`—` when absent), refetching with
+  `status=sent` on filter and with `offset`/`limit` and the allowlisted `sort_by` on paging and
+  sorting; a row opens `/quotes/{id}`; "New Quote" opens the create dialog. The detail shows the
+  header fields, the lines table (description, qty, unit price, discount %, line total) and the
+  server's subtotal, discount and total; "Add line" opens a dialog whose product picker offers
+  active products in the quote's currency (`GET /products?is_active=true&currency=`), takes a
+  quantity and a discount in percent and posts `POST /quotes/{id}/lines` with `discount_bp` 1250
+  for `12.5`; the line Edit dialog sends the partial update with the discount in basis points;
+  line Delete asks for confirmation; the Edit dialog changes title, valid-until (null clears) and
+  notes. On a sent, accepted, rejected or expired quote none of Edit, Add line, line Edit and
+  line Delete renders, and the lines and totals still read.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteList.test.tsx`: "QuoteList renders
+  number, title, status, customer, deal, total and valid-until from the quotes response",
+  "QuoteList refetches with status=sent when the status filter changes" (plus the first-page
+  request, paging/sorting and the row/dialog cases); `QuoteDetail.test.tsx`: "QuoteDetail shows
+  the lines and the subtotal, discount and total from the server response", "QuoteDetail offers
+  Add line on a draft and submits discount_bp 1250 for 12.5 percent", "QuoteDetail hides every
+  edit control when the quote is not a draft" (plus local validation, line edit and delete, the
+  quote edit dialog, delete and the not-found state); `admin-quotes.spec.ts` (partial: a line at
+  10 % off, the totals 25.00 / 2.50 / 22.50 and the controls gone after sending).
 
 ### TC-PQ-020 — Status actions and the deal's Quotes section
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** Admin logged in; a deal with quotes.
 - **Steps:**
-  1. On a draft click "Mark as sent"; on a sent quote see Accept, Reject, Mark expired, Revise.
-  2. Open the deal; use "New quote".
-- **Expected:** Only the valid transitions are offered; each posts to `/quotes/{id}/status` and
-  refreshes the quote and history; a 400 `INVALID_STATUS_TRANSITION` or a 409 shows the server
-  message. DealDetail lists `GET /deals/{id}/quotes` with status and total; "New quote" is hidden on
-  a won or lost deal.
-- **Automation:** planned — `gocrm-ui/src/pages/quotes/QuoteStatusActions.test.tsx`,
-  `DealQuotesSection.test.tsx`, a case in `gocrm-ui/src/pages/deals/DealDetail.test.tsx`;
-  `admin-quotes.spec.ts`.
+  1. On a draft click "Mark as sent"; on a sent quote see Accept, Reject, Mark expired, Revise;
+     on a closed quote see no button.
+  2. Open the deal; use "New quote"; open a won or lost deal.
+- **Expected:** Only the valid transitions are offered (draft: Mark as sent; sent: Accept,
+  Reject, Mark expired, Revise; accepted/rejected/expired: "No further status changes"); each
+  posts `{status}` to `/quotes/{id}/status`, stores the returned quote and refetches the history;
+  a 400 `INVALID_STATUS_TRANSITION` (a lost race) or a 409 `CONFLICT` (no lines, past
+  `valid_until`) shows the server's message inline and in the snackbar. DealDetail's "Quotes"
+  section lists `GET /deals/{id}/quotes` (number linking to the quote, title, status chip, total
+  with currency, paged five at a time); "New quote" opens the create dialog with the deal
+  prefilled (and its customer and currency) and is hidden on a won or lost deal and for a viewer
+  who cannot write.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteStatusActions.test.tsx`:
+  "QuoteStatusActions offers only the transitions valid from the current status",
+  "QuoteStatusActions shows the server message for INVALID_STATUS_TRANSITION and CONFLICT
+  responses" (plus the post-and-refresh case); `DealQuotesSection.test.tsx`: "DealQuotesSection
+  lists the deal's quotes with status and total", "DealQuotesSection hides New quote for a won or
+  lost deal" (plus the read-only viewer, the prefilled dialog and the empty text);
+  `gocrm-ui/src/pages/deals/DealDetail.test.tsx`: "DealDetail renders the Quotes section for the
+  deal", "DealDetail hides New quote in the Quotes section of a lost deal";
+  `admin-quotes.spec.ts` (partial: Mark as sent and Accept with the history growing, the quote
+  started from the section and shown there as accepted with its total, the deal's stage untouched).
 
 ### TC-PQ-021 — Print page and email dialog
 - **Priority:** P2
 - **Type:** functional
 - **Preconditions:** Admin logged in; a sent quote with a customer.
 - **Steps:**
-  1. Open `/quotes/{id}/print`; click Print. Manual check: print preview hides the app navigation.
-  2. Click "Email quote", confirm.
-- **Expected:** The print layout shows number, title, date, valid until, customer name and company,
-  the lines table and totals; `window.print()` is called; navigation is hidden under
-  `@media print`. The dialog names the customer recipient (no free-text address) and posts
-  `/quotes/{id}/email`; 409 and 502 show distinct messages; success shows the last emailed time.
-- **Automation:** planned — `gocrm-ui/src/pages/quotes/QuotePrint.test.tsx`, `QuoteEmailDialog.test.tsx`;
-  the `@media print` hiding is a manual check.
+  1. Open `/quotes/{id}/print`; click Print; emulate print media.
+  2. Click "Email quote", confirm; repeat with the API answering 409 and 502.
+- **Expected:** The print layout shows the application name, "Quote Q-000042", the title, the
+  date (sent_at, else created_at), valid until, the customer's name and company, the lines table,
+  the totals and the notes; the Print button calls `window.print()`. Under print media the app
+  bar, the navigation drawer, the breadcrumbs and the page's own toolbar are hidden while the
+  quote content stays visible. "Email quote" renders on sent and accepted quotes only; the dialog
+  names the customer recipient (no address field, the API reads the current address itself) and
+  posts `/quotes/{id}/email`; a 409 reads "The quote was not emailed: …" with the server's
+  reason and keeps the send button, a 502 reads "The quote email could not be delivered. The
+  quote was not changed; try again later."; success shows "Emailed on <time>" and the detail
+  page its "Last emailed" field; a quote without a customer cannot be sent.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuotePrint.test.tsx`: "QuotePrint
+  renders the header, the lines and the totals from the quote", "QuotePrint calls window.print
+  when Print is clicked"; `QuoteEmailDialog.test.tsx`: "QuoteEmailDialog names the customer
+  recipient and shows the last emailed time on success", "QuoteEmailDialog shows distinct
+  messages for 409 and 502 responses" (plus the no-customer case); `admin-quotes.spec.ts`
+  (partial: the print page's content, then `page.emulateMedia({ media: 'print' })` with the
+  navigation entry, the app bar and the toolbar hidden and the quote number, line and total
+  visible, because jsdom does not evaluate `@media` rules). The email send is not exercised end
+  to end: the e2e backend runs the log-only mailer, so it would stamp a success without a
+  delivery (see 4d.7).
 
 ### TC-PQ-022 — Navigation and route guards
 - **Priority:** P2
@@ -408,8 +477,17 @@ and the Vitest files named in each case), 0 blocked. Priorities: 13 P0, 7 P1, 2 
 - **Preconditions:** Users of every role.
 - **Steps:**
   1. As each role, look for the Products and Quotes nav entries and visit `/products`,
-     `/products/new`, `/quotes`, `/quotes/1`, `/quotes/1/print`.
-- **Expected:** Admin and sales see the entries and reach the pages; support and customer see no
-  entry and are redirected as on the other role-guarded pages.
-- **Automation:** planned — `gocrm-ui/src/routes/index.test.tsx` (new role-guard cases),
-  `gocrm-ui/src/layouts/MainLayout.test.tsx` (new).
+     `/products/new`, `/products/1/edit`, `/quotes`, `/quotes/1`, `/quotes/1/print`.
+- **Expected:** Admin and sales see the two entries (next to Deals) and reach the list, detail
+  and print pages; support and customer see no entry and get the "Access Denied" redirect on
+  every one of the URLs, as on the other role-guarded pages. `/products/new` and
+  `/products/{id}/edit` are admin only: a sales user is redirected from them like support and
+  customer, while an admin reaches "Create New Product".
+- **Automation:** automated — `gocrm-ui/src/routes/index.test.tsx`: "products and quotes routes
+  redirect support and customer users away from /products, /products/new, /quotes, /quotes/1 and
+  /quotes/1/print", "products and quotes routes render the list and quote pages for admin and
+  sales users and redirect sales away from /products/new and /products/1/edit";
+  `gocrm-ui/src/layouts/MainLayout.test.tsx`: "MainLayout shows the Products and Quotes
+  navigation entries for admin and sales and hides them for support and customer". The
+  support/customer and sales cases are Vitest-only until a role-login e2e helper exists
+  (lesson 8).
