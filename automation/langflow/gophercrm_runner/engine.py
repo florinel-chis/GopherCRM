@@ -972,6 +972,10 @@ class Runner:
     async def ci_pause(self, record):
         await asyncio.sleep(min(self.config.ci_poll_seconds, telemetry.remaining(record, self.clock())))
 
+    async def run_completed(self, run):
+        data = json.loads(await self.gh('run', 'view', run, '--json', 'status,conclusion'))
+        return isinstance(data, dict) and data.get('status') == 'completed'
+
     async def wait_ci(self, record):
         deadline = time.monotonic() + self.config.ci_timeout_seconds
         while time.monotonic() < deadline:
@@ -995,6 +999,11 @@ class Runner:
                         if match:
                             runs.add(match[1])
                 if runs:
+                    # `gh run view --log-failed` refuses a run that is still in
+                    # progress; wait for every failed run to complete first.
+                    if not all([await self.run_completed(run) for run in sorted(runs)]):
+                        await self.ci_pause(record)
+                        continue
                     logs = [await self.gh('run', 'view', run, '--log-failed') for run in sorted(runs)]
                     raise CIFailure('CI regression failures (untrusted logs):\n' + '\n'.join(logs)[-40000:])
                 raise GateError(f'CI failed for PR #{record["pr"]}; inspect GitHub before resuming')
