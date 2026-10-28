@@ -27,6 +27,14 @@ from . import agents, contracts, documentation, evidence, telemetry, validation
 
 PR_FIELDS = ('number,url,state,isDraft,headRefOid,baseRefOid,mergeable,reviewDecision,'
              'statusCheckRollup,mergeCommit,headRefName,baseRefName,closingIssuesReferences')
+ISSUE_CLOSURE_FIELDS = 'number,state,stateReason,closedByPullRequestsReferences,url'
+
+
+def same_repository(reference, repository):
+    """A closing reference without repository identity is attributed to the configured one."""
+    remote = reference.get('repository') or {}
+    name, owner = remote.get('name'), (remote.get('owner') or {}).get('login')
+    return not (name and owner) or f'{owner}/{name}'.lower() == repository.lower()
 
 
 class CIFailure(CommandError):
@@ -90,7 +98,7 @@ class Runner:
             raise GateError('Budget extension requires nonnegative integers, a positive increment and a short reason')
         with self.store.exclusive():
             record = self.store.journal(number)
-            if not record or record.get('legacy') or record['stage'] in {'merged', 'pr_ready'}:
+            if not record or record.get('legacy') or record['stage'] in {'merged', 'pr_ready', 'retired'}:
                 raise GateError('Only an unfinished current execution can receive a budget extension')
             before = {k: record[k] for k in ('deadline', 'max_provider_calls')}
             record['deadline'] += seconds
@@ -281,7 +289,7 @@ class Runner:
         with self.store.exclusive():
             record = self.store.journal(number)
             if record and (record.get('legacy') or record.get('policy') != self.policy
-                           or record['stage'] in {'merged', 'pr_ready'}):
+                           or record['stage'] in {'merged', 'pr_ready', 'retired'}):
                 raise GateError('Cannot refresh a legacy, completed or differently configured execution')
             current_path = self.config.state_dir / 'tasks' / str(number) / 'contract.json'
             if (record or current_path.exists()) and not refresh:
@@ -649,6 +657,60 @@ class Runner:
             return dict(issue=number, status='abandoned', remote_state='MERGED',
                         validated_by_this_execution=False, queue_stopped=True)
 
+    async def retire_issue(self, number, *, reason, processes_stopped=False):
+        """Retire an unfinished ticket whose issue GitHub closed outside this execution.
+
+        The disposition records the observed closure and its pull requests without
+        modifying GitHub, claiming their validation, or discarding local evidence.
+        """
+        self.config.allows(number)
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+            raise GateError('Retirement requires a short reason')
+        with self.store.exclusive():
+            record = self.store.journal(number)
+            if not record or record.get('legacy') or record.get('policy') != self.policy:
+                raise GateError('Only a matching execution journal can be retired')
+            if record.get('stage') == 'retired':
+                self.store.stop_after_current()
+                self.store.release(number)
+                return self.retirement_result(record)
+            if record.get('stage') in {'merged', 'pr_ready', 'abandoned'}:
+                raise GateError('Completed or abandoned executions cannot be retired')
+            unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
+            if unresolved and processes_stopped is not True:
+                raise GateError('Inspect orphaned processes, then explicitly pass --processes-stopped')
+            issue = json.loads(await self.gh('issue', 'view', str(number), '--json', ISSUE_CLOSURE_FIELDS))
+            if issue.get('state') != 'CLOSED':
+                raise GateError('Issue is still open; resume the execution with run instead of retiring it')
+            numbers = {ref['number'] for ref in issue.get('closedByPullRequestsReferences') or []
+                       if type(ref.get('number')) is int and same_repository(ref, self.config.repository)}
+            if record.get('pr'):
+                numbers.add(record['pr'])
+            closing = []
+            for pr_number in sorted(numbers):
+                pr = await self.pr(pr_number)
+                closing.append(dict(number=pr_number, state=pr.get('state'), head=pr.get('headRefOid'),
+                                    merge_commit=(pr.get('mergeCommit') or {}).get('oid')))
+            for call in unresolved:
+                record.setdefault('provider_dispositions', []).append(dict(id=call['id'],
+                    pid=call.get('pid'), at=self.clock(), reason=redact(reason), processes_stopped=True))
+                call.update(status='operator-resolved', ended_at=None)
+            record.setdefault('retirements', []).append(dict(at=self.clock(), reason=redact(reason)))
+            record.update(stage='retired', completed_at=self.clock(), remote_disposition=dict(
+                issue_state='CLOSED', state_reason=issue.get('stateReason'), closing_prs=closing,
+                validated_by_this_execution=False))
+            self.save(record)
+            self.store.stop_after_current()
+            self.store.release(number)
+            return self.retirement_result(record)
+
+    @staticmethod
+    def retirement_result(record):
+        disposition = record['remote_disposition']
+        return dict(issue=record['issue'], status='retired', remote_issue_state=disposition['issue_state'],
+                    closing_prs=disposition['closing_prs'], validated_by_this_execution=False,
+                    queue_stopped=True)
+
     def documentation_result(self, record):
         if self.config.documentation_mode != 'reviewed':
             return {}
@@ -930,6 +992,10 @@ class Runner:
     async def ci_pause(self, record):
         await asyncio.sleep(min(self.config.ci_poll_seconds, telemetry.remaining(record, self.clock())))
 
+    async def run_completed(self, run):
+        data = json.loads(await self.gh('run', 'view', run, '--json', 'status,conclusion'))
+        return isinstance(data, dict) and data.get('status') == 'completed'
+
     async def wait_ci(self, record):
         deadline = time.monotonic() + self.config.ci_timeout_seconds
         while time.monotonic() < deadline:
@@ -953,6 +1019,11 @@ class Runner:
                         if match:
                             runs.add(match[1])
                 if runs:
+                    # `gh run view --log-failed` refuses a run that is still in
+                    # progress; wait for every failed run to complete first.
+                    if not all([await self.run_completed(run) for run in sorted(runs)]):
+                        await self.ci_pause(record)
+                        continue
                     logs = [await self.gh('run', 'view', run, '--log-failed') for run in sorted(runs)]
                     raise CIFailure('CI regression failures (untrusted logs):\n' + '\n'.join(logs)[-40000:])
                 raise GateError(f'CI failed for PR #{record["pr"]}; inspect GitHub before resuming')
@@ -1052,6 +1123,9 @@ class Runner:
             return None
         if record.get('stage') == 'abandoned':
             return dict(issue=record['issue'], status='abandoned',
+                        remote_disposition=record.get('remote_disposition'), validated_by_this_execution=False)
+        if record.get('stage') == 'retired':
+            return dict(issue=record['issue'], status='retired',
                         remote_disposition=record.get('remote_disposition'), validated_by_this_execution=False)
         await self.check_remote()
         if not record.get('pr') and record.get('stage') == 'publishing':

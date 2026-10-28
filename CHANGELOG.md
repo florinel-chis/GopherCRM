@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
   `database_test_commands` and `TEST_MYSQL_DSN`. See the
   [runner guide](automation/langflow/README.md#execute-the-queue).
+- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
+  closed outside the runner, recording the closure and its closing pull requests as unvalidated
+  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
 
 - **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
   on, even when no provider key exists at boot: engines are resolved from the environment plus
@@ -191,6 +194,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Feature analysis checks anticipate the execution gates.** The specification and revision
+  stages now report context references that are not Markdown, are missing at the base commit or
+  exceed the 128 KiB guidance cap; Go test-plan names that are not bare identifiers or appear in
+  more than one registry entry; `./cmd/migrate` registry entries whose `-run` pattern and tests
+  do not cover `TestMigrationFresh_FullUpAndDown` and
+  `TestMigrationUpgrade_FromMainAutoMigratedSchema`; and migration or CHANGELOG changes whose
+  scope omits `cmd/migrate/*_test.go` or `CHANGELOG.md`. An over-budget one-pager note states
+  the excess and the largest fields, and the revision reports a one-pager it did not shrink. The
+  stage rules state each requirement.
+- **The remediation runner waits for an in-progress workflow run before it collects failed-job
+  logs.** A required check that failed while other jobs of the same run were still running made
+  the runner request the run's failed-job logs, which `gh` refuses until the run completes; the
+  ticket or PR completion then stopped on that refusal instead of entering its repair loop. The
+  runner now waits, within the CI deadline, until every failed run has completed and then fetches
+  the logs once.
 - **Sorted customer CSV exports no longer lose rows (#105).** `GET /customers/export` read the
   book in 500-row primary-key batches through GORM's `FindInBatches` while also applying the
   requested `sort_by`. The batch continuation is `id > last id of the previous batch`, which is

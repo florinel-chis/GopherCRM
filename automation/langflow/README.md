@@ -38,7 +38,10 @@ See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
 If a merged ticket fails documentation verification, inspect its evidence and either restore
 verification prerequisites or explicitly use `abandon-issue` with a reason. This retains the
 unverified result and leaves the queue stopped; it does not close issues or claim a successful
-handoff. Existing PR completions retain their `abandon-pr` recovery path.
+handoff. Existing PR completions retain their `abandon-pr` recovery path. An unfinished ticket
+whose issue GitHub closed outside the runner, for example through a separate `complete-pr`
+merge, is disposed with `retire-issue`; see
+[operations](OPERATIONS.md#retire-a-ticket-closed-outside-the-runner).
 
 Run these commands from the repository root. Use an isolated environment outside the checkout:
 
@@ -164,7 +167,7 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected backend tickets. The full audit queue includes unsupported UI work and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
 
-The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
+The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. When a required check fails while other jobs of the same workflow run are still in progress, the runner waits, within the CI deadline, for the whole workflow run to finish before it collects the failed-job logs. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
 
 All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
@@ -396,7 +399,15 @@ is a second, independent process that returns severity-graded findings and is ov
 approves with an open P0 or P1; Revision addresses every finding by id, once. Deterministic checks
 (manifest validity through the same validators as `freeze`, contiguous `AC` ids, registry test
 names matching their `-run` pattern, Mermaid keywords, word budgets) are recorded as rules-check
-notes, given to the reviewer as runner findings, and listed at the end of the document.
+notes, given to the reviewer as runner findings, and listed at the end of the document. The
+specification checks also anticipate the gates an execution would stop at: context references
+must be Markdown files that exist at the base commit and fit the 128 KiB guidance cap; Go
+test-plan entries must be bare test names, each in exactly one registry entry; every
+`./cmd/migrate` entry must cover `TestMigrationFresh_FullUpAndDown` and
+`TestMigrationUpgrade_FromMainAutoMigratedSchema` for the migration coverage gate, and a change
+with a migration pair must name such an entry and put `cmd/migrate/*_test.go` in scope; a
+CHANGELOG.md named in the documentation to update must be in scope. An over-budget one-pager
+note states the excess and the largest fields, and Revision reports a one-pager it did not shrink.
 
 Document writes `<checkout>/docs/specs/<date>-<slug>.md` only after `git check-ignore` confirms
 the path is ignored, never overwrites, and keeps a private copy (`feature-analysis.md`), the
