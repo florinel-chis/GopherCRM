@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from gophercrm_runner.config import GateError
+from gophercrm_runner.config import CommandError, GateError
 
 
 class EvidenceTests(unittest.TestCase):
@@ -53,3 +53,103 @@ class EvidenceTests(unittest.TestCase):
                       dict(verdict, criteria=[dict(verdict['criteria'][0], passed=False, finding='Bug')])]:
             with self.assertRaises(GateError):
                 review_coverage(wrong, criteria)
+
+
+REPORT = Path(__file__).with_name('vitest-report.json')
+CHIP = 'src/pages/deals/DealStageChip.test.tsx'
+COLORS = 'src/pages/deals/dealStageColors.test.ts'
+QUALIFICATION = 'DealStageChip labels \'qualification\' as "\'Qualification\'"'
+PALETTE = 'dealStagePaletteColor covers every stage in the one colour map'
+
+
+class VitestEvidenceTests(unittest.TestCase):
+    """The parser is exercised against a captured `--reporter=json` report."""
+
+    def report(self):
+        return json.loads(REPORT.read_text())
+
+    def identities(self):
+        return [{'file': CHIP, 'name': QUALIFICATION}, {'file': COLORS, 'name': PALETTE}]
+
+    def assertion(self, report, file, name):
+        for result in report['testResults']:
+            if result['name'].endswith('/gocrm-ui/' + file):
+                for item in result['assertionResults']:
+                    if item['fullName'] == name:
+                        return result, item
+        raise AssertionError('fixture lacks ' + name)
+
+    def test_captured_report_passes_named_identities(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        named_vitest_tests(REPORT.read_text(), self.identities())
+
+    def test_leading_banner_lines_are_tolerated(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        banner = '\n> gophercrm-ui@1.2.0 test\n> vitest --run --reporter=json src/x.test.ts\n\n'
+        named_vitest_tests(banner + json.dumps(self.report()), self.identities())
+
+    def test_failed_skipped_pending_or_todo_identity_fails(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        for status in ['failed', 'skipped', 'pending', 'todo', 'disabled']:
+            report = self.report()
+            self.assertion(report, CHIP, QUALIFICATION)[1]['status'] = status
+            with self.subTest(status=status), self.assertRaisesRegex(CommandError, 'failed or was skipped'):
+                named_vitest_tests(json.dumps(report), self.identities())
+
+    def test_failed_required_file_fails_even_when_its_named_case_passed(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        report = self.report()
+        self.assertion(report, CHIP, QUALIFICATION)[0]['status'] = 'failed'
+        with self.assertRaisesRegex(CommandError, 'failed or was skipped'):
+            named_vitest_tests(json.dumps(report), self.identities())
+
+    def test_missing_file_or_case_fails(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        report = self.report()
+        report['testResults'] = [r for r in report['testResults'] if not r['name'].endswith(COLORS)]
+        with self.assertRaisesRegex(CommandError, 'reported no results'):
+            named_vitest_tests(json.dumps(report), self.identities())
+        report = self.report()
+        self.assertion(report, COLORS, PALETTE)[0]['assertionResults'] = []
+        with self.assertRaisesRegex(CommandError, 'reported no results'):
+            named_vitest_tests(json.dumps(report), self.identities())
+        report = self.report()
+        self.assertion(report, COLORS, PALETTE)[1]['fullName'] = PALETTE + ' (renamed)'
+        with self.assertRaisesRegex(CommandError, 'exact file/test passes'):
+            named_vitest_tests(json.dumps(report), self.identities())
+        # A same-named case in another file is not the required identity.
+        with self.assertRaisesRegex(CommandError, 'exact file/test passes'):
+            named_vitest_tests(REPORT.read_text(), [{'file': COLORS, 'name': QUALIFICATION}])
+
+    def test_duplicate_results_fail(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        report = self.report()
+        result, item = self.assertion(report, CHIP, QUALIFICATION)
+        result['assertionResults'].append(dict(item))
+        with self.assertRaisesRegex(CommandError, 'Duplicate'):
+            named_vitest_tests(json.dumps(report), self.identities())
+        report = self.report()
+        report['testResults'].append(self.assertion(report, CHIP, QUALIFICATION)[0])
+        with self.assertRaisesRegex(CommandError, 'Duplicate'):
+            named_vitest_tests(json.dumps(report), self.identities())
+
+    def test_absent_or_malformed_report_fails(self):
+        from gophercrm_runner.evidence import named_vitest_tests
+        for output in ['', 'All checks passed', '{"testResults": "none"}', '[]',
+                       REPORT.read_text()[:200], json.dumps({'success': True}),
+                       REPORT.read_text() + '\n' + REPORT.read_text()]:
+            with self.subTest(output=output[:40]), self.assertRaises(CommandError):
+                named_vitest_tests(output, self.identities())
+
+    def test_named_tests_dispatches_by_declared_kind(self):
+        from gophercrm_runner.evidence import named_tests, vitest_identities
+        named_tests(REPORT.read_text(), vitest_identities(self.identities()))
+        go = [{'package': 'example/repo/feature', 'name': 'TestFeature'}]
+        named_tests(json.dumps(dict(Package='example/repo/feature', Test='TestFeature', Action='pass')), go)
+        with self.assertRaises(CommandError):
+            named_tests(REPORT.read_text(), go)
+        # The declared kind, not the identity shape, selects the parser; a mismatch is refused.
+        with self.assertRaisesRegex(GateError, 'identities'):
+            named_tests(REPORT.read_text(), self.identities())
+        with self.assertRaisesRegex(GateError, 'identities'):
+            named_tests(REPORT.read_text(), vitest_identities(go))

@@ -2,11 +2,12 @@ from pathlib import Path
 import json
 import shutil
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import test_runner as fixtures
 import test_batches as batch_fixtures
 import test_pull_requests as pr_fixtures
+from gophercrm_runner import evidence
 from gophercrm_runner.config import BudgetError, CommandError, GateError
 
 
@@ -237,3 +238,72 @@ class PullRequestValidationResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final['validation_restarts'][0]['receipts'], old['receipts'])
         self.assertEqual(final['head'], final['tested_head'])
         self.assertEqual(final['head'], final['reviewed_head'])
+
+
+VITEST = ('npm', '--prefix', 'gocrm-ui', 'test', '--silent', '--', '--run', '--reporter=json',
+          'src/pages/deals/DealStageChip.test.tsx')
+VITEST_TESTS = [{'file': 'src/pages/deals/DealStageChip.test.tsx',
+                 'name': 'DealStageChip labels \'qualification\' as "\'Qualification\'"'}]
+REPORT = Path(__file__).with_name('vitest-report.json').read_text()
+
+
+class VitestValidationTests(unittest.IsolatedAsyncioTestCase):
+    """A Vitest acceptance check is parsed from its JSON report and installs locked dependencies."""
+    setUp = fixtures.EngineTests.setUp
+    tearDown = fixtures.EngineTests.tearDown
+
+    async def asyncSetUp(self):
+        await fixtures.EngineTests.asyncSetUp(self)
+        self.checks = [('local-0', ('make', 'verify'), None),
+                       ('acceptance-ui-deals', VITEST, evidence.vitest_identities(VITEST_TESTS))]
+        self.runner.validation_checks = AsyncMock(side_effect=lambda *args: self.checks)
+        self.installs, self.vitest_calls, self.reports = [], [], []
+        original = self.commands.run
+
+        async def boundary(args, *, cwd, **kwargs):
+            args = tuple(args)
+            if args == INSTALL:
+                self.installs.append(cwd)
+                return 0, 'Locked frontend dependencies installed'
+            if args == VITEST:
+                self.vitest_calls.append(cwd)
+                report = self.reports.pop(0)
+                if isinstance(report, Exception):
+                    raise report
+                return 0, report
+            return await original(args, cwd=cwd, **kwargs)
+
+        self.commands.run = boundary
+
+    async def test_resumed_vitest_check_installs_dependencies_and_parses_its_report(self):
+        self.reports = [CommandError('connection refused: temporary test environment failure'), REPORT]
+        with self.assertRaisesRegex(GateError, 'environment'):
+            await self.runner.run_issue(95, execute=True)
+        old = self.runner.store.read('issue-95')
+        self.assertEqual(list(old['receipts']), ['local-0'])
+        with patch('gophercrm_runner.evidence.named_vitest_tests',
+                   wraps=evidence.named_vitest_tests) as vitest, \
+                patch('gophercrm_runner.evidence.named_go_tests', wraps=evidence.named_go_tests) as go:
+            result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertEqual(final['receipts']['local-0'], old['receipts']['local-0'])
+        self.assertIn('acceptance-ui-deals', final['receipts'])
+        # The reused make verify receipt did not install this fresh checkout's dependencies.
+        self.assertEqual(self.installs, [Path(final['validation_worktree'])])
+        self.assertEqual(self.vitest_calls[-1], Path(final['validation_worktree']))
+        # The runner passes the command's stdout without its trailing newline.
+        self.assertEqual([call.args for call in vitest.call_args_list], [(REPORT.rstrip('\n'), VITEST_TESTS)])
+        go.assert_not_called()
+
+    async def test_vitest_check_without_a_named_pass_produces_no_receipt(self):
+        skipped = json.loads(REPORT)
+        skipped['testResults'][0]['assertionResults'][0]['status'] = 'skipped'
+        self.reports = [json.dumps(skipped)] * 3
+        with self.assertRaisesRegex(GateError, 'Repair budget exhausted') as raised:
+            await self.runner.run_issue(95, execute=True)
+        self.assertIn('failed or was skipped', str(raised.exception.__context__))
+        self.assertEqual(len(self.vitest_calls), 3)
+        record = self.runner.store.read('issue-95')
+        self.assertNotIn('acceptance-ui-deals', record.get('receipts', {}))
+        self.assertIsNone(record.get('tested_head'))

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from .config import CommandError, GateError
+from .config import CommandError, GateError, check_kind
 from .process import redact
 from . import documentation
 
@@ -40,6 +40,83 @@ def named_go_tests(output, tests):
                 passed.add(identity)
     if passed != required:
         raise CommandError('Named acceptance regressions did not all report exact package/test passes')
+
+
+class VitestIdentities(list):
+    """Named Vitest identities. Serializes exactly like the registry list it copies."""
+    kind = 'vitest'
+
+
+def vitest_identities(tests):
+    return VitestIdentities(tests)
+
+
+def acceptance_tests(check):
+    """Named tests of a registry entry, carrying its kind into the (id, argv, tests) check tuple.
+    A Go entry yields its registry list unchanged, so existing plan identities are preserved."""
+    return vitest_identities(check['tests']) if check_kind(check) == 'vitest' else check['tests']
+
+
+IDENTITY_FIELDS = {'go': {'package', 'name'}, 'vitest': {'file', 'name'}}
+
+
+def named_tests(output, tests):
+    """Dispatch to the parser of the check's declared kind; never infer it from the output."""
+    kind = getattr(tests, 'kind', 'go')
+    if kind not in IDENTITY_FIELDS or any(
+            not isinstance(t, dict) or set(t) != IDENTITY_FIELDS[kind] for t in tests):
+        raise GateError('Named-test identities do not match their declared check kind')
+    (named_vitest_tests if kind == 'vitest' else named_go_tests)(output, tests)
+
+
+def vitest_report(output):
+    """Return the one JSON report on stdout, after any leading non-JSON lines."""
+    decoder = json.JSONDecoder()
+    offset = 0
+    for line in output.splitlines(keepends=True):
+        start, offset = offset, offset + len(line)
+        if not line.startswith('{'):
+            continue
+        try:
+            report, end = decoder.raw_decode(output, start)
+        except ValueError:
+            continue
+        if output[end:].strip():
+            raise CommandError('Vitest output continues after its JSON report')
+        if (not isinstance(report, dict) or not isinstance(report.get('testResults'), list)
+                or any(not isinstance(r, dict) or not isinstance(r.get('name'), str)
+                       or not isinstance(r.get('assertionResults'), list)
+                       or any(not isinstance(a, dict) for a in r['assertionResults'])
+                       for r in report['testResults'])):
+            raise CommandError('Malformed Vitest JSON report')
+        return report
+    raise CommandError('Acceptance check printed no Vitest JSON report')
+
+
+def named_vitest_tests(output, tests):
+    required = {(t['file'], t['name']) for t in tests}
+    report = vitest_report(output)
+    passed = set()
+    for file in sorted({file for file, _ in required}):
+        results = [r for r in report['testResults']
+                   if r['name'].replace('\\', '/').endswith('/gocrm-ui/' + file)]
+        if len(results) > 1:
+            raise CommandError('Duplicate required acceptance result')
+        if not results or not results[0]['assertionResults']:
+            raise CommandError('Required Vitest file reported no results')
+        if results[0].get('status') != 'passed':
+            raise CommandError('Required acceptance test file failed or was skipped')
+        for assertion in results[0]['assertionResults']:
+            identity = (file, assertion.get('fullName'))
+            if identity not in required:
+                continue
+            if assertion.get('status') != 'passed':
+                raise CommandError('Required acceptance test failed or was skipped')
+            if identity in passed:
+                raise CommandError('Duplicate required acceptance result')
+            passed.add(identity)
+    if passed != required:
+        raise CommandError('Named acceptance tests did not all report exact file/test passes')
 
 
 def safe_artifact(root, relative):

@@ -98,7 +98,36 @@ Every new execution requires a frozen task contract. The operator owns its objec
 }
 ```
 
-These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the selected browser tests on SQLite/MySQL and migration tests. The backend MVP rejects manual/UI profiles and frontend edits explicitly.
+These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the selected browser tests on SQLite/MySQL and migration tests. Manual evidence profiles remain rejected explicitly.
+
+A manifest's `validation_profile` selects one evidence model for the whole ticket:
+
+| Profile | Acceptance check kind | Changes admitted | Browser checks |
+| --- | --- | --- | --- |
+| `backend` | `go` | `scope_paths`, never `gocrm-ui/` | contextual policy |
+| `backend-database` | `go` | `scope_paths`, never `gocrm-ui/` | configured SQLite/MySQL matrix, mandatory |
+| `frontend` | `vitest` | `scope_paths` within `gocrm-ui/`, `docs/`, `README.md` and `CHANGELOG.md` | configured SQLite/MySQL matrix, mandatory |
+
+A manifest that references a check of the other kind is refused, so Go and Vitest evidence never mix inside one ticket. `internal/handler/assets/` is outside every profile. A `frontend` ticket never changes Go code, even when a scope glob would admit it; the protected paths (`gocrm-ui/package.json`, `gocrm-ui/package-lock.json` and the TypeScript, Vite and ESLint configuration) stay protected, so it cannot add a dependency. Its core check is `make verify`, which runs `npm run build`, `npm run lint` with `--max-warnings=0` and the full Vitest suite. Freezing a `frontend` contract requires `database_test_commands` and `TEST_MYSQL_DSN`, as its browser checks are mandatory evidence: the selected specs on SQLite and MySQL (the full browser matrix when the selection falls back to `full`) plus the migration check.
+
+A registry entry may carry `kind`: `"go"` (the default when absent; existing entries and their frozen `checks_hash` are unchanged) or `"vitest"`. A Vitest entry's `argv` is exactly the prefix below followed by one or more unique test files relative to `gocrm-ui`, each matching `^src/.*\.test\.tsx?$`; the runner executes it from the repository root of a fresh validation checkout after `npm ci`. `--silent` keeps npm's script banner off standard output, so the Vitest JSON report is the command's only stdout. Each named test is `{file, name}`: `file` is one of the argv files, `name` is the test's `fullName` exactly as the JSON reporter prints it (the `describe` titles and the test title joined by single spaces). Identities are unique.
+
+```json
+{
+  "acceptance_checks": {
+    "deal-detail-ui": {
+      "kind": "vitest",
+      "argv": ["npm", "--prefix", "gocrm-ui", "test", "--silent", "--", "--run", "--reporter=json",
+               "src/pages/deals/DealDetail.test.tsx"],
+      "tests": [
+        {"file": "src/pages/deals/DealDetail.test.tsx", "name": "DealDetail flags a past expected close on an open deal"}
+      ]
+    }
+  }
+}
+```
+
+Vitest evidence is as strict as Go evidence. The runner reads the one JSON report on standard output, tolerating leading non-JSON lines and refusing any content after it. Every named identity must report `status: "passed"` exactly once in the result of its own file; a `failed`, `skipped`, `pending`, `todo` or any other status fails acceptance, as does a required file that reports no results or a non-passed file status, a missing or renamed test, a duplicate file result or a duplicate passing case. A same-named case in another file never satisfies the identity.
 
 ```sh
 gophercrm-runner freeze --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 96 --manifest /absolute/path/to/task.json
@@ -359,7 +388,9 @@ unresolvable citation moves to the gaps) and the external context the agent choo
 (reported by the agent; the runner does not verify web citations); Analysis writes the one-pager
 (500 words, breaches are reported); Specification writes the acceptance criteria in the task
 manifest shape of `freeze --manifest` plus the check registry entries they name, UI criteria for
-the frontend slice the backend MVP cannot execute, the data model with both migration halves, the
+the frontend slice, each verified by a named Vitest test file and case (executed as a separate
+`frontend` ticket with `vitest` registry entries; the analysis manifest itself remains a backend
+profile), the data model with both migration halves, the
 API, screens, permissions, Mermaid diagrams, the test plan and the documentation to update; Review
 is a second, independent process that returns severity-graded findings and is overruled when it
 approves with an open P0 or P1; Revision addresses every finding by id, once. Deterministic checks

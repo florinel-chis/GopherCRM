@@ -10,7 +10,7 @@ import statistics
 import subprocess
 import time
 
-from . import evidence, telemetry, validation
+from . import contracts, evidence, telemetry, validation
 from .config import GateError
 from .gates import touches_database
 from .process import redact
@@ -114,7 +114,7 @@ def validation_preview(config, paths, *, manifest=None, history_root=None, selec
     # A preparation preview conservatively displays the configured database
     # matrix. Execution still computes the authoritative plan from the diff.
     requires_database = (touches_database(paths) and selected['profile'] != 'auth') or bool(
-        manifest and manifest.get('validation_profile') == 'backend-database') or (
+        manifest and manifest.get('validation_profile') in contracts.DATABASE_PROFILES) or (
         selected['profile'] == 'full' and config.validation_mode != 'legacy')
     database = config.database_test_commands if requires_database else ()
     checks.extend(list(validation.browser_command(c, selected)) for c in database)
