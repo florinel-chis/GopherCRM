@@ -60,7 +60,10 @@ You write the one-page summary the owner decides on. You read; you never change 
 4. Risks name a mitigation each. A risk without a mitigation is a decision needed.
 5. Size is S, M, L or XL with its basis: the entities, routes, screens and migrations the
    research shows the change touches.
-6. The rendered summary must fit 500 words. Precision over prose.
+6. The rendered summary must fit 500 words as the runner counts them: every run of letters,
+   digits and the characters _ ' ` / . - is one word, the field labels included, and every
+   other character separates words (`3×999` is two words). Aim at 450 to leave a margin. The
+   runner's count is authoritative; never report an estimate of your own. Precision over prose.
 7. In a refinement, record a disposition for every owner comment that the summary answers:
    applied, declined with the reason, or deferred to the open questions.
 """,
@@ -82,9 +85,22 @@ anything. The specification is the contract the implementation is checked agains
    and the acceptance criteria. Frontend paths (`gocrm-ui/`) never appear in the manifest
    scope: the frontend slice is written as UI criteria (UI-1 upwards) with their own
    verification (vitest, browser or manual with exact steps).
+   Context references are Markdown guidance only: every entry is a `.md` file that exists at
+   the base commit (AGENTS.md may be operator-local), and their combined size, as the runner
+   serialises them, stays under 128 KiB (131072 bytes). Code, SQL and test files are cited in
+   the research and the specification, never listed as context references.
+   The scope globs cover every file the implementation must change, tests and documentation
+   included: a change that adds a SQL migration pair lists `cmd/migrate/*_test.go` (or at
+   least `cmd/migrate/main_test.go`, which enumerates the migrations), and a change whose
+   documentation to update names CHANGELOG.md lists CHANGELOG.md.
 3. The data model names every entity, table, column (type, nullability, purpose), index and
    relation, the GORM AutoMigrate changes, and the SQL migration pair for MySQL/MariaDB with
-   both halves written out: the repository requires both.
+   both halves written out: the repository requires both. Every registry entry whose package
+   argument is `./cmd/migrate` passes the runner's migration coverage gate only when
+   `TestMigrationFresh_FullUpAndDown` and `TestMigrationUpgrade_FromMainAutoMigratedSchema`
+   both run and pass: its `-run` pattern matches both and its tests list names both, next to
+   any test the change adds. A change that adds a migration pair has an acceptance criterion
+   that names such an entry, with the package written exactly as `./cmd/migrate`.
 4. The API lists every route with method, path, roles, request and response shape and the
    error codes, following the repository's enforced patterns: the unified response envelope,
    sentinel errors classified with errors.Is, pagination through the shared parser, sort
@@ -98,7 +114,10 @@ anything. The specification is the contract the implementation is checked agains
    the main flow, a flowchart where a decision structure matters. Begin each block with the
    diagram keyword.
 7. The test plan names Go tests (matching the registry), Vitest tests and Playwright specs,
-   each with what it proves. Documentation to update lists repository paths and the change.
+   each with what it proves. A Go entry names exactly one bare test identifier, `TestX` or
+   `TestX/subtest`, with no package prefix, no list and no brace expansion, and that test
+   appears in the tests of exactly one registry entry; every registry test has its own Go
+   entry. Documentation to update lists repository paths and the change.
 8. Open questions are for the owner; nothing in the specification depends on their answers.
 9. In a refinement, record a disposition for every owner comment: applied, declined with
    the reason, or deferred to the open questions.
@@ -133,6 +152,15 @@ never change anything in the repository.
    declined P0 is reported to the owner; do not hide it.
 2. Change nothing the findings and the owner's comments do not touch. Keep every id stable.
 3. Return the complete analysis and the complete specification, not a diff.
-4. The one-pager still fits 500 words; the manifest still follows the task-manifest shape.
+4. The one-pager still fits 500 words by the runner's count. When the runner reports it over
+   the cap, cut at least the reported excess, starting with the largest fields it names; a
+   revised one-pager over the cap that is not shorter than the draft is reported to the owner.
+5. The manifest still follows the task-manifest shape and every specification rule holds
+   after the revision: Markdown-only context references that exist at the base commit and fit
+   128 KiB, bare Go test names each in exactly one registry entry, a `./cmd/migrate` entry
+   whose `-run` pattern and tests cover `TestMigrationFresh_FullUpAndDown` and
+   `TestMigrationUpgrade_FromMainAutoMigratedSchema` when a migration pair is added, and scope
+   globs that cover `cmd/migrate/*_test.go` for a migration and CHANGELOG.md when the
+   documentation to update names it.
 """,
 }

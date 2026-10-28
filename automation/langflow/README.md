@@ -365,7 +365,15 @@ is a second, independent process that returns severity-graded findings and is ov
 approves with an open P0 or P1; Revision addresses every finding by id, once. Deterministic checks
 (manifest validity through the same validators as `freeze`, contiguous `AC` ids, registry test
 names matching their `-run` pattern, Mermaid keywords, word budgets) are recorded as rules-check
-notes, given to the reviewer as runner findings, and listed at the end of the document.
+notes, given to the reviewer as runner findings, and listed at the end of the document. The
+specification checks also anticipate the gates an execution would stop at: context references
+must be Markdown files that exist at the base commit and fit the 128 KiB guidance cap; Go
+test-plan entries must be bare test names, each in exactly one registry entry; every
+`./cmd/migrate` entry must cover `TestMigrationFresh_FullUpAndDown` and
+`TestMigrationUpgrade_FromMainAutoMigratedSchema` for the migration coverage gate, and a change
+with a migration pair must name such an entry and put `cmd/migrate/*_test.go` in scope; a
+CHANGELOG.md named in the documentation to update must be in scope. An over-budget one-pager
+note states the excess and the largest fields, and Revision reports a one-pager it did not shrink.
 
 Document writes `<checkout>/docs/specs/<date>-<slug>.md` only after `git check-ignore` confirms
 the path is ignored, never overwrites, and keeps a private copy (`feature-analysis.md`), the

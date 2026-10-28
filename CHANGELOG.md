@@ -178,6 +178,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Feature analysis checks anticipate the execution gates.** The specification and revision
+  stages now report context references that are not Markdown, are missing at the base commit or
+  exceed the 128 KiB guidance cap; Go test-plan names that are not bare identifiers or appear in
+  more than one registry entry; `./cmd/migrate` registry entries whose `-run` pattern and tests
+  do not cover `TestMigrationFresh_FullUpAndDown` and
+  `TestMigrationUpgrade_FromMainAutoMigratedSchema`; and migration or CHANGELOG changes whose
+  scope omits `cmd/migrate/*_test.go` or `CHANGELOG.md`. An over-budget one-pager note states
+  the excess and the largest fields, and the revision reports a one-pager it did not shrink. The
+  stage rules state each requirement.
 - **The remediation runner waits for an in-progress workflow run before it collects failed-job
   logs.** A required check that failed while other jobs of the same run were still running made
   the runner request the run's failed-job logs, which `gh` refuses until the run completes; the
