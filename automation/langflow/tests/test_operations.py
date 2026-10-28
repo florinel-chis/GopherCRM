@@ -147,6 +147,29 @@ class OperationalReports(unittest.TestCase):
         self.assertTrue(result['missing_database_policy'])
         self.assertEqual(result['estimate']['status'], 'unknown')
 
+    def test_preview_of_a_frontend_manifest_includes_the_database_browser_matrix(self):
+        from gophercrm_runner.config import DATABASE_CHECKS
+        from test_contracts import VITEST_CHECK, frontend_manifest
+        config = replace(self.config, validation_mode='contextual', database_test_commands=DATABASE_CHECKS,
+                         acceptance_checks={'ui-deals': VITEST_CHECK})
+        for name in ['health-smoke', 'admin-tickets', 'admin-entity-suite']:
+            spec = self.checkout / 'gocrm-ui/e2e/tests' / (name + '.spec.ts')
+            spec.parent.mkdir(parents=True, exist_ok=True)
+            spec.write_text('// fixture spec\n')
+        paths = ['gocrm-ui/src/pages/tickets/TicketList.tsx']
+        backend = operations.validation_preview(config, paths, manifest=dict(
+            frontend_manifest(), validation_profile='backend'))
+        self.assertEqual(backend['selection']['profile'], 'contextual')
+        self.assertNotIn(list(DATABASE_CHECKS[-1]), backend['commands'])
+        result = operations.validation_preview(config, paths, manifest=frontend_manifest())
+        self.assertIn(VITEST_CHECK['argv'], result['commands'])
+        self.assertEqual(sum(c[:2] == ['make', 'e2e'] for c in result['commands']), 2)
+        self.assertIn(list(DATABASE_CHECKS[-1]), result['commands'])
+        self.assertFalse(result['missing_database_policy'])
+        bare = replace(config, database_test_commands=())
+        self.assertTrue(operations.validation_preview(bare, ['gocrm-ui/src/pages/deals/DealList.tsx'],
+                                                      manifest=frontend_manifest())['missing_database_policy'])
+
     def test_process_identity_mismatch_is_not_liveness(self):
         with patch('gophercrm_runner.resources.process_identity', return_value='new-process'):
             self.assertEqual(liveness({'pid': 123, 'process_identity': 'old-process'})['status'], 'identity-mismatch')

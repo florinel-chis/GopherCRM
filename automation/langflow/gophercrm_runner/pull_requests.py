@@ -272,7 +272,7 @@ class PullRequestRunner(Runner):
             checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in record['criteria']}):
             check = self.config.acceptance_checks[check_id]
-            checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
+            checks.append(('acceptance-' + check_id, tuple(check['argv']), evidence.acceptance_tests(check)))
         if self.config.validation_mode != 'legacy':
             checks.extend(database)
         return checks
@@ -358,7 +358,9 @@ class PullRequestRunner(Runner):
     async def finalize_implementation(self, record):
         # Initial externally authored changes are explicitly pinned by the operator.
         # A repair agent may never change the runner or validation policy.
-        validate_paths(await self.changed_paths(Path(record['worktree']), record['head']))
+        worktree = Path(record['worktree'])
+        paths = await self.changed_paths(worktree, record['head'])
+        validate_paths(paths, added=await self.added_paths(worktree, record['head'], paths))
         await super().finalize_implementation(record)
 
     async def review(self, issue, record):
@@ -488,7 +490,7 @@ class PullRequestRunner(Runner):
         if source:
             frozen = contracts.load_contract(self.config, source['issue'])
             record.update(source_issue=source['issue'], criteria=frozen['acceptance'],
-                          database_profile=frozen['validation_profile'] == 'backend-database',
+                          database_profile=frozen['validation_profile'] in contracts.DATABASE_PROFILES,
                           source_digest=evidence.sha(json.dumps(source, sort_keys=True).encode()),
                           source_snapshot=source,
                           reuse_ticket=source['head'] == fetched and source['base'] == base)
