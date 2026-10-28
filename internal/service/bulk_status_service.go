@@ -119,7 +119,7 @@ func isValidTaskStatus(status models.TaskStatus) bool {
 // runBulkStatusUpdate records the operation, runs apply inside one transaction
 // and reports the outcome against that record. apply returning an error rolls
 // the transaction back, so nothing apply wrote survives a refusal.
-func (s *bulkOperationService) runBulkStatusUpdate(actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkRepository) error) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkOperationService) runBulkStatusUpdate(actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkRepository, events repository.AutomationRepository) error) (*models.BulkStatusUpdateResult, error) {
 	operation, err := s.CreateBulkOperation(actorID, resourceType, models.BulkAction, len(ids))
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (s *bulkOperationService) runBulkStatusUpdate(actorID uint, resourceType st
 		if !ok || tx == nil {
 			return fmt.Errorf("transaction not found in context")
 		}
-		return apply(s.bulkRepo.WithTx(tx))
+		return apply(s.bulkRepo.WithTx(tx), automationTx(s.automation, tx))
 	})
 
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *bulkOperationService) BulkSetLeadStatus(actorID uint, actorRole models.
 		return nil, bulkStatusForbidden("Only sales and admin users can update leads", nil)
 	}
 
-	return s.runBulkStatusUpdate(actorID, "leads", unique, func(txRepo repository.BulkRepository) error {
+	return s.runBulkStatusUpdate(actorID, "leads", unique, func(txRepo repository.BulkRepository, events repository.AutomationRepository) error {
 		leads, err := txRepo.GetLeadsByIDs(unique)
 		if err != nil {
 			return err
@@ -191,7 +191,20 @@ func (s *bulkOperationService) BulkSetLeadStatus(actorID uint, actorRole models.
 			return bulkStatusForbidden("You can only update your own leads", notOwned)
 		}
 
-		return txRepo.SetLeadStatus(unique, status)
+		if err := txRepo.SetLeadStatus(unique, status); err != nil {
+			return err
+		}
+		// The events ride in the same transaction as the write: every lead
+		// gets lead_updated, and the ones whose status actually changed
+		// lead_status_changed with the previous and the new value. A refused
+		// batch rolls everything back, events included.
+		actor := actorID
+		for _, lead := range leads {
+			if err := automationLeadUpdated(events, lead.ID, lead.Status, status, models.AutomationOriginBulk, &actor); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -220,7 +233,7 @@ func (s *bulkOperationService) BulkSetTicketStatus(actorID uint, actorRole model
 		return nil, bulkStatusForbidden("Your role cannot update tickets", nil)
 	}
 
-	return s.runBulkStatusUpdate(actorID, "tickets", unique, func(txRepo repository.BulkRepository) error {
+	return s.runBulkStatusUpdate(actorID, "tickets", unique, func(txRepo repository.BulkRepository, _ repository.AutomationRepository) error {
 		tickets, err := txRepo.GetTicketsByIDs(unique)
 		if err != nil {
 			return err
@@ -269,7 +282,7 @@ func (s *bulkOperationService) BulkSetTaskStatus(actorID uint, actorRole models.
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid task status: %s", status))
 	}
 
-	return s.runBulkStatusUpdate(actorID, "tasks", unique, func(txRepo repository.BulkRepository) error {
+	return s.runBulkStatusUpdate(actorID, "tasks", unique, func(txRepo repository.BulkRepository, _ repository.AutomationRepository) error {
 		tasks, err := txRepo.GetTasksByIDs(unique)
 		if err != nil {
 			return err

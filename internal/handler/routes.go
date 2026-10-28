@@ -220,6 +220,48 @@ func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	}
 }
 
+// SetupAutomationRoutes mounts the follow-up automation endpoints. Rules and
+// the dry run are admin-only on every route; the run history is admin and
+// sales (the service narrows sales to its own leads and deals inside the
+// query), and cancelling a run is admin-only.
+func SetupAutomationRoutes(router *gin.RouterGroup, handler *AutomationHandler) {
+	admin := middleware.RequireRole(models.RoleAdmin)
+	rules := router.Group("/automation/rules")
+	rules.Use(admin)
+	{
+		rules.POST("", handler.CreateRule)
+		rules.GET("", handler.ListRules)
+		rules.GET("/:id", handler.GetRule)
+		rules.PUT("/:id", handler.UpdateRule)
+		rules.DELETE("/:id", handler.DeleteRule)
+		rules.POST("/:id/enable", handler.EnableRule)
+		rules.POST("/:id/disable", handler.DisableRule)
+		rules.POST("/:id/dry-run", handler.DryRun)
+	}
+	runs := router.Group("/automation/runs")
+	runs.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales))
+	{
+		runs.GET("", handler.ListRuns)
+		runs.GET("/:id", handler.GetRun)
+		runs.POST("/:id/cancel", admin, handler.CancelRun)
+	}
+}
+
+// SetupNotificationRoutes mounts a staff user's own notifications. Customers
+// are never addressed by a rule and get 403 on every route.
+func SetupNotificationRoutes(router *gin.RouterGroup, handler *NotificationHandler) {
+	notifications := router.Group("/notifications")
+	notifications.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport))
+	{
+		notifications.GET("", handler.List)
+		// Static segments registered before the parameter route, as the
+		// deals group does with /pipeline.
+		notifications.GET("/unread-count", handler.UnreadCount)
+		notifications.POST("/read-all", handler.MarkAllRead)
+		notifications.POST("/:id/read", handler.MarkRead)
+	}
+}
+
 // SetupBulkStatusRoutes registers the entity bulk status endpoints. They are
 // registered outside the entity groups so the Setup* signatures stay stable
 // for the test suites that mount them; the lead variant therefore repeats the

@@ -37,6 +37,20 @@ type dealService struct {
 	currency     DealCurrencySource
 	txManager    *utils.TransactionManager
 	now          func() time.Time
+	// automation records the outbox events of every committed deal write
+	// (issue #164) in the same transaction as the deal row and its stage
+	// history. Nil means no automation.
+	automation repository.AutomationRepository
+}
+
+// DealServiceOption configures NewDealService beyond its required
+// dependencies.
+type DealServiceOption func(*dealService)
+
+// WithDealAutomationEvents makes Create, Update and ChangeStage record their
+// automation events inside the write transaction.
+func WithDealAutomationEvents(repo repository.AutomationRepository) DealServiceOption {
+	return func(s *dealService) { s.automation = repo }
 }
 
 func NewDealService(
@@ -47,8 +61,9 @@ func NewDealService(
 	userRepo repository.UserRepository,
 	currency DealCurrencySource,
 	txManager *utils.TransactionManager,
+	opts ...DealServiceOption,
 ) DealService {
-	return &dealService{
+	s := &dealService{
 		dealRepo:     dealRepo,
 		companyRepo:  companyRepo,
 		customerRepo: customerRepo,
@@ -58,6 +73,10 @@ func NewDealService(
 		txManager:    txManager,
 		now:          time.Now,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // stamp is the time written to closed_at and deal_stage_changes.changed_at,
@@ -99,13 +118,17 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 		if err := repo.Create(deal); err != nil {
 			return err
 		}
-		return repo.CreateStageChange(&models.DealStageChange{
+		if err := repo.CreateStageChange(&models.DealStageChange{
 			DealID:      deal.ID,
 			FromStage:   nil,
 			ToStage:     deal.Stage,
 			ChangedByID: actorID,
 			ChangedAt:   s.stamp(),
-		})
+		}); err != nil {
+			return err
+		}
+		actor := actorID
+		return automationDealCreated(automationTx(s.automation, tx), deal.ID, deal.Stage, models.AutomationOriginUser, &actor)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -185,16 +208,21 @@ func (s *dealService) Update(deal *models.Deal, probability *int, leadIDSent boo
 		if err := repo.Update(deal); err != nil {
 			return err
 		}
+		actor := actorID
+		events := automationTx(s.automation, tx)
 		if !changed {
-			return nil
+			return automationDealUpdated(events, deal.ID, from, from, models.AutomationOriginUser, &actor)
 		}
-		return repo.CreateStageChange(&models.DealStageChange{
+		if err := repo.CreateStageChange(&models.DealStageChange{
 			DealID:      deal.ID,
 			FromStage:   &from,
 			ToStage:     deal.Stage,
 			ChangedByID: actorID,
 			ChangedAt:   s.stamp(),
-		})
+		}); err != nil {
+			return err
+		}
+		return automationDealUpdated(events, deal.ID, from, deal.Stage, models.AutomationOriginUser, &actor)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -249,13 +277,17 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 		if err := repo.Update(deal); err != nil {
 			return err
 		}
-		return repo.CreateStageChange(&models.DealStageChange{
+		if err := repo.CreateStageChange(&models.DealStageChange{
 			DealID:      deal.ID,
 			FromStage:   &from,
 			ToStage:     stage,
 			ChangedByID: actorID,
 			ChangedAt:   s.stamp(),
-		})
+		}); err != nil {
+			return err
+		}
+		actor := actorID
+		return automationDealStageChanged(automationTx(s.automation, tx), deal.ID, from, stage, models.AutomationOriginUser, &actor)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)

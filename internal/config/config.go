@@ -21,6 +21,36 @@ type Config struct {
 	App      AppConfig
 	AEO      AEOConfig
 	Forms    FormsConfig
+	// Automation holds the follow-up automation worker settings.
+	Automation AutomationConfig
+}
+
+// AutomationConfig configures the follow-up automation worker: whether it is
+// started at all (AUTOMATION_ENABLED, default true) and how often it polls for
+// unprocessed events, due runs and schedule passes
+// (AUTOMATION_POLL_INTERVAL_SECONDS, default 30, clamped to 1..3600 so a
+// mistyped value never spins the worker or stalls it for days).
+type AutomationConfig struct {
+	Enabled             bool
+	PollIntervalSeconds int
+}
+
+// Bounds of AUTOMATION_POLL_INTERVAL_SECONDS.
+const (
+	AutomationPollIntervalMin     = 1
+	AutomationPollIntervalMax     = 3600
+	AutomationPollIntervalDefault = 30
+)
+
+// clampAutomationPollInterval keeps the poll interval inside its bounds.
+func clampAutomationPollInterval(seconds int) int {
+	if seconds < AutomationPollIntervalMin {
+		return AutomationPollIntervalMin
+	}
+	if seconds > AutomationPollIntervalMax {
+		return AutomationPollIntervalMax
+	}
+	return seconds
 }
 
 // Supported values of DB_DRIVER. MySQL is the default and the only driver the
@@ -287,6 +317,10 @@ func Load() (*Config, error) {
 			RecaptchaSiteKey:  getEnv("RECAPTCHA_SITE_KEY", ""),
 			RecaptchaSecret:   getEnv("RECAPTCHA_SECRET_KEY", ""),
 			RecaptchaMinScore: clampUnitInterval(getEnvAsFloat("RECAPTCHA_MIN_SCORE", 0.5)),
+		},
+		Automation: AutomationConfig{
+			Enabled:             getEnvAsBool("AUTOMATION_ENABLED", true),
+			PollIntervalSeconds: clampAutomationPollInterval(getEnvAsInt("AUTOMATION_POLL_INTERVAL_SECONDS", AutomationPollIntervalDefault)),
 		},
 	}
 

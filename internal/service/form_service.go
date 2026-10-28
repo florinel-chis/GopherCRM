@@ -218,6 +218,21 @@ type formService struct {
 	// verifier is nil whenever the server has no reCAPTCHA key pair, which is
 	// what makes a form's captcha_enabled flag a no-op instead of a wall.
 	verifier *forms.RecaptchaVerifier
+
+	// automation records the outbox events of the leads a submission creates
+	// or updates (issue #164), in the submission's own transaction. Nil means
+	// no automation.
+	automation repository.AutomationRepository
+}
+
+// FormServiceOption configures NewFormService beyond its required
+// dependencies.
+type FormServiceOption func(*formService)
+
+// WithFormAutomationEvents makes the submission paths record lead_created
+// (origin form) for a new lead and lead_updated for an existing one.
+func WithFormAutomationEvents(repo repository.AutomationRepository) FormServiceOption {
+	return func(s *formService) { s.automation = repo }
 }
 
 // NewFormService wires the forms module. apiPrefix is the mount point of the
@@ -231,6 +246,7 @@ func NewFormService(
 	txManager *utils.TransactionManager,
 	cfg config.FormsConfig,
 	apiPrefix string,
+	opts ...FormServiceOption,
 ) FormService {
 	s := &formService{
 		repo:      repo,
@@ -245,6 +261,9 @@ func NewFormService(
 	}
 	if cfg.RecaptchaActive() {
 		s.verifier = forms.NewRecaptchaVerifier(cfg.RecaptchaSecret, cfg.RecaptchaMinScore)
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	return s
 }
@@ -826,7 +845,7 @@ func (s *formService) storeReceivedSubmission(form *models.Form, submission *mod
 		if !form.CreateLead {
 			return nil
 		}
-		if err := s.applySubmissionLead(s.leadRepo.WithTx(tx), form, submission); err != nil {
+		if err := s.applySubmissionLead(s.leadRepo.WithTx(tx), automationTx(s.automation, tx), form, submission); err != nil {
 			return err
 		}
 		return txFormRepo.UpdateSubmission(submission)
@@ -917,7 +936,7 @@ func (s *formService) ConfirmSubmission(rawToken string) error {
 			return utils.ErrNoTransaction
 		}
 		var err error
-		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), hash)
+		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), hash)
 		return err
 	})
 	if err != nil {
@@ -942,7 +961,7 @@ func (s *formService) ConfirmSubmission(rawToken string) error {
 // repositories and returns the form and the now-confirmed submission for the
 // mail that follows the commit. Any error discards every write, the token claim
 // included.
-func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, hash string) (*models.Form, *models.FormSubmission, error) {
+func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, events repository.AutomationRepository, hash string) (*models.Form, *models.FormSubmission, error) {
 	// The lookup already excludes spent and expired tokens; the claim below
 	// re-applies both predicates as part of its own UPDATE.
 	stored, err := formRepo.GetConfirmationTokenByHash(hash)
@@ -1004,7 +1023,7 @@ func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo reposi
 	submission.ConfirmedAt = &confirmedAt
 
 	if form.CreateLead {
-		if err := s.applySubmissionLead(leadRepo, form, submission); err != nil {
+		if err := s.applySubmissionLead(leadRepo, events, form, submission); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1017,8 +1036,9 @@ func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo reposi
 // applySubmissionLead links the submission to a lead: the newest live lead with
 // the same address gains a note recording this submission, and when there is
 // none a lead is created from the mapped fields. Both repositories are
-// transaction-scoped by the caller.
-func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, form *models.Form, submission *models.FormSubmission) error {
+// transaction-scoped by the caller; events (nil without automation) records
+// the lead's outbox event in the same transaction, origin form.
+func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, events repository.AutomationRepository, form *models.Form, submission *models.FormSubmission) error {
 	notes := submissionNotes(form, submission)
 
 	existing, err := leadRepo.GetLatestByEmail(submission.Email)
@@ -1029,6 +1049,9 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 	if err == nil && existing != nil {
 		existing.Notes = appendLeadNotes(existing.Notes, notes, submissionNotesPointer(form))
 		if err := leadRepo.Update(existing); err != nil {
+			return err
+		}
+		if err := automationLeadUpdated(events, existing.ID, existing.Status, existing.Status, models.AutomationOriginForm, nil); err != nil {
 			return err
 		}
 		submission.LeadID = &existing.ID
@@ -1069,6 +1092,9 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, fo
 		Notes:     appendLeadNotes("", notes, submissionNotesPointer(form)),
 	}
 	if err := leadRepo.Create(lead); err != nil {
+		return err
+	}
+	if err := automationLeadCreated(events, lead.ID, models.AutomationOriginForm, nil); err != nil {
 		return err
 	}
 

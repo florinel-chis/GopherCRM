@@ -79,6 +79,14 @@ func MigrateDatabase() error {
 			&Form{},
 			&FormSubmission{},
 			&FormConfirmationToken{},
+			// Follow-up automation: rules before steps and runs (both reference
+			// the rule), runs before run steps, notifications last.
+			&AutomationRule{},
+			&AutomationStep{},
+			&AutomationEvent{},
+			&AutomationRun{},
+			&AutomationRunStep{},
+			&Notification{},
 		)
 	})
 }
