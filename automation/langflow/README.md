@@ -167,7 +167,7 @@ To process one issue through its configured completion target:
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
 ```
 
-The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected backend tickets. The full audit queue includes unsupported UI work and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
+The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected tickets (backend or `frontend` profile) or backend pull requests. The full audit queue includes work without an executable profile, such as manual-evidence items, and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
 
 The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. When a required check fails while other jobs of the same workflow run are still in progress, the runner waits, within the CI deadline, for the whole workflow run to finish before it collects the failed-job logs. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
 

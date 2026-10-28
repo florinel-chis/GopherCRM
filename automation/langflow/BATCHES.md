@@ -1,7 +1,7 @@
 # Prepared unattended batches (MVP)
 
-The batch supervisor processes **one to three explicitly prepared backend items**
-sequentially. It freezes each new ticket at admission, runs the existing tests,
+The batch supervisor processes **one to three explicitly prepared items** (backend tickets,
+frontend tickets under the `frontend` profile, and backend pull requests) sequentially. It freezes each new ticket at admission, runs the existing tests,
 independent Claude review, bounded repairs, CI and exact-head squash merge, then
 verifies the merge before admitting the next item. Installing this version neither
 selects tickets nor starts the audit queue. A live two-ticket canary remains a
