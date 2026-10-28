@@ -231,7 +231,8 @@ class Runner:
                                        cwd=worktree)
         return sorted(set(p for p in (tracked + '\0' + untracked).split('\0') if p))
 
-    async def validate_agent_paths(self, record):
+    async def validate_agent_paths(self, record, *, scope=True):
+        """Refuse protected paths; with `scope`, also refuse paths outside the frozen task scope."""
         worktree = Path(record['worktree'])
         ignored = await self.command('git', 'ls-files', '--others', '--ignored', '--exclude-standard',
                                       '-z', cwd=worktree)
@@ -247,7 +248,8 @@ class Runner:
                     if code == 128:  # Git reports a missing object/path with exit 128.
                         additions.add(path)
         validate_paths(paths, new_workflows=additions)
-        contracts.check_scope(contracts.load_contract(self.config, record['issue']), paths)
+        if scope:
+            contracts.check_scope(contracts.load_contract(self.config, record['issue']), paths)
         return paths
 
     async def context_documents(self, refs, base):
@@ -711,8 +713,16 @@ class Runner:
         await self.finalize_implementation(record)
 
     async def finalize_implementation(self, record):
+        """Commit the agent's work, refusing protected paths before anything is written.
+
+        The frozen-scope check runs on the committed candidate, so a scope
+        violation stops at validation with the implementation preserved on the
+        runner branch. Validation repeats the same check, so nothing outside
+        the scope can be tested, reviewed or published until the operator
+        widens the contract or disposes of the execution.
+        """
         worktree = Path(record['worktree'])
-        paths = await self.validate_agent_paths(record)
+        paths = await self.validate_agent_paths(record, scope=False)
         if not await self.command('git', 'status', '--porcelain', '--untracked-files=all', cwd=worktree):
             record['stage'] = 'no_change'
             self.save(record)
@@ -725,6 +735,12 @@ class Runner:
         record.update(stage='committing', intended_tree=await self.command('git', 'write-tree', cwd=worktree))
         self.save(record)
         await self.commit(record)
+        try:
+            await self.validate_agent_paths(record)
+        except GateError as exc:
+            record['last_error'] = redact(str(exc))[-12000:]
+            self.save(record)
+            raise
 
     async def commit(self, record):
         """Reconcile interruption between committing and persisting the new head."""
@@ -741,7 +757,7 @@ class Runner:
                 raise GateError('Index changed during interrupted commit recovery')
             if await self.command('git', 'diff', '--name-only', cwd=worktree):
                 raise GateError('Unstaged changes during interrupted commit recovery')
-            await self.validate_agent_paths(record)
+            await self.validate_agent_paths(record, scope=False)
             await self.command('git', 'commit', '-m', record.get('commit_message') or
                                f'fix: address remediation issue #{record["issue"]}',
                                cwd=worktree)

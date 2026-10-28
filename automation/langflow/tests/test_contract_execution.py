@@ -269,6 +269,112 @@ class ContractExecutionTests(fixtures.EngineTests):
                 await self.runner.freeze(95, self.manifest_path, refresh=True)
 
 
+class ScopeViolationRecoveryTests(ContractExecutionTests):
+    """An out-of-scope implementation is committed and stopped, never stranded or published."""
+
+    def write_during_implementation(self, relative, content='Agent output\n'):
+        original = self.commands.run
+
+        async def implementation(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                target = kwargs['cwd'] / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            return result
+
+        self.commands.run = implementation
+
+    def advance_main(self):
+        (self.checkout / 'other.txt').write_text('Independent main change\n')
+        for command in [('add', '.'), ('commit', '-m', 'advance main'),
+                        ('update-ref', 'refs/remotes/origin/main', 'HEAD')]:
+            subprocess.run(['git', *command], cwd=self.checkout, check=True, capture_output=True)
+
+    def git(self, worktree, *args):
+        return subprocess.check_output(['git', *args], cwd=worktree, text=True)
+
+    async def stop_on_scope_violation(self):
+        self.write_during_implementation('internal/handler/bulk_status_handler.go', 'package handler\n')
+        with self.assertRaisesRegex(GateError, 'Change outside frozen task scope: '
+                                               'internal/handler/bulk_status_handler.go'):
+            await self.runner.run_issue(95, execute=True)
+        return self.runner.store.read('issue-95')
+
+    async def test_scope_violation_commits_the_implementation_and_stops_at_validation(self):
+        record = await self.stop_on_scope_violation()
+        worktree = Path(record['worktree'])
+        self.assertEqual(record['stage'], 'validate')
+        self.assertIn('Change outside frozen task scope', record['last_error'])
+        self.assertNotEqual(record['head'], record['base'])
+        self.assertEqual(await self.runner.head(worktree), record['head'])
+        self.assertEqual(self.git(worktree, 'status', '--porcelain', '--untracked-files=all'), '')
+        self.assertEqual(self.git(worktree, 'diff', '--name-only', record['base'], record['head']).split(),
+                         ['feature.txt', 'internal/handler/bulk_status_handler.go'])
+        self.assertEqual(len(record['implementation_claims']), 1)
+        self.assertEqual(record['implementation_claims'][0]['head_before'], record['base'])
+        self.assertIsNone(record['tested_head'])
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews,
+                          self.commands.creates), (1, 0, 0, 0))
+
+    async def test_unchanged_scope_keeps_failing_at_validation_without_another_provider_call(self):
+        await self.stop_on_scope_violation()
+        with self.assertRaisesRegex(GateError, 'outside frozen task scope'):
+            await self.runner.run_issue(95, execute=True)
+        await self.runner.freeze(95, self.manifest_path, refresh=True)
+        self.assertEqual(self.runner.store.read('issue-95')['stage'], 'validate')
+        with self.assertRaisesRegex(GateError, 'outside frozen task scope'):
+            await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.read('issue-95')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertIsNone(record['tested_head'])
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.creates,
+                          self.commands.merges), (1, 0, 0, 0))
+
+    async def test_revalidate_and_widened_refresh_recover_the_committed_implementation(self):
+        before = await self.stop_on_scope_violation()
+        self.advance_main()
+        self.commands.base = await self.runner.head(self.checkout)
+        with self.assertRaisesRegex(GateError, 'Revalidate the active candidate'):
+            await self.runner.freeze(95, self.manifest_path, refresh=True)
+        await self.runner.revalidate(95)
+        revalidated = self.runner.store.read('issue-95')
+        self.assertEqual((revalidated['stage'], revalidated['base']), ('validate', self.commands.base))
+        self.manifest['scope_paths'].append('internal/handler/**')
+        self.manifest_path.write_text(json.dumps(self.manifest))
+        await self.runner.freeze(95, self.manifest_path, refresh=True)
+        refreshed = self.runner.store.read('issue-95')
+        self.assertEqual(refreshed['stage'], 'validate')
+        self.assertIsNone(refreshed['last_error'])
+        self.assertEqual(refreshed['provider_calls'], before['provider_calls'])
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        final = self.runner.store.read('issue-95')
+        self.assertEqual(self.commands.implementations, 1)
+        self.assertEqual(final['repairs'], 0)
+        self.assertEqual(final['head'], final['tested_head'])
+        self.assertEqual(subprocess.run(['git', 'merge-base', '--is-ancestor', before['head'], final['head']],
+                                        cwd=Path(final['worktree'])).returncode, 0)
+
+    async def test_protected_path_is_refused_before_any_commit(self):
+        self.write_during_implementation('.env.local', 'SECRET=value\n')
+        with self.assertRaisesRegex(GateError, 'protected or private path: .env.local'):
+            await self.runner.run_issue(95, execute=True)
+        record = self.runner.store.read('issue-95')
+        worktree = Path(record['worktree'])
+        self.assertEqual(record['stage'], 'finalize_implementation')
+        self.assertEqual(record['head'], record['base'])
+        self.assertEqual(await self.runner.head(worktree), record['base'])
+        self.assertNotIn('intended_tree', record)
+        status = self.git(worktree, 'status', '--porcelain', '--untracked-files=all')
+        self.assertIn('.env.local', status)
+        self.assertIn('feature.txt', status)
+        self.assertEqual(self.commands.implementations, 1)
+
+
 for _name in list(fixtures.EngineTests.__dict__):
     if _name.startswith('test_'):
         setattr(ContractExecutionTests, _name, None)
+for _name in list(ContractExecutionTests.__dict__):
+    if _name.startswith('test_'):
+        setattr(ScopeViolationRecoveryTests, _name, None)
