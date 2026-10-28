@@ -59,6 +59,7 @@ If it's useful, a star helps others find it.
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
+- 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email (API; the UI is a follow-up)
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
@@ -164,6 +165,8 @@ Things to know before relying on it:
   columns — so the binary can be rolled back even though the schema is not.
   The deals release adds the `deals` and `deal_stage_changes` tables only: it
   rebuilds no existing table, and the previous binary still opens the file.
+  The quotes release does the same with `products`, `quotes`, `quote_lines` and
+  `quote_status_changes`: four new tables, no existing table touched.
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 
@@ -600,6 +603,56 @@ authentication and live on the moderate tier:
 - `GET /api/v1/customers/:id/deals` - The customer's deals, paginated *(admin and sales; sales sees
   only its own)*
 
+### Products *(admin and sales read; create, update and delete: admin; support and customer get 403)*
+- `GET /api/v1/products` - List the catalogue (`page`/`offset`/`limit` through the shared parser —
+  `limit=0` is 20, the cap is 100 — `search` over name and SKU, `is_active`, `currency`, `sort_by` in
+  `id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, anything else is
+  400, `sort_order`); soft-deleted products never appear
+- `POST /api/v1/products` - Create a product `{name, sku?, description?, unit_price_cents, currency?, is_active?}`
+  *(the price is an integer in minor units, 0 to 10^12; currency defaults to `deals.default_currency`;
+  active by default)*
+- `GET /api/v1/products/:id` - Get a product
+- `PUT /api/v1/products/:id` - Partial update *(existing quote lines keep the name and price they copied)*
+- `DELETE /api/v1/products/:id` - Soft-delete a product *(its quote lines keep their copied values)*
+
+### Quotes *(admin and sales; sales sees and edits its own quotes only; support and customer get 403)*
+- `GET /api/v1/quotes` - List quotes without their lines (`status`, `deal_id`, `customer_id`,
+  `owner_id` — admin only, sales is always narrowed to itself inside the query, so `meta.total`
+  counts only its quotes — `sort_by` in `id, title, status, total_cents, currency, valid_until,
+  sent_at, created_at, updated_at`, `sort_order`, pagination)
+- `POST /api/v1/quotes` - Create a draft `{title, deal_id?, customer_id?, currency?, valid_until?, notes?, owner_id?}`
+  *(at least one of `deal_id` and `customer_id`; with only the deal the customer is taken from it;
+  a customer that is not the deal's is 400; an unknown deal, customer or owner is 400
+  `INVALID_REFERENCE`; a won or lost deal is 409; sales may only quote its own deals and own the
+  quote itself; the first history row is written in the same transaction; the JSON adds
+  `number`, e.g. `Q-000042`)*
+- `GET /api/v1/quotes/:id` - Get a quote with its lines (by position), its totals and summaries of
+  its customer, deal and owner
+- `PUT /api/v1/quotes/:id` - Partial update of a draft *(`currency` only while it has no lines;
+  `valid_until: null` clears; 409 `CONFLICT` when the quote is not a draft)*
+- `DELETE /api/v1/quotes/:id` - Soft-delete *(sales: its own drafts only, 409 on a non-draft; admin:
+  any quote; lines and history stay)*
+- `POST /api/v1/quotes/:id/lines` - Add a line `{product_id, quantity, discount_bp?, unit_price_cents?, description?}`
+  *(copies the product's name and price unless overridden; `quantity` 1–1,000,000, `discount_bp`
+  0–10000, the line's gross and the quote total at most 10^12, at most 100 lines; another currency
+  is 400; an inactive or deleted product is 400 `INVALID_REFERENCE`; returns the quote with its
+  recomputed totals; 409 when not a draft)*
+- `PUT /api/v1/quotes/:id/lines/:lineId` - Edit a line *(same bounds; a line of another quote is 404)*
+- `DELETE /api/v1/quotes/:id/lines/:lineId` - Remove a line and recompute the totals
+- `POST /api/v1/quotes/:id/status` - Move the quote `{status}` *(draft→sent, sent→accepted,
+  sent→rejected, sent→expired, sent→draft; anything else or a lost race is 400
+  `INVALID_STATUS_TRANSITION`; sending without lines or accepting after `valid_until` is 409; one
+  history row per move; accepting does not change the deal)*
+- `GET /api/v1/quotes/:id/history` - The status changes, oldest first, with the acting user
+- `POST /api/v1/quotes/:id/email` - Email a sent or accepted quote as plaintext to the linked
+  customer's current address *(fixed subject `Quote Q-000042 from GopherCRM`; 409 without a live
+  customer or when the quote was revised during the send; 502 `MAIL_DELIVERY_FAILED` when the mailer
+  fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
+  password reset applies: the mail is logged, not delivered, and the call still answers 200 and
+  stamps `last_emailed_at`)*
+- `GET /api/v1/deals/:id/quotes` - The deal's quotes, paginated *(sales: its own deals and its own quotes only)*
+- `GET /api/v1/customers/:id/quotes` - The customer's quotes, paginated *(sales sees only its own)*
+
 ### Tickets
 - `GET /api/v1/tickets` - List tickets *(customers cannot list all tickets)*
 - `POST /api/v1/tickets` - Create new ticket *(admin, support)*
@@ -754,8 +807,11 @@ gophercrm/
 - **Access tokens cannot be revoked before expiry.** Logout and the refresh-token rotation revoke
   the *refresh* tokens, but an already-issued JWT stays valid until `JWT_EXPIRY_HOURS` elapses —
   there is no token blocklist.
-- **Password-reset email needs SMTP configuration.** Without `SMTP_HOST` set, reset links go to the
-  application log (redacted) instead of a mailbox — fine for development, useless in production.
+- **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
+  password-reset link (redacted), the forms mail and the quote email — goes to the application log
+  instead of a mailbox, and the sending code cannot tell: `POST /api/v1/quotes/:id/email` still
+  answers `200` and stamps `last_emailed_at` although nothing was delivered. Fine for development,
+  useless in production.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.

@@ -23,6 +23,8 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupCustomerRoutes(group, &CustomerHandler{})
 	SetupCompanyRoutes(group, &CompanyHandler{})
 	SetupDealRoutes(group, &DealHandler{})
+	SetupProductRoutes(group, &ProductHandler{})
+	SetupQuoteRoutes(group, &QuoteHandler{})
 	SetupTicketRoutes(group, &TicketHandler{})
 	SetupTaskRoutes(group, &TaskHandler{})
 	SetupLabelRoutes(group, &LabelHandler{})
@@ -127,6 +129,30 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/customers/1/deals"},
 		{http.MethodGet, "/api/v1/customers/1/tickets"},
 		{http.MethodGet, "/api/v1/dashboard/pipeline"},
+		// Products: a plain collection next to /:id on five verbs. Quotes:
+		// /:id/lines/:lineId two levels down on two verbs, three POST
+		// sub-resources, and two sub-lists registered from the quotes file
+		// onto the deal and customer parameter paths, next to
+		// /deals/:id/stage, /deals/:id/history, /customers/:id/deals and
+		// /customers/:id/tickets.
+		{http.MethodGet, "/api/v1/products"},
+		{http.MethodPost, "/api/v1/products"},
+		{http.MethodGet, "/api/v1/products/1"},
+		{http.MethodPut, "/api/v1/products/1"},
+		{http.MethodDelete, "/api/v1/products/1"},
+		{http.MethodGet, "/api/v1/quotes"},
+		{http.MethodPost, "/api/v1/quotes"},
+		{http.MethodGet, "/api/v1/quotes/1"},
+		{http.MethodPut, "/api/v1/quotes/1"},
+		{http.MethodDelete, "/api/v1/quotes/1"},
+		{http.MethodPost, "/api/v1/quotes/1/lines"},
+		{http.MethodPut, "/api/v1/quotes/1/lines/2"},
+		{http.MethodDelete, "/api/v1/quotes/1/lines/2"},
+		{http.MethodPost, "/api/v1/quotes/1/status"},
+		{http.MethodGet, "/api/v1/quotes/1/history"},
+		{http.MethodPost, "/api/v1/quotes/1/email"},
+		{http.MethodGet, "/api/v1/deals/1/quotes"},
+		{http.MethodGet, "/api/v1/customers/1/quotes"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()
@@ -153,12 +179,15 @@ func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
 		c.Abort()
 	})
 	SetupDealRoutes(group, &DealHandler{})
+	SetupQuoteRoutes(group, &QuoteHandler{})
 	SetupDashboardRoutes(group, &DashboardHandler{})
 
 	for path, want := range map[string]string{
 		"/api/v1/deals/pipeline":     "/api/v1/deals/pipeline",
 		"/api/v1/deals/7":            "/api/v1/deals/:id",
 		"/api/v1/deals/7/history":    "/api/v1/deals/:id/history",
+		"/api/v1/deals/7/quotes":     "/api/v1/deals/:id/quotes",
+		"/api/v1/quotes/7/history":   "/api/v1/quotes/:id/history",
 		"/api/v1/dashboard/pipeline": "/api/v1/dashboard/pipeline",
 	} {
 		matched = ""

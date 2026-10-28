@@ -151,6 +151,111 @@ transaction as the create or the change, never updated, kept when the deal is so
 | changed_by_id | uint | Yes | FK to users | Who made the change |
 | changed_at | datetime | Yes | - | When |
 
+## Product Model
+
+One entry of the catalogue a quote line is priced from. Products hold no personal data and are
+not erased; deleting one is a soft delete, and the quote lines that reference it keep the name and
+price they copied. Money is an integer amount in minor units next to an ISO 4217 code, the deal
+convention.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200, trimmed | Display name, copied into `quote_lines.description` when a line is added |
+| sku | string | No | - | max 64, indexed, not unique | Stock-keeping code |
+| description | text | No | - | max 65535 bytes | Free text |
+| unit_price_cents | int64 | Yes | - | 0 to 10^12 (`models.QuoteAmountCentsMax`); no column default, so an explicit 0 is kept | Price in minor units |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`, `char(3)` | ISO 4217 code |
+| is_active | boolean | Yes | true (set by the service) | no column default, so an explicit false is kept | Whether new quote lines may be priced from it |
+
+The SKU is deliberately not unique: a unique index over a soft-deleted table either blocks the
+reuse of a code or, scoped by `deleted_at`, stops meaning anything (see the gotchas in
+[DEVELOPMENT.md](DEVELOPMENT.md)).
+
+## Quote Model
+
+A priced offer to a customer, optionally grown from a deal, always owned by a user. A quote
+carries its lines and server-computed totals; everything, lines included, is editable only while
+the status is `draft`. Quotes copy no personal data: the recipient of the email is read from the
+linked customer at send time, so erasing the customer leaves the quote, its lines and its history
+untouched, with `customer_id` in place as a business link (as deals keep theirs).
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 200, trimmed | Free text (the same accepted limitation as deal titles) |
+| status | enum | Yes | `draft` | one of the status values below, max 20 | Lifecycle status |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`; immutable once the quote has lines | Currency of every line and total |
+| subtotal_cents | int64 | Yes | 0 | Σ quantity × unit_price_cents over the lines; never taken from a request | |
+| discount_cents | int64 | Yes | 0 | subtotal − total | |
+| total_cents | int64 | Yes | 0 | Σ line_total_cents, at most 10^12 | |
+| valid_until | date | No | - | `YYYY-MM-DD` on the wire, stored as local midnight (the deal date convention) | Acceptance is refused once this date has passed; expiry itself is a manual status |
+| notes | text | No | - | max 65535 bytes | Free text shown on the document and in the email |
+| sent_at | datetime | No | - | set on draft→sent, cleared on sent→draft | UTC |
+| closed_at | datetime | No | - | set on accepted, rejected and expired; cleared on sent→draft | UTC |
+| last_emailed_at | datetime | No | - | set by the conditional update that follows a successful email | UTC |
+| deal_id | uint | No | - | FK to deals; at least one of `deal_id` and `customer_id` on create; not editable | The deal it grew from |
+| customer_id | uint | No | - | FK to customers; taken from the deal when omitted; must be the deal's customer when the deal has one | The recipient, read live at send time and never copied |
+| owner_id | uint | Yes | the caller | FK to users; only an admin may name another | Owning staff account |
+
+The JSON adds `number` (`Q-` followed by the id zero-padded to six digits, `Q-000042`) and
+replaces the preloaded `customer`, `deal` and `owner` by summaries (`{id, first_name, last_name,
+company}`, `{id, title, stage}` and `{id, first_name, last_name}`): no email address or phone
+number is ever disclosed through a quote. Lists carry quotes without their lines.
+
+### Quote Status Values and Transitions
+- `draft` — editable; the only status in which the fields and the lines may change
+- `sent` — entered from draft, only when the quote has at least one line
+- `accepted`, `rejected`, `expired` — final; entered from sent
+
+The allowed moves are exactly `draft → sent`, `sent → accepted`, `sent → rejected`,
+`sent → expired` and `sent → draft` (revise). Any other pair, the same status again included, is
+refused with 400 `INVALID_STATUS_TRANSITION` and writes nothing. Each move claims the row with a
+conditional update (`WHERE id = ? AND status = <from>`, exactly one row, which is also what settles
+two competing moves) and writes one history row in the same transaction; `draft → sent` then counts
+the lines with a locking read and rolls the claim back with 409 when there are none; `accepted` is
+refused with 409 once `valid_until` lies in the past in the server's local zone. Accepting a quote
+does not change its deal.
+
+### Quote Line
+
+`quote_lines` — one priced row of a quote. The line copies the product's name and price when it is
+added, so a later change to the catalogue never alters an existing quote; both copies may be
+overridden in the request and edited while the quote is a draft. Lines are hard-deleted (no
+`deleted_at`).
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| quote_id | uint | Yes | FK to quotes, indexed | The quote |
+| product_id | uint | Yes | FK to products, indexed; a soft-deleted product still resolves | The product it was priced from |
+| position | int64 | Yes | 1-based, assigned max+1 on insert | Display order |
+| description | string | Yes | max 255 | Copied from `products.name` unless overridden |
+| quantity | int64 | Yes | 1 to 1,000,000 | |
+| unit_price_cents | int64 | Yes | 0 to 10^12, and quantity × unit_price_cents at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
+| discount_bp | int64 | Yes | 0 to 10000 | Per-line percentage in basis points (12.5 % = 1250) |
+| line_total_cents | int64 | Yes | - | `(gross × (10000 − discount_bp) + 5000) / 10000`: round half up on minor units |
+
+A quote holds at most 100 lines, and the gross of a line is checked against the bound before the
+discount arithmetic, so nothing the server multiplies can leave an int64.
+
+### Quote Status Change
+
+`quote_status_changes` is append-only, the `deal_stage_changes` pattern: one row per status the
+quote entered, the create included (`from_status` null), written in the same transaction as the
+change, never updated, kept when the quote is soft-deleted. There is no foreign key to `quotes`.
+Its id is also the marker the email stamp compares against: `last_emailed_at` is set only when no
+row of the quote with `to_status = 'draft'` and an id above the one read before the send exists.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| quote_id | uint | Yes | indexed, no FK | The quote |
+| from_status | string | No | null on the creating row | Status left |
+| to_status | string | Yes | a status value | Status entered |
+| changed_by_id | uint | Yes | FK to users | Who made the change |
+| changed_at | datetime | Yes | UTC | When |
+
 ## Customer Model
 
 Represents confirmed customers in the system.
@@ -292,7 +397,7 @@ Represents system configuration settings that control application behavior.
 - `leads.conversion.allowed_statuses` - Lead statuses that allow conversion
 - `leads.conversion.require_notes` - Whether conversion notes are required
 - `leads.conversion.auto_assign_owner` - Auto-assign lead owner to customer
-- `deals.default_currency` - Currency a new deal takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
+- `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
 - `tickets.auto_assign_support` - Auto-assign tickets to support users
 
 ## API Request/Response Format
@@ -387,10 +492,13 @@ stage whose `closed_at` falls in the current calendar month in UTC.
 - `UNAUTHORIZED` - Authentication required
 - `FORBIDDEN` - Access denied
 - `NOT_FOUND` - Resource not found
-- `CONFLICT` - Resource conflict (e.g., duplicate)
+- `CONFLICT` - Resource conflict (e.g., duplicate, a quote that is not a draft, a closed deal)
 - `INTERNAL_ERROR` - Server error
 - `BAD_REQUEST` - Invalid request
 - `TOO_MANY_REQUESTS` - Rate limit exceeded
+- `INVALID_REFERENCE` - A body names a row that does not exist (an unknown company, deal, customer, owner or product)
+- `INVALID_STATUS_TRANSITION` - A quote status move that is not allowed, or lost its race
+- `MAIL_DELIVERY_FAILED` - The mailer refused or failed to deliver a quote email (502)
 
 ## Data Validation Rules
 

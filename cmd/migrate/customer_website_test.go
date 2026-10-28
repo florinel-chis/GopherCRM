@@ -69,7 +69,10 @@ func TestCustomerWebsiteMigration(t *testing.T) {
 			require.NoError(t, appDB.AutoMigrate(&models.Customer{}))
 			require.NoError(t, db.QueryRow("SELECT website FROM customers WHERE email = 'existing@example.com'").Scan(&website))
 			assert.Equal(t, "https://example.com", website)
-			require.NoError(t, m.Steps(-1))
+			// Roll back to the head before the website migration rather than one
+			// step: later migrations (products and quotes, 20261026120000) sit
+			// above it, and Steps(-1) would revert the newest of those instead.
+			require.NoError(t, m.Migrate(20261017120000))
 			assert.False(t, appDB.Migrator().HasColumn(&models.Customer{}, "website"))
 			var email string
 			require.NoError(t, db.QueryRow("SELECT email FROM customers").Scan(&email))
