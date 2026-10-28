@@ -130,7 +130,7 @@ export const Component: React.FC = () => {
       <Paper sx={{ mb: 2, p: 2 }}>
         <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
           <FormControl size="small" sx={{ minWidth: 170 }}>
-            <InputLabel id="quote-status-filter-label">Status</InputLabel>
+            <InputLabel id="quote-status-filter-label" shrink>Status</InputLabel>
             <Select
               labelId="quote-status-filter-label"
               id="quote-status-filter"
@@ -138,6 +138,7 @@ export const Component: React.FC = () => {
               onChange={(e) => handleStatusFilter(e.target.value)}
               label="Status"
               displayEmpty
+              notched
               renderValue={(value: QuoteStatus | '') =>
                 value === '' ? 'All statuses' : QUOTE_STATUSES.find((s) => s.value === value)?.label
               }

@@ -3,8 +3,8 @@
 Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
 captured from the running application — a MySQL-backed backend and the Vite dev server — by the
 Playwright suite in `gocrm-ui/e2e/screenshots/`, at a 1440x900 viewport with `deviceScaleFactor: 2`.
-46 captures: 41 regenerated 2026-08-08 when tasks gained labels, plus the five AEO captures added
-2026-08-11 with the module itself.
+56 captures: 41 regenerated 2026-08-08 when tasks gained labels, the five AEO captures added
+2026-08-11 with the module itself, and the ten products and quotes captures added 2026-10-28.
 
 The captures record the application as it actually is. Where a screen is a placeholder or a control
 does not exist yet, the image shows that rather than a mock-up, and the difference is noted in the
@@ -109,6 +109,64 @@ The edit form populated from the stored record.
 ![Delete customer confirmation](screenshots/customers/05-delete-confirm.png)
 The admin-only delete confirmation. Confirming erases personal data and cascades to the lead the
 customer was converted from.
+
+## Products and quotes
+
+FEATURES.md section 4d (4d.9 for the screens). The suite seeds a product catalogue, one customer,
+three deals and quotes in every status through the API, then walks one quote through the UI: it
+is started from its deal's Quotes section, given two lines, marked as sent, printed and accepted.
+The catalogue entries use fixed names and are created only when missing; the quotes and deals are
+created on every run. These ten were captured against the e2e driver's SQLite backend. To regenerate only these images, on free ports against the e2e database:
+`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/11-quotes.spec.ts`.
+
+![Products list](screenshots/quotes/01-products-list.png)
+The product catalogue at `/products`: name, SKU, price formatted with its currency and the
+Active/Inactive chip, with the search box, the active filter and server pagination. The edit and
+delete actions and New Product are shown to admins only.
+
+![Product form](screenshots/quotes/02-product-form.png)
+The admin-only create form at `/products/new`, filled in and not submitted: name, SKU,
+description, price in major units (stored as integer minor units), ISO 4217 currency and the
+active switch.
+
+![Quotes list](screenshots/quotes/03-quotes-list.png)
+The quotes table at `/quotes` with number, title, status chip, customer, deal, total with
+currency and valid-until date, over quotes in all five statuses (draft, sent, accepted, rejected,
+expired), with the status filter and server pagination.
+
+![Create quote dialog](screenshots/quotes/04-quote-create-dialog.png)
+The New quote dialog opened from a deal's Quotes section, filled in and not yet submitted: the
+deal is prefilled and the customer and currency follow from it; title, valid until and notes are
+typed in.
+
+![Draft quote detail](screenshots/quotes/05-quote-detail-draft.png)
+A draft quote at `/quotes/{id}` with two lines (one at 10 % off) and the subtotal, discount and
+total as computed by the server. While the quote is a draft, the Edit button, Add line and the
+per-line edit and delete actions are available, and the only status action is Mark as sent.
+
+![Add line dialog](screenshots/quotes/06-quote-add-line-dialog.png)
+The Add line dialog: the product picker lists active products in the quote's currency and shows
+the unit price; description, quantity, discount percentage (sent as basis points) and an optional
+unit-price override complete the line.
+
+![Sent quote detail](screenshots/quotes/07-quote-detail-sent.png)
+The same quote after Mark as sent: the status buttons for the valid transitions (Accept, Reject,
+Mark expired, Revise), the Email quote action, the sent time, and a status history of two rows.
+The line and edit controls are gone outside the draft status.
+
+![Quote print page](screenshots/quotes/08-quote-print.png)
+The print layout at `/quotes/{id}/print` on screen: application name, quote number, title, date,
+valid until, status, the customer it is prepared for, the lines, the totals and the notes, below
+the Back to quote and Print buttons.
+
+![Quote print page under print media](screenshots/quotes/09-quote-print-media.png)
+The same page with print media emulated: the app bar, the navigation drawer, the breadcrumbs and
+the page's own toolbar are hidden, leaving only the quote document.
+
+![Deal Quotes section](screenshots/quotes/10-deal-quotes-section.png)
+The deal detail page after the quote was accepted: its Quotes section lists the accepted quote and
+the earlier rejected proposal with number, title, status and total, next to the New quote button.
+Accepting a quote leaves the deal's stage unchanged.
 
 ## Tickets
 
@@ -273,9 +331,6 @@ Screens with no image because the UI does not exist yet:
   exist (see [ROADMAP.md](ROADMAP.md)).
 - **Bulk status updates** (FEATURES.md section 10) — the endpoints are routed, but no frontend
   screen drives them.
-- **Products and quotes** (FEATURES.md 4d.9) — the `/products`, `/quotes`, `/quotes/{id}` and
-  `/quotes/{id}/print` screens and the deal page's Quotes section exist since 2026-10-28 (#167),
-  but the screenshot suite has no spec for them yet; the captures are made after that merge.
 
 The `settings/` file numbering skips `03`: the suite defines three settings captures, named
 `01-profile`, `02-api-keys` and `04-configuration`. Nothing is missing between them.

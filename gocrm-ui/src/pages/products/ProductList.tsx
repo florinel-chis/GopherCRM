@@ -166,7 +166,7 @@ export const Component: React.FC = () => {
           />
 
           <FormControl size="small" sx={{ minWidth: 170 }}>
-            <InputLabel id="product-active-filter-label">Active</InputLabel>
+            <InputLabel id="product-active-filter-label" shrink>Active</InputLabel>
             <Select
               labelId="product-active-filter-label"
               id="product-active-filter"
@@ -174,6 +174,7 @@ export const Component: React.FC = () => {
               onChange={(e) => handleActiveFilter(e.target.value)}
               label="Active"
               displayEmpty
+              notched
               renderValue={(value: ActiveFilter) =>
                 value === '' ? 'All products' : value === 'active' ? 'Active only' : 'Inactive only'
               }
