@@ -82,6 +82,32 @@ class GateTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(GateError):
                 validate_paths([name])
 
+    def test_frontend_validation_files_are_protected_gates(self):
+        for name in ['gocrm-ui/vitest.config.ts', 'gocrm-ui/vitest.config.mts',
+                     'gocrm-ui/playwright.config.ts', 'gocrm-ui/playwright.config.screenshots.ts',
+                     'gocrm-ui/src/test/setup.ts', 'gocrm-ui/src/test/globals.d.ts',
+                     'gocrm-ui/e2e/global-setup.ts', 'gocrm-ui/e2e/global-teardown.ts',
+                     'gocrm-ui/e2e/helpers/auth.ts', 'gocrm-ui/e2e/fixtures/data.ts',
+                     'gocrm-ui/e2e/pages/LoginPage.ts', 'gocrm-ui/e2e/scripts/seed.ts',
+                     'gocrm-ui/e2e/screenshots/capture.spec.ts', 'gocrm-ui/e2e/README.md',
+                     'gocrm-ui/e2e/tests/health-smoke.spec.ts']:
+            with self.subTest(name=name), self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name])
+            with self.subTest(name=name, added=True), \
+                    self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name], added={name})
+
+    def test_only_a_newly_added_browser_spec_is_admitted(self):
+        spec = 'gocrm-ui/e2e/tests/deal-board.spec.ts'
+        validate_paths([spec, 'gocrm-ui/src/pages/Deals.tsx'], added={spec})
+        with self.assertRaisesRegex(GateError, 'existing validation gate'):
+            validate_paths([spec])
+        for name in ['gocrm-ui/e2e/tests/Deal-Board.spec.ts', 'gocrm-ui/e2e/tests/nested/x.spec.ts',
+                     'gocrm-ui/e2e/tests/deal-board.ts', 'gocrm-ui/e2e/helpers/new-helper.ts']:
+            with self.subTest(name=name), self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name], added={name})
+        validate_paths(['gocrm-ui/src/test/utils.tsx', 'gocrm-ui/src/pages/Deals.test.tsx'])
+
     def test_migration_success_cannot_be_a_skip_or_empty_output(self):
         for output in ['', '{}', '{"Action":"skip","Test":"TestMigrationFresh_FullUpAndDown"}']:
             with self.assertRaises(GateError):
@@ -474,6 +500,58 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         self.commands.run = bad_agent
         with self.assertRaisesRegex(GateError, 'existing validation gate'):
+            await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.tests, 0)
+
+    async def agent_writes(self, files):
+        original = self.commands.run
+
+        async def writing_agent(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                for name, content in files.items():
+                    path = kwargs['cwd'] / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content)
+            return result
+
+        self.commands.run = writing_agent
+
+    def commit_fixture(self, files):
+        for name, content in files.items():
+            path = self.checkout / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        subprocess.run(['git', 'add', '.'], cwd=self.checkout, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', 'browser suite'], cwd=self.checkout, check=True,
+                       capture_output=True)
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.checkout, text=True).strip()
+
+    async def test_added_paths_lists_only_paths_absent_from_the_base(self):
+        existing = 'gocrm-ui/e2e/tests/login.spec.ts'
+        base = self.commit_fixture({existing: 'old\n'})
+        (self.checkout / existing).write_text('weakened\n')
+        spec = self.checkout / 'gocrm-ui/e2e/tests/deal-board.spec.ts'
+        spec.write_text('new\n')
+        paths = await self.runner.changed_paths(self.checkout, base)
+        self.assertEqual(await self.runner.added_paths(self.checkout, base, paths),
+                         {'gocrm-ui/e2e/tests/deal-board.spec.ts'})
+
+    async def test_agent_cannot_edit_the_browser_suite_or_vitest_setup(self):
+        for name in ['gocrm-ui/e2e/helpers/auth.ts', 'gocrm-ui/playwright.config.ts',
+                     'gocrm-ui/vitest.config.ts', 'gocrm-ui/src/test/setup.ts']:
+            with self.subTest(name=name):
+                self.tearDown()  # Each path starts from a fresh fixture repository.
+                self.setUp()
+                await self.asyncSetUp()
+                await self.agent_writes({name: 'export {}\n'})
+                with self.assertRaisesRegex(GateError, 'existing validation gate'):
+                    await self.runner.run_issue(95, execute=True)
+                self.assertEqual(self.commands.tests, 0)
+
+    async def test_new_browser_spec_passes_the_gate_and_reaches_the_scope_check(self):
+        await self.agent_writes({'gocrm-ui/e2e/tests/deal-board.spec.ts': 'export {}\n'})
+        with self.assertRaisesRegex(GateError, 'Frontend edits require the frontend profile'):
             await self.runner.run_issue(95, execute=True)
         self.assertEqual(self.commands.tests, 0)
 

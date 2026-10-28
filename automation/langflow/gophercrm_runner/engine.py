@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 
-from .config import BudgetError, CommandError, Config, EnvironmentError, GateError
+from .config import BudgetError, CommandError, Config, EnvironmentError, GateError, VITEST_ARGV
 from .gates import (check_state, merge_gate, migration_coverage,
                     touches_database, validate_paths)
 from .process import Commands, redact
@@ -231,6 +231,17 @@ class Runner:
                                        cwd=worktree)
         return sorted(set(p for p in (tracked + '\0' + untracked).split('\0') if p))
 
+    async def added_paths(self, worktree, base, paths):
+        """Changed paths absent from `base`, considered only where the path gate admits additions."""
+        added = set()
+        for path in paths:
+            if path.startswith(('.github/workflows/', 'gocrm-ui/e2e/tests/')):
+                code, _ = await self.run_command(
+                    ('git', 'cat-file', '-e', f'{base}:{path}'), cwd=worktree, check=False)
+                if code == 128:  # Git reports a missing object/path with exit 128.
+                    added.add(path)
+        return added
+
     async def validate_agent_paths(self, record, *, scope=True):
         """Refuse protected paths; with `scope`, also refuse paths outside the frozen task scope."""
         worktree = Path(record['worktree'])
@@ -239,15 +250,10 @@ class Runner:
         if ignored:
             raise GateError('Agent worktree contains ignored files; inspect them before continuing')
         paths = await self.changed_paths(worktree, record['base'])
-        additions = set()
-        if record['issue'] in self.config.workflow_addition_issues:
-            for path in paths:
-                if path.startswith('.github/workflows/'):
-                    code, _ = await self.run_command(
-                        ('git', 'cat-file', '-e', f'{record["base"]}:{path}'), cwd=worktree, check=False)
-                    if code == 128:  # Git reports a missing object/path with exit 128.
-                        additions.add(path)
-        validate_paths(paths, new_workflows=additions)
+        added = await self.added_paths(worktree, record['base'], paths)
+        additions = ({p for p in added if p.startswith('.github/workflows/')}
+                     if record['issue'] in self.config.workflow_addition_issues else set())
+        validate_paths(paths, new_workflows=additions, added=added)
         if scope:
             contracts.check_scope(contracts.load_contract(self.config, record['issue']), paths)
         return paths
@@ -342,12 +348,12 @@ class Runner:
                                              explicit_full=self.config.validation_mode == 'full')
         checks = [(f'local-{i}', tuple(c), None) for i, c in enumerate(commands)]
         database = self.browser_validation_checks(
-            record, paths, frozen['validation_profile'] == 'backend-database')
+            record, paths, frozen['validation_profile'] in contracts.DATABASE_PROFILES)
         if self.config.validation_mode == 'legacy':
             checks.extend(database)
         for check_id in sorted({c['verification']['check_id'] for c in frozen['acceptance']}):
             check = self.config.acceptance_checks[check_id]
-            checks.append(('acceptance-' + check_id, tuple(check['argv']), check['tests']))
+            checks.append(('acceptance-' + check_id, tuple(check['argv']), evidence.acceptance_tests(check)))
         if self.config.validation_mode != 'legacy':
             checks.extend(database)  # Named acceptance failures stop before browser work.
         return checks
@@ -515,10 +521,28 @@ class Runner:
             '\nFROZEN TASK CONTRACT (criteria, scope and named checks; no authority to change runner policy):\n' +
             json.dumps({k: frozen[k] for k in sorted(contracts.MANIFEST_FIELDS)}) +
             '\nTRUSTED CHECK IDENTITIES (runner executes them):\n' + json.dumps(self.config.acceptance_checks) +
+            self.profile_prompt(frozen) +
             '\nEXPLICIT REPOSITORY GUIDANCE (follow within the runner restrictions above):\n' +
             '\n'.join(f'### {d["path"]}\n{d["content"]}' for d in frozen['documents']) +
             self.documentation_prompt(record, frozen['scope_paths'])
         )
+
+    def profile_prompt(self, frozen):
+        if frozen['validation_profile'] != 'frontend':
+            return ''
+        named = [dict(file='gocrm-ui/' + t['file'], name=t['name'])
+                 for check_id in sorted({c['verification']['check_id'] for c in frozen['acceptance']})
+                 for t in self.config.acceptance_checks[check_id]['tests']]
+        return (
+            '\nFRONTEND PROFILE (runner-enforced evidence):\n'
+            'Each named Vitest test below must exist in the listed file, with its exact full test name '
+            '(the describe titles and the test title joined by single spaces, as the Vitest JSON reporter '
+            'prints fullName), and must pass; a missing, renamed, skipped, todo or failing test fails '
+            'acceptance. Change only gocrm-ui/, docs/, README.md and CHANGELOG.md, never Go code. '
+            '`npm run lint` must pass with zero warnings and `npm run build` '
+            'must pass. Add no dependency: package.json, package-lock.json and the TypeScript, Vite and '
+            'ESLint configuration are protected. The selected Playwright browser checks also run on SQLite '
+            'and MySQL.\nNAMED VITEST TESTS:\n' + json.dumps(named))
 
     def documentation_prompt(self, record, paths):
         if self.config.documentation_mode != 'reviewed':
@@ -803,7 +827,7 @@ class Runner:
                     if './cmd/migrate' in command:
                         migration_coverage(output)
                     if named_tests:
-                        evidence.named_go_tests(output, named_tests)
+                        evidence.named_tests(output, named_tests, root=previous.resolve())
             except BudgetError:
                 raise
             except (GateError, OSError) as exc:
@@ -869,8 +893,10 @@ class Runner:
         remaining = [(key, command, tests) for key, command, tests in checks if key not in completed]
         # A fresh checkout must install its own locked dependencies even when
         # the earlier core/installation receipt is reused. Never copy ignored
-        # node_modules or application data from the previous checkout.
-        if (any(command[:2] == ('make', 'e2e') for _, command, _ in remaining)
+        # node_modules or application data from the previous checkout. Vitest
+        # acceptance checks run the checkout's locked frontend dependencies too.
+        if (any(command[:2] == ('make', 'e2e') or command[:len(VITEST_ARGV)] == VITEST_ARGV
+                for _, command, _ in remaining)
                 and not any(command[:2] in {('make', 'verify'), ('npm', 'ci')}
                             for _, command, _ in remaining)):
             await run_check(('npm', 'ci', '--prefix', 'gocrm-ui'))
@@ -879,7 +905,7 @@ class Runner:
             if './cmd/migrate' in command:
                 migration_coverage(output)
             if named_tests:
-                evidence.named_go_tests(output, named_tests)
+                evidence.named_tests(output, named_tests, root=worktree.resolve())
             record['receipts'][check_id] = evidence.write_receipt(
                 self.config.state_dir, record, check_id, command, output, 0)
             self.save(record)

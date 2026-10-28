@@ -269,6 +269,32 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final['provider_calls'], 4)
         self.assertEqual(self.commands.merges, 1)
 
+    async def test_repair_may_add_a_browser_spec_but_not_a_browser_helper(self):
+        for name, admitted in [('gocrm-ui/e2e/tests/repair-flow.spec.ts', True),
+                               ('gocrm-ui/e2e/helpers/repair.ts', False)]:
+            with self.subTest(name=name):
+                self.tearDown()  # Each path starts from a fresh fixture repository.
+                self.setUp()
+                await self.asyncSetUp()
+                self.commands.reject_reviews = 1
+                original = self.commands.run
+
+                async def change(args, **kwargs):
+                    result = await original(args, **kwargs)
+                    if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                        path = kwargs['cwd'] / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text('export {}\n')
+                    return result
+
+                with patch.object(self.commands, 'run', side_effect=change):
+                    if admitted:
+                        await self.complete()
+                    else:
+                        with self.assertRaisesRegex(GateError, 'validation gate'):
+                            await self.complete()
+                self.assertEqual(self.commands.merges, int(admitted))
+
     async def test_runner_changes_require_local_and_remote_runner_checks(self):
         path = self.source / '.github/workflows/remediation-runner.yml'
         path.parent.mkdir(parents=True)

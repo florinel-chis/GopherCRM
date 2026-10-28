@@ -43,6 +43,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numbered owner comments and inherit the parent run's journals. See the
   [runner guide](automation/langflow/README.md#analyse-a-feature-request).
 
+- **Frontend task profile with named Vitest evidence (runner).** A task manifest may now set
+  `validation_profile: "frontend"`. Its acceptance checks are registry entries of the new
+  optional `kind: "vitest"` (`go` remains the default, so existing entries and frozen contract
+  hashes are unchanged) whose argument array is exactly `npm --prefix gocrm-ui test --silent --
+  --run --reporter=json` followed by test files under `gocrm-ui/src`; each named test is a file
+  and the exact `fullName` the JSON reporter prints, and must report `passed` exactly once.
+  Failed, skipped, pending or todo cases, a required file without results, and duplicates fail
+  acceptance. A frontend ticket changes only `gocrm-ui/`, `docs/`, `README.md` and
+  `CHANGELOG.md`, cannot mix Go and Vitest checks, keeps `make verify` (build, zero-warning lint,
+  unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
+  `database_test_commands` and `TEST_MYSQL_DSN`. For every profile, the Vitest and Playwright
+  configuration, the Vitest setup files and the whole `gocrm-ui/e2e/` suite are now protected
+  validation gates that no agent may change; only a newly added `gocrm-ui/e2e/tests/*.spec.ts`
+  is admitted. See the [runner guide](automation/langflow/README.md#execute-the-queue).
 - `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
   closed outside the runner, recording the closure and its closing pull requests as unvalidated
   by that execution, releasing its admission slot and stopping the queue without modifying GitHub.

@@ -84,7 +84,9 @@ anything. The specification is the contract the implementation is checked agains
    transaction helper), context references that include AGENTS.md and docs/DEVELOPMENT.md,
    and the acceptance criteria. Frontend paths (`gocrm-ui/`) never appear in the manifest
    scope: the frontend slice is written as UI criteria (UI-1 upwards) with their own
-   verification (vitest, browser or manual with exact steps).
+   verification (vitest, browser or manual with exact steps). A UI criterion verified by
+   vitest names its test file under `gocrm-ui/src` and the exact full test name the Vitest
+   JSON reporter prints: the describe titles and the test title joined by single spaces.
    Context references are Markdown guidance only: every entry is a `.md` file that exists at
    the base commit (AGENTS.md may be operator-local), and their combined size, as the runner
    serialises them, stays under 128 KiB (131072 bytes). Code, SQL and test files are cited in
