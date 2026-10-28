@@ -104,6 +104,20 @@ var (
 	// default), so other configured providers do not help. The service wraps
 	// this with a message naming the selected engine. Also answered with 503.
 	ErrGenerationProviderNotConfigured = errors.New("the prompt generation engine has no API key configured")
+
+	// Follow-up automation errors. ErrAutomationRuleNotFound and
+	// ErrAutomationRunNotFound are 404 at the requested path; a sales caller
+	// asking for a run on a record it does not own gets the same not-found.
+	// ErrAutomationRunFinished refuses a cancel of a completed, failed or
+	// cancelled run (409 INVALID_STATUS_TRANSITION). Rule validation failures
+	// unwrap to ErrValidation (400 INVALID_INPUT) and an unknown or inactive
+	// user named by a step to ErrAssigneeNotFound (400 INVALID_REFERENCE).
+	ErrAutomationRuleNotFound = errors.New("automation rule not found")
+	ErrAutomationRunNotFound  = errors.New("automation run not found")
+	ErrAutomationRunFinished  = errors.New("automation run is already finished")
+	// ErrNotificationNotFound is a notification that does not exist or that
+	// belongs to another user: both are 404.
+	ErrNotificationNotFound = errors.New("notification not found")
 )
 
 // Error codes

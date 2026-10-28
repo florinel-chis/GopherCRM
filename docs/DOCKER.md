@@ -99,10 +99,17 @@ Notes on the wiring:
   changing endpoints. A model appearing in a provider's catalog does not
   guarantee access for your account.
 - Outbound email: `SMTP_HOST` is unset, so the mailer logs deliveries
-  instead of sending — password-reset links, forms mail and quote emails
-  alike. A quote email in this mode still answers 200 and stamps the quote's
-  `last_emailed_at` although nothing was delivered. Add the `SMTP_*` variables
-  to the backend environment to enable real mail.
+  instead of sending — password-reset links, forms mail, quote emails and
+  the `send_email` step of automation rules alike. A quote email in this mode
+  still answers 200 and stamps the quote's `last_emailed_at`, and an
+  automation email step is logged as `succeeded`, although nothing was
+  delivered. Add the `SMTP_*` variables to the backend environment to enable
+  real mail.
+- Follow-up automation: the worker is on by default (`AUTOMATION_ENABLED`,
+  `AUTOMATION_POLL_INTERVAL_SECONDS` in `.env.example`) and assumes a single
+  backend container — do not scale the backend service to several replicas
+  with the worker enabled on each; runs left `running` by a killed container
+  are recovered when the next container boots.
 
 ## SQLite flavor (no database server)
 

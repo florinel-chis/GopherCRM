@@ -51,6 +51,21 @@ type bulkOperationService struct {
 	ticketRepo        repository.TicketRepository
 	transactionMgr    repository.TransactionManager
 	logger            *logrus.Logger
+	// automation records the outbox events of every lead a bulk write
+	// changes (issue #164), inside the bulk transaction, origin bulk. Nil
+	// means no automation.
+	automation repository.AutomationRepository
+}
+
+// BulkOperationServiceOption configures NewBulkOperationService beyond its
+// required dependencies.
+type BulkOperationServiceOption func(*bulkOperationService)
+
+// WithBulkAutomationEvents makes the bulk lead writes (status, assign,
+// convert, source and the generic update) record lead_updated and, when the
+// status changed, lead_status_changed for every item that was written.
+func WithBulkAutomationEvents(repo repository.AutomationRepository) BulkOperationServiceOption {
+	return func(s *bulkOperationService) { s.automation = repo }
 }
 
 func NewBulkOperationService(
@@ -63,8 +78,9 @@ func NewBulkOperationService(
 	ticketRepo repository.TicketRepository,
 	transactionMgr repository.TransactionManager,
 	logger *logrus.Logger,
+	opts ...BulkOperationServiceOption,
 ) BulkOperationService {
-	return &bulkOperationService{
+	s := &bulkOperationService{
 		bulkOperationRepo: bulkOperationRepo,
 		bulkRepo:          bulkRepo,
 		userRepo:          userRepo,
@@ -75,6 +91,47 @@ func NewBulkOperationService(
 		transactionMgr:    transactionMgr,
 		logger:            logger,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// recordBulkLeadEvents records the events of the leads a bulk update wrote:
+// lead_updated for each written lead, plus lead_status_changed when its
+// status differs from the status read before the write. previous is the
+// snapshot of the leads before the write; a lead that is not in it (it was
+// created meanwhile) is reported as a plain update. Nothing is recorded for
+// an item that failed, because it is not among the written leads.
+func recordBulkLeadEvents(events repository.AutomationRepository, previous map[uint]models.LeadStatus, written []models.Lead, actorID *uint) error {
+	if events == nil {
+		return nil
+	}
+	for i := range written {
+		lead := written[i]
+		from, ok := previous[lead.ID]
+		if !ok {
+			from = lead.Status
+		}
+		if err := automationLeadUpdated(events, lead.ID, from, lead.Status, models.AutomationOriginBulk, actorID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bulkLeadStatuses snapshots the status of every listed lead before a bulk
+// write.
+func bulkLeadStatuses(txRepo repository.BulkRepository, ids []uint) (map[uint]models.LeadStatus, error) {
+	leads, err := txRepo.GetLeadsByIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	previous := make(map[uint]models.LeadStatus, len(leads))
+	for _, lead := range leads {
+		previous[lead.ID] = lead.Status
+	}
+	return previous, nil
 }
 
 // Bulk operation management
@@ -653,8 +710,20 @@ func (s *bulkOperationService) BulkUpdateLeads(request *models.BulkUpdateRequest
 			return fmt.Errorf("transaction not found in context")
 		}
 		txRepo := s.bulkRepo.WithTx(tx)
+		var previous map[uint]models.LeadStatus
+		if s.automation != nil {
+			ids := make([]uint, 0, len(request.Items))
+			for _, item := range request.Items {
+				ids = append(ids, item.ID)
+			}
+			var err error
+			if previous, err = bulkLeadStatuses(txRepo, ids); err != nil {
+				return err
+			}
+		}
 		results, operationErrors = txRepo.BulkUpdateLeads(request.Items)
-		return nil
+		actor := currentUserID
+		return recordBulkLeadEvents(automationTx(s.automation, tx), previous, results, &actor)
 	})
 
 	if err != nil {
@@ -1762,7 +1831,22 @@ func (s *bulkOperationService) performBulkUpdateAction(operationID uint, resourc
 
 		switch resourceType {
 		case "leads":
-			results, operationErrors = txRepo.BulkUpdateLeads(updates)
+			var previous map[uint]models.LeadStatus
+			if s.automation != nil {
+				ids := make([]uint, 0, len(updates))
+				for _, item := range updates {
+					ids = append(ids, item.ID)
+				}
+				var err error
+				if previous, err = bulkLeadStatuses(txRepo, ids); err != nil {
+					return err
+				}
+			}
+			leads, errs := txRepo.BulkUpdateLeads(updates)
+			results, operationErrors = leads, errs
+			if err := recordBulkLeadEvents(automationTx(s.automation, tx), previous, leads, nil); err != nil {
+				return err
+			}
 		case "customers":
 			results, operationErrors = txRepo.BulkUpdateCustomers(updates)
 		case "tasks":

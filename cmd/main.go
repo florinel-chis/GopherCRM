@@ -103,11 +103,12 @@ func main() {
 
 	utils.Logger.Info("Shutting down server...")
 
-	// Stop the background workers and drain the AEO runtime first: admission
-	// closes, so no new run starts while the server is draining, and every
-	// scheduled, manual or single-prompt run already in flight is cancelled
-	// and joined under aeoDrainTimeout. A request that asks for a run from here
-	// on is answered 503.
+	// Stop the background workers and drain the automation worker and the
+	// AEO runtime first: admission closes, so no new run starts while the
+	// server is draining, an automation step in flight finishes or rolls
+	// back, and every scheduled, manual or single-prompt AEO run already in
+	// flight is cancelled and joined under aeoDrainTimeout. A request that
+	// asks for an AEO run from here on is answered 503.
 	stopBackground()
 	drainErr := drainAEO(stopAEO, aeoDrainTimeout)
 
@@ -176,7 +177,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 }
 
 // setupDependencies wires every repository, service and handler onto the API
-// group and returns the function that drains the AEO runtime at shutdown.
+// group and returns the function that drains the automation worker and the
+// AEO runtime at shutdown, in that order, before main closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
@@ -201,6 +203,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	bulkRepo := repository.NewBulkRepository(models.DB)
 	aeoRepo := repository.NewAEORepository(models.DB)
 	formRepo := repository.NewFormRepository(models.DB)
+	automationRepo := repository.NewAutomationRepository(models.DB)
+	notificationRepo := repository.NewNotificationRepository(models.DB)
 
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 	txManager := utils.NewTransactionManager(models.DB)
@@ -212,7 +216,12 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
+	// Every lead and deal write path records its automation events in the
+	// transaction that commits the write (issue #164): the lead service, the
+	// deal service, the form submission path and the bulk paths all take the
+	// same outbox repository.
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager,
+		service.WithLeadAutomationEvents(automationRepo))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
@@ -221,7 +230,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	configService := service.NewConfigurationService(configRepo,
 		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
-	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
+	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,
+		service.WithDealAutomationEvents(automationRepo))
 	// Products take the deals' default currency; quotes email through the
 	// same mailer as the password reset and the forms.
 	productService := service.NewProductService(productRepo, configService)
@@ -229,6 +239,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	bulkService := service.NewBulkOperationService(
 		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
 		taskRepo, ticketRepo, txManager, utils.Logger,
+		service.WithBulkAutomationEvents(automationRepo),
 	)
 
 	// AEO. Only engines with credentials are loaded, so a deployment that sets
@@ -259,7 +270,21 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	aeoService := aeoRuntime.runs.Service()
 
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
-		txManager, cfg.Forms, cfg.API.Prefix)
+		txManager, cfg.Forms, cfg.API.Prefix, service.WithFormAutomationEvents(automationRepo))
+
+	// Follow-up automation. The engine executes rules behind locking reads
+	// and conditional advances; the runtime owns the worker goroutine and is
+	// the second drain handle main receives. The worker is started only when
+	// AUTOMATION_ENABLED is on; the API and the event capture work either way.
+	automationEngine := service.NewAutomationEngine(automationRepo, notificationRepo, taskRepo, userRepo, appMailer, txManager)
+	automationService := service.NewAutomationService(automationRepo, userRepo, automationEngine, txManager)
+	notificationService := service.NewNotificationService(notificationRepo)
+	var automationRuntime *service.AutomationRuntime
+	if cfg.Automation.Enabled {
+		automationRuntime = service.NewAutomationRuntime(automationEngine,
+			time.Duration(cfg.Automation.PollIntervalSeconds)*time.Second)
+	}
+	automation := newAutomationBackground(automationRuntime)
 
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
@@ -279,6 +304,20 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	aeoHandler := handler.NewAEOHandler(aeoService)
 	formHandler := handler.NewFormHandler(formService)
 	formPublicHandler := handler.NewFormPublicHandler(formService, cfg.Forms, cfg.API.Prefix)
+	automationHandler := handler.NewAutomationHandler(automationService)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
+
+	// Recover the automation runs a previous process left in running before
+	// the worker and the HTTP server start, under the single-replica
+	// assumption: no live executor owns them. A run goes back to pending at
+	// its next position; one whose last step row is an email in sending is
+	// failed with email_unconfirmed, so the mail is never sent twice.
+	if reset, failed, err := automationEngine.Reconcile(); err != nil {
+		utils.Logger.WithError(err).Error("Failed to reconcile stranded automation runs")
+	} else if reset > 0 || failed > 0 {
+		utils.Logger.WithFields(map[string]interface{}{"reset": reset, "failed": failed}).
+			Warn("Recovered automation runs left behind by a previous process")
+	}
 
 	// Recover runs stranded by the previous process before anything can start a
 	// new one. The engine runs in-process and writes the terminal status itself,
@@ -307,6 +346,14 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			"enabled":   cfg.AEO.ScheduleEnabled,
 			"providers": len(aeoProviders),
 		}).Info("AEO scheduler not started")
+	}
+
+	// The automation worker, after the reconciliation above and before the
+	// routes are served.
+	if cfg.Automation.Enabled {
+		automation.start(backgroundCtx)
+	} else {
+		utils.Logger.Info("Automation worker not started")
 	}
 
 	// Public routes with strict rate limiting for auth endpoints
@@ -356,6 +403,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupBulkStatusRoutes(protected, bulkHandler)
 		handler.SetupAEORoutes(protected, aeoHandler)
 		handler.SetupFormRoutes(protected, formHandler)
+		handler.SetupAutomationRoutes(protected, automationHandler)
+		handler.SetupNotificationRoutes(protected, notificationHandler)
 
 		protectedAuth := protected.Group("/auth")
 		{
@@ -364,5 +413,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		}
 	}
 
-	return aeoRuntime.Stop
+	// One drain handle for both runtimes: the automation worker first (its
+	// step transactions are short), then the AEO runs.
+	return combineStops(automation.Stop, aeoRuntime.Stop)
 }

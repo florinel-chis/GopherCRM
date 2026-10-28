@@ -34,6 +34,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
@@ -97,6 +98,18 @@ type erasurePlan struct {
 	// data that lives outside the row itself — credentials, above all — which
 	// must not outlive the person either.
 	AfterScrub func(tx *gorm.DB, id uint) error
+
+	// BeforeScrub, when set, runs inside the SAME transaction before the row
+	// is touched. The automation cancel of a lead lives here on purpose: an
+	// automation step holds the lead row under a locking read while it runs,
+	// so an erasure that cancelled the runs only after its own UPDATE of the
+	// lead would wait on that lock, let the step commit its task, and cancel
+	// a run that had already done its work. Cancelling first means the
+	// erasure has modified rows by the time it waits on the lead, which is
+	// what makes it the survivor of the resulting MySQL deadlock: the step
+	// transaction (no rows modified yet) is rolled back, retried, and then
+	// finds the run cancelled and the lead gone.
+	BeforeScrub func(tx *gorm.DB, id uint) error
 }
 
 // newModel returns a fresh zero pointer of the plan's entity type. Every
@@ -117,6 +130,12 @@ func (p erasurePlan) newModel() interface{} {
 // Either way the scrub and the soft delete cannot be separated by a failure.
 func eraseRecord(db *gorm.DB, id uint, plan erasurePlan) error {
 	return runInTransaction(db, func(tx *gorm.DB) error {
+		if plan.BeforeScrub != nil {
+			if err := plan.BeforeScrub(tx, id); err != nil {
+				return err
+			}
+		}
+
 		erased := make(map[string]interface{}, len(plan.Scrub)+1)
 		for column, value := range plan.Scrub {
 			erased[column] = value
@@ -229,6 +248,60 @@ func purgeCredentials(tx *gorm.DB, userID uint) error {
 	for _, model := range credentialModels {
 		if err := tx.Unscoped().Where("user_id = ?", userID).Delete(model).Error; err != nil {
 			return fmt.Errorf("purging credentials of user %d: %w", userID, err)
+		}
+	}
+	// The in-app notifications addressed to the user go with the credentials:
+	// they are personal to the recipient, their title and body may render a
+	// lead's name, and nothing of either may outlive the person. They share
+	// this purge because every user erasure (single and bulk) reaches it.
+	return purgeUserNotifications(tx, userID)
+}
+
+// purgeUserNotifications hard-deletes every notification addressed to the
+// user. A failure rolls the whole erasure back.
+//
+// Unlike the credential purge it first asks the migrator whether the table
+// exists, and skips a table that is not part of the schema: the automation
+// tables arrived in one release and a number of fixtures migrate only the
+// tables they exercise. The probe is a schema fact, not an error swallowed —
+// when the table is there, every failure of the delete itself propagates.
+func purgeUserNotifications(tx *gorm.DB, userID uint) error {
+	if !tx.Migrator().HasTable(&models.Notification{}) {
+		return nil
+	}
+	if err := tx.Unscoped().Where("user_id = ?", userID).Delete(&models.Notification{}).Error; err != nil {
+		return fmt.Errorf("purging notifications of user %d: %w", userID, err)
+	}
+	return nil
+}
+
+// cancelAutomationForEntity ends the automation state that refers to a
+// record about to be erased: every pending, waiting or running run of the
+// record is cancelled with record_deleted, so no further step runs against
+// it, and every notification whose entity is the record is hard-deleted,
+// because its rendered title or body may name the person. A failure of
+// either statement rolls the erasure back; a table absent from the schema
+// (see purgeUserNotifications) is skipped.
+func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) error {
+	now := time.Now().UTC()
+	if tx.Migrator().HasTable(&models.AutomationRun{}) {
+		err := tx.Model(&models.AutomationRun{}).
+			Where("entity_type = ? AND entity_id = ?", entityType, entityID).
+			Where("status IN ?", []string{models.AutomationRunPending, models.AutomationRunWaiting, models.AutomationRunRunning}).
+			Updates(map[string]interface{}{
+				"status":        models.AutomationRunCancelled,
+				"cancel_reason": models.AutomationCancelRecordDeleted,
+				"finished_at":   &now,
+				"updated_at":    now,
+			}).Error
+		if err != nil {
+			return fmt.Errorf("cancelling automation runs of %s %d: %w", entityType, entityID, err)
+		}
+	}
+	if tx.Migrator().HasTable(&models.Notification{}) {
+		if err := tx.Unscoped().Where("entity_type = ? AND entity_id = ?", entityType, entityID).
+			Delete(&models.Notification{}).Error; err != nil {
+			return fmt.Errorf("purging notifications of %s %d: %w", entityType, entityID, err)
 		}
 	}
 	return nil

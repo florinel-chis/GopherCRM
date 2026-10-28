@@ -255,6 +255,7 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		"api_keys", "configurations", "refresh_tokens",
 		"bulk_operations", "bulk_operation_items",
 		"products", "quotes", "quote_lines", "quote_status_changes",
+		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)

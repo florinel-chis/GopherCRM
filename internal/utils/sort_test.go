@@ -39,6 +39,27 @@ func TestValidateSort_ValidColumns(t *testing.T) {
 	}
 }
 
+// The automation run allowlist is exactly id, created_at, updated_at, status
+// and resume_at (AC-11); the rule allowlist is what the rule list sorts by.
+func TestValidateSortAutomationAllowlists(t *testing.T) {
+	for _, column := range []string{"id", "created_at", "updated_at", "status", "resume_at"} {
+		col, dir, err := ValidateSort("automation_runs", column, "asc")
+		require.NoError(t, err, column)
+		assert.Equal(t, column, col)
+		assert.Equal(t, "asc", dir)
+	}
+	for _, column := range []string{"rule_id", "entity_id", "dedupe_key", "next_position", "cancel_reason", "id; DROP TABLE"} {
+		_, _, err := ValidateSort("automation_runs", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable run column", column)
+	}
+	for _, column := range []string{"id", "name", "entity_type", "trigger_type", "enabled", "version", "created_at", "updated_at"} {
+		_, _, err := ValidateSort("automation_rules", column, "desc")
+		require.NoError(t, err, column)
+	}
+	_, _, err := ValidateSort("automation_rules", "trigger_config", "asc")
+	assert.Error(t, err)
+}
+
 func TestValidateSort_EmptySortBy_ReturnsDefault(t *testing.T) {
 	col, dir, err := ValidateSort("users", "", "asc")
 	require.NoError(t, err)

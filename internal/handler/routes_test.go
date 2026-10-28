@@ -34,6 +34,8 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupBulkStatusRoutes(group, &BulkHandler{})
 	SetupAEORoutes(group, &AEOHandler{})
 	SetupFormRoutes(group, &FormHandler{})
+	SetupAutomationRoutes(group, &AutomationHandler{})
+	SetupNotificationRoutes(group, &NotificationHandler{})
 	// The forms module registers two groups on the same mount point from two
 	// different files: the CRM routes above and the unauthenticated ones here.
 	// Between them they put a static segment (/forms/public), a parameter
@@ -153,6 +155,25 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodPost, "/api/v1/quotes/1/email"},
 		{http.MethodGet, "/api/v1/deals/1/quotes"},
 		{http.MethodGet, "/api/v1/customers/1/quotes"},
+		// Automation: two groups under one static prefix, three POST
+		// sub-resources next to /:id on three verbs, and the runs group's
+		// admin-only cancel. Notifications: two static segments
+		// (/unread-count on GET, /read-all on POST) next to /:id/read.
+		{http.MethodGet, "/api/v1/automation/rules"},
+		{http.MethodPost, "/api/v1/automation/rules"},
+		{http.MethodGet, "/api/v1/automation/rules/1"},
+		{http.MethodPut, "/api/v1/automation/rules/1"},
+		{http.MethodDelete, "/api/v1/automation/rules/1"},
+		{http.MethodPost, "/api/v1/automation/rules/1/enable"},
+		{http.MethodPost, "/api/v1/automation/rules/1/disable"},
+		{http.MethodPost, "/api/v1/automation/rules/1/dry-run"},
+		{http.MethodGet, "/api/v1/automation/runs"},
+		{http.MethodGet, "/api/v1/automation/runs/1"},
+		{http.MethodPost, "/api/v1/automation/runs/1/cancel"},
+		{http.MethodGet, "/api/v1/notifications"},
+		{http.MethodGet, "/api/v1/notifications/unread-count"},
+		{http.MethodPost, "/api/v1/notifications/read-all"},
+		{http.MethodPost, "/api/v1/notifications/1/read"},
 	} {
 		req := httptest.NewRequest(route.method, route.path, nil)
 		w := httptest.NewRecorder()
@@ -181,14 +202,16 @@ func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
 	SetupDealRoutes(group, &DealHandler{})
 	SetupQuoteRoutes(group, &QuoteHandler{})
 	SetupDashboardRoutes(group, &DashboardHandler{})
+	SetupNotificationRoutes(group, &NotificationHandler{})
 
 	for path, want := range map[string]string{
-		"/api/v1/deals/pipeline":     "/api/v1/deals/pipeline",
-		"/api/v1/deals/7":            "/api/v1/deals/:id",
-		"/api/v1/deals/7/history":    "/api/v1/deals/:id/history",
-		"/api/v1/deals/7/quotes":     "/api/v1/deals/:id/quotes",
-		"/api/v1/quotes/7/history":   "/api/v1/quotes/:id/history",
-		"/api/v1/dashboard/pipeline": "/api/v1/dashboard/pipeline",
+		"/api/v1/deals/pipeline":             "/api/v1/deals/pipeline",
+		"/api/v1/deals/7":                    "/api/v1/deals/:id",
+		"/api/v1/deals/7/history":            "/api/v1/deals/:id/history",
+		"/api/v1/deals/7/quotes":             "/api/v1/deals/:id/quotes",
+		"/api/v1/quotes/7/history":           "/api/v1/quotes/:id/history",
+		"/api/v1/dashboard/pipeline":         "/api/v1/dashboard/pipeline",
+		"/api/v1/notifications/unread-count": "/api/v1/notifications/unread-count",
 	} {
 		matched = ""
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))

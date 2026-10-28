@@ -60,6 +60,7 @@ If it's useful, a star helps others find it.
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
 - 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email (API; the UI is a follow-up)
+- ⏱️ **Follow-up Automation**: Admin-defined rules that start on lead or deal events, or on a daily UTC schedule, and run ordered steps — wait, condition, create task, assign owner, staff email, in-app notification — as persisted runs that survive a restart, with a dry run that writes, sends and notifies nothing (API; the UI is a follow-up)
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
@@ -711,6 +712,51 @@ expired, or if its owner has been deactivated or erased.
   `won_this_month` (count and amounts per currency of the deals won in the current calendar month,
   UTC) *(admin sees all deals, sales its own; support and customer get 403 — no deal access)*
 
+### Automation *(rules and dry run: admin; runs: admin and sales, sales narrowed to the leads and deals it owns; support and customer get 403)*
+- `GET /api/v1/automation/rules` - List rules with their steps (`entity_type`, `enabled`, `sort_by` in
+  `id, name, entity_type, trigger_type, enabled, version, created_at, updated_at`, anything else is
+  400; pagination through the shared parser — `limit=0` is 20, the cap is 100)
+- `POST /api/v1/automation/rules` - Create a rule
+  `{name, description?, entity_type, trigger_type, trigger, enabled?, steps[]}` *(returns 201 with the
+  steps numbered 1..n; `trigger_type` is `lead_created`, `lead_updated`, `lead_status_changed`,
+  `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`; `trigger` carries `from`/`to`
+  for a status or stage change and `hour_utc`, `filters {status|stage}` and `stale_days` for a
+  schedule; a step is `{step_type, config}` with `wait` (`duration_minutes`), `condition` (`field`,
+  `operator`, `value`, `currency` for `amount_cents`, `else` stop|jump, `else_position`),
+  `create_task` (`title`, `description?`, `priority?`, `due_in_days`, `recipient` owner|user,
+  `user_id`), `assign_owner` (`user_id`), `send_email` (`subject`, `body`, recipient) and `notify`
+  (`title`, `body?`, recipient); an invalid trigger or step, more than 20 steps, more than 90 days
+  of waits, a backward or out-of-range `else_position` or an unknown `{{placeholder}}` is 400
+  `INVALID_INPUT` and writes nothing; an unknown, inactive or non-staff user is 400
+  `INVALID_REFERENCE`)*
+- `GET /api/v1/automation/rules/:id` - Get a rule with its steps
+- `PUT /api/v1/automation/rules/:id` - Replace a rule *(one transaction: version + 1, steps replaced,
+  the rule's pending, waiting and running runs cancelled with `rule_changed`)*
+- `POST /api/v1/automation/rules/:id/enable` / `disable` - Switch a rule *(disabling cancels its
+  active runs with `rule_disabled`)*
+- `DELETE /api/v1/automation/rules/:id` - Soft-delete a rule *(its active runs are cancelled with
+  `rule_deleted`; runs and their logs stay)*
+- `POST /api/v1/automation/rules/:id/dry-run` - Simulate the rule `{entity_type, entity_id}` and get a
+  per-step report *(outcome, simulated time, resolved user ids, task due date and link, owner
+  from/to, branch taken; waits advance a simulated clock; nothing is written, sent or notified; the
+  wrong entity type is 400 `INVALID_INPUT`, a missing rule or record 404)*
+- `GET /api/v1/automation/runs` - List runs (`status`, `rule_id`, `entity_type`, `entity_id`,
+  `sort_by` in `id, created_at, updated_at, status, resume_at`; the role scope is applied inside
+  the query, so `meta.total` counts only what the caller may see)
+- `GET /api/v1/automation/runs/:id` - A run with its step log *(a sales user asking for a run on
+  somebody else's record gets 404)*
+- `POST /api/v1/automation/runs/:id/cancel` - Cancel a pending, waiting or running run with
+  `cancel_reason` `manual` *(admin; a finished run is 409 `INVALID_STATUS_TRANSITION`)*
+
+### Notifications *(admin, sales and support see their own; customers get 403)*
+- `GET /api/v1/notifications` - The caller's notifications, newest first, paginated (`unread=true`
+  narrows to the unread ones)
+- `GET /api/v1/notifications/unread-count` - `{unread}` for the caller
+- `POST /api/v1/notifications/:id/read` - Mark one of the caller's notifications read *(anyone
+  else's is 404)*
+- `POST /api/v1/notifications/read-all` - Mark every unread notification of the caller read;
+  returns `{marked}`
+
 ### Not currently exposed
 
 The generic `/bulk/:resource` create/update/delete/action handlers in
@@ -808,10 +854,16 @@ gophercrm/
   the *refresh* tokens, but an already-issued JWT stays valid until `JWT_EXPIRY_HOURS` elapses —
   there is no token blocklist.
 - **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
-  password-reset link (redacted), the forms mail and the quote email — goes to the application log
-  instead of a mailbox, and the sending code cannot tell: `POST /api/v1/quotes/:id/email` still
-  answers `200` and stamps `last_emailed_at` although nothing was delivered. Fine for development,
-  useless in production.
+  password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
+  automation rule — goes to the application log instead of a mailbox, and the sending code cannot
+  tell: `POST /api/v1/quotes/:id/email` still answers `200` and stamps `last_emailed_at`, and an
+  automation email step is logged as `succeeded`, although nothing was delivered. Fine for
+  development, useless in production.
+- **The automation worker assumes a single API replica.** Runs are claimed by conditional updates
+  and recovered only at boot (`AUTOMATION_ENABLED`, see `.env.example`); there is no lease
+  timeout, so a run left `running` by a crashed replica is handed back only when a process
+  restarts. Run the worker on one instance. Processed events and finished runs are kept; there is
+  no retention pruning yet.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.

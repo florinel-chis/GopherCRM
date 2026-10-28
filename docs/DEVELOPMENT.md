@@ -555,6 +555,10 @@ settings:
 - `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
 - `DISABLE_RATE_LIMIT` — test-only escape hatch, never enable in production
+- `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker; the API and the
+  event capture work without it, but no run starts or resumes. One replica only.
+- `AUTOMATION_POLL_INTERVAL_SECONDS` (default 30, clamped to 1..3600) — how often the worker
+  polls for events, due runs and schedule passes; also the granularity of every wait
 
 Frontend configuration lives in `gocrm-ui/.env` (see `gocrm-ui/.env.example`); `VITE_API_BASE_URL`
 points the Axios client at the backend.
@@ -593,6 +597,18 @@ What happens on `DELETE`:
   item neither corrupts itself nor rolls back the rest of the batch.
 - A lead that was converted into a customer is cascaded in both directions via `leads.customer_id`,
   because conversion copies the person's details into the customer row.
+- The lead's automation state ends in the same transaction, *before* the scrub
+  (`erasurePlan.BeforeScrub`): every pending, waiting or running run on the lead is cancelled with
+  `cancel_reason = record_deleted`, so no further step runs against it, and every notification
+  whose entity is the lead is hard-deleted, because a rendered title or body may name the person.
+  Run logs hold ids only and stay. A user erasure hard-deletes the notifications addressed to the
+  user alongside the credential purge. A failure in either step rolls the whole erasure back; a
+  table absent from the schema (a fixture that migrates a subset) is skipped by a migrator probe,
+  never by swallowing an error. The order matters on MySQL: an automation step holds the lead row
+  under `FOR UPDATE` while it runs, so an erasure that reached the lead first would wait on that
+  lock and let the step commit its task; cancelling the runs first means the erasure has modified
+  rows by the time it waits, which makes it the survivor of the resulting deadlock — the step
+  (nothing modified yet) is rolled back, retried, and finds the run cancelled and the lead gone.
 
 Two consequences worth knowing:
 
@@ -640,6 +656,117 @@ engine finalizes on a fresh context bounded by `EngineOptions.CleanupTimeout`. W
 background work elsewhere, follow the same shape: register before the first database call, hand
 the registration to the goroutine, release after the terminal write, and never close the pool
 while the count is non-zero. Tests substitute `aeoSchedulerClock` to deliver a due tick on demand.
+
+### Automation runtime
+
+Follow-up automation (#164) is the second owner of background work. `internal/service/
+automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
+`cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
+(`combineStops`) that `main` runs — automation first, then AEO — before `models.CloseDatabase`.
+The pieces, and why each is shaped the way it is:
+
+- **The outbox event is written in the write transaction.** `LeadService.Create/Update/
+  ConvertToCustomer`, the form submission path, the bulk status/assign/convert paths and
+  `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
+  option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
+  transaction-bound repository, so a write that rolls back records nothing and a bulk item that
+  fails records nothing for that item. A create records `*_created`; an update `*_updated` plus
+  `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
+  the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
+  types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a
+  name or an address.
+- **Three conditional claims.** The dispatcher claims an event with `UPDATE … SET processed_at
+  WHERE id = ? AND processed_at IS NULL` (exactly one row) and, in the same transaction, inserts
+  one run per enabled matching rule with `clause.OnConflict{DoNothing: true}` on the unique
+  `dedupe_key` — `ON CONFLICT DO NOTHING` on SQLite, `ON DUPLICATE KEY UPDATE id=id` on MySQL, no
+  error and no row for a duplicate on either. The executor claims a run with `UPDATE … SET status =
+  'running' WHERE id = ? AND status = <pending|waiting>` (a waiting run only once `resume_at <=
+  now`). A schedule batch advances the rule's cursor with `UPDATE … WHERE id = ? AND
+  schedule_pass_on <=> ? AND schedule_cursor = ?`; two workers handing out the same batch commit
+  exactly one. Every one of these changes a column value when it matches, so MySQL's changed-rows
+  count is the matched count.
+- **Each step: a locking read of the record, then a conditional advance.** A step other than
+  `send_email` is one `WithTransactionAndRetry` transaction that, in order, re-reads the lead or
+  deal with the transaction-bound locking read (`GetLeadForUpdate` / `GetDealForUpdate`, `SELECT …
+  FOR UPDATE` on MySQL, a plain read on SQLite), advances the run with `UPDATE … WHERE id = ? AND
+  status = 'running' AND next_position = <expected>` — exactly one row, else the transaction rolls
+  back and the executor stops — applies the effect (task, owner change plus an `origin =
+  automation` event, notification) and inserts the `automation_run_steps` row. The locking read is
+  not decoration: a plain read inside MySQL's REPEATABLE READ transaction answers from the snapshot
+  taken at the transaction's first statement, so a cancel, a rule change or an erasure committed by
+  another connection after that read would be invisible, and the step would act on a record that
+  no longer exists or a run that is already cancelled. With the locking read the record is current
+  and the conditional advance is what notices the run moved. A fault after the effect rolls the
+  effect, the log row and the advance back together; the run is handed back to `pending` at the
+  same position (`attempts + 1`, the third failure fails it with `step_failed`) and the next
+  execution performs the step exactly once. A recipient or assignee that is inactive, erased or not
+  staff is logged as `skipped` with `recipient_unavailable`.
+- **Email at most once.** `send_email` cannot be one transaction — a relay holds no lock and cannot
+  be rolled back — so it is two: the first performs the same locking read and a locking check of
+  the run row, then commits a run-step row with outcome `sending` (unique on `run_id, position`, so
+  a second executor cannot start the same send); only after that commit is `Mailer.Send` called,
+  once, with the staff user's current address; the second marks the row `succeeded` or `failed`
+  (`mail_failed`) and advances the run conditionally. A fault after the send leaves the row in
+  `sending`, and a row found in `sending` — by the next execution or by the boot reconciliation —
+  is failed with `email_unconfirmed` together with the run; the mail is never sent again. A run
+  cancelled between the two halves stays cancelled with its row finalized.
+- **Boot reconciliation, single replica.** `AutomationEngine.Reconcile` runs in `setupDependencies`
+  before the worker and the HTTP server start: a run left in `running` goes back to `pending` at
+  its `next_position`; one whose last step row is a `send_email` in `sending` is failed as above.
+  That is only safe because the worker assumes a single API replica: no live executor owns the
+  runs it touches, and there is no lease timeout on `claimed_at`. A second replica with the worker
+  enabled would double-execute; multi-replica leases are a roadmap item.
+- **Waits and schedules survive a restart.** A wait step advances the run to `waiting` with
+  `resume_at = now + duration` (written in UTC, compared with a UTC parameter, so SQLite's text
+  timestamps order correctly) and `next_position` after the wait; the worker claims it at the first
+  tick at or after `resume_at`. A schedule rule makes one pass per UTC day, starting at the first
+  tick at or after `hour_utc` — a process that was down at the hour catches up later the same day;
+  a UTC day missed entirely is not backfilled — handing out at most 500 live matching records per
+  tick in id order from the persisted cursor, with the dedupe key
+  `sch:<rule_id>:<YYYY-MM-DD>:<entity_id>`; a batch shorter than 500 sets `schedule_completed_on`.
+- **Loop prevention.** `assign_owner` records its event with `origin = automation`; the dispatcher
+  claims such an event and starts nothing. A rule holds at most 20 steps and at most 90 days of
+  waits, and a condition's `else_position` only jumps forward, so a run executes a bounded number
+  of steps.
+- **Rule changes cancel runs.** Every update, in one transaction, locks the rule row, increments
+  `version`, replaces the steps and cancels the rule's pending, waiting and running runs with
+  `rule_changed`; disable cancels with `rule_disabled`, delete (soft) with `rule_deleted`. A
+  running run cancelled this way performs no further step: its next conditional advance affects
+  zero rows. Each run records the `rule_version` it started from as a second guard.
+- **The drain.** `AutomationRuntime.Stop` cancels the worker context (so the loop claims no further
+  run), closes admission, cancels the owned context and waits for every admitted step to release —
+  a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
+  afterwards — then joins the goroutine, all under the deadline main passes (`automationDrainTimeout`,
+  15 s). A drained runtime holds no goroutine. The same crash policy as AEO applies when the
+  deadline passes: the process exits without closing the database and the next boot reconciles.
+- **Erasure hooks.** See *Deleting personal data* above: lead erasure cancels the lead's runs and
+  purges its notifications before the scrub; user erasure purges the user's notifications.
+- **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
+  simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
+  conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,
+  calls `Mailer.Send` zero times and creates no run, notification, task or event.
+- **Logs.** The engine logs operation names, `run_id`, `rule_id`, `event_id`, `entity_type`,
+  `entity_id`, `position`, `step_type`, `outcome` and `error_code` only; a transport error, which
+  may quote the address, is not logged.
+
+Regression roots, all on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestAutomationLeadEvents{SQLite,MySQL}`, `TestAutomationDealEvents{SQLite,MySQL}`,
+`TestAutomationDispatch{SQLite,MySQL}` (two dispatchers racing for one event),
+`TestAutomationRuleLifecycle{SQLite,MySQL}` (a fault injected during the step replacement),
+`TestAutomationStepExecution{SQLite,MySQL}` (the MySQL root pauses a step after its first read
+through the engine's instance-local seams and commits a cancel, a rule change and an erasure from
+a second connection), `TestAutomationConditionBranching`, `TestAutomationWaitResume{SQLite,MySQL}`
+(a fresh engine on the same database after the clock passes `resume_at`),
+`TestAutomationScheduleTrigger{SQLite,MySQL}` (1,201 records over three ticks, a racing worker),
+`TestAutomationDryRunNoSideEffects{SQLite,MySQL}` (a before/after snapshot of every table),
+`TestAutomationReconcile{SQLite,MySQL}`, `TestAutomationRuntimeDrain`,
+`TestAutomationLogsOmitPersonalData` (`internal/service`); `TestAutomationRunListScope{SQLite,MySQL}`,
+`TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
+repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
+`TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);
+`TestAutomationRuntimeLifecycle` (`cmd`, the real wiring over a SQLite file);
+`TestMigrationAutomationSchema` and `TestMigrationAutomationTablesListed` (`cmd/migrate`). The MySQL
+roots skip without the variable and fail when it points at an unreachable server.
 
 ### AEO runtime validation and candidate inspection
 

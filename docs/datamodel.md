@@ -256,6 +256,138 @@ row of the quote with `to_status = 'draft'` and an id above the one read before 
 | changed_by_id | uint | Yes | FK to users | Who made the change |
 | changed_at | datetime | Yes | UTC | When |
 
+## Follow-up Automation
+
+Six tables added by issue #164: the rules an admin defines, their ordered steps, the outbox
+events a lead or deal write records in its own transaction, the persisted runs the worker
+executes with their per-step log, and the in-app notifications a `notify` step creates. None of
+them stores personal data: events and run logs carry ids, types, statuses, outcomes and error
+codes; the only free text is what an admin typed into a rule and the rendered title and body of
+a notification addressed to a staff user (deleted with the lead it refers to and with its
+recipient).
+
+```mermaid
+erDiagram
+    users ||--o{ automation_rules : "created_by_id"
+    automation_rules ||--o{ automation_steps : "rule_id"
+    automation_rules ||--o{ automation_runs : "rule_id"
+    automation_runs ||--o{ automation_run_steps : "run_id"
+    automation_events o|--o{ automation_runs : "event_id (no FK)"
+    users ||--o{ notifications : "user_id"
+    automation_runs o|--o{ notifications : "run_id (no FK)"
+    leads o|--o{ automation_events : "entity_type = lead, entity_id (no FK)"
+    deals o|--o{ automation_events : "entity_type = deal, entity_id (no FK)"
+    leads o|--o{ automation_runs : "entity_type = lead, entity_id (no FK)"
+    deals o|--o{ automation_runs : "entity_type = deal, entity_id (no FK)"
+```
+
+### Automation Rule
+
+`automation_rules` — one rule with its trigger. Soft-deleted; a deleted rule's runs and logs stay.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200, trimmed | Display name |
+| description | text | No | - | max 65535 bytes | Free text |
+| entity_type | string | Yes | - | `lead` or `deal`, max 20 | What the rule runs on |
+| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`, max 40 | When a run starts |
+| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status or stage change (empty = any); `hour_utc` 0–23, `filters {status|stage}` and `stale_days` for a schedule |
+| enabled | boolean | Yes | false | - | Disabled rules start no run |
+| version | int | Yes | 1 | incremented by every update | Every run records the version it started from |
+| schedule_pass_on | string | No | - | `YYYY-MM-DD` | UTC day of the schedule pass in progress |
+| schedule_cursor | uint | Yes | 0 | - | Last record id handed out in that pass |
+| schedule_completed_on | string | No | - | `YYYY-MM-DD` | UTC day whose pass finished (a batch shorter than 500 sets it) |
+| created_by_id | uint | No | - | FK to users | The admin who created the rule |
+
+The three `schedule_*` columns are the persisted cursor of the schedule trigger: each tick inserts
+one run per record above the cursor (at most 500, id order) and advances the cursor with a
+conditional update on `(schedule_pass_on, schedule_cursor)`, so a racing worker commits nothing.
+
+### Automation Step
+
+`automation_steps` — the ordered steps of a rule, numbered 1..n and replaced wholesale by every
+rule update (hard-deleted, no `deleted_at`).
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| rule_id | uint | Yes | FK to automation_rules, indexed | The rule |
+| position | int | Yes | 1-based | Execution order |
+| step_type | string | Yes | `wait`, `condition`, `create_task`, `assign_owner`, `send_email`, `notify`, max 20 | |
+| config | text (JSON) | No | decoded as `config`; validated per type | `duration_minutes`; `field`, `operator`, `value`, `currency`, `else` (stop|jump), `else_position` (forward only); `recipient` (owner|user), `user_id`; `title`, `description`, `priority`, `due_in_days`; `subject`, `body` |
+
+Limits checked when a rule is saved: at most 20 steps, at most 90 days of waits in total, a
+forward `else_position` within the rule, allowlisted condition fields and operators with a value
+of the matching JSON type, known `{{placeholders}}` only, and every named user a live, active
+staff account.
+
+### Automation Event
+
+`automation_events` — the outbox row of one committed lead or deal write. No foreign keys: the
+row outlives nothing and refers to the record by type and id.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| entity_type | string | Yes | `lead` or `deal`; composite index with entity_id | |
+| entity_id | uint | Yes | - | The record |
+| event_type | string | Yes | one of the event trigger types, max 40 | |
+| from_value | string | No | max 50 | Previous status or stage of a `*_status_changed` / `*_stage_changed` event |
+| to_value | string | No | max 50 | New status or stage (`deal_created` carries the stage) |
+| origin | string | Yes | `user`, `form`, `bulk`, `conversion` or `automation`, max 20 | `automation` events are claimed and start no run (loop guard) |
+| actor_id | uint | No | - | The acting user, when known |
+| created_at | datetime | Yes | UTC | |
+| processed_at | datetime | No | indexed | Set by the dispatcher's conditional claim (`WHERE processed_at IS NULL`) |
+
+### Automation Run
+
+`automation_runs` — one execution of a rule against one record.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| rule_id | uint | Yes | - | FK to automation_rules, indexed | |
+| rule_version | int | Yes | - | - | The rule version the run started from; a changed rule cancels its runs |
+| entity_type | string | Yes | - | composite index with entity_id | |
+| entity_id | uint | Yes | - | - | The record |
+| event_id | uint | No | - | no FK | The event that started it (empty for schedule runs) |
+| dedupe_key | string | Yes | - | unique, max 100 | `evt:<event_id>:rule:<rule_id>` or `sch:<rule_id>:<YYYY-MM-DD>:<entity_id>`; inserted with `ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE id=id` |
+| status | string | Yes | `pending` | `pending`, `running`, `waiting`, `completed`, `failed`, `cancelled`; indexed | |
+| next_position | int | Yes | 1 | - | The step to execute next; every advance is `WHERE status = 'running' AND next_position = ?` |
+| attempts | int | Yes | 0 | - | Failed step attempts; the third failure fails the run with `step_failed` |
+| resume_at | datetime | No | - | indexed, UTC | When a waiting run becomes claimable |
+| claimed_at | datetime | No | - | - | When the executor claimed it |
+| finished_at | datetime | No | - | - | Set on completed, failed and cancelled |
+| cancel_reason | string | No | - | `rule_changed`, `rule_disabled`, `rule_deleted`, `manual`, `record_deleted`, max 30 | |
+| error_code | string | No | - | `email_unconfirmed`, `step_failed`, max 40 | |
+
+### Automation Run Step
+
+`automation_run_steps` — the log row of one executed step; `(run_id, position)` is unique, which
+is what keeps a second executor from recording a second `sending` row for an email step.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| run_id | uint | Yes | FK to automation_runs; unique with position | |
+| position | int | Yes | - | The step's position in the rule |
+| step_type | string | Yes | max 20 | |
+| outcome | string | Yes | `succeeded`, `skipped`, `failed`, `sending`, `waiting`, max 20 | |
+| error_code | string | No | `recipient_unavailable`, `mail_failed`, `email_unconfirmed`, max 40 | |
+| detail | text (JSON) | No | decoded as `details`; ids and statuses only | `task_id`, `notification_id`, `assignee_id`, `recipient_id`, `from_owner_id`, `to_owner_id`, `lead_id`, `customer_id`, `due_date`, `resume_at`, `result`, `branch`, `next_position` |
+| executed_at | datetime | Yes | UTC | |
+
+### Notification
+
+`notifications` — an in-app message addressed to one staff user, created by a `notify` step.
+Hard-deleted with the lead it refers to and with its recipient.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| user_id | uint | Yes | FK to users, indexed | The recipient |
+| title | string | Yes | max 255 | Rendered from the step's title |
+| body | text | No | - | Rendered from the step's body |
+| entity_type | string | Yes | composite index with entity_id | The record the run acted on |
+| entity_id | uint | Yes | - | |
+| run_id | uint | No | no FK | The run that created it |
+| read_at | datetime | No | - | Set by `POST /notifications/{id}/read` and `read-all` |
+
 ## Customer Model
 
 Represents confirmed customers in the system.
@@ -497,7 +629,8 @@ stage whose `closed_at` falls in the current calendar month in UTC.
 - `BAD_REQUEST` - Invalid request
 - `TOO_MANY_REQUESTS` - Rate limit exceeded
 - `INVALID_REFERENCE` - A body names a row that does not exist (an unknown company, deal, customer, owner or product)
-- `INVALID_STATUS_TRANSITION` - A quote status move that is not allowed, or lost its race
+- `INVALID_STATUS_TRANSITION` - A quote status move that is not allowed, or lost its race (400); a cancel of a finished automation run (409)
+- `INVALID_INPUT` - An automation rule that fails validation (bad trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range `else_position`, an unknown placeholder), or a dry run on a record of the wrong entity type
 - `MAIL_DELIVERY_FAILED` - The mailer refused or failed to deliver a quote email (502)
 
 ## Data Validation Rules

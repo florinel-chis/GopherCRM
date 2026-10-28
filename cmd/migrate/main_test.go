@@ -119,6 +119,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"bulk_operation_items", "aeo_profiles", "aeo_prompts", "aeo_runs",
 		"aeo_answers", "aeo_citations", "forms", "form_submissions", "form_confirmation_tokens",
 		"products", "quotes", "quote_lines", "quote_status_changes",
+		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())
@@ -337,7 +338,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 	ver, dirty, err = m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261026120000), ver)
+	assert.Equal(t, uint(20261028120000), ver)
 
 	// 5. Verify models.MigrateDatabase() on top continues to succeed without error
 	models.DB = gormDB
@@ -392,7 +393,7 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	ver, dirty, err := m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261026120000), ver)
+	assert.Equal(t, uint(20261028120000), ver)
 
 	// Full rollback to 0
 	err = m.Down()
