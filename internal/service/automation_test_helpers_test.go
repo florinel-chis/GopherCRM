@@ -259,7 +259,10 @@ func (e *automationEnv) createDeal(owner *models.User, stage models.DealStage, a
 	return deal
 }
 
-// step builders
+// step builders. The text of a task, an email and a notification carries
+// placeholders of the rule's entity type: the lead builders render lead.*
+// values, the deal builders deal.* values. A placeholder of the other entity
+// type is an unknown placeholder and the rule is refused.
 func waitStep(minutes int64) models.AutomationStep {
 	return models.AutomationStep{StepType: models.AutomationStepWait, Config: models.AutomationStepConfig{DurationMinutes: minutes}}
 }
@@ -290,6 +293,20 @@ func emailStep(recipient string, userID uint) models.AutomationStep {
 func notifyStep(recipient string, userID uint) models.AutomationStep {
 	return models.AutomationStep{StepType: models.AutomationStepNotify, Config: models.AutomationStepConfig{
 		Recipient: recipient, UserID: userID, Title: "NOTIFY-TITLE-CANARY {{lead.last_name}}", Body: "NOTIFY-BODY-CANARY {{lead.company}}",
+	}}
+}
+
+// dealTaskStep is the create_task step of a deal rule.
+func dealTaskStep(recipient string, userID uint, dueInDays int) models.AutomationStep {
+	return models.AutomationStep{StepType: models.AutomationStepCreateTask, Config: models.AutomationStepConfig{
+		Recipient: recipient, UserID: userID, Title: "Follow up on {{deal.title}}", Description: "Stage {{deal.stage}}, {{deal.amount}}", DueInDays: dueInDays,
+	}}
+}
+
+// dealNotifyStep is the notify step of a deal rule.
+func dealNotifyStep(recipient string, userID uint) models.AutomationStep {
+	return models.AutomationStep{StepType: models.AutomationStepNotify, Config: models.AutomationStepConfig{
+		Recipient: recipient, UserID: userID, Title: "NOTIFY-TITLE-CANARY {{deal.title}}", Body: "NOTIFY-BODY-CANARY {{deal.stage}}",
 	}}
 }
 
@@ -416,12 +433,22 @@ func eventTypes(events []models.AutomationEvent) []string {
 
 // startRun records an event, dispatches it and returns the single run the
 // rule started, still pending.
+//
+// The roots create several enabled rules with the same trigger in one
+// environment, one per subtest, and the dispatcher rightly starts one run per
+// matching rule (the dispatch root asserts exactly that). Here the subtests
+// want only the run of the rule under test, so the pending runs the same
+// event started for the earlier rules are removed before anything executes
+// them; they have no step row and no effect yet, so nothing else changes.
 func (e *automationEnv) startRun(rule *models.AutomationRule, lead *models.Lead) *models.AutomationRun {
 	e.t.Helper()
 	before := len(e.runsOf(rule.ID))
-	e.recordEvent(models.AutomationEntityLead, lead.ID, rule.TriggerType, "", "", models.AutomationOriginUser)
+	event := e.recordEvent(models.AutomationEntityLead, lead.ID, rule.TriggerType, "", "", models.AutomationOriginUser)
 	e.dispatch()
 	runs := e.runsOf(rule.ID)
 	require.Len(e.t, runs, before+1, "the event starts exactly one run of the rule")
+	require.NoError(e.t, e.db.
+		Where("event_id = ? AND rule_id <> ? AND status = ?", event.ID, rule.ID, models.AutomationRunPending).
+		Delete(&models.AutomationRun{}).Error, "the sibling runs of the other rules on the same trigger are removed")
 	return &runs[len(runs)-1]
 }

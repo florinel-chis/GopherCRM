@@ -129,7 +129,8 @@ Priorities: 18 P0, 14 P1, 1 P2.
 ### TC-AUT-006 — The list pages through the shared parser and refuses unknown sort columns
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** At least two rules.
+- **Preconditions:** At least two live rules (the automated case creates its second one itself,
+  because the delete of TC-AUT-005 leaves only one).
 - **Steps:** `GET /automation/rules?limit=0`; `?limit=1&offset=1&sort_by=name&sort_order=asc`;
   `?sort_by=trigger_config`; `?enabled=maybe`; `?enabled=true&entity_type=lead`.
 - **Expected:** `limit=0` gives `per_page 20`; the page of one holds one rule; the unknown sort

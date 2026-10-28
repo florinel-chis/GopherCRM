@@ -486,7 +486,12 @@ func (h *AutomationHandler) respondError(c *gin.Context, logger *logrus.Entry, e
 	case errors.Is(err, apperrors.ErrForbidden):
 		logger.WithError(utils.LogError(err)).Warn("Automation access refused")
 		utils.RespondForbidden(c, "Access denied")
-	case apperrors.IsNotFound(err):
+	case errors.Is(err, apperrors.ErrAutomationRuleNotFound),
+		errors.Is(err, apperrors.ErrAutomationRunNotFound),
+		apperrors.IsNotFound(err):
+		// The two automation sentinels are their own identities, not wrapped
+		// in ErrNotFound, so the shared helper alone would miss them and a
+		// missing rule or run would be answered as a server error.
 		logger.WithError(utils.LogError(err)).Warn("Automation resource not found")
 		utils.RespondNotFound(c, err.Error())
 	default:

@@ -104,7 +104,7 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 
 	t.Run("a deal run links the task to the customer, else the lead, never both", func(t *testing.T) {
 		rule := env.createRule(models.AutomationEntityDeal, models.AutomationEventDealCreated, models.AutomationTrigger{},
-			taskStep(models.AutomationRecipientUser, env.other.ID, 0))
+			dealTaskStep(models.AutomationRecipientUser, env.other.ID, 0))
 		customer := env.createCustomer()
 		lead := env.createLead(env.sales, models.LeadStatusQualified)
 		withCustomer := env.createDeal(env.sales, models.DealStageProposal, 100, "EUR", &customer.ID, &lead.ID)

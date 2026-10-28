@@ -141,7 +141,7 @@ func TestAutomationConditionBranching(t *testing.T) {
 
 	t.Run("a money condition follows the deal's currency", func(t *testing.T) {
 		rule := env.createRule(models.AutomationEntityDeal, models.AutomationEventDealCreated, models.AutomationTrigger{},
-			moneyCondition("gte", 100000, "EUR"), notifyStep(models.AutomationRecipientOwner, 0))
+			moneyCondition("gte", 100000, "EUR"), dealNotifyStep(models.AutomationRecipientOwner, 0))
 		usd := env.createDeal(env.sales, models.DealStageProposal, 500000, "USD", nil, nil)
 		eur := env.createDeal(env.sales, models.DealStageProposal, 500000, "EUR", nil, nil)
 		for _, deal := range []*models.Deal{usd, eur} {

@@ -320,6 +320,15 @@ forward `else_position` within the rule, allowlisted condition fields and operat
 of the matching JSON type, known `{{placeholders}}` only, and every named user a live, active
 staff account.
 
+The placeholders a task title or description, an email subject or body and a notification title
+or body may use are scoped to the rule's entity type. A lead rule knows `lead.id`,
+`lead.first_name`, `lead.last_name`, `lead.email`, `lead.phone`, `lead.company`, `lead.status` and
+`lead.source`; a deal rule knows `deal.id`, `deal.title`, `deal.stage`, `deal.amount` (formatted
+with its currency), `deal.currency` and `deal.source`; both know `owner.first_name`,
+`owner.last_name` and `owner.email` of the record's owner at execution time. Anything else,
+including a `lead.*` placeholder in a deal rule, is an unknown placeholder and the rule is refused.
+The rendered text goes into the task, the mail or the notification, never into a log line.
+
 ### Automation Event
 
 `automation_events` — the outbox row of one committed lead or deal write. No foreign keys: the

@@ -323,7 +323,14 @@ func TestAutomationRuleAPISQLite(t *testing.T) {
 	})
 
 	t.Run("the list pages through the shared parser and refuses unknown sort columns", func(t *testing.T) {
-		rec := h.request(http.MethodGet, "/api/v1/automation/rules?limit=0", "admin", nil)
+		// The earlier subtests leave one live rule (the delete above soft-deleted
+		// the other); a second one makes the second page non-empty.
+		second := h.validRuleBody()
+		second["name"] = "Second rule"
+		rec := h.request(http.MethodPost, "/api/v1/automation/rules", "admin", second)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		rec = h.request(http.MethodGet, "/api/v1/automation/rules?limit=0", "admin", nil)
 		require.Equal(t, http.StatusOK, rec.Code)
 		response := h.decode(rec)
 		require.NotNil(t, response.Meta)

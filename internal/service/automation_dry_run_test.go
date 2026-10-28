@@ -67,8 +67,8 @@ func runAutomationDryRunNoSideEffects(t *testing.T, db *gorm.DB) {
 		notifyStep(models.AutomationRecipientOwner, 0))
 	dealRule := env.createRule(models.AutomationEntityDeal, models.AutomationEventDealCreated, models.AutomationTrigger{},
 		conditionStep("stage", "eq", "won", models.AutomationElseJump, 3),
-		notifyStep(models.AutomationRecipientOwner, 0),
-		taskStep(models.AutomationRecipientOwner, 0, 1))
+		dealNotifyStep(models.AutomationRecipientOwner, 0),
+		dealTaskStep(models.AutomationRecipientOwner, 0, 1))
 	// Something to compare against: an unprocessed event, a run and a
 	// notification already in the tables.
 	env.recordEvent(models.AutomationEntityLead, lead.ID, models.AutomationEventLeadCreated, "", "", models.AutomationOriginUser)
