@@ -21,7 +21,10 @@ type AutomationRuntime struct {
 	mu      sync.Mutex
 	started bool
 	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	// exited is closed by the worker goroutine when it returns; nil until the
+	// first Start. Stop joins it, and a closed (or nil) channel makes a
+	// repeated Stop a no-op whatever the caller's context.
+	exited chan struct{}
 	// wake lets a caller (a test, mostly) trigger a tick without waiting for
 	// the interval.
 	wake chan struct{}
@@ -51,12 +54,13 @@ func (r *AutomationRuntime) Start(ctx context.Context) {
 	r.started = true
 	workerCtx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
-	r.wg.Add(1)
-	go r.loop(workerCtx)
+	exited := make(chan struct{})
+	r.exited = exited
+	go r.loop(workerCtx, exited)
 }
 
-func (r *AutomationRuntime) loop(ctx context.Context) {
-	defer r.wg.Done()
+func (r *AutomationRuntime) loop(ctx context.Context, exited chan<- struct{}) {
+	defer close(exited)
 	owned := r.engine.Context()
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
@@ -102,10 +106,13 @@ func (r *AutomationRuntime) Running() bool {
 // Stop closes admission, cancels the worker context and waits for the
 // goroutine and every admitted unit of work to finish, or for ctx to end. A
 // step whose transaction is in flight finishes or rolls back before Stop
-// returns; nothing is written afterwards. Repeated calls are safe.
+// returns; nothing is written afterwards. Repeated calls are safe: once the
+// worker has exited and the engine has drained, Stop returns nil even on a
+// context that has already ended.
 func (r *AutomationRuntime) Stop(ctx context.Context) error {
 	r.mu.Lock()
 	cancel := r.cancel
+	exited := r.exited
 	r.started = false
 	r.mu.Unlock()
 
@@ -119,13 +126,17 @@ func (r *AutomationRuntime) Stop(ctx context.Context) error {
 	if err := r.engine.Shutdown(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	done := make(chan struct{})
-	go func() {
-		r.wg.Wait()
-		close(done)
-	}()
+	if exited == nil {
+		// Never started: there is no goroutine to join.
+		return errors.Join(errs...)
+	}
 	select {
-	case <-done:
+	case <-exited:
+		return errors.Join(errs...)
+	default:
+	}
+	select {
+	case <-exited:
 	case <-ctx.Done():
 		errs = append(errs, errors.New("automation worker did not stop before the deadline: "+ctx.Err().Error()))
 	}

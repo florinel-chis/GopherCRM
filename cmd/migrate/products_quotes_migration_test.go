@@ -23,8 +23,11 @@ import (
 // server: it applies to a fresh database and to one whose new binary already
 // ran AutoMigrate, it produces exactly the schema AutoMigrate produces (so a
 // database created either way ends up the same), AutoMigrate on top of it is a
-// no-op, a second Up is ErrNoChange, and Steps(-1) removes the four tables and
-// nothing else.
+// no-op, applying it a second time is ErrNoChange, and Steps(-1) removes the
+// four tables and nothing else. The migration is applied by version, not with
+// Up: later migrations (the automation pair of issue #164) sort after it, and
+// MigrateDatabase creates their tables through AutoMigrate, which is why the
+// rollback is compared against the tables present after that AutoMigrate.
 const (
 	quotesMigrationVersion    = 20261026120000
 	quotesPreviousHeadVersion = 20261019120000
@@ -206,7 +209,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			require.NoError(t, tdb.m.Up(), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
+			require.NoError(t, tdb.m.Migrate(quotesMigrationVersion), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
 			version, dirty, err := tdb.m.Version()
 			require.NoError(t, err)
 			assert.False(t, dirty)
@@ -223,12 +226,16 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			}
 
 			// The application's own migration on top: succeeds and changes
-			// nothing.
+			// nothing in the four tables. It does create the tables of the
+			// migrations that sort after this one (AutoMigrate knows every
+			// model), so the rollback below is compared against this list.
 			models.DB = appDB
 			require.NoError(t, models.MigrateDatabase())
 			assert.Equal(t, got, snapshotQuoteTables(t, tdb.sql, tdb.name), "MigrateDatabase must not alter the migrated tables")
+			tablesMigrated := listTables(t, tdb.sql, tdb.name)
+			assert.Subset(t, tablesMigrated, tablesBefore, "MigrateDatabase drops nothing")
 
-			require.ErrorIs(t, tdb.m.Up(), migrate.ErrNoChange)
+			require.ErrorIs(t, tdb.m.Migrate(quotesMigrationVersion), migrate.ErrNoChange)
 
 			// Rollback: the four tables go, every other table stays.
 			require.NoError(t, tdb.m.Steps(-1))
@@ -240,10 +247,10 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			for _, table := range quoteMigrationTables {
 				assert.NotContains(t, tablesAfter, table)
 			}
-			assert.Equal(t, without(tablesBefore, quoteMigrationTables), tablesAfter, "Steps(-1) must leave every other table intact")
+			assert.Equal(t, without(tablesMigrated, quoteMigrationTables), tablesAfter, "Steps(-1) must leave every other table intact")
 
 			// And it applies again from there.
-			require.NoError(t, tdb.m.Up())
+			require.NoError(t, tdb.m.Migrate(quotesMigrationVersion))
 			assert.Equal(t, got, snapshotQuoteTables(t, tdb.sql, tdb.name))
 		})
 	}

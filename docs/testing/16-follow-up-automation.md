@@ -434,7 +434,8 @@ Priorities: 18 P0, 14 P1, 1 P2.
   "Automation worker not started" appears, the event is never dispatched and the stop is
   immediate. (3) Stop blocks while the step is in flight, returns once it commits, the run is
   handed back at its next position, the second run was never claimed, and no row changes after
-  Stop returned; a fresh runtime finishes both.
+  Stop returned; a second Stop is a no-op even on a context that has already ended, as is Stop on
+  a runtime that never started; a fresh runtime finishes both runs.
 - **Automation:** automated — `internal/service/automation_reconcile_test.go`:
   `TestAutomationReconcileSQLite`, `TestAutomationReconcileMySQL`;
   `cmd/automation_runtime_test.go`: `TestAutomationRuntimeLifecycle`;

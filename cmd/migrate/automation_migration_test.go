@@ -180,7 +180,9 @@ func TestMigrationAutomationSchema(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			require.NoError(t, tdb.m.Up(), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
+			// Applied by version so a later migration pair cannot change what
+			// this root exercises (the quotes root learnt that from this one).
+			require.NoError(t, tdb.m.Migrate(automationMigrationVersion), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
 			version, dirty, err := tdb.m.Version()
 			require.NoError(t, err)
 			assert.False(t, dirty)
@@ -199,7 +201,9 @@ func TestMigrationAutomationSchema(t *testing.T) {
 			models.DB = appDB
 			require.NoError(t, models.MigrateDatabase())
 			assert.Equal(t, got, snapshotAutomationTables(t, tdb), "MigrateDatabase must not alter the migrated tables")
-			require.ErrorIs(t, tdb.m.Up(), migrate.ErrNoChange)
+			tablesMigrated := listTables(t, tdb.sql, tdb.name)
+			assert.Subset(t, tablesMigrated, tablesBefore, "MigrateDatabase drops nothing")
+			require.ErrorIs(t, tdb.m.Migrate(automationMigrationVersion), migrate.ErrNoChange)
 
 			require.NoError(t, tdb.m.Steps(-1))
 			version, dirty, err = tdb.m.Version()
@@ -210,9 +214,9 @@ func TestMigrationAutomationSchema(t *testing.T) {
 			for _, table := range automationMigrationTables {
 				assert.NotContains(t, tablesAfter, table)
 			}
-			assert.Equal(t, without(tablesBefore, automationMigrationTables), tablesAfter, "Steps(-1) must leave every other table intact")
+			assert.Equal(t, without(tablesMigrated, automationMigrationTables), tablesAfter, "Steps(-1) must leave every other table intact")
 
-			require.NoError(t, tdb.m.Up())
+			require.NoError(t, tdb.m.Migrate(automationMigrationVersion))
 			assert.Equal(t, got, snapshotAutomationTables(t, tdb))
 		})
 	}

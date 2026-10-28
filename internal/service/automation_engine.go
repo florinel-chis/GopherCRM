@@ -128,6 +128,14 @@ func (o *automationOwner) shutdown(ctx context.Context) error {
 	o.signalIfDrained()
 	o.mu.Unlock()
 
+	// An already drained owner reports success whatever the caller's
+	// context: a repeated Stop after a deadline has passed is a no-op, not a
+	// failure. Only an owner that still holds work waits on ctx.
+	select {
+	case <-o.drained:
+		return nil
+	default:
+	}
 	select {
 	case <-o.drained:
 		return nil

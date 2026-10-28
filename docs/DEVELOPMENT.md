@@ -737,8 +737,10 @@ The pieces, and why each is shaped the way it is:
   run), closes admission, cancels the owned context and waits for every admitted step to release —
   a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
   afterwards — then joins the goroutine, all under the deadline main passes (`automationDrainTimeout`,
-  15 s). A drained runtime holds no goroutine. The same crash policy as AEO applies when the
-  deadline passes: the process exits without closing the database and the next boot reconciles.
+  15 s). A drained runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
+  even on a context that has already ended: the join and the admission drain check their
+  "already done" state before they look at the deadline. The same crash policy as AEO applies when
+  the deadline passes: the process exits without closing the database and the next boot reconciles.
 - **Erasure hooks.** See *Deleting personal data* above: lead erasure cancels the lead's runs and
   purges its notifications before the scrub; user erasure purges the user's notifications.
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and

@@ -78,6 +78,25 @@ func seedAutomationFixture(t *testing.T, repo repository.AutomationRepository) (
 	return rule, lead
 }
 
+// awaitGoroutines polls from the test goroutine itself until the process
+// holds no more goroutines than before the router was built. It must not use
+// assert.Eventually: that evaluates its condition on a goroutine of its own,
+// which the count would include.
+func awaitGoroutines(t *testing.T, baseline int) {
+	t.Helper()
+	deadline := time.Now().Add(automationBootTimeout)
+	for {
+		current := runtime.NumGoroutine()
+		if current <= baseline {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a drained runtime holds no goroutine: %d running, %d before the router was built", current, baseline)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func automationRun(t *testing.T, id uint) models.AutomationRun {
 	t.Helper()
 	var run models.AutomationRun
@@ -128,18 +147,18 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 		defer cancel()
 		require.NoError(t, stop(ctx))
 		assert.Equal(t, 1, boot.logs.count(`"msg":"Automation worker stopped"`))
-		assert.Eventually(t, func() bool { return runtime.NumGoroutine() <= baseline }, automationBootTimeout, 20*time.Millisecond,
-			"a drained runtime holds no goroutine")
+		awaitGoroutines(t, baseline)
 
 		// Nothing is written after Stop returned: an event recorded now stays
-		// unprocessed and starts no run.
+		// unprocessed and starts no run (the stranded run reconciled at boot is
+		// the rule's only other run).
 		require.NoError(t, boot.repo.RecordEvent(&models.AutomationEvent{EntityType: "lead", EntityID: lead.ID, EventType: "lead_created", Origin: "user"}))
 		time.Sleep(1500 * time.Millisecond)
 		events, err := boot.repo.ListUnprocessedEvents(10)
 		require.NoError(t, err)
 		assert.Len(t, events, 1)
 		var runs int64
-		require.NoError(t, models.DB.Model(&models.AutomationRun{}).Where("rule_id = ?", rule.ID).Count(&runs).Error)
+		require.NoError(t, models.DB.Model(&models.AutomationRun{}).Where("rule_id = ? AND id <> ?", rule.ID, stranded.ID).Count(&runs).Error)
 		assert.EqualValues(t, 1, runs)
 		require.NoError(t, stop(ctx), "stopping again is a no-op")
 		require.NoError(t, models.CloseDatabase())

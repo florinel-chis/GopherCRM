@@ -78,6 +78,10 @@ func TestAutomationRuntimeDrain(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, before, snapshotDatabase(t, env.db))
 	require.NoError(t, runtime.Stop(context.Background()), "stopping again is a no-op")
+	ended, cancelEnded := context.WithCancel(context.Background())
+	cancelEnded()
+	require.NoError(t, runtime.Stop(ended), "a drained runtime is a no-op even on a context that has already ended")
+	require.NoError(t, NewAutomationRuntime(env.engine, time.Hour).Stop(ended), "a runtime that never started has nothing to join")
 
 	// A fresh runtime on the same database finishes the work.
 	env.rebuild()
