@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (product → deal → quote → line → sent → print →
   accepted, with print-media emulation). No new dependency. (#167)
 
+- **Products and quotes screenshots.** Ten documentation captures under
+  `docs/screenshots/quotes/` (product list and form, quote list, the create dialog from a deal,
+  the draft detail with two lines, the add-line dialog, the sent detail with its status actions,
+  the print page on screen and under print media, and the deal's Quotes section with an accepted
+  quote), produced by the new screenshot spec `gocrm-ui/e2e/screenshots/11-quotes.spec.ts` and
+  indexed in `docs/SCREENSHOTS.md`. The capture review also fixed the "Active" filter on
+  `/products` and the "Status" filter on `/quotes`, whose floating label overlapped the empty
+  "All products" / "All statuses" value: the label is now shrunk and the outline notched.
+
 - **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
   start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
   (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
