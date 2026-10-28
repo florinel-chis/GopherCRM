@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from gophercrm_runner.config import CommandError, Config, GateError, REQUIRED_CHECKS
+from gophercrm_runner.config import CommandError, Config, EnvironmentError, GateError, REQUIRED_CHECKS
 from gophercrm_runner.engine import CIFailure, Runner
 from gophercrm_runner.gates import agent_result, check_state, merge_gate, migration_coverage, validate_paths
 from gophercrm_runner.process import Commands
@@ -26,6 +26,9 @@ def ready_pr():
                 isDraft=False, headRefOid='head', baseRefOid='base', mergeable='MERGEABLE',
                 reviewDecision='', statusCheckRollup=green_checks(), mergeCommit=None,
                 headRefName='automation/remediate-95', baseRefName='main')
+
+
+GH_TRANSPORT_FAILURE = 'Post "https://api.github.com/graphql": net/http: TLS handshake timeout\n'
 
 
 def fixture_manifest(number):
@@ -97,6 +100,16 @@ class GateTests(unittest.TestCase):
                     self.assertRaisesRegex(GateError, 'existing validation gate'):
                 validate_paths([name], added={name})
 
+    def test_every_vitest_root_configuration_is_a_protected_gate(self):
+        # Vitest discovers workspace and project files beside its configuration.
+        for name in ['gocrm-ui/vitest.workspace.ts', 'gocrm-ui/vitest.projects.ts',
+                     'gocrm-ui/vitest.workspace.json', 'gocrm-ui/vitest.setup.ts']:
+            for added in (set(), {name}):
+                with self.subTest(name=name, added=bool(added)), \
+                        self.assertRaisesRegex(GateError, 'existing validation gate'):
+                    validate_paths([name], added=added)
+        validate_paths(['gocrm-ui/src/vitest.helpers.ts', 'gocrm-ui/src/pages/Deals.test.tsx'])
+
     def test_only_a_newly_added_browser_spec_is_admitted(self):
         spec = 'gocrm-ui/e2e/tests/deal-board.spec.ts'
         validate_paths([spec, 'gocrm-ui/src/pages/Deals.tsx'], added={spec})
@@ -128,10 +141,16 @@ class FakeCommands:
         self.ci_repair = False
         self.pr_data = None
         self.pushed_head = None
+        # GitHub state reads that fail at the transport layer, as `gh` reports them.
+        self.gh_transport_failures = 0
 
     async def run(self, args, *, cwd, **kwargs):
         args = tuple(args)
         self.calls.append(args)
+        if (self.gh_transport_failures and args[0] == 'gh'
+                and args[1:2] in {('issue',), ('pr',), ('run',)}):
+            self.gh_transport_failures -= 1
+            raise CommandError('gh exited 1; log gh.log', stdout='', stderr=GH_TRANSPORT_FAILURE)
         versions = {('git', '--version'): 'git version 2.54.0',
                     ('gh', '--version'): 'gh version 2.92.0',
                     ('claude', '--version'): '2.1.303',
@@ -361,6 +380,57 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         # A repeated request reconciles the existing merge without another agent or PR.
         await self.runner.run_issue(95, execute=True)
         self.assertEqual((self.commands.implementations, self.commands.merges), (2, 1))
+
+    async def test_github_transport_failure_during_validation_is_resumable_without_repair(self):
+        original = self.runner.validate
+
+        async def validate(record):
+            # The first GitHub read inside validation fails at the transport layer.
+            self.commands.gh_transport_failures = 1
+            return await original(record)
+
+        with patch.object(self.runner, 'validate', side_effect=validate):
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed: .*TLS handshake timeout') as caught:
+                await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.gh_transport_failures, 0)
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        record = self.runner.store.read('issue-95')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertEqual((record['attempts'][-1]['stage'], record['attempts'][-1]['outcome'],
+                          record['attempts'][-1]['category']), ('validation', 'failed', 'environment'))
+        self.assertEqual(record['last_failure']['category'], 'environment')
+        self.assertEqual((record['provider_calls'], record['repairs']), (1, 0))
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (1, 0, 0))
+        self.assertEqual(self.runner.store.read('active'), {'issue': 95})
+        # A plain resume validates the same commit once GitHub answers again.
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (1, 1, 1))
+        record = self.runner.store.read('issue-95')
+        self.assertEqual((record['provider_calls'], record['repairs']), (2, 0))
+
+    async def test_failed_log_retrieval_stops_ci_wait_without_a_repair(self):
+        self.commands.pr_data = dict(ready_pr(), statusCheckRollup=[dict(green_checks()[0], conclusion='FAILURE',
+            detailsUrl='https://github.com/example/repo/actions/runs/123/job/456')])
+        original = self.commands.run
+
+        async def boundary(args, **kwargs):
+            if tuple(args[:3]) == ('gh', 'run', 'view') and '--log-failed' in args:
+                self.commands.calls.append(tuple(args))
+                raise CommandError('gh exited 1; log gh.log', stdout='', stderr=GH_TRANSPORT_FAILURE)
+            return await original(args, **kwargs)
+
+        self.commands.run = boundary
+        record = dict(pr=122, head='head', base='base')
+        with patch.object(self.runner, 'ci_pause', new_callable=AsyncMock) as pause:
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed') as caught:
+                await self.runner.wait_ci(record)
+        self.assertNotIsInstance(caught.exception, CIFailure)
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        pause.assert_not_awaited()
+        gh = [c[1:5] for c in self.commands.calls if c[0] == 'gh']
+        self.assertEqual(gh, [('pr', 'view', '122', '--json'), ('run', 'view', '123', '--json'),
+                              ('run', 'view', '123', '--log-failed')])
 
     async def test_failed_tests_are_repaired_before_review(self):
         self.commands.fail_tests = 1

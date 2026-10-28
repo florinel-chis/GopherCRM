@@ -159,7 +159,9 @@ def artifact_prefix(record):
     return Path('artifacts') / record['execution_id'] / record['head'] / record['validation_attempt']
 
 
-def write_receipt(root, record, check_id, argv, output, exit_code):
+def write_receipt(root, record, check_id, argv, output, exit_code, *, checkout=None):
+    """Write a candidate-bound receipt. `checkout` records the validation checkout that
+    produced a Vitest report, whose result paths name it; other receipts omit the field."""
     if not re.fullmatch(r'[a-z][a-z0-9_-]{0,80}', check_id) or exit_code != 0:
         raise GateError('Only successful trusted checks produce acceptance receipts')
     prefix = artifact_prefix(record)
@@ -169,6 +171,8 @@ def write_receipt(root, record, check_id, argv, output, exit_code):
     receipt = {k: record[k] for k in BINDING_KEYS}
     receipt.update(check_id=check_id, argv=list(argv), exit_code=exit_code,
                    output_path=str(output_path), output_sha256=sha(output_bytes))
+    if checkout is not None:
+        receipt['root'] = str(checkout)
     raw = json.dumps(receipt, sort_keys=True).encode()
     path = prefix / f'{check_id}.json'
     private_bytes(safe_artifact(root, path), raw)

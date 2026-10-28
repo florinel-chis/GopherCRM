@@ -172,7 +172,17 @@ class Runner:
         return output.rstrip('\n')
 
     async def gh(self, *args):
-        return await self.command('gh', *args, '--repo', self.config.repository)
+        """Read or change GitHub state; a failed `gh` process is an environment failure.
+
+        Transport and API failures (TLS or network timeouts, rate limits, outages)
+        cannot be repaired by a coding agent, so they never reach a repair loop.
+        Resuming the same command retries the step.
+        """
+        try:
+            return await self.command('gh', *args, '--repo', self.config.repository)
+        except CommandError as exc:
+            detail = (exc.stderr or '').strip() or str(exc)
+            raise EnvironmentError('GitHub command failed: ' + redact(detail)[-2000:]) from exc
 
     async def issue(self, number):
         self.config.allows(number)
@@ -685,7 +695,10 @@ class Runner:
             if record.get('stage') in {'merged', 'pr_ready', 'abandoned'}:
                 raise GateError('Completed or abandoned executions cannot be retired')
             unresolved = [c for c in record.get('provider_invocations', []) if c['status'] == 'running']
-            if unresolved and processes_stopped is not True:
+            # A hard crash can also leave a validation command recorded as running.
+            check = record.get('current_check')
+            running_check = isinstance(check, dict) and check.get('outcome') == 'running'
+            if (unresolved or running_check) and processes_stopped is not True:
                 raise GateError('Inspect orphaned processes, then explicitly pass --processes-stopped')
             issue = json.loads(await self.gh('issue', 'view', str(number), '--json', ISSUE_CLOSURE_FIELDS))
             if issue.get('state') != 'CLOSED':
@@ -703,6 +716,15 @@ class Runner:
                 record.setdefault('provider_dispositions', []).append(dict(id=call['id'],
                     pid=call.get('pid'), at=self.clock(), reason=redact(reason), processes_stopped=True))
                 call.update(status='operator-resolved', ended_at=None)
+            if running_check:
+                record.setdefault('check_dispositions', []).append(dict(id=check.get('id'),
+                    pid=check.get('pid'), process_identity=check.get('process_identity'), at=self.clock(),
+                    reason=redact(reason), processes_stopped=True))
+                check.update(outcome='operator-resolved', ended_at=self.clock())
+                for attempt in record.get('check_attempts', []):
+                    if (attempt.get('outcome') == 'running' and attempt.get('id') == check.get('id')
+                            and attempt.get('started_at') == check.get('started_at')):
+                        attempt.update(outcome='operator-resolved', ended_at=check['ended_at'])
             record.setdefault('retirements', []).append(dict(at=self.clock(), reason=redact(reason)))
             record.update(stage='retired', completed_at=self.clock(), remote_disposition=dict(
                 issue_state='CLOSED', state_reason=issue.get('stateReason'), closing_prs=closing,
@@ -827,7 +849,8 @@ class Runner:
                     if './cmd/migrate' in command:
                         migration_coverage(output)
                     if named_tests:
-                        evidence.named_tests(output, named_tests, root=previous.resolve())
+                        evidence.named_tests(output, named_tests,
+                                             root=self.receipt_checkout(record, receipt, previous))
             except BudgetError:
                 raise
             except (GateError, OSError) as exc:
@@ -907,7 +930,8 @@ class Runner:
             if named_tests:
                 evidence.named_tests(output, named_tests, root=worktree.resolve())
             record['receipts'][check_id] = evidence.write_receipt(
-                self.config.state_dir, record, check_id, command, output, 0)
+                self.config.state_dir, record, check_id, command, output, 0,
+                checkout=worktree.resolve() if getattr(named_tests, 'kind', 'go') == 'vitest' else None)
             self.save(record)
         await self.clean(worktree)
         if await self.head(worktree) != record['head'] or await self.head(source) != record['head']:
@@ -916,6 +940,22 @@ class Runner:
             await self.perform(record, 'documentation', self.prepare_documentation, record)
         record.update(tested_head=record['head'], stage='review')
         self.save(record)
+
+    def receipt_checkout(self, record, receipt, previous):
+        """The validation checkout whose paths a retained Vitest report names.
+
+        Each resume replaces `validation_worktree` with a fresh checkout, so a receipt
+        reused across two interruptions names an earlier checkout. The digest-bound
+        receipt records it; it must be one of this issue's validation checkouts.
+        Receipts written before the field existed name the previous checkout."""
+        if 'root' not in receipt:
+            return previous.resolve()
+        checkout = receipt['root']
+        parent = (self.config.state_dir / 'validation').resolve()
+        if (not isinstance(checkout, str) or Path(checkout).parent != parent
+                or not re.fullmatch(f'{record["issue"]}-[0-9a-f]{{12}}', Path(checkout).name)):
+            raise GateError('Retained Vitest receipt names an unexpected validation checkout')
+        return Path(checkout)
 
     async def review(self, issue, record):
         receipts = await self.verify_evidence(record)
@@ -1064,6 +1104,71 @@ class Runner:
         record['stage'] = 'implement'
         self.save(record)
         await self.perform(record, 'repair', self.implement, issue, record, feedback)
+
+    ADOPTABLE_STAGES = frozenset({'validate', 'review', 'repair_pending', 'publish', 'ci',
+                                  'finalize_implementation', 'implement'})
+
+    async def adopt_commit(self, number, *, head, reason):
+        """Adopt an inspected maintainer commit as the candidate of an unfinished execution.
+
+        The commit must descend from the recorded head and pass the protected-path and
+        frozen-scope gates. Evidence is invalidated as by `freeze --refresh`; spent
+        calls, repair rounds and the deadline are unchanged, and no repair round is
+        consumed. The next run validates and independently reviews the adopted commit.
+        """
+        self.config.allows(number)
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+            raise GateError('Adoption requires a short reason describing the maintainer commit')
+        if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', head):
+            raise GateError('Adoption requires the full commit SHA of the maintainer commit')
+        with self.store.exclusive():
+            record = self.store.journal(number)
+            if (record and not record.get('legacy') and record.get('policy') == self.policy
+                    and record.get('stage') == 'validate' and record.get('head') == head
+                    and (record.get('adoptions') or [{}])[-1].get('to_head') == head):
+                return self.adoption_result(record)  # A repeated request after a lost response.
+            if (not record or record.get('legacy') or record.get('policy') != self.policy
+                    or record.get('stage') not in self.ADOPTABLE_STAGES
+                    or (record['stage'] == 'implement' and record['head'] == record['base'])):
+                raise GateError('Only an unfinished execution with a committed candidate under the current '
+                                'policy can adopt a maintainer commit')
+            if any(c.get('status') == 'running' for c in record.get('provider_invocations', [])):
+                raise GateError('Resolve orphaned provider processes before adopting a maintainer commit')
+            worktree = Path(record['worktree'])
+            await self.clean(worktree)
+            if await self.head(worktree) != head:
+                raise GateError('Worktree HEAD differs from the commit to adopt; check out exactly that commit')
+            if head == record['head']:
+                raise GateError('The commit to adopt is already the recorded candidate')
+            code, _ = await self.run_command(('git', 'merge-base', '--is-ancestor', record['head'], head),
+                                             cwd=worktree, check=False)
+            if code != 0:
+                raise GateError('The commit to adopt must be a descendant of the recorded candidate head')
+            # The gates of an implementation commit, applied to the whole diff from the base.
+            paths = await self.validate_agent_paths(record, scope=False)
+            try:
+                contracts.check_scope(contracts.load_contract(self.config, number), paths)
+            except GateError as exc:
+                raise GateError(f'{exc}; widen scope_paths with freeze --refresh before adopting') from exc
+            if record.get('pr'):
+                pr = await self.pr(record['pr'])
+                if (pr.get('state') != 'OPEN' or pr.get('headRefOid') != head
+                        or pr.get('headRefName') != record['branch']):
+                    raise GateError('The recorded pull request must be open with the adopted commit as its '
+                                    'head; push the commit to the ticket branch first')
+            record.setdefault('adoptions', []).append(dict(
+                at=self.clock(), from_head=record['head'], to_head=head, reason=redact(reason)[:1000]))
+            record.update(head=head, tested_head=None, reviewed_head=None, receipts={}, review=None,
+                          review_receipt=None, pending_review=None, last_error=None, stage='validate')
+            self.save(record)
+            return self.adoption_result(record)
+
+    @staticmethod
+    def adoption_result(record):
+        return dict(issue=record['issue'], head=record['head'], stage=record['stage'],
+                    adoption=record['adoptions'][-1], provider_calls=record['provider_calls'],
+                    max_provider_calls=record['max_provider_calls'], repairs=record['repairs'],
+                    deadline=record['deadline'])
 
     async def revalidate(self, number):
         """Accept current main into a clean runner worktree and invalidate old gates."""

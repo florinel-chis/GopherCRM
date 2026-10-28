@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import test_runner as fixtures
-from gophercrm_runner.config import GateError
+from gophercrm_runner.config import CommandError, EnvironmentError, GateError
 from gophercrm_runner.engine import Runner
 from gophercrm_runner.pull_requests import PullRequestRunner
 
@@ -90,6 +90,36 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runner.store.read('active'), {})
         self.assertEqual((await self.complete())['status'], 'merged')
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (1, 1, 1))
+
+    async def test_github_transport_failure_during_validation_is_resumable_without_repair(self):
+        original = self.runner.validate
+
+        async def validate(record):
+            # The PR re-read inside validation fails at the transport layer.
+            self.commands.gh_transport_failures = 1
+            return await original(record)
+
+        with patch.object(self.runner, 'validate', side_effect=validate):
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed: .*TLS handshake timeout') as caught:
+                await self.complete()
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        self.assertEqual(self.commands.gh_transport_failures, 0)
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertEqual((record['attempts'][-1]['stage'], record['attempts'][-1]['outcome'],
+                          record['attempts'][-1]['category']), ('validation', 'failed', 'environment'))
+        self.assertEqual((record['provider_calls'], record['repairs']), (0, 0))
+        self.assertNotIn('feedback', record)
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (0, 0, 0))
+        self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        # A plain resume validates, reviews and merges the unchanged head.
+        result = await self.complete()
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews,
+                          self.commands.merges), (0, 1, 1, 1))
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual((record['provider_calls'], record['repairs']), (1, 0))
+        self.assertEqual(record['head'], self.head)
 
     async def test_zero_repair_allowance_keeps_successful_validation_review_and_merge(self):
         self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=0), self.commands)
