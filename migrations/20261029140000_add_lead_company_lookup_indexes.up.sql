@@ -21,9 +21,10 @@
 -- it use the index. The application has always stored domains lower-cased; the
 -- UPDATE below normalises any row written another way so the lookup cannot
 -- miss it. The comparison is binary so only rows that actually change are
--- written and row-locked (none when every row came through the application).
--- models.MigrateDatabase runs the same normalisation on every start, on every
--- driver.
+-- written; under InnoDB REPEATABLE READ the statement still locks every record
+-- it scans until it finishes, a one-time cost of this upgrade.
+-- models.MigrateDatabase repeats the normalisation on every start, on every
+-- driver, with a non-locking SELECT and primary-key updates instead.
 UPDATE companies
 SET domain = LOWER(domain)
 WHERE domain IS NOT NULL AND CAST(domain AS BINARY) <> CAST(LOWER(domain) AS BINARY);

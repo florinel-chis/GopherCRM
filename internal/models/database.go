@@ -64,10 +64,18 @@ func MigrateDatabase() error {
 // this step covers rows written another way, on every driver, because SQLite
 // installs never run the SQL migration that does the same on MySQL/MariaDB.
 //
-// It runs on every start and is idempotent: only rows whose bytes differ from
-// their lower-case form are written, so a normalised table costs one scan and
-// no writes. The comparison is binary on MySQL/MariaDB, whose case-insensitive
-// collation would otherwise call 'Acme.Example' equal to 'acme.example'.
+// It runs on every start and is idempotent, and it is built so that a
+// normalised database takes no row locks at all. Discovery is a plain SELECT,
+// a consistent non-locking read on MySQL/MariaDB: one full read of companies
+// per start. Only when it returns ids are those rows lower-cased, by primary
+// key in chunks of companyDomainNormalizeChunk, so writes and row locks are
+// limited to the rows that actually need normalising. A single UPDATE with the
+// predicate in its WHERE clause would instead lock every record it scans under
+// InnoDB REPEATABLE READ, serialising replicas that start together and blocking
+// company writes on every boot. The comparison is binary on MySQL/MariaDB,
+// whose case-insensitive collation would otherwise call 'Acme.Example' equal
+// to 'acme.example'. NULL domains are left alone; soft-deleted rows are
+// normalised like live ones.
 //
 // Lower-casing cannot create a live duplicate the application did not already
 // treat as one: the old check was case-insensitive (LOWER() on both sides), so
@@ -79,11 +87,25 @@ func normalizeCompanyDomains(tx *gorm.DB) error {
 	if tx.Dialector.Name() != "sqlite" {
 		predicate = "CAST(domain AS BINARY) <> CAST(LOWER(domain) AS BINARY)"
 	}
-	if err := tx.Exec("UPDATE companies SET domain = LOWER(domain) WHERE domain IS NOT NULL AND " + predicate).Error; err != nil {
-		return fmt.Errorf("failed to normalise company domains: %w", err)
+	var ids []uint
+	if err := tx.Raw("SELECT id FROM companies WHERE domain IS NOT NULL AND " + predicate + " ORDER BY id").Scan(&ids).Error; err != nil {
+		return fmt.Errorf("failed to find company domains to normalise: %w", err)
+	}
+	for start := 0; start < len(ids); start += companyDomainNormalizeChunk {
+		end := start + companyDomainNormalizeChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err := tx.Exec("UPDATE companies SET domain = LOWER(domain) WHERE id IN ?", ids[start:end]).Error; err != nil {
+			return fmt.Errorf("failed to normalise company domains: %w", err)
+		}
 	}
 	return nil
 }
+
+// companyDomainNormalizeChunk bounds how many rows one normalising UPDATE
+// writes, and so how many row locks it holds at once.
+const companyDomainNormalizeChunk = 500
 
 // autoMigrateModels is the AutoMigrate half of MigrateDatabase.
 func autoMigrateModels(tx *gorm.DB) error {

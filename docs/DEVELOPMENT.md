@@ -361,9 +361,11 @@ captures the statements the repository really runs and asserts their SQLite plan
 indexes; `TestLookupIndexesMigration` (fresh up/down, populated upgrade, AutoMigrate first,
 rollback and reapply, index parity) is one of the roots the Database migrations workflow requires.
 Plain equality relies on every stored domain being lower case: the service normalises on write,
-and `models.MigrateDatabase` lower-cases any other row on every start on every driver (binary
-comparison on MySQL/MariaDB, idempotent, no writes on a normalised table), which is how SQLite
-installs, which never run the SQL migration, get it. Roots:
+and `models.MigrateDatabase` lower-cases any other row on every start on every driver, which is how
+SQLite installs, which never run the SQL migration, get it. It discovers the rows with a plain
+non-locking `SELECT id` (binary comparison on MySQL/MariaDB) and updates only those ids, by primary
+key in chunks of 500, so a normalised database takes no write and no row lock on startup; a single
+predicate `UPDATE` would lock every scanned record under InnoDB REPEATABLE READ on every boot. Roots:
 `TestCompanyDomainNormalization{SQLite,MySQL}` (`internal/repository/company_domain_normalization_test.go`).
 
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →

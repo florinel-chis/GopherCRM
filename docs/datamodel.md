@@ -155,11 +155,14 @@ secondary index as in-place online DDL: reads and writes continue during the bui
 statement takes a brief exclusive metadata lock at its start and end. A long-running transaction
 that touched the table delays that lock, and statements arriving behind the waiting DDL queue
 until it is granted, so run the upgrade when no long transaction or report is open on `leads` or
-`companies`. The domain normalisation `UPDATE` before the index builds is a separate, ordinary
-write: it scans `companies` once and row-locks only the rows whose domain is not already lower
-case (none when every row came through the application). `models.MigrateDatabase` repeats the
-same normalisation on every start on every driver, which is how SQLite installs get it; on a
-normalised table it is a scan with no writes. SQLite builds the indexes during the startup
+`companies`. The domain normalisation `UPDATE` in the SQL migration is a separate, one-time
+write: it scans `companies` once, and under InnoDB REPEATABLE READ it locks every record it scans,
+not only the ones it changes, until the migration statement finishes; on a large table run it in
+the same quiet window. `models.MigrateDatabase` repeats the normalisation on every start on every
+driver (which is how SQLite installs get it) without that cost: it finds the rows with a plain,
+non-locking `SELECT id`, a full read of `companies` on each boot, and only when that returns ids
+lower-cases those rows by primary key in chunks of 500. Writes and row locks are therefore limited
+to the rows that need normalising, and a normalised database takes none. SQLite builds the indexes during the startup
 AutoMigrate, holding the database write lock while it does.
 
 ## Deal Model
