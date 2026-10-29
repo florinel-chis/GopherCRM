@@ -14,3 +14,5 @@ export * from './apikeys';
 export * from './configurations';
 export * from './aeo';
 export * from './forms';
+export * from './automation';
+export * from './notifications';

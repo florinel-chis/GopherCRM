@@ -181,6 +181,30 @@ vi.mock('@/api/endpoints/tickets', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/automation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/automation')>();
+  return {
+    ...actual,
+    automationApi: {
+      ...actual.automationApi,
+      listRules: vi.fn().mockResolvedValue({ rules: [], total: 0 }),
+      listRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
+    },
+  };
+});
+
+vi.mock('@/api/endpoints/notifications', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/notifications')>();
+  return {
+    ...actual,
+    notificationsApi: {
+      ...actual.notificationsApi,
+      list: vi.fn().mockResolvedValue({ notifications: [], total: 0 }),
+      unreadCount: vi.fn().mockResolvedValue(0),
+    },
+  };
+});
+
 import { router } from './index';
 
 const renderAt = (path: string) => {
@@ -510,5 +534,59 @@ describe('products and quotes routes', () => {
       await adminForm.findByRole('heading', { name: 'Create New Product' }, { timeout: 15000 })
     ).toBeInTheDocument();
     expect(adminForm.queryByText('Access Denied')).not.toBeInTheDocument();
+  }, 90000);
+});
+
+// Rules and the dry run are admin-only on the API; the run history is admin
+// and sales; notifications are every staff role.
+describe('automation and notification routes', () => {
+  beforeEach(() => {
+    authUser = null;
+  });
+
+  const denied = async (path: string) => {
+    const view = renderAt(path);
+    // The data router resolves the lazy page module before the guard renders.
+    expect(await view.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+    view.unmount();
+  };
+
+  it('redirect sales, support and customer users away from /automation/rules, /automation/rules/new and /automation/rules/1/edit', async () => {
+    for (const role of ['sales', 'support', 'customer'] as const) {
+      for (const path of ['/automation/rules', '/automation/rules/new', '/automation/rules/1/edit']) {
+        authUser = createMockUser({ role });
+        await denied(path);
+      }
+    }
+  }, 90000);
+
+  it('redirect support and customer users away from /automation/runs and /automation/runs/1', async () => {
+    for (const role of ['support', 'customer'] as const) {
+      for (const path of ['/automation/runs', '/automation/runs/1']) {
+        authUser = createMockUser({ role });
+        await denied(path);
+      }
+    }
+  }, 90000);
+
+  it('redirect customer users away from /notifications', async () => {
+    authUser = createMockUser({ role: 'customer' });
+    await denied('/notifications');
+  }, 30000);
+
+  it('render the rule list for admin, the run list for admin and sales and the notifications page for support', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['admin', '/automation/rules', 'Automation rules'],
+      ['admin', '/automation/runs', 'Automation runs'],
+      ['sales', '/automation/runs', 'Automation runs'],
+      ['support', '/notifications', 'Notifications'],
+    ];
+    for (const [role, path, heading] of cases) {
+      authUser = createMockUser({ role: role as 'admin' | 'sales' | 'support' });
+      const view = renderAt(path);
+      expect(await view.findByRole('heading', { name: heading }, { timeout: 15000 })).toBeInTheDocument();
+      expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+      view.unmount();
+    }
   }, 90000);
 });

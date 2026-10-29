@@ -4430,7 +4430,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch. The same 400 answers as the create apply and leave the rule untouched.",
+                "description": "Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply and leave the rule untouched.",
                 "consumes": [
                     "application/json"
                 ],

@@ -118,12 +118,14 @@ candidate follow-up, not an accident:
 
 ## Follow-up automation — deliberate v1 cuts
 
-The automation subsystem (#164) shipped its backend and API with these decided out, each a
-candidate follow-up:
+The automation subsystem (#164) shipped its backend, API and screens with these decided out,
+each a candidate follow-up:
 
-- **The screens** — rule list and form, dry-run dialog, run list and detail, the lead and deal
-  "Automation" sections and the notification bell are the separate `follow-up-automation-ui`
-  task; the API is complete without them.
+- **Rule names on runs** — runs carry only `rule_id` and `rule_version` (sales cannot read
+  rules), so the run screens show "Rule #id"; admins see names where the rule list is loaded.
+- **Field-level validation errors** — a rejected rule returns one message; the editor shows it on
+  the step it names, not on the individual field.
+- **Dry run of unsaved edits** — the dry run simulates the saved rule version only.
 - **Email to leads and customers** — `send_email` reaches staff users only until a consent and
   opt-out model exists.
 - **Multi-replica leases** — the worker assumes one API replica: runs are recovered at boot, not

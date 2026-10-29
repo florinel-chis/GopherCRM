@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	_ "github.com/florinel-chis/gophercrm/internal/models" // referenced by the swag annotations
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"

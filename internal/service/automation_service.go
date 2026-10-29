@@ -388,8 +388,10 @@ func (s *automationService) ListRules(offset, limit int, filter repository.Autom
 // UpdateRule replaces the rule wholesale in one transaction: the row is
 // locked, the version incremented, the steps replaced and every pending,
 // waiting or running run of the rule cancelled with rule_changed. A failure
-// anywhere leaves the version, the steps and the runs as they were.
-func (s *automationService) UpdateRule(id uint, rule *models.AutomationRule) (*models.AutomationRule, error) {
+// anywhere leaves the version, the steps and the runs as they were. enabled
+// nil keeps the switch as read under the row lock, so a disable committed
+// after the caller read the rule is not undone.
+func (s *automationService) UpdateRule(id uint, rule *models.AutomationRule, enabled *bool) (*models.AutomationRule, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("rule_id", id), "AutomationService", "UpdateRule")
 	if err := s.validateRule(rule); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Automation rule rejected")
@@ -411,6 +413,11 @@ func (s *automationService) UpdateRule(id uint, rule *models.AutomationRule) (*m
 		rule.ID = stored.ID
 		rule.Version = stored.Version + 1
 		rule.CreatedByID = stored.CreatedByID
+		if enabled == nil {
+			rule.Enabled = stored.Enabled
+		} else {
+			rule.Enabled = *enabled
+		}
 		if err := r.UpdateRule(rule); err != nil {
 			return err
 		}

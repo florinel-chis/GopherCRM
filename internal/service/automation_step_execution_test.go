@@ -328,8 +328,9 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 				}, models.AutomationCancelManual},
 			{"rule change", notifyStep(models.AutomationRecipientOwner, 0),
 				func(t *testing.T, env *automationEnv, rule *models.AutomationRule, _ *models.Lead, _ uint) func() {
+					enabled := true
 					_, err := env.svc.UpdateRule(rule.ID, &models.AutomationRule{Name: "Changed", EntityType: rule.EntityType, TriggerType: rule.TriggerType,
-						Enabled: true, Steps: []models.AutomationStep{waitStep(5)}})
+						Enabled: enabled, Steps: []models.AutomationStep{waitStep(5)}}, &enabled)
 					require.NoError(t, err)
 					return nil
 				}, models.AutomationCancelRuleChanged},
