@@ -197,14 +197,14 @@ describe('AutomationRunList', () => {
     vi.mocked(automationApi.listRules).mockImplementation(async (filters) =>
       filters?.offset === 100 ? { rules: pageTwo, total: 120 } : { rules: pageOne, total: 120 }
     );
-    const ofQuarterly = createMockAutomationRun({ id: 11, rule_id: 205, rule_version: 1, entity_id: 8 });
+    const ofQuarterly = createMockAutomationRun({ id: 11, rule_id: 205, rule_name: 'Quarterly check', rule_version: 1, entity_id: 8 });
     vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [ofQuarterly], total: 1 });
 
     render(<AutomationRunList />);
     await rowOf('#11');
-    // Nothing is fetched before the picker opens; the row falls back to the id.
+    // Nothing is fetched before the picker opens; the run names its rule.
     expect(automationApi.listRules).not.toHaveBeenCalled();
-    expect(screen.getByText('Rule #205 · v1')).toBeInTheDocument();
+    expect(screen.getByText('Quarterly check · v1')).toBeInTheDocument();
 
     await pickAutocompleteOption('Rule', 'Quarterly check (#205)');
 
@@ -214,8 +214,77 @@ describe('AutomationRunList', () => {
       expect(automationApi.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({ rule_id: 205, offset: 0 }))
     );
     expect(screen.getByLabelText('Rule ID')).toHaveValue(205);
-    // Names the picker loaded label the rows.
     expect(await screen.findByText('Quarterly check · v1')).toBeInTheDocument();
+  });
+
+  it('shows the rule name from the run for sales without loading rules', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 2, role: 'sales' })));
+    vi.mocked(automationApi.listRuns).mockResolvedValue({
+      runs: [{ ...waiting, rule_name: 'Welcome call' }],
+      total: 1,
+    });
+    render(<AutomationRunList />);
+
+    const row = await rowOf('#9');
+    expect(within(row).getByText('Welcome call · v2')).toBeInTheDocument();
+    expect(automationApi.listRules).not.toHaveBeenCalled();
+  });
+
+  it("marks a deleted rule's runs and falls back to Rule #id without a name", async () => {
+    vi.mocked(automationApi.listRuns).mockResolvedValue({
+      runs: [
+        { ...waiting, rule_name: 'Old nurture', rule_deleted: true },
+        { ...completed, rule_name: '', rule_deleted: true },
+      ],
+      total: 2,
+    });
+    render(<AutomationRunList />);
+
+    expect(within(await rowOf('#9')).getByText('Old nurture (deleted) · v2')).toBeInTheDocument();
+    expect(within(await rowOf('#10')).getByText('Rule #4 (deleted) · v1')).toBeInTheDocument();
+  });
+
+  it('keeps naming a filtered rule the picker never loaded while later pages are empty, loading or failed', async () => {
+    window.history.replaceState({}, '', '/automation/runs?rule_id=3');
+    vi.mocked(automationApi.listRuns).mockResolvedValueOnce({
+      runs: [{ ...waiting, rule_name: 'Old nurture', rule_deleted: true }],
+      total: 1,
+    });
+    render(<AutomationRunList />);
+    const picker = () => screen.getByRole('combobox', { name: 'Rule' });
+
+    await rowOf('#9');
+    await waitFor(() => expect(picker()).toHaveValue('Old nurture (#3)'));
+    expect(automationApi.listRules).not.toHaveBeenCalled();
+
+    // An empty page.
+    vi.mocked(automationApi.listRuns).mockResolvedValueOnce({ runs: [], total: 0 });
+    await pickSelect(/status/i, 'Failed');
+    await waitFor(() => expect(screen.queryByText('#9')).not.toBeInTheDocument());
+    expect(picker()).toHaveValue('Old nurture (#3)');
+
+    // A page still loading.
+    vi.mocked(automationApi.listRuns).mockReturnValueOnce(new Promise(() => {}));
+    await pickSelect(/status/i, 'Completed');
+    await waitFor(() =>
+      expect(automationApi.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'completed', rule_id: 3 }))
+    );
+    expect(picker()).toHaveValue('Old nurture (#3)');
+
+    // A failed page.
+    vi.mocked(automationApi.listRuns).mockRejectedValue(serverError('database unavailable'));
+    await pickSelect(/status/i, 'Cancelled');
+    expect(await screen.findByText(/database unavailable/)).toBeInTheDocument();
+    expect(picker()).toHaveValue('Old nurture (#3)');
+  });
+
+  it('shows Rule #id in the picker for a filtered rule without a known name', async () => {
+    window.history.replaceState({}, '', '/automation/runs?rule_id=12');
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [], total: 0 });
+    render(<AutomationRunList />);
+
+    await waitFor(() => expect(automationApi.listRuns).toHaveBeenCalled());
+    expect(screen.getByRole('combobox', { name: 'Rule' })).toHaveValue('Rule #12');
   });
 
   it('reads its initial filters from the URL and writes changes back', async () => {

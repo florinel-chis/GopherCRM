@@ -96,7 +96,7 @@ The list filtered by a search term, which matches across name, email, company, p
 FEATURES.md section 4.
 
 ![Customers list](screenshots/customers/01-list.png)
-The customers table with name, email, company, revenue and status.
+The customers table with company, primary contact, email, phone, revenue and customer-since date. Every row carries its own actions; for admin and support the row menu also offers "Create Ticket" for that customer.
 
 ![Create customer form](screenshots/customers/02-create.png)
 The create form with contact details and full address, filled in and not submitted.
@@ -194,8 +194,9 @@ editor too.
 The editor of the deal rule at `/automation/rules/{id}/edit`: name, description, entity type,
 trigger with its from/to stage, and three step cards (wait, condition, send email) with move up,
 move down and remove controls and the placeholders each text field accepts. The condition's value
-is free text that suggests the known stages and is stored verbatim (here `proposal`). The Dry run
-button simulates the saved version; saving creates a new version after a confirmation.
+is free text that suggests the known stages and is stored verbatim (here `proposal`). The name
+field notes that sales users see the name on runs. The Dry run button simulates the form as it is,
+unsaved changes included, and saves nothing; saving creates a new version after a confirmation.
 
 ![Dry-run dialog](screenshots/automation/03-dry-run-dialog.png)
 The dry run of "New lead follow-up" on a seeded lead, opened from the rule list: the notice that
@@ -205,16 +206,16 @@ and lead).
 
 ![Automation runs list](screenshots/automation/04-runs-list.png)
 The run list at `/automation/runs` with the status, rule, rule ID, entity and record ID filters,
-over the two runs waiting on their two-day wait; each run number links to its detail. Admins see every run, sales only runs on records
+over the two runs waiting on their two-day wait, each naming its rule; each run number links to its detail. Admins see every run, sales only runs on records
 it owns.
 
 ![Run detail](screenshots/automation/05-run-detail.png)
-A waiting run at `/automation/runs/{id}`: rule and version, record, next step, attempts, the
+A waiting run at `/automation/runs/{id}`: rule name and version, record, next step, attempts, the
 timestamps and the step log (notify succeeded with its recipient and notification, wait waiting
 with its resume time). The Cancel run button is shown to admins while the run is still active.
 
 ![Lead Automation section](screenshots/automation/06-lead-automation-section.png)
-The lead detail page with its Automation section: the lead's runs with rule, status chip, resume
+The lead detail page with its Automation section: the lead's runs with rule name, status chip, resume
 time and creation time, and a View all link to the run list filtered to this lead. Deals carry the
 same section; support and customers do not see it.
 

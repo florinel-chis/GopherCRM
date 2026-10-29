@@ -54,23 +54,22 @@ depend on that are flagged.
   `{success:true,data:{customers:[…],total:N},meta:{…}}`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can view customers list page"
 
-### TC-CUST-002 — Total Revenue and Status columns are client-side constants
+### TC-CUST-002 — Total Revenue is a client-side constant; there is no Status column
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Admin logged in; at least one customer exists.
 - **Steps:**
   1. Navigate to `/customers`.
-  2. Read the "Total Revenue" and "Status" cells of every visible row.
+  2. Read the column headers and the "Total Revenue" cell of every visible row.
   3. Inspect the `GET /api/v1/customers` response body.
-- **Expected:** Every Total Revenue cell reads `$0` and every Status chip reads "Active" (green),
-  regardless of the data. The response body contains no `total_revenue` and no `is_active` field at
-  all.
-- **Known issue:** `transformCustomerFromBackend()` in `gocrm-ui/src/api/endpoints/customers.ts:28-41`
-  hardcodes `total_revenue: 0`, `is_active: true`, `website: ''`, `industry: ''`,
-  `annual_revenue: 0`, `employee_count: 0`. `models.Customer` (`internal/models/customer.go`) has
-  none of those columns, so two of the seven list columns display invented data. Not recorded in
-  FEATURES.md row 4.1, which calls the row "covered".
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+- **Expected:** There is no "Status" column and no Active/Inactive chip (removed in #118: customers
+  have no activation concept). Every Total Revenue cell reads `$0` regardless of the data; the
+  response body contains no `total_revenue` field.
+- **Known issue:** `transformCustomerFromBackend()` in `gocrm-ui/src/api/endpoints/customers.ts`
+  still hardcodes `total_revenue: 0`; `models.Customer` (`internal/models/customer.go`) has no such
+  column. It no longer invents `is_active`, `industry`, `annual_revenue` or `employee_count`.
+- **Automation:** automated (Vitest, status half) — `CustomerList.test.tsx` "has no status column";
+  the revenue half is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-003 — Sales user can read the customers list
 - **Priority:** P0
@@ -118,12 +117,13 @@ depend on that are flagged.
 - **Expected:** The nav item is hidden. The deep link still renders the page — `src/routes/index.tsx`
   wraps `customers*` in the bare `ProtectedRoute` with **no** `requiredRole`, so there is no redirect
   to `/unauthorized`. `GET /api/v1/customers` returns **403** with "Insufficient permissions to list
-  customers". The page shows the "Customers" heading, the "Add Customer" button and a table with zero
-  rows; no error message is displayed, because `CustomerList` never reads the query's `error` state
+  customers". The page shows the "Customers" heading (no "Add Customer" button, which is admin and
+  sales only since #120) and a table with zero rows; no error message is displayed, because `CustomerList` never reads the query's `error` state
   and the axios interceptor only acts on 401.
 - **Known issue:** A forbidden page renders as an empty-but-normal page. Compare `/users` and the
-  ticket forms (`/tickets/new`, `/tickets/:id/edit`), which are role-gated in the router — `/leads`
-  is **not** (see TC-LEAD-004): it has the same open-route defect as `/customers`.
+  ticket forms (`/tickets/new`, `/tickets/:id/edit`), which are role-gated in the router, as are
+  `/leads/*` and `/customers/new` since #120 (see TC-LEAD-004 and TC-CUST-013). The customer list,
+  detail and edit routes stay open on purpose: the API scopes them itself.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new, or a dedicated
   `customer-role-access.spec.ts`)
 
@@ -137,8 +137,8 @@ depend on that are flagged.
 - **Preconditions:** Admin logged in. Data from `generateCustomerData()`.
 - **Steps:**
   1. `/customers` → "Add Customer".
-  2. Fill Company Name, Industry, Website, Number of Employees, Annual Revenue, Primary Contact Name,
-     Email, Phone, Street Address, City, State/Province, Country, Postal Code, Notes.
+  2. Fill Company (as entered), Website, Primary Contact Name, Email, Phone, Street Address, City,
+     State/Province, Country, Postal Code, Notes.
   3. Click "Create Customer".
 - **Expected:** `POST /api/v1/customers` returns **201**; a success snackbar reads "Customer created
   successfully" and the app navigates to `/customers`.
@@ -217,24 +217,34 @@ depend on that are flagged.
   `last_name`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
-### TC-CUST-012 — Industry, Employees, Annual Revenue and Active are collected but never sent
+### TC-CUST-012 — The form offers only fields the API stores
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Admin logged in.
 - **Steps:**
   1. `/customers` → "Add Customer".
-  2. Fill every field including Industry, Website, Number of Employees, Annual Revenue, and toggle
-     "Active Customer" off.
-  3. Click "Create Customer" and inspect the `POST /api/v1/customers` request body.
-  4. Open the new customer's detail page.
-- **Expected:** The request body contains only `first_name, last_name, email, phone, company,
-  website, address, city, state, country, postal_code, notes` — the four extra fields are absent
-  (`customersApi.createCustomer` builds `transformedData` explicitly). 201. The detail page shows
-  Industry "Not specified", Annual Revenue "Not specified", Employees "Not specified", Total Revenue
-  "$0" and an "Active" chip, whatever was typed or toggled.
-- **Known issue:** Four form controls are inert. `models.Customer` has no matching columns; the
-  backend also owns a `Position` field that the form never exposes.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+  2. Look for Industry, Number of Employees, Annual Revenue and an "Active Customer" switch.
+  3. Fill every field shown and click "Create Customer"; inspect the `POST /api/v1/customers`
+     request body.
+  4. Open the new customer's edit page: every saved field is loaded. Clear Website, Street
+     Address, City, State/Province, Country, Postal Code and Notes, save while inspecting the
+     `PUT /api/v1/customers/{id}` request body, and reload the edit page.
+- **Expected:** None of the four controls exists (removed in #118; industry and employee range are
+  on the linked Company, and customers have no activation concept). The create body contains
+  `first_name, last_name, email, phone, company, website, address, city, state, country,
+  postal_code, notes` (and `company_id` when one is linked). Step 4 *submission*: the PUT body
+  carries each cleared field as an empty string and the API answers 200. Step 4 *persistence*:
+  after the reload only Website is empty; Street Address, City, State/Province, Country, Postal
+  Code and Notes come back with their previous values, because `CustomerHandler.Update` treats an
+  empty string as "unchanged" for every field except `website` (TC-CUST-018).
+- **Known issue:** Clearing an optional customer field other than Website does not persist — a
+  backend limitation recorded in `docs/ROADMAP.md` ("Customer update cannot clear optional text
+  fields"). The backend also owns a `Position` field that the form never exposes. Before #118 the
+  four controls accepted input that every save discarded.
+- **Automation:** submission half automated (Vitest) — `CustomerForm.test.tsx` "CustomerForm
+  retained fields" asserts the create and update payloads and the edit-form reload from a stored
+  record, with a mocked API; nothing automated asserts persistence. The browser half (including
+  the persistence check) is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-012a — Website persists through both creation paths and can be cleared
 - **Priority:** P1
@@ -251,12 +261,16 @@ depend on that are flagged.
 - **Type:** rbac
 - **Preconditions:** Support user logged in.
 - **Steps:**
-  1. Navigate to `/customers`, click "Add Customer" (the button is not role-gated).
-  2. Fill valid `generateCustomerData()` values and submit.
-- **Expected:** The route-level `middleware.RequireRole(admin, sales)` rejects the request:
-  `POST /api/v1/customers` returns **403** with the middleware's message. The form stays on
-  `/customers/new`; the snackbar reads "Failed to create customer".
-- **Automation:** blocked — needs a role-login helper
+  1. Navigate to `/customers` and look for "Add Customer".
+  2. Navigate directly to `/customers/new`.
+  3. With the support user's token, `POST /api/v1/customers` with valid `generateCustomerData()`
+     values.
+- **Expected:** Step 1: no "Add Customer" button. Step 2: redirect to `/unauthorized` ("Access
+  Denied") — since #120 the route sits under an admin+sales `ProtectedRoute`. Step 3: the
+  route-level `middleware.RequireRole(admin, sales)` answers **403**.
+- **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
+  routes" and `CustomerList.rowActions.test.tsx` "shows Add Customer to …"; the browser case is
+  blocked on a role-login helper
 
 ### TC-CUST-014 — Sales user can create a customer
 - **Priority:** P1
@@ -317,12 +331,16 @@ depend on that are flagged.
   1. Open the customer's edit form.
   2. Clear the "Notes" field and the "City" field entirely.
   3. Click "Update Customer", then reopen the record.
-- **Expected:** 200, but the original Notes and City are still present. `CustomerHandler.Update`
-  applies each field only `if req.X != ""`, so an empty string is read as "leave unchanged". The UI
-  gives no indication that the deletion was ignored.
-- **Known issue:** There is no way to blank an optional customer field through the API or the UI. The
-  behaviour is documented in the handler's swagger `@Description` ("empty fields leave the stored
-  value unchanged") but not in FEATURES.md row 4.3.
+- **Expected:** The form sends `notes: ""` and `city: ""` and the API answers 200, but the original
+  Notes and City are still present after the reload. `CustomerHandler.Update` applies each text
+  field only `if req.X != ""`, so an empty string is read as "leave unchanged". The UI gives no
+  indication that the clearing was ignored. Website is the exception: it is a pointer in the
+  request, so clearing it does persist (TC-CUST-012a), and `company_id: 0` clears the company link.
+- **Known issue:** Address, city, state, country, postal code and notes cannot be blanked through
+  the API or the UI; website and the company link can. The behaviour is documented in the
+  handler's swagger `@Description` ("empty fields leave the stored value unchanged"), listed as a
+  gap in FEATURES.md row 4.3 and recorded as a defect in `docs/ROADMAP.md` ("Customer update
+  cannot clear optional text fields"). TC-CUST-012 shows the same split for the full form.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-019 — Support user cannot update a customer
@@ -352,20 +370,20 @@ depend on that are flagged.
   icon. Three tabs render: Details, Tickets, History.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can view customer details"
 
-### TC-CUST-021 — Detail page shows placeholder business information
+### TC-CUST-021 — Detail page shows only stored business information
 - **Priority:** P2
 - **Type:** regression
-- **Preconditions:** Admin logged in; a customer created by the test with Industry, Website, Annual
-  Revenue and Employees filled in on the form.
+- **Preconditions:** Admin logged in; a customer created by the test with a website.
 - **Steps:**
   1. Open the customer's detail page, Details tab.
-  2. Read the Contact Information and Business Information blocks.
-- **Expected:** Industry reads "Not specified", Annual Revenue "Not specified", Employees "Not
-  specified", and Total Revenue "$0". The Website row displays the saved URL as a link; it is
-  absent when the saved website is empty.
-- **Known issue:** Same root cause as TC-CUST-002 and TC-CUST-012 — the fields do not exist in
-  `models.Customer`.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+  2. Read the heading and the Contact Information and Business Information blocks.
+- **Expected:** No Active/Inactive chip next to the heading and no Industry, Annual Revenue or
+  Employees entries (removed in #118). Business Information shows Total Revenue "$0" and Customer
+  Since. The Website row displays the saved URL as a link; it is absent when the saved website is
+  empty.
+- **Known issue:** Total Revenue is still a client-side constant (TC-CUST-002).
+- **Automation:** automated (Vitest) — `CustomerDetail.test.tsx` "CustomerDetail fields"; browser
+  case planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-022 — History tab renders two synthetic entries
 - **Priority:** P2
@@ -513,22 +531,24 @@ depend on that are flagged.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new), mirroring
   `leads-sorting-search.spec.ts`
 
-### TC-CUST-031 — Sorting by Phone, Total Revenue or Status is silently ignored
+### TC-CUST-031 — Phone sorts nothing, Total Revenue is not sortable, there is no Status column
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Admin logged in; several customers with different phone numbers.
 - **Steps:**
-  1. `/customers`.
+  1. `/customers` and read the column headers.
   2. Click the "Phone" column header; note the request and the row order.
-  3. Repeat for "Total Revenue" and "Status".
-- **Expected:** Each click sends `sort_by=phone` / `sort_by=total_revenue` / `sort_by=is_active`, but
-  none is in `customerSortColumns` (`created_at, updated_at, first_name, last_name, email, company`),
-  so the handler blanks `sort_by` and falls through to the unsorted `List` path. The response is 200
-  and the row order does not change, while the `TableSortLabel` arrow flips as if it had.
-- **Known issue:** Three of the seven headers are sortable-looking but inert. `DataTable` marks every
-  column sortable unless `sortable: false` is set, and `CustomerList` sets it nowhere. Dropping the
-  unknown column is the deliberate SQL-injection guard (`utils.ValidateSort`), so the fix belongs on
-  the frontend.
+  3. Try to click the "Total Revenue" header.
+- **Expected:** The headers are Company, Primary Contact, Email, Phone, Total Revenue and Customer
+  Since; there is no Status column (removed in #118). Step 2 sends `sort_by=phone`, which is not in
+  the handler's `customerSortColumns` (`created_at, updated_at, first_name, last_name, email,
+  company`), so the handler blanks `sort_by` and returns the unsorted list with 200: the row order
+  does not change while the `TableSortLabel` arrow flips as if it had. Step 3: Total Revenue is
+  plain text with no sort control (`sortable: false` in `CustomerList.tsx`), so no request is sent.
+- **Known issue:** The Phone header looks sortable but is inert. Dropping the unknown column is
+  the deliberate SQL-injection guard, so the fix is either `sortable: false` on Phone or `phone`
+  in the handler allowlist (`utils.AllowedSortColumns` already lists it for customers). Recorded
+  in `docs/ROADMAP.md` ("Sortable columns the backend has no mapping for").
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ---
@@ -738,3 +758,20 @@ depend on that are flagged.
 - **Automation:** blocked — needs a helper that links a registered customer-role user to a customer
   record (`customers.user_id` is not settable through any UI or public endpoint today); the API-level
   403 half can be automated once that link exists
+
+### TC-CUST-042 — Create a ticket for a customer from its row menu
+- **Priority:** P2
+- **Type:** regression
+- **Preconditions:** Admin (or support) logged in; three customers created by the test.
+- **Steps:**
+  1. `/customers`, sort by Company.
+  2. Open "More actions for <second customer>" (by mouse, or focus it and press Enter) and choose
+     "Create Ticket".
+  3. Repeat step 1 as a sales user and look for any "More actions" button.
+- **Expected:** Step 2 opens `/tickets/new?customer_id=<that customer's id>` with the customer
+  preselected; the click does not open the customer's detail page. The menu holds only "Create
+  Ticket": view, edit and delete are the row's own icons. Step 3: no menu at all, because
+  `POST /tickets` is admin and support only. Before #114 the only menu button sat in the table
+  toolbar and never opened.
+- **Automation:** automated (Vitest) — `CustomerList.rowActions.test.tsx`; the browser case is
+  planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts` (admin half)

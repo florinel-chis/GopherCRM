@@ -9,6 +9,7 @@ import {
   formatStepDetails,
   operatorLabel,
   outcomeLabel,
+  runRuleLabel,
   runStatusLabel,
   stepTypeLabel,
   triggerTypeLabel,
@@ -190,5 +191,12 @@ describe('automationFormat', () => {
     expect(formatStepDetails({ branch: 'stop' })[0].value).toBe('Stop');
     expect(formatStepDetails({})).toEqual([]);
     expect(formatStepDetails(null)).toEqual([]);
+  });
+
+  it('runRuleLabel falls back to Rule #id and flags deleted rules', () => {
+    expect(runRuleLabel({ rule_id: 3, rule_name: 'Welcome call', rule_deleted: false })).toBe('Welcome call');
+    expect(runRuleLabel({ rule_id: 3, rule_name: 'Welcome call', rule_deleted: true })).toBe('Welcome call (deleted)');
+    expect(runRuleLabel({ rule_id: 3, rule_name: '', rule_deleted: true })).toBe('Rule #3 (deleted)');
+    expect(runRuleLabel({ rule_id: 3, rule_name: '  ', rule_deleted: false })).toBe('Rule #3');
   });
 });

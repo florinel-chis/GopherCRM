@@ -45,10 +45,6 @@ export class CustomersPage {
     return this.page.locator('input[name="phone"]');
   }
 
-  get industryInput() {
-    return this.page.locator('input[name="industry"]');
-  }
-
   get websiteInput() {
     return this.page.locator('input[name="website"]');
   }
@@ -102,7 +98,6 @@ export class CustomersPage {
     contactName: string;
     email: string;
     phone?: string;
-    industry?: string;
     website?: string;
     address?: string;
     city?: string;
@@ -115,7 +110,6 @@ export class CustomersPage {
     await this.contactNameInput.fill(data.contactName);
     await this.emailInput.fill(data.email);
     if (data.phone) await this.phoneInput.fill(data.phone);
-    if (data.industry) await this.industryInput.fill(data.industry);
     if (data.website) await this.websiteInput.fill(data.website);
     if (data.address) await this.addressInput.fill(data.address);
     if (data.city) await this.cityInput.fill(data.city);

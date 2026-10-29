@@ -275,3 +275,133 @@ describe('CustomerForm linked company', () => {
     });
   });
 });
+
+// The form offers only what the customer API persists. Industry and employee
+// range belong to the linked Company; there is no customer activation.
+describe('CustomerForm retained fields', () => {
+  const mockNavigate = vi.fn();
+
+  const retained = {
+    company_name: 'Bolt Robotics',
+    contact_name: 'Ada Byron',
+    email: 'ada@bolt.example',
+    phone: '+40 21 555 0199',
+    website: 'https://bolt.example',
+    address: '1 Gear Street',
+    city: 'Cluj',
+    state: 'CJ',
+    country: 'Romania',
+    postal_code: '400000',
+    notes: 'Prefers email',
+  };
+
+  const labels: Array<[keyof typeof retained, RegExp]> = [
+    ['company_name', /^Company \(as entered\)/i],
+    ['contact_name', /Primary Contact Name/i],
+    ['email', /^Email/i],
+    ['phone', /^Phone/i],
+    ['website', /^Website/i],
+    ['address', /Street Address/i],
+    ['city', /^City/i],
+    ['state', /State\/Province/i],
+    ['country', /^Country/i],
+    ['postal_code', /Postal Code/i],
+    ['notes', /^Notes/i],
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({});
+    vi.mocked(useSearchParams).mockReturnValue([new URLSearchParams(), vi.fn()]);
+    vi.mocked(companiesApi.getCompanies).mockResolvedValue({ companies: [], total: 0 });
+    vi.mocked(customersApi.createCustomer).mockResolvedValue(createMockCustomer());
+    vi.mocked(customersApi.updateCustomer).mockResolvedValue(createMockCustomer());
+  });
+
+  it('renders no industry, employee count, annual revenue or active-status control', () => {
+    render(<CustomerForm />);
+
+    expect(screen.queryByLabelText(/Industry/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Number of Employees/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Annual Revenue/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Active Customer/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  it('creates with exactly the retained fields', async () => {
+    render(<CustomerForm />);
+
+    for (const [field, label] of labels) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: retained[field] } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
+
+    await waitFor(() => expect(customersApi.createCustomer).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(customersApi.createCustomer).mock.calls[0][0]).toStrictEqual(retained);
+  });
+
+  it('creates with the optional fields left empty', async () => {
+    render(<CustomerForm />);
+
+    fireEvent.change(screen.getByLabelText(/^Company \(as entered\)/i), {
+      target: { value: 'Bare Ltd' },
+    });
+    fillRequired();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Customer' }));
+
+    await waitFor(() => expect(customersApi.createCustomer).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(customersApi.createCustomer).mock.calls[0][0]).toStrictEqual({
+      company_name: 'Bare Ltd',
+      contact_name: 'Jane Smith',
+      email: 'jane@acme.example',
+      phone: '+40 21 555 0100',
+      website: '',
+      address: '',
+      city: '',
+      state: '',
+      country: '',
+      postal_code: '',
+      notes: '',
+    });
+  });
+
+  it('reloads every retained field on edit and sends empty strings for the cleared ones', async () => {
+    vi.mocked(useParams).mockReturnValue({ id: '9' });
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(
+      createMockCustomer({ id: 9, ...retained }),
+    );
+
+    render(<CustomerForm />);
+
+    await waitFor(() => expect(screen.getByLabelText(/^Notes/i)).toHaveValue(retained.notes));
+    for (const [field, label] of labels) {
+      expect(screen.getByLabelText(label)).toHaveValue(retained[field]);
+    }
+
+    const optional = ['website', 'address', 'city', 'state', 'country', 'postal_code', 'notes'] as const;
+    for (const [field, label] of labels) {
+      if ((optional as readonly string[]).includes(field)) {
+        fireEvent.change(screen.getByLabelText(label), { target: { value: '' } });
+      }
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Update Customer' }));
+
+    await waitFor(() => expect(customersApi.updateCustomer).toHaveBeenCalledTimes(1));
+    const [id, sent] = vi.mocked(customersApi.updateCustomer).mock.calls[0];
+    expect(id).toBe(9);
+    expect(sent).toStrictEqual({
+      company_name: retained.company_name,
+      contact_name: retained.contact_name,
+      email: retained.email,
+      phone: retained.phone,
+      website: '',
+      address: '',
+      city: '',
+      state: '',
+      country: '',
+      postal_code: '',
+      notes: '',
+    });
+  });
+});

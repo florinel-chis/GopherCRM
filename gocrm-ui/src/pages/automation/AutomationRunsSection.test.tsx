@@ -118,6 +118,21 @@ describe('AutomationRunsSection', () => {
     );
   });
 
+  it('names the rule of each run', async () => {
+    vi.mocked(automationApi.listRuns).mockResolvedValue({
+      runs: [
+        { ...waiting, rule_name: 'Welcome call' },
+        { ...failed, rule_name: 'Old nurture', rule_deleted: true },
+      ],
+      total: 2,
+    });
+    render(<AutomationRunsSection entityType="lead" entityId={5} />);
+
+    const rows = await screen.findAllByTestId('record-run-row');
+    expect(within(rows[0]).getByText(`Welcome call · v${waiting.rule_version}`)).toBeInTheDocument();
+    expect(within(rows[1]).getByText(`Old nurture (deleted) · v${failed.rule_version}`)).toBeInTheDocument();
+  });
+
   it('shows the empty text for a record without runs', async () => {
     vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [], total: 0 });
     render(<AutomationRunsSection entityType="deal" entityId={9} />);

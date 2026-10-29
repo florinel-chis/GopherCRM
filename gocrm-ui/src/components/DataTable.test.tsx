@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { DataTable } from './DataTable';
 import type { Column } from './DataTable';
+import { RowActionsMenu } from './RowActionsMenu';
 
 interface TestData {
   id: number;
@@ -210,5 +211,83 @@ describe('DataTable', () => {
     
     render(<DataTable columns={columnsWithFormat} data={mockData} />);
     expect(screen.getByText('JOHN@EXAMPLE.COM')).toBeInTheDocument();
+  });
+});
+describe('DataTable rowActions', () => {
+  it('renders the per-row controls with their own row and keeps their clicks off the row', async () => {
+    const onRowClick = vi.fn();
+    const onAction = vi.fn();
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        onRowClick={onRowClick}
+        rowActions={(row) => (
+          <RowActionsMenu
+            label={`More actions for ${row.name}`}
+            actions={[{ label: 'Ping', onClick: () => onAction(row.id) }]}
+          />
+        )}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Jane Smith' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Ping' }));
+
+    expect(onAction).toHaveBeenCalledWith(2);
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('renders nothing for a row without actions', () => {
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        rowActions={(row) => (
+          <RowActionsMenu label={`More actions for ${row.name}`} actions={[]} />
+        )}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: /^More actions for / })).not.toBeInTheDocument();
+  });
+
+  // The list pages unmount the table while a sort or search loads, so their
+  // tests cannot catch a binding to the index a row had when the table first
+  // mounted. Reorder the rows of one mounted table instead.
+  it('binds row controls to the row record when the same mounted table is reordered', async () => {
+    const onAction = vi.fn();
+    const onEdit = vi.fn();
+    const rowActions = (row: TestData) => (
+      <RowActionsMenu
+        label={`More actions for ${row.name}`}
+        actions={[{ label: 'Ping', onClick: () => onAction(row.id) }]}
+      />
+    );
+    const { rerender } = render(
+      <DataTable columns={columns} data={mockData} onEdit={onEdit} rowActions={rowActions} />
+    );
+
+    rerender(
+      <DataTable
+        columns={columns}
+        data={[...mockData].reverse()}
+        onEdit={onEdit}
+        rowActions={rowActions}
+      />
+    );
+    expect(screen.getAllByRole('row')[1]).toHaveTextContent('Bob Johnson');
+
+    // John Doe moved from the first row to the last.
+    const row = screen.getByText('John Doe').closest('tr');
+    if (!row) throw new Error('no row for John Doe');
+    const trigger = within(row).getByRole('button', { name: /^More actions for / });
+    expect(trigger).toHaveAccessibleName('More actions for John Doe');
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Ping' }));
+    expect(onAction).toHaveBeenCalledWith(1);
+
+    fireEvent.click(within(row).getByTestId('EditIcon'));
+    expect(onEdit).toHaveBeenCalledWith(mockData[0]);
   });
 });

@@ -265,7 +265,7 @@ test.describe('Screenshots - Follow-up automation', () => {
     await expect(page.getByRole('group', { name: 'Step 2' }).getByRole('combobox', { name: 'Field' })).toHaveText(
       'Stage'
     );
-    await expect(page.getByTestId('dry-run-saved-version')).toBeVisible();
+    await expect(page.getByTestId('dry-run-draft-notice')).toBeVisible();
 
     await capture(page, AREA, '02-rule-form', { fullPage: true });
   });
