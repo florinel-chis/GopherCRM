@@ -7,17 +7,9 @@ import { ConfigurationProvider } from '@/contexts/ConfigurationContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { router } from '@/routes';
 import { theme } from '@/theme';
+import { APP_QUERY_DEFAULTS } from '@/api/queryDefaults';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: false, // Disable retries to prevent loading loops
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    },
-  },
-});
+const queryClient = new QueryClient({ defaultOptions: APP_QUERY_DEFAULTS });
 
 function App() {
   return (

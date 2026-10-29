@@ -13,6 +13,11 @@ import type {
   Quote,
   QuoteLine,
   QuoteStatusChange,
+  AutomationRule,
+  AutomationRun,
+  AutomationRunStep,
+  AutomationDryRunReport,
+  Notification,
 } from '@/types';
 
 export const createMockUser = (overrides?: Partial<User>): User => ({
@@ -234,5 +239,101 @@ export const createMockQuoteStatusChange = (
   changed_by_id: 1,
   changed_by: { id: 1, first_name: 'Test', last_name: 'User' },
   changed_at: '2026-10-26T08:00:00Z',
+  ...overrides,
+});
+
+// A disabled lead rule on lead_created with one notify step, as saved.
+export const createMockAutomationRule = (overrides?: Partial<AutomationRule>): AutomationRule => ({
+  id: 1,
+  created_at: '2026-10-28T08:00:00Z',
+  updated_at: '2026-10-28T08:00:00Z',
+  deleted_at: null,
+  name: 'Welcome new leads',
+  description: '',
+  entity_type: 'lead',
+  trigger_type: 'lead_created',
+  enabled: false,
+  version: 1,
+  schedule_cursor: 0,
+  created_by_id: 1,
+  trigger: { hour_utc: 0 },
+  steps: [
+    {
+      id: 1,
+      rule_id: overrides?.id ?? 1,
+      position: 1,
+      step_type: 'notify',
+      created_at: '2026-10-28T08:00:00Z',
+      config: {
+        recipient: 'owner',
+        title: 'New lead',
+        body: 'Follow up with {{ lead.first_name }}',
+      },
+    },
+  ],
+  ...overrides,
+});
+
+// A pending run of rule #1 on lead #1; list rows carry no steps.
+export const createMockAutomationRun = (overrides?: Partial<AutomationRun>): AutomationRun => ({
+  id: 1,
+  created_at: '2026-10-28T09:00:00Z',
+  updated_at: '2026-10-28T09:00:00Z',
+  rule_id: 1,
+  rule_version: 1,
+  entity_type: 'lead',
+  entity_id: 1,
+  event_id: 1,
+  dedupe_key: 'event:1:rule:1',
+  status: 'pending',
+  next_position: 1,
+  attempts: 0,
+  ...overrides,
+});
+
+export const createMockAutomationRunStep = (
+  overrides?: Partial<AutomationRunStep>,
+): AutomationRunStep => ({
+  id: 1,
+  run_id: 1,
+  position: 1,
+  step_type: 'notify',
+  outcome: 'succeeded',
+  executed_at: '2026-10-28T09:00:00Z',
+  details: { recipient_id: 1, notification_id: 1 },
+  ...overrides,
+});
+
+export const createMockNotification = (overrides?: Partial<Notification>): Notification => ({
+  id: 1,
+  created_at: '2026-10-28T09:00:00Z',
+  updated_at: '2026-10-28T09:00:00Z',
+  user_id: 1,
+  title: 'New lead',
+  body: 'Follow up with Jane',
+  entity_type: 'lead',
+  entity_id: 1,
+  run_id: 1,
+  ...overrides,
+});
+
+export const createMockDryRunReport = (
+  overrides?: Partial<AutomationDryRunReport>,
+): AutomationDryRunReport => ({
+  rule_id: 1,
+  rule_version: 1,
+  entity_type: 'lead',
+  entity_id: 1,
+  simulated_start: '2026-10-28T09:00:00Z',
+  simulated_end: '2026-10-28T09:00:00Z',
+  steps: [
+    {
+      position: 1,
+      step_type: 'notify',
+      outcome: 'succeeded',
+      simulated_at: '2026-10-28T09:00:00Z',
+      details: { recipient_id: 1 },
+    },
+  ],
   ...overrides,
 });

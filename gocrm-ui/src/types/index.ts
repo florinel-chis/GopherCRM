@@ -522,3 +522,5 @@ export interface DashboardStats {
   conversion_rate: number;
   average_ticket_resolution_time: number;
 }
+
+export * from './automation';
