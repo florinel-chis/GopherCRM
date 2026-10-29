@@ -18,7 +18,7 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth/transaction/migration/AEO profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| Hygiene and core checks | Auth/transaction/migration/AEO/mailer profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -109,10 +109,33 @@ use a new configuration/state for fresh focused completion; never rewrite an adm
 or relabel the interrupted check as passed. Record actual candidate selection before expensive
 work. A manifest containing scope globs is a conservative preview, not the committed diff.
 
-The shared `check-go.py` profiles (AEO, transaction and migration) isolate application
+The shared `check-go.py` profiles (AEO, transaction, migration and mailer) isolate application
 database connection variables from Go subprocesses,
 while retaining `TEST_MYSQL_DSN` for disposable fixtures. This applies equally to local and
 CI checks, including MariaDB; browser/server connection settings remain unchanged.
+
+The bounded `mailer` profile covers only `internal/mailer/smtp.go` and package test files,
+plus documentation and proven comment-only `.env.example` edits.
+The mailer interface/factory, log transport, unmapped production helpers, service/handler
+changes, schema/configuration changes and other mixed application changes retain full fallback. Workflow changes add runner checks.
+
+`python3 scripts/ci/check-go.py mailer` runs API build, vet and uncached race checks for all
+mailer tests, log-error sanitation and thirteen existing mail caller roots (password reset, forms, quote email and the automation
+`send_email` step).
+It requires `TestSMTPDeadlines`, `TestSMTPHeaders`, `TestSMTPTLSAuth` and
+`TestSMTPFailureRedaction`, and every selected caller root, before starting Go commands.
+Selection requires all four SMTP test declarations exactly once in committed regular
+package test files; comments and literals cannot supply them. This is declaration presence,
+not proof of build eligibility, execution or meaningful assertions; build and exact runtime
+checks plus independent review remain mandatory. Missing
+or duplicate roots retain full fallback; these roots will be supplied by the SMTP behavior
+fix, not this policy prerequisite. The checker also rejects missing or skipped roots as
+defense in depth; they do not silently reduce coverage. The source boundary has
+no persistence change, so local browsers need only SQLite health smoke. SMTP behavior is
+covered by protocol fixtures, and no login/form browser pretends to test a real SMTP relay.
+CI keeps frontend build, health smoke on all three engines and the existing MySQL/MariaDB
+migration gates. Every frozen named acceptance command still runs; explicit full/release
+coverage remains unchanged.
 
 The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
 repository, handler and their tests/mocks, plus `cmd/aeo_runtime.go` and AEO startup tests.
