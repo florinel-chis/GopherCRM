@@ -1,7 +1,7 @@
 """Deterministic contextual validation shared by CI and the installed runner.
 
 Runner-only changes use runner/hygiene tests and application health smoke.
-Bounded auth/transaction changes use targeted Go checks; unmapped shared app code goes full.
+Bounded backend profiles use targeted Go checks; unmapped shared app code goes full.
 """
 
 import argparse
@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 8
+POLICY_VERSION = 9
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 FEATURES = {
     "aeo": ("aeo-providers",),
@@ -76,6 +76,10 @@ GO_LEXEME = re.compile(
     r'(?P<word>[^\W\d]\w*)|(?P<symbol>.)', re.DOTALL)
 TRANSACTION_PATH = re.compile(r'internal/utils/transaction(?:\.go|(?:_[a-z0-9_]+)?_test\.go)$')
 AUTH_SPECS = {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'}
+MAILER_FILES = {'internal/mailer/smtp.go'}
+MAILER_TEST = re.compile(r'internal/mailer/[a-z0-9_]+_test\.go$')
+MAILER_REQUIRED_ROOTS = {'TestSMTPDeadlines', 'TestSMTPHeaders', 'TestSMTPTLSAuth',
+                         'TestSMTPFailureRedaction'}
 
 
 AEO_MAIN_PROOF = r'''
@@ -453,9 +457,39 @@ def env_comments_only(base, head, *, cwd=None):
     return active[0] == active[1]
 
 
+def mailer_roots_present(head, *, cwd=None):
+    """Prove committed declarations, not runtime success or test semantics."""
+    if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
+        return False
+    listing = subprocess.run(['git', 'ls-tree', '-r', head, '--', 'internal/mailer'],
+                             cwd=cwd, capture_output=True, text=True)
+    if listing.returncode:
+        return False
+    names = []
+    for line in listing.stdout.splitlines():
+        metadata, separator, path = line.partition('\t')
+        if not separator or not MAILER_TEST.fullmatch(path):
+            continue
+        if not metadata.startswith('100644 blob '):
+            return False
+        result = subprocess.run(['git', 'show', f'{head}:{path}'], cwd=cwd,
+                                capture_output=True, text=True)
+        if result.returncode:
+            return False
+        # Ignore complete comments/literals, not only matching grep lines. A
+        # quoted sample function cannot satisfy candidate declaration presence.
+        source = GO_LEXEME.sub(lambda match: (
+            re.sub(r'[^\n]', ' ', match.group())
+            if match.lastgroup in {'ignore', 'literal'} else match.group()), result.stdout)
+        names.extend(re.findall(r'^\s*func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)\s*\{',
+                                source, re.MULTILINE))
+    return all(names.count(name) == 1 for name in MAILER_REQUIRED_ROOTS)
+
+
 def candidate_scope(paths, base, head, *, cwd=None):
     persistence = any(p in AUTH_PERSISTENCE_FILES or p == REPOSITORY_INTERFACES for p in paths)
-    return dict(env_comments='.env.example' in paths and env_comments_only(base, head, cwd=cwd),
+    return dict(mailer_roots=any(p in MAILER_FILES or MAILER_TEST.fullmatch(p) for p in paths) and mailer_roots_present(head, cwd=cwd),
+                env_comments='.env.example' in paths and env_comments_only(base, head, cwd=cwd),
                 aeo_roots=any(p in AEO_FILES or AEO_PATH.fullmatch(p) or p in {'cmd/main.go', REPOSITORY_INTERFACES} for p in paths) and aeo_roots_present(head, cwd=cwd),
                 aeo_main='cmd/main.go' in paths and aeo_main_only(base, head, cwd=cwd),
                 aeo_interface=REPOSITORY_INTERFACES in paths and aeo_interface_only(base, head, cwd=cwd),
@@ -463,11 +497,11 @@ def candidate_scope(paths, base, head, *, cwd=None):
                 rotation_roots=persistence and rotation_roots_present(head, cwd=cwd))
 
 
-def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False, env_comments=False):
+def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, aeo_main=False, aeo_interface=False, aeo_roots=False, env_comments=False, mailer_roots=False):
     paths = sorted(set(paths))
     reasons, features, specs = [], set(), {SMOKE}
     runner_paths = application_paths = auth_paths = transaction_paths = migration_paths = other_application = False
-    persistence_paths = aeo_paths = False
+    persistence_paths = aeo_paths = mailer_paths = False
     if full:
         reasons.append("explicit full validation")
     if not paths:
@@ -479,6 +513,9 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
             raise ValueError("Invalid changed path")
         if (name in DOC_FILES or name.startswith("docs/") and name.endswith(".md")
                 or name == '.env.example' and env_comments):
+            continue
+        if name in MAILER_FILES or MAILER_TEST.fullmatch(name):
+            mailer_paths = application_paths = True
             continue
         if (name in AEO_FILES or AEO_PATH.fullmatch(name) or
                 name == 'cmd/main.go' and aeo_main or name == REPOSITORY_INTERFACES and aeo_interface):
@@ -530,6 +567,10 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
             reasons.append(f"unmapped path: {name}")
     if aeo_paths and not aeo_roots:
         reasons.append('required AEO startup/shutdown and database roots are not proved at candidate')
+    if mailer_paths and not mailer_roots:
+        reasons.append('required SMTP boundary tests are absent from candidate')
+    if mailer_paths and (aeo_paths or auth_paths or transaction_paths or migration_paths or other_application):
+        reasons.append('mailer transport mixed with other application changes')
     if aeo_paths and (auth_paths or transaction_paths or migration_paths or other_application):
         reasons.append('AEO runtime mixed with other application changes')
     if migration_paths and (auth_paths or transaction_paths or other_application):
@@ -540,14 +581,15 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         reasons.append('auth mixed with other application changes')
     if persistence_paths and not rotation_roots:
         reasons.append('required refresh rotation boundary roots are not proved at candidate')
-    profile = ('full' if reasons else 'aeo' if aeo_paths else 'migration' if migration_paths else 'transaction' if transaction_paths else
+    profile = ('full' if reasons else 'mailer' if mailer_paths else 'aeo' if aeo_paths else 'migration' if migration_paths else 'transaction' if transaction_paths else
                'auth-persistence' if persistence_paths else 'auth' if auth_paths else
                'runner' if runner_paths and not application_paths else 'contextual')
     return {
         "policy_version": POLICY_VERSION,
         "profile": profile,
         "reasons": sorted(set(reasons)) or [
-            'AEO runtime, provider and persistence regressions plus health/provider browsers' if profile == 'aeo'
+            'SMTP transport/header/privacy and mail caller regressions plus health smoke' if profile == 'mailer'
+            else 'AEO runtime, provider and persistence regressions plus health/provider browsers' if profile == 'aeo'
             else 'SQL migrations and SQLite upgrades plus health smoke' if profile == 'migration'
             else 'transaction and caller regressions plus health smoke' if profile == 'transaction'
             else 'auth/session and transaction boundaries on real databases plus auth browsers' if profile == 'auth-persistence'
@@ -561,7 +603,7 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
 
 
 def core_commands(configured, selected, *, explicit_full=False):
-    if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration', 'aeo'}:
+    if selected['profile'] in {'auth', 'auth-persistence', 'transaction', 'migration', 'aeo', 'mailer'}:
         check = (('python3', 'scripts/ci/check-auth.py', '--persistence') if selected['profile'] == 'auth-persistence' else
                  ('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
                  ('python3', 'scripts/ci/check-go.py', selected['profile']))
