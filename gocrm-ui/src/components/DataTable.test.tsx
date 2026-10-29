@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { DataTable } from './DataTable';
 import type { Column } from './DataTable';
+import { RowActionsMenu } from './RowActionsMenu';
 
 interface TestData {
   id: number;
@@ -210,5 +211,44 @@ describe('DataTable', () => {
     
     render(<DataTable columns={columnsWithFormat} data={mockData} />);
     expect(screen.getByText('JOHN@EXAMPLE.COM')).toBeInTheDocument();
+  });
+});
+describe('DataTable rowActions', () => {
+  it('renders the per-row controls with their own row and keeps their clicks off the row', async () => {
+    const onRowClick = vi.fn();
+    const onAction = vi.fn();
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        onRowClick={onRowClick}
+        rowActions={(row) => (
+          <RowActionsMenu
+            label={`More actions for ${row.name}`}
+            actions={[{ label: 'Ping', onClick: () => onAction(row.id) }]}
+          />
+        )}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Jane Smith' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Ping' }));
+
+    expect(onAction).toHaveBeenCalledWith(2);
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('renders nothing for a row without actions', () => {
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        rowActions={(row) => (
+          <RowActionsMenu label={`More actions for ${row.name}`} actions={[]} />
+        )}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: /^More actions for / })).not.toBeInTheDocument();
   });
 });

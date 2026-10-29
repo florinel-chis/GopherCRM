@@ -71,8 +71,9 @@ the in-handler role checks (API gate). It is the specification the cases in this
 |---|---|---|---|
 | `/login`, `/register`, `/unauthorized` | none (public) | — | — |
 | `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`routes.go:105`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
-| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | authenticated only — **no role gate** | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
-| `/customers`, `/customers/new`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:157`, `:239`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `requiredRole=['admin','sales']` (pathless layout, #120) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
+| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:157`, `:239`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/customers/new` | `requiredRole=['admin','sales']` (shares the lead guard, #120) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
 | `/tickets`, `/tickets/:id` | authenticated only | admin, support | list/get: 403 only for customer (`ticket_handler.go:135`, `:354`) — **sales can read** |
 | `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:69`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:230`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
@@ -731,14 +732,15 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Steps:**
   1. Delete the generated user from `/users` and confirm.
   2. Search `/users` for that email, then register a fresh account with it through `/register`.
-  3. Open the row menu on the admin's **own** row and inspect the Delete item; then issue
-     `DELETE /api/v1/users/<own id>` from the API context.
+  3. Inspect the admin's **own** row; then issue `DELETE /api/v1/users/<own id>` from the API
+     context.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
-  Step 2 finds nothing and the registration succeeds with **201**. In step 3 the menu's Delete item
-  is `disabled` when `selectedUser.id === currentUser.id`, and the direct API call returns **400**
-  with "You cannot delete your own account" (`user_handler.go:347`) — not a 403.
-- **Known issue:** The `DataTable` row Delete icon (`UserList.tsx:314`) carries **no** self-deletion
-  guard; only the overflow-menu item does. The 400 from the API is the real protection. FEATURES 7.4
+  Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
+  its Delete icon, and the direct API call returns **400** with "You cannot delete your own
+  account" (`user_handler.go:347`) — not a 403.
+- **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
+  toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
+  carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4
   notes there is no E2E delete test at all today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended) — closes half of G20.
 
@@ -795,10 +797,9 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   real name and email and an "Inactive" status chip — nothing is anonymised (FEATURES 12.10). The
   login attempt in step 2 fails with the same generic **401** as a wrong password (deliberate
   anti-enumeration). Step 3 restores access, proving the action is reversible.
-- **Known issue:** The two dedicated activate/deactivate affordances do **not** work. The
-  `UserList` overflow menu can never open — its trigger is
-  `onClick={(e) => selectedUser && handleMenuOpen(e, selectedUser)}` (`UserList.tsx:320`), and
-  `selectedUser` is only ever set *by* `handleMenuOpen`, so the guard is always false. The `UserDetail`
+- **Known issue:** Since #114 the `UserList` row menu ("More actions for <name>") offers Activate /
+  Deactivate per row (see TC-USER-032); before, its single toolbar trigger could never open. The
+  `UserDetail`
   **Deactivate**/**Activate** button calls `POST /users/:id/deactivate` and `/activate`
   (`api/endpoints/users.ts:72-80`), which are not registered in `routes.go` at all, so it 404s into
   the "Failed to deactivate user" snackbar. Per the repository's standing directive those endpoint

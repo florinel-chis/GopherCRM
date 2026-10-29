@@ -552,22 +552,23 @@ Expected field still describes it and a **Known issue** line records the defect.
   the `is_active` switch on the edit form (TC-USER-027). FEATURES.md row 7.5, gap G20.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
-### TC-USER-032 — Record the unreachable overflow menu on the list toolbar
+### TC-USER-032 — Activate and deactivate from the list row menu
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** Admin logged in on `/users`.
+- **Preconditions:** Admin logged in on `/users`; an active and an inactive user created in-test.
 - **Steps:**
-  1. Click the vertical-dots (⋮) icon button in the table toolbar.
-  2. Look for a menu containing View Details / Edit / Deactivate / Delete.
-- **Expected:** Nothing happens. The button's handler is
-  `onClick={(e) => selectedUser && handleMenuOpen(e, selectedUser)}` and `selectedUser` starts as
-  `null` and is only ever set by `handleMenuOpen` itself, so the menu can never open. Every action it
-  offers — including the "Delete" item that is correctly disabled for your own account — is
-  unreachable. The per-row eye / pencil / trash icons in the Actions column are the only working
-  controls.
-- **Known issue:** Dead control in `UserList.tsx`; it also means the per-row delete path (TC-USER-036)
-  has no self-deletion guard at all.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
+  1. Sort by Name, open "More actions for <active user>" and choose "Deactivate".
+  2. Open "More actions for <inactive user>" and choose "Activate".
+  3. Open the menu on your own row.
+- **Expected:** Step 1 issues `POST /api/v1/users/<that id>/deactivate`, step 2
+  `POST /api/v1/users/<that id>/activate`; the list refreshes with the new chips and neither click
+  opens the user's detail page. Step 3: "Deactivate" is disabled, matching the API's refusal to
+  deactivate the caller's own account. The menu holds only the activation item: view, edit and
+  delete are the row's own icons. Before #114 the only menu button sat in the table toolbar,
+  guarded by a selection nothing could set, and never opened.
+- **Known issue:** The per-row delete icon still has no self-deletion guard (TC-USER-036).
+- **Automation:** automated (Vitest) — `src/pages/users/UserList.test.tsx`; browser case planned
+  in `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
 
