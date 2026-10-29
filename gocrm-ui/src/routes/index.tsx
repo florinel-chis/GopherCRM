@@ -54,28 +54,44 @@ export const router = createBrowserRouter([
         element: <Dashboard />,
       },
       {
-        path: 'leads',
-        lazy: () => import('@/pages/leads/LeadList'),
-      },
-      {
-        path: 'leads/new',
-        lazy: () => import('@/pages/leads/LeadForm'),
-      },
-      {
-        path: 'leads/:id',
-        lazy: () => import('@/pages/leads/LeadDetail'),
-      },
-      {
-        path: 'leads/:id/edit',
-        lazy: () => import('@/pages/leads/LeadForm'),
+        // The whole /leads API group is RequireRole(admin, sales), and so is
+        // POST /customers; support and customer users must not reach those
+        // pages through a deep link. Customer list, detail and edit stay open
+        // to every authenticated role because the API scopes them itself.
+        // Same pathless-layout shape as the admin block — a static `element`
+        // on the children themselves would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'leads',
+            lazy: () => import('@/pages/leads/LeadList'),
+          },
+          {
+            path: 'leads/new',
+            lazy: () => import('@/pages/leads/LeadForm'),
+          },
+          {
+            path: 'leads/:id',
+            lazy: () => import('@/pages/leads/LeadDetail'),
+          },
+          {
+            path: 'leads/:id/edit',
+            lazy: () => import('@/pages/leads/LeadForm'),
+          },
+          {
+            // Static segment: ranks above customers/:id.
+            path: 'customers/new',
+            lazy: () => import('@/pages/customers/CustomerForm'),
+          },
+        ],
       },
       {
         path: 'customers',
         lazy: () => import('@/pages/customers/CustomerList'),
-      },
-      {
-        path: 'customers/new',
-        lazy: () => import('@/pages/customers/CustomerForm'),
       },
       {
         path: 'customers/:id',

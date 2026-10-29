@@ -96,7 +96,7 @@ The list filtered by a search term, which matches across name, email, company, p
 FEATURES.md section 4.
 
 ![Customers list](screenshots/customers/01-list.png)
-The customers table with name, email, company, revenue and status.
+The customers table with company, primary contact, email, phone, revenue and customer-since date. Every row carries its own actions; for admin and support the row menu also offers "Create Ticket" for that customer.
 
 ![Create customer form](screenshots/customers/02-create.png)
 The create form with contact details and full address, filled in and not submitted.

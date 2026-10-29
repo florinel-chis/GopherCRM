@@ -8,8 +8,6 @@ import {
   Typography,
   Button,
   Chip,
-  IconButton,
-  Menu,
   MenuItem,
   FormControl,
   InputLabel,
@@ -20,9 +18,10 @@ import {
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  MoreVert as MoreVertIcon,
+  PersonAdd as ConvertIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLeadDialog';
 import { Loading } from '@/components/Loading';
@@ -107,9 +106,6 @@ export const Component: React.FC = () => {
     lead?: Lead;
   }>({ open: false });
   
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-
   // The sorted column is tracked as the DataTable column id (filters carry the
   // mapped backend field). It has to live here, not inside DataTable: a sort
   // click switches the query key, which sends this page down its loading branch
@@ -209,29 +205,26 @@ export const Component: React.FC = () => {
     },
   ], []);
 
-  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, lead: Lead) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedLead(lead);
-  }, []);
-
-  const handleMenuClose = useCallback(() => {
-    setAnchorEl(null);
-    setSelectedLead(null);
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    if (selectedLead) {
-      setDeleteDialog({ open: true, lead: selectedLead });
-      handleMenuClose();
-    }
-  }, [selectedLead, handleMenuClose]);
-
-  const handleConvert = useCallback(() => {
-    if (selectedLead) {
-      setConvertDialog({ open: true, lead: selectedLead });
-      handleMenuClose();
-    }
-  }, [selectedLead, handleMenuClose]);
+  // View, edit and delete are the row's own icon buttons; the overflow menu
+  // carries only what they do not, conversion, and only on leads whose status
+  // allows it. Each menu closes over its own row.
+  const conversionStatuses = getLeadConversionStatuses();
+  const renderRowActions = (lead: Lead) => (
+    <RowActionsMenu
+      label={`More actions for ${lead.company_name || lead.contact_name}`}
+      actions={
+        conversionStatuses.includes(lead.status)
+          ? [
+              {
+                label: 'Convert to Customer',
+                icon: <ConvertIcon fontSize="small" />,
+                onClick: () => setConvertDialog({ open: true, lead }),
+              },
+            ]
+          : []
+      }
+    />
+  );
 
   const handleConvertConfirm = useCallback((data: ConvertLeadData) => {
     if (convertDialog.lead) {
@@ -357,32 +350,7 @@ export const Component: React.FC = () => {
         onRowClick={(lead) => navigate(`/leads/${lead.id}`)}
         onEdit={(lead) => navigate(`/leads/${lead.id}/edit`)}
         onDelete={(lead) => setDeleteDialog({ open: true, lead })}
-        actions={
-          <>
-            <IconButton
-              size="small"
-              onClick={(e) => selectedLead && handleMenuOpen(e, selectedLead)}
-            >
-              <MoreVertIcon />
-            </IconButton>
-            <Menu
-              anchorEl={anchorEl}
-              open={Boolean(anchorEl)}
-              onClose={handleMenuClose}
-            >
-              <MenuItem onClick={() => selectedLead && navigate(`/leads/${selectedLead.id}`)}>
-                View Details
-              </MenuItem>
-              <MenuItem onClick={() => selectedLead && navigate(`/leads/${selectedLead.id}/edit`)}>
-                Edit
-              </MenuItem>
-              {getLeadConversionStatuses().includes(selectedLead?.status || '') && (
-                <MenuItem onClick={handleConvert}>Convert to Customer</MenuItem>
-              )}
-              <MenuItem onClick={handleDelete}>Delete</MenuItem>
-            </Menu>
-          </>
-        }
+        rowActions={renderRowActions}
       />
 
       <ConfirmDialog

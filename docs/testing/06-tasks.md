@@ -313,13 +313,14 @@ regression anchors, not endorsements.
 ### TC-TASK-024 — Mark a task complete from the list row menu
 - **Priority:** P2
 - **Type:** functional
-- **Preconditions:** Admin logged in; a pending task created by the test.
+- **Preconditions:** Admin logged in; a pending and a completed task created by the test.
 - **Steps:**
-  1. Navigate to `/tasks`.
-  2. Open the row overflow menu and click "Mark as Complete".
-- **Expected:** `PUT /api/v1/tasks/{id}` with `{status:"completed"}` returns 200, the snackbar reads "Task marked as completed", the tasks query is invalidated and the row's Status chip becomes "Completed". The menu item is hidden when the selected task is already completed (`TaskList.tsx:434`).
-- **Known issue:** The overflow menu is wired to `selectedTask`, which is only set by `handleMenuOpen`, and the `IconButton` that would open it is itself rendered inside the `actions` slot and guarded by `selectedTask &&` (`TaskList.tsx:417-422`) — the menu cannot be opened from a cold page load. Exercising this path may require the calendar/detail route instead.
-- **Automation:** blocked — the overflow menu is not reachable through normal interaction
+  1. Navigate to `/tasks` and sort by Title.
+  2. Open "More actions for <pending task title>" (by mouse, or focus it and press Enter) and choose "Mark as Complete".
+  3. Look for a menu button on the completed task's row.
+- **Expected:** `PUT /api/v1/tasks/{thatId}` with `{status:"completed"}` returns 200, the snackbar reads "Task marked as completed", the tasks query is invalidated and the row's Status chip becomes "Completed". The click does not open the task's detail page. The completed task's row has no menu button. The menu holds only "Mark as Complete": view, edit and delete are the row's own icons.
+- **Known issue:** Fixed in #114 — the menu button used to sit in the table toolbar, guarded by a selection nothing could set, so it never opened.
+- **Automation:** automated (Vitest) — `src/pages/tasks/TaskList.rowActions.test.tsx`; browser case planned in `gocrm-ui/e2e/tests/admin-tasks.spec.ts`
 
 ---
 

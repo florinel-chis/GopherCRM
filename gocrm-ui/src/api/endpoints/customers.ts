@@ -48,11 +48,7 @@ export const transformCustomerFromBackend = (backendCustomer: BackendCustomer): 
     contact_name: `${backendCustomer.first_name || ''} ${backendCustomer.last_name || ''}`.trim(),
     // Provide defaults for optional and UI-only fields.
     total_revenue: 0,
-    is_active: true,
     website: backendCustomer.website ?? '',
-    industry: '',
-    annual_revenue: 0,
-    employee_count: 0,
   };
 };
 

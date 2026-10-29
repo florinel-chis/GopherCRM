@@ -71,7 +71,15 @@ export interface DataTableProps<T> {
   onDelete?: (row: T) => void;
   getRowId?: (row: T) => string | number;
   title?: string;
+  /** Toolbar content shown above the table. It knows no row. */
   actions?: React.ReactNode;
+  /**
+   * Extra per-row controls, rendered in the row's Actions cell before the
+   * view/edit/delete buttons. Use it for anything that must act on one row
+   * (an overflow menu built with RowActionsMenu, for example); clicks inside
+   * it never reach onRowClick.
+   */
+  rowActions?: (row: T) => React.ReactNode;
 }
 
 type Order = 'asc' | 'desc';
@@ -250,6 +258,7 @@ export function DataTable<T extends { id?: string | number }>({
   getRowId = (row) => row.id as string | number,
   title,
   actions,
+  rowActions,
 }: DataTableProps<T>) {
   const [internalOrder, setInternalOrder] = useState<Order>('asc');
   const [internalOrderBy, setInternalOrderBy] = useState<string>('');
@@ -397,6 +406,18 @@ export function DataTable<T extends { id?: string | number }>({
                     })}
                     <TableCell align="right">
                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+                        {rowActions && (
+                          // React bubbles events out of portals along the
+                          // component tree, so a click on an item of a menu
+                          // opened from here would otherwise also open the row.
+                          <Box
+                            component="span"
+                            sx={{ display: 'inline-flex' }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {rowActions(row)}
+                          </Box>
+                        )}
                         {onRowClick && (
                           <IconButton
                             size="small"

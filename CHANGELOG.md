@@ -324,8 +324,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   untouched. No table or column is dropped: `bulk_operations` keeps receiving one row per status
   update, and `bulk_operation_items` stays in the schema although nothing writes it any more
   (retirement is a separate roadmap item).
+- **Customer fields the API never stored (#118).** The customer form no longer offers Industry,
+  Number of Employees, Annual Revenue or the "Active Customer" switch, the customer list drops
+  its Status column and the customer detail page drops the Industry, Annual Revenue and Employees
+  fields and the Active/Inactive chip. None of them exists on the customer API: saves discarded
+  what was typed and reads showed invented defaults (blank, zero, always active). The Company
+  record already owns industry and employee range, and customers link to it; there is no
+  customer activation concept. The frontend `Customer` type and the read adapter no longer carry
+  the four fields. No backend change.
 
 ### Fixed
+
+- **Overflow menus on the lead, customer, user, ticket and task lists (#114).** The "more"
+  button sat in the table toolbar and acted on a selected record that nothing ever set, so it
+  never opened. Each row now has its own menu, named for the row ("More actions for <name>"),
+  that carries only what the row's view/edit/delete icons do not: Convert to Customer on leads
+  whose status allows conversion, Create Ticket on customers for admin and support, Activate or
+  Deactivate on users (deactivating your own account is disabled, as the API refuses it), and
+  Mark as Complete on tasks that are not completed. The ticket list's menu only repeated view,
+  edit and delete under the same role rules as the row icons, so it is gone. Every menu acts on
+  its own row whatever the sort, filter or page, and a click inside it no longer falls through to
+  the row. `DataTable` gains a `rowActions` slot and the new `RowActionsMenu` component.
+- **Lead owner changes reach the API (#119).** `leadsApi.updateLead` now sends `owner_id` when the
+  caller provides it and still omits it otherwise; the API keeps reassignment admin-only.
+- **Role guards on the lead routes and customer creation (#120).** `/leads`, `/leads/new`,
+  `/leads/{id}` and `/leads/{id}/edit` and `/customers/new` now sit under an admin-and-sales
+  route guard matching the API, so a support or customer deep link lands on Access Denied
+  instead of a page whose requests all fail. The customer list hides "Add Customer" from the same
+  roles. Customer list, detail and edit routes are unchanged.
 
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock

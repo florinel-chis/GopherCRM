@@ -7,8 +7,6 @@ import {
   Typography,
   Button,
   Chip,
-  IconButton,
-  Menu,
   MenuItem,
   FormControl,
   InputLabel,
@@ -21,11 +19,11 @@ import {
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  MoreVert as MoreVertIcon,
   Block as BlockIcon,
   CheckCircle as ActiveIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
@@ -76,9 +74,6 @@ export const Component: React.FC = () => {
     user?: User;
   }>({ open: false });
   
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-
   // Sorted column as the DataTable column id (filters carry the mapped backend
   // field). Owned here because a sort click switches the query key and unmounts
   // the table through the loading branch below.
@@ -182,33 +177,29 @@ export const Component: React.FC = () => {
     },
   ], []);
 
-  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, user: User) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedUser(user);
-  }, []);
-
-  const handleMenuClose = useCallback(() => {
-    setAnchorEl(null);
-    setSelectedUser(null);
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    if (selectedUser) {
-      setDeleteDialog({ open: true, user: selectedUser });
-      handleMenuClose();
-    }
-  }, [selectedUser, handleMenuClose]);
-
-  const handleActivationToggle = useCallback(() => {
-    if (selectedUser) {
-      if (selectedUser.is_active) {
-        deactivateMutation.mutate(selectedUser.id);
-      } else {
-        activateMutation.mutate(selectedUser.id);
-      }
-      handleMenuClose();
-    }
-  }, [selectedUser, activateMutation, deactivateMutation, handleMenuClose]);
+  // View, edit and delete are the row's own icon buttons; the overflow menu
+  // carries only what they do not, activation and deactivation. Each menu
+  // closes over its own row. The API refuses to deactivate the caller's own
+  // account, so that item is disabled rather than offered.
+  const renderRowActions = (user: User) => (
+    <RowActionsMenu
+      label={`More actions for ${`${user.first_name} ${user.last_name}`.trim() || user.email}`}
+      actions={[
+        user.is_active
+          ? {
+              label: 'Deactivate',
+              icon: <BlockIcon fontSize="small" />,
+              disabled: user.id === currentUser?.id,
+              onClick: () => deactivateMutation.mutate(user.id),
+            }
+          : {
+              label: 'Activate',
+              icon: <ActiveIcon fontSize="small" />,
+              onClick: () => activateMutation.mutate(user.id),
+            },
+      ]}
+    />
+  );
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
@@ -329,36 +320,7 @@ export const Component: React.FC = () => {
         onRowClick={(user) => navigate(`/users/${user.id}`)}
         onEdit={isAdmin ? (user) => navigate(`/users/${user.id}/edit`) : undefined}
         onDelete={isAdmin ? (user) => setDeleteDialog({ open: true, user }) : undefined}
-        actions={
-          isAdmin ? (
-            <>
-              <IconButton
-                size="small"
-                onClick={(e) => selectedUser && handleMenuOpen(e, selectedUser)}
-              >
-                <MoreVertIcon />
-              </IconButton>
-              <Menu
-                anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
-                onClose={handleMenuClose}
-              >
-                <MenuItem onClick={() => selectedUser && navigate(`/users/${selectedUser.id}`)}>
-                  View Details
-                </MenuItem>
-                <MenuItem onClick={() => selectedUser && navigate(`/users/${selectedUser.id}/edit`)}>
-                  Edit
-                </MenuItem>
-                <MenuItem onClick={handleActivationToggle}>
-                  {selectedUser?.is_active ? 'Deactivate' : 'Activate'}
-                </MenuItem>
-                <MenuItem onClick={handleDelete} disabled={selectedUser?.id === currentUser?.id}>
-                  Delete
-                </MenuItem>
-              </Menu>
-            </>
-          ) : undefined
-        }
+        rowActions={isAdmin ? renderRowActions : undefined}
       />
 
       <ConfirmDialog
