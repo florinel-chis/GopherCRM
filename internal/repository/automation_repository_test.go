@@ -256,10 +256,13 @@ func runAutomationRunRuleNames(t *testing.T, db *gorm.DB) {
 	renamed := seedAutomationRule(t, db, models.AutomationEntityLead)
 	deleted := seedAutomationRule(t, db, models.AutomationEntityLead)
 	kept := seedAutomationRule(t, db, models.AutomationEntityLead)
-	require.NoError(t, db.Model(&models.AutomationRule{}).Where("id = ?", renamed.ID).Update("name", "Renamed rule").Error)
-	require.NoError(t, db.Model(&models.AutomationRule{}).Where("id = ?", deleted.ID).Update("name", "Deleted rule").Error)
-	require.NoError(t, db.Model(&models.AutomationRule{}).Where("id = ?", kept.ID).Update("name", "Kept rule").Error)
-	require.NoError(t, repo.DeleteRule(deleted.ID))
+	rename := func(rule *models.AutomationRule, name string) {
+		t.Helper()
+		require.NoError(t, db.Model(&models.AutomationRule{}).Where("id = ?", rule.ID).Update("name", name).Error)
+	}
+	rename(renamed, "Original name")
+	rename(deleted, "Deleted rule")
+	rename(kept, "Kept rule")
 
 	lead := &models.Lead{FirstName: "L", LastName: "N", Email: fmt.Sprintf("names-%d@repo.test", time.Now().UnixNano()), OwnerID: sales.ID}
 	require.NoError(t, db.Create(lead).Error)
@@ -288,6 +291,31 @@ func runAutomationRunRuleNames(t *testing.T, db *gorm.DB) {
 			}{"Kept rule", false}
 		}
 	}
+	// The runs exist and have been read under the old name before the rule
+	// is renamed and deleted: the name is looked up at read time, never
+	// captured with the run.
+	firstID := uint(0)
+	for id := range want {
+		if firstID == 0 || id < firstID {
+			firstID = id
+		}
+	}
+	before, _, err := repo.ListRuns(0, 100, AutomationRunListFilter{}, AutomationRunScope{})
+	require.NoError(t, err)
+	for _, run := range before {
+		if run.RuleID == renamed.ID {
+			require.Equal(t, "Original name", run.RuleName)
+		}
+		if run.RuleID == deleted.ID {
+			require.False(t, run.RuleDeleted)
+		}
+	}
+	detail, err := repo.GetRunByID(firstID)
+	require.NoError(t, err)
+	require.Equal(t, "Original name", detail.RuleName)
+	rename(renamed, "Renamed rule")
+	require.NoError(t, repo.DeleteRule(deleted.ID))
+
 	check := func(t *testing.T, runs []models.AutomationRun) {
 		t.Helper()
 		for _, run := range runs {

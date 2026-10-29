@@ -551,7 +551,9 @@ Priorities: 20 P0, 15 P1, 1 P2.
   field (editing the field clears it), entries without a field (`steps`, `entity_type`, a step
   type) go to the step's card or above the buttons, and a server without details falls back to the
   message on the step it names; an answer arriving after the form changed follows each step by its
-  key and drops errors of steps removed or fields edited meanwhile; a field error under the user
+  key and drops errors of steps removed or fields edited meanwhile (a user error also when the step
+  no longer sends to a specific user); a server error clears when its field is edited, also after
+  its step was moved or a step before it removed; a field error under the user
   picker replaces the "no longer assignable" hint; saving an edit asks for confirmation, warns that
   the rule's pending, waiting and running runs will be cancelled, and sends no `enabled`; the name
   field says that sales users see the name on runs.
@@ -561,11 +563,14 @@ Priorities: 20 P0, 15 P1, 1 P2.
   "editing shows the cancellation warning before the PUT and omits enabled", "shows a server 400
   message on the step it names and other messages above the buttons", "shows each server field
   error under its field", "puts unmapped server errors in the form-level alert", "places a delayed
-  save error on the moved step and drops errors of edited or removed steps";
+  save error on the moved step and drops errors of edited or removed steps", "clears a draft user
+  error when the field is edited after its step was moved up", "clears a draft user error when the
+  field is edited after its step was shifted by removing the step before it";
   `ruleFormSchema.test.ts`: "mapServerFieldErrors maps every server path onto its form field",
   "mapServerFieldErrors sends unknown or out-of-range paths to the form-level list", "follows moved
-  steps by key and drops errors of removed, retyped or edited fields", "reads error.details.fields
-  and ignores anything else"; `StaffUserAutocomplete.test.tsx`: "shows a field error message
+  steps by key and drops errors of removed, retyped or edited fields", "drops a user error whose
+  step no longer sends to a specific user", "reads error.details.fields and ignores anything
+  else"; `StaffUserAutocomplete.test.tsx`: "shows a field error message
   instead of the inactive hint".
 
 ### TC-AUT-030 — Dry-run dialog

@@ -424,4 +424,20 @@ describe('ruleFormSchema', () => {
       serverFieldErrorsOf({ fields: [{ field: 'name', code: 'required', message: 'm' }, { field: 1 }, 'x'] }),
     ).toEqual([{ field: 'name', code: 'required', message: 'm' }]);
   });
+
+  it('drops a user error whose step no longer sends to a specific user', () => {
+    const submitted: RuleFormValues = {
+      ...emptyFormValues(),
+      steps: [step('notify', { key: 'a', title: 'A', recipient: 'user', user_id: 7 })],
+    };
+    const current: RuleFormValues = {
+      ...submitted,
+      steps: [step('notify', { key: 'a', title: 'A', recipient: 'owner', user_id: 7 })],
+    };
+    const errors = [{ field: 'steps[0].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' }];
+    expect(mapServerFieldErrors(errors, submitted, current)).toEqual({ fields: [], unmapped: [] });
+    expect(mapServerFieldErrors(errors, submitted, submitted).fields).toEqual([
+      { name: 'steps.0.user_id', message: 'the user is deactivated' },
+    ]);
+  });
 });

@@ -53,6 +53,7 @@ import {
   mapServerFieldErrors,
   parseStepError,
   ruleFormSchema,
+  SERVER_ERROR_CLEARED_BY,
   serverFieldErrorsOf,
   toRulePayload,
   type RuleFormValues,
@@ -79,6 +80,15 @@ interface DryRunState {
   values: RuleFormValues;
   token: number;
 }
+
+// A form field as the server-error bookkeeping knows it: a step field by
+// its step's stable key, anything else by its name.
+const serverFieldId = (name: string, values: RuleFormValues): string | undefined => {
+  const match = /^steps\.(\d+)\.(.+)$/.exec(name);
+  if (!match) return name;
+  const key = values.steps[Number(match[1])]?.key;
+  return key === undefined ? undefined : `${key}:${match[2]}`;
+};
 
 const snapshot = (values: RuleFormValues): RuleFormValues => structuredClone(values);
 
@@ -126,15 +136,24 @@ export const Component: React.FC = () => {
     }
   }, [rule, reset]);
 
-  // Field names carrying a server error; editing one clears it.
-  const serverFieldNames = useRef(new Set<string>());
+  // The fields carrying a server error, editing one clears it. A step field
+  // is tracked by the step's stable key, not its index: react-hook-form moves
+  // the error with the step on a reorder or a removal, so the index it was
+  // set at may no longer be the step's.
+  const serverFieldIds = useRef(new Set<string>());
   useEffect(() => {
-    const subscription = watch((_values, { name }) => {
+    const subscription = watch((values, { name }) => {
       if (!name) return;
-      const touched = name.endsWith('.wait_unit') ? name.replace(/wait_unit$/, 'wait_amount') : name;
-      if (serverFieldNames.current.has(touched)) {
-        serverFieldNames.current.delete(touched);
-        clearErrors(touched as Parameters<typeof clearErrors>[0]);
+      const match = /^steps\.(\d+)\.(.+)$/.exec(name);
+      const cleared =
+        match && SERVER_ERROR_CLEARED_BY[match[2] as keyof typeof SERVER_ERROR_CLEARED_BY]
+          ? [name, `steps.${match[1]}.${SERVER_ERROR_CLEARED_BY[match[2] as keyof typeof SERVER_ERROR_CLEARED_BY]}`]
+          : [name];
+      for (const touched of cleared) {
+        const id = serverFieldId(touched, values as RuleFormValues);
+        if (id !== undefined && serverFieldIds.current.delete(id)) {
+          clearErrors(touched as Parameters<typeof clearErrors>[0]);
+        }
       }
     });
     return () => subscription.unsubscribe();
@@ -154,9 +173,11 @@ export const Component: React.FC = () => {
       setServerErrors([{ stepKey, text: stepKey || parsed.step === undefined ? parsed.text : `Step ${parsed.step}: ${parsed.text}` }]);
       return;
     }
-    const mapped = mapServerFieldErrors(fields, submitted, getValues());
+    const current = getValues();
+    const mapped = mapServerFieldErrors(fields, submitted, current);
     mapped.fields.forEach(({ name, message }, index) => {
-      serverFieldNames.current.add(name);
+      const id = serverFieldId(name, current);
+      if (id !== undefined) serverFieldIds.current.add(id);
       setError(name as Parameters<typeof setError>[0], { type: 'server', message }, { shouldFocus: index === 0 });
     });
     setServerErrors(mapped.unmapped);
@@ -192,7 +213,7 @@ export const Component: React.FC = () => {
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     setServerErrors([]);
-    serverFieldNames.current.clear();
+    serverFieldIds.current.clear();
     void handleSubmit(onValid)(event);
   };
 

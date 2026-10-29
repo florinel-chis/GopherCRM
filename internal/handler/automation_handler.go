@@ -76,7 +76,7 @@ type AutomationRuleErrorDetails struct {
 // an unsaved rule body (the create body; enabled is ignored) and the record
 // to simulate it against.
 type AutomationDraftDryRunRequest struct {
-	Rule       AutomationRuleRequest `json:"rule"`
+	Rule       AutomationRuleRequest `json:"rule" binding:"required"`
 	EntityType string                `json:"entity_type" binding:"required,oneof=lead deal"`
 	EntityID   uint                  `json:"entity_id" binding:"required,min=1"`
 }

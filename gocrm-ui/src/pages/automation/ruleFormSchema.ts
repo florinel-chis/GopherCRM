@@ -609,7 +609,7 @@ const SAME_NAME_STEP_FIELDS = new Set<keyof StepFormValues>([
 
 const STEP_PATH = /^steps\[(\d+)\]\.(?:config\.([a-z_]+)|step_type)$/;
 
-/** The form field of a step config name, with the values that decide it. */
+/** The form field of a step config name, with the values that decide it (all compared before it is set). */
 const stepFormField = (configName: string, step: StepFormValues): (keyof StepFormValues)[] | null => {
   switch (configName) {
     case 'duration_minutes':
@@ -618,6 +618,10 @@ const stepFormField = (configName: string, step: StepFormValues): (keyof StepFor
       return [isListOperator(step.operator) ? 'value_list' : 'value_text', 'operator'];
     case 'else_position':
       return ['else_target', 'else'];
+    // A user error belongs to the user the step sends to; once the step sends
+    // to the record owner the picker is gone and so is the error.
+    case 'user_id':
+      return ['user_id', 'recipient'];
     default:
       return SAME_NAME_STEP_FIELDS.has(configName as keyof StepFormValues) ? [configName as keyof StepFormValues] : null;
   }
@@ -685,4 +689,13 @@ export const mapServerFieldErrors = (
     }
   }
   return result;
+};
+
+/**
+ * Fields whose change clears a server error on another field of the same
+ * step: the wait unit rescales the amount, a new recipient retires the user.
+ */
+export const SERVER_ERROR_CLEARED_BY: Partial<Record<keyof StepFormValues, keyof StepFormValues>> = {
+  wait_unit: 'wait_amount',
+  recipient: 'user_id',
 };

@@ -644,6 +644,52 @@ describe('AutomationRuleForm', () => {
     expect(await within(group(2)).findByText('the user is deactivated')).toBeInTheDocument();
   });
 
+  // A draft refusal is shown without a submit, so nothing re-validates the
+  // field on change: the form itself must clear the error it set, wherever
+  // the step has moved since.
+  for (const change of ['moved up', 'shifted by removing the step before it'] as const) {
+    it(`clears a draft user error when the field is edited after its step was ${change}`, async () => {
+      const ada = createMockUser({ id: 8, first_name: 'Ada', last_name: 'Admin', role: 'admin' });
+      vi.mocked(usersApi.getUsers).mockResolvedValue({ data: [sam, ada], total: 2, page: 1, limit: 100, total_pages: 1 });
+      vi.mocked(usersApi.getUser).mockImplementation(async (id) => (id === 8 ? ada : sam));
+      const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
+      vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
+      vi.mocked(automationApi.dryRunDraft).mockRejectedValueOnce(
+        fieldsError('user 7 is inactive: assignee not found', [
+          { field: 'steps[1].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' },
+        ], 'INVALID_REFERENCE'),
+      );
+      render(<AutomationRuleForm />);
+      type(screen.getByRole('textbox', { name: 'Name' }), 'Draft');
+      await addStep('Notify');
+      type(field(group(1), 'Title'), 'First');
+      await addStep('Assign owner');
+      await pickAutocompleteOption('New owner', 'Sam Seller (sales)');
+      fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+      const dialog = await screen.findByRole('dialog', { name: 'Dry run: Draft' });
+      const leadInput = within(dialog).getByLabelText('Lead');
+      leadInput.focus();
+      fireEvent.mouseDown(leadInput);
+      fireEvent.click(await screen.findByRole('option', { name: 'Ion Ionescu (Bolt Robotics)' }));
+      await waitFor(() => expect(leadInput).toHaveValue('Ion Ionescu (Bolt Robotics)'));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Run dry run' }));
+      await within(dialog).findByTestId('dry-run-error');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      expect(await within(group(2)).findByText('the user is deactivated')).toBeInTheDocument();
+
+      if (change === 'moved up') {
+        fireEvent.click(screen.getByRole('button', { name: 'Move step 2 up' }));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Remove step 1' }));
+      }
+      expect(within(group(1)).getByText('the user is deactivated')).toBeInTheDocument();
+
+      await pickAutocompleteOption('New owner', 'Ada Admin (admin)');
+      await waitFor(() => expect(screen.queryByText('the user is deactivated')).not.toBeInTheDocument());
+    });
+  }
+
   it('ignores a draft dry-run refusal that arrives after the dialog closed', async () => {
     const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
     vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
