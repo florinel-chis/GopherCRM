@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as AutomationRunDetail } from './AutomationRunDetail';
+import { Component as AutomationRunList } from './AutomationRunList';
+import { createProductionQueryClient } from '@/test/productionQueryClient';
+import { withClient } from '@/test/dealQueryCache';
 import { automationApi } from '@/api/endpoints';
 import { createMockAutomationRun, createMockAutomationRunStep, createMockUser } from '@/test/factories';
 import { useParams } from 'react-router-dom';
@@ -18,6 +21,7 @@ vi.mock('@/api/endpoints', () => ({
   automationApi: {
     getRun: vi.fn(),
     cancelRun: vi.fn(),
+    listRuns: vi.fn(),
   },
   configurationsApi: {
     getUIConfigurations: vi.fn(),
@@ -207,6 +211,53 @@ describe('AutomationRunDetail', () => {
     await waitFor(() => expect(automationApi.getRun).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getAllByTestId('run-status-chip')[0]).toHaveTextContent('Completed'));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument());
+  });
+
+  it('refreshes a cached run list after a 409 under production defaults', async () => {
+    window.history.replaceState({}, '', '/automation/runs');
+    const client = createProductionQueryClient();
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [run], total: 1 });
+
+    // The list was visited first and is cached for five minutes.
+    const list = render(withClient(client, <AutomationRunList />));
+    const row = (await screen.findByText('#9')).closest('tr') as HTMLElement;
+    expect(within(row).getByTestId('run-status-chip')).toHaveTextContent('Waiting');
+    list.unmount();
+
+    const finished = { ...run, status: 'completed' as const, finished_at: '2026-10-29T11:00:00Z' };
+    vi.mocked(automationApi.cancelRun).mockRejectedValue(
+      apiError(409, 'INVALID_STATUS_TRANSITION', 'run 9 is completed: invalid status transition')
+    );
+    const detail = render(withClient(client, <AutomationRunDetail />));
+    await screen.findByRole('heading', { name: 'Run #9' });
+    vi.mocked(automationApi.getRun).mockResolvedValue(finished);
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [finished], total: 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Cancel run' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel run' }));
+    await waitFor(() => expect(showError).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getAllByTestId('run-status-chip')[0]).toHaveTextContent('Completed'));
+    detail.unmount();
+
+    // Back on the list: the conflict marked it stale, so it shows the end state.
+    render(withClient(client, <AutomationRunList />));
+    await waitFor(async () => {
+      const again = (await screen.findByText('#9')).closest('tr') as HTMLElement;
+      expect(within(again).getByTestId('run-status-chip')).toHaveTextContent('Completed');
+    });
+  });
+
+  it('shows the server message and a Retry button when the run cannot be loaded', async () => {
+    vi.mocked(automationApi.getRun).mockRejectedValueOnce(apiError(500, 'INTERNAL_ERROR', 'database unavailable'));
+    render(<AutomationRunDetail />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('database unavailable');
+    expect(screen.queryByText('Run not found')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('heading', { name: 'Run #9' })).toBeInTheDocument();
+    expect(automationApi.getRun).toHaveBeenCalledTimes(2);
   });
 
   it('shows Run not found on a 404', async () => {

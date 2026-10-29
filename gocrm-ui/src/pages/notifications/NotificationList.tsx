@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -53,7 +54,7 @@ export const Component: React.FC = () => {
     unread: readFilter === 'unread' ? true : undefined,
   };
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: notificationKeys.list(filters),
     queryFn: () => notificationsApi.list(filters),
     staleTime: 0,
@@ -121,9 +122,16 @@ export const Component: React.FC = () => {
       {isLoading ? (
         <Loading />
       ) : isError ? (
-        <Typography color="error">
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" disabled={isFetching} onClick={() => void refetch()}>
+              Retry
+            </Button>
+          }
+        >
           {getAPIError(error)?.message || 'Failed to load notifications'}
-        </Typography>
+        </Alert>
       ) : (
         <Paper>
           <TableContainer>

@@ -32,7 +32,7 @@ import {
   errorCodeLabel,
   stepTypeLabel,
 } from './automationFormat';
-import { afterRunCancelled, automationKeys } from './automationQueries';
+import { afterRunCancelled, afterRunSettled, automationKeys } from './automationQueries';
 import { OutcomeChip, RunStatusChip } from './AutomationChips';
 import { AutomationStepDetails } from './AutomationStepDetails';
 
@@ -54,7 +54,7 @@ export const Component: React.FC = () => {
   const isAdmin = user?.role === 'admin';
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const { data: run, isLoading, error } = useQuery({
+  const { data: run, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: automationKeys.run(runId),
     queryFn: () => automationApi.getRun(runId),
     enabled: Number.isInteger(runId) && runId > 0,
@@ -72,8 +72,8 @@ export const Component: React.FC = () => {
       setConfirmOpen(false);
       showError(getAPIError(err)?.message ?? 'Failed to cancel run');
       if (getHTTPStatus(err) === 409) {
-        // The run finished meanwhile: show where it really ended.
-        void queryClient.invalidateQueries({ queryKey: automationKeys.run(runId) });
+        // The run finished meanwhile: re-read it and every list holding it.
+        void afterRunSettled(queryClient, runId);
       }
     },
   });
@@ -89,7 +89,19 @@ export const Component: React.FC = () => {
         <Typography variant="h5" gutterBottom>
           {notFound ? 'Run not found' : 'Failed to load run'}
         </Typography>
-        {!notFound && <Alert severity="error">{getAPIError(error)?.message ?? 'Please try again.'}</Alert>}
+        {!notFound && (
+          <Alert
+            severity="error"
+            sx={{ mb: 2 }}
+            action={
+              <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
+                Retry
+              </Button>
+            }
+          >
+            {getAPIError(error)?.message ?? 'The run could not be loaded.'}
+          </Alert>
+        )}
         <Link component={RouterLink} to="/automation/runs">
           Back to runs
         </Link>

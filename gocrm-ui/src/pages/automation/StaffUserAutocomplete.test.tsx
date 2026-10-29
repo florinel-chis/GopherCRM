@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { usersApi } from '@/api/endpoints';
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { createMockUser } from '@/test/factories';
 import { pickAutocompleteOption } from '@/test/autocomplete';
 import type { User } from '@/types';
@@ -80,5 +81,28 @@ describe('StaffUserAutocomplete', () => {
     render(<StaffUserAutocomplete label="User" value={10} onChange={vi.fn()} />);
     await waitFor(() => expect(screen.getByLabelText('User')).toHaveValue('Cora Client (customer)'));
     expect(screen.getByText('This user can no longer be assigned')).toBeInTheDocument();
+  });
+
+  it('reports a failed user search or lookup instead of an empty list', async () => {
+    const failure = new AxiosError('Request failed with status code 500', 'ERR_BAD_RESPONSE', undefined, undefined, {
+      status: 500,
+      statusText: 'Error',
+      headers: {},
+      config: {} as InternalAxiosRequestConfig,
+      data: { code: 'INTERNAL_ERROR', message: 'Database unavailable', details: null },
+    } as AxiosResponse);
+    vi.mocked(usersApi.getUsers).mockRejectedValue(failure);
+    const { unmount } = render(<StaffUserAutocomplete label="User" value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByLabelText('User');
+    input.focus();
+    fireEvent.mouseDown(input);
+    expect(await screen.findByText('Users could not be loaded: Database unavailable')).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    unmount();
+
+    vi.mocked(usersApi.getUser).mockRejectedValue(failure);
+    render(<StaffUserAutocomplete label="User" value={8} onChange={vi.fn()} />);
+    expect(await screen.findByText('User #8 could not be loaded: Database unavailable')).toBeInTheDocument();
   });
 });

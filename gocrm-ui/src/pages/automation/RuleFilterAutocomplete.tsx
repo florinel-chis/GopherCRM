@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
-import { Autocomplete, CircularProgress, TextField } from '@mui/material';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Autocomplete, CircularProgress, Link, TextField } from '@mui/material';
 import { automationApi, type AutomationRuleFilters } from '@/api/endpoints';
 import type { AutomationRule } from '@/types';
+import { getAPIError } from '@/utils/apiError';
 import { automationKeys } from './automationQueries';
 
 // The rules API has no name search: page through it by name (100 per page,
@@ -38,6 +39,7 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
   onChange,
   onRulesLoaded,
 }) => {
+  const queryClient = useQueryClient();
   const [opened, setOpened] = useState(false);
 
   const firstPage = useQuery({
@@ -63,6 +65,7 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
     combine: (results) => ({
       rules: results.map((result) => result.data?.rules),
       loading: results.some((result) => result.isLoading),
+      error: results.find((result) => result.isError)?.error ?? null,
     }),
   });
 
@@ -83,6 +86,14 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
 
   const selected = value === undefined ? null : (rules.find((rule) => rule.id === value) ?? null);
   const loading = opened && (firstPage.isLoading || laterPages.loading);
+  const loadError = firstPage.error ?? laterPages.error;
+  const errorText = loadError
+    ? `Rules could not be loaded: ${getAPIError(loadError)?.message ?? 'please try again'}`
+    : undefined;
+  // Refetches every rule page this picker holds, failed ones included.
+  const retry = () => {
+    void queryClient.refetchQueries({ queryKey: automationKeys.rules, type: 'active' });
+  };
 
   return (
     <Autocomplete
@@ -95,11 +106,28 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
       onChange={(_, rule) => onChange(rule ? rule.id : undefined)}
       getOptionLabel={ruleLabel}
       isOptionEqualToValue={(option, current) => option.id === current.id}
-      noOptionsText={firstPage.isError ? 'Rules could not be loaded' : 'No rules'}
+      noOptionsText={errorText ?? 'No rules'}
       renderInput={(params) => (
         <TextField
           {...params}
           label="Rule"
+          error={Boolean(loadError)}
+          helperText={
+            loadError ? (
+              <>
+                {errorText}{' '}
+                <Link
+                  component="button"
+                  type="button"
+                  variant="caption"
+                  aria-label="Retry loading rules"
+                  onClick={retry}
+                >
+                  Retry
+                </Link>
+              </>
+            ) : undefined
+          }
           InputProps={{
             ...params.InputProps,
             endAdornment: (

@@ -67,6 +67,16 @@ export const afterRunCancelled = async (qc: QueryClient, run: AutomationRun): Pr
   await qc.invalidateQueries({ queryKey: automationKeys.runs });
 };
 
+// A cancel refused because the run finished meanwhile (409): the run moved on
+// without this client, so its detail and every list or record section holding
+// it are stale.
+export const afterRunSettled = async (qc: QueryClient, runId: number): Promise<void> => {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: automationKeys.run(runId), exact: true }),
+    qc.invalidateQueries({ queryKey: automationKeys.runs }),
+  ]);
+};
+
 // Covers the unread count, the bell menu and the notifications page.
 export const afterNotificationsRead = async (qc: QueryClient): Promise<void> => {
   await qc.invalidateQueries({ queryKey: notificationKeys.all });

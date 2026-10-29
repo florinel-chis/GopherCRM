@@ -267,6 +267,64 @@ describe('NotificationBell', () => {
     expect(notificationsApi.list).toHaveBeenCalledTimes(2);
   });
 
+  it('shows the server message and a Retry action when the menu list fails, not the empty state', async () => {
+    vi.mocked(notificationsApi.list).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Database unavailable' } },
+      }),
+    );
+    renderBell();
+    const menu = await openMenu();
+
+    expect(await within(menu).findByText('Database unavailable')).toBeInTheDocument();
+    expect(within(menu).queryByText('No notifications')).not.toBeInTheDocument();
+    expect(within(menu).queryAllByTestId('bell-notification')).toHaveLength(0);
+
+    vi.mocked(notificationsApi.list).mockResolvedValue({ notifications: [unread], total: 1 });
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Retry' }));
+
+    expect(await within(menu).findByText('Call Jane back')).toBeInTheDocument();
+    expect(within(menu).queryByText('Database unavailable')).not.toBeInTheDocument();
+    expect(notificationsApi.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows no badge while the unread count has never loaded and keeps the last known count when a refetch fails', async () => {
+    // Refetches are driven by window focus here: real timers keep React
+    // Query's error-then-success notification path intact.
+    vi.mocked(notificationsApi.unreadCount).mockRejectedValueOnce(new Error('Network Error'));
+    renderBell();
+    await waitFor(() => expect(notificationsApi.unreadCount).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const bell = screen.getByTestId('notification-bell');
+    // No count yet: no "0 unread" claim, no badge.
+    expect(bell).not.toHaveAttribute('data-unread');
+    expect(bell).toHaveAccessibleName('Notifications');
+    expect(within(bell).queryByText('0')).not.toBeInTheDocument();
+
+    // The next refetch succeeds.
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(bell).toHaveAttribute('data-unread', '3'));
+    expect(bell).toHaveAccessibleName('Notifications (3 unread)');
+
+    // A failed refetch keeps the last known count instead of dropping to zero.
+    vi.mocked(notificationsApi.unreadCount).mockRejectedValueOnce(new Error('Network Error'));
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(notificationsApi.unreadCount).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(bell).toHaveAttribute('data-unread', '3');
+    expect(within(bell).getByText('3')).toBeInTheDocument();
+  });
+
   it('links to the notifications page', async () => {
     renderBell();
     const menu = await openMenu();

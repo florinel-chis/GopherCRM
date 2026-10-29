@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usersApi, type UserFilters } from '@/api/endpoints';
 import { RecordAutocomplete } from '@/components/RecordAutocomplete';
 import type { User } from '@/types';
+import { getAPIError, getErrorMessage } from '@/utils/apiError';
 
 export interface StaffUserAutocompleteProps {
   label: string;
@@ -27,6 +28,22 @@ const userLabel = (user: User): string => {
   return `${name} (${user.role})`;
 };
 
+// Up to WANTED assignable users for the term, paging until found or out of pages.
+const searchStaff = async (term: string, setStoppedEarly: (value: boolean) => void): Promise<User[]> => {
+  const found: User[] = [];
+  let more = false;
+  for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
+    const offset = pageIndex * PAGE_SIZE;
+    const filters: UserFilters = { search: term || undefined, offset, limit: PAGE_SIZE };
+    const result = await usersApi.getUsers(filters);
+    found.push(...result.data.filter(isAssignable));
+    more = offset + PAGE_SIZE < result.total && result.data.length > 0;
+    if (found.length >= WANTED || !more) break;
+  }
+  setStoppedEarly(more || found.length > WANTED);
+  return found.slice(0, WANTED);
+};
+
 /** Picker of an active staff user (the users a rule step may name); the value is a user id. */
 export const StaffUserAutocomplete: React.FC<StaffUserAutocompleteProps> = ({
   label,
@@ -37,31 +54,34 @@ export const StaffUserAutocomplete: React.FC<StaffUserAutocompleteProps> = ({
 }) => {
   const [stoppedEarly, setStoppedEarly] = useState(false);
   const [picked, setPicked] = useState<User | null>(null);
+  // The shared picker shows a failed search as an empty list; say so instead.
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const search = useCallback(async (term: string): Promise<User[]> => {
-    const found: User[] = [];
-    let more = false;
-    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
-      const offset = pageIndex * PAGE_SIZE;
-      const filters: UserFilters = { search: term || undefined, offset, limit: PAGE_SIZE };
-      const result = await usersApi.getUsers(filters);
-      found.push(...result.data.filter(isAssignable));
-      more = offset + PAGE_SIZE < result.total && result.data.length > 0;
-      if (found.length >= WANTED || !more) break;
+    try {
+      const users = await searchStaff(term, setStoppedEarly);
+      setSearchError(null);
+      return users;
+    } catch (error) {
+      setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+      throw error;
     }
-    setStoppedEarly(more || found.length > WANTED);
-    return found.slice(0, WANTED);
   }, []);
 
   // The selected account, to flag one that can no longer be assigned. Shares
   // its cache entry with the picker's own lookup.
-  const { data: lookedUp } = useQuery({
+  const { data: lookedUp, error: lookupError } = useQuery({
     queryKey: ['user', value],
     queryFn: () => usersApi.getUser(value as number),
     enabled: value !== null && picked?.id !== value,
   });
   const selected = picked?.id === value ? picked : lookedUp?.id === value ? lookedUp : null;
   const unassignable = selected !== null && !isAssignable(selected);
+  const lookupMessage =
+    lookupError && value !== null && !selected
+      ? `User #${value} could not be loaded: ${getAPIError(lookupError)?.message ?? getErrorMessage(lookupError, 'request failed')}`
+      : null;
+  const loadMessage = searchError ? `Users could not be loaded: ${searchError}` : lookupMessage;
 
   return (
     <RecordAutocomplete<User>
@@ -77,11 +97,11 @@ export const StaffUserAutocomplete: React.FC<StaffUserAutocompleteProps> = ({
       getOptionLabel={userLabel}
       noOptionsText="No matching staff users"
       emptySearchText="Type to search users"
-      error={error || unassignable}
+      error={error || unassignable || loadMessage !== null}
       helperText={
         unassignable
           ? 'This user can no longer be assigned'
-          : helperText ?? (stoppedEarly ? 'Type to narrow the list' : undefined)
+          : loadMessage ?? helperText ?? (stoppedEarly ? 'Type to narrow the list' : undefined)
       }
     />
   );

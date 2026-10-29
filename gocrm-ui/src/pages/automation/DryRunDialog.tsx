@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useCallback, useId, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   Alert,
@@ -17,12 +17,11 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { automationApi, dealsApi } from '@/api/endpoints';
-import { LeadAutocomplete } from '@/components/LeadAutocomplete';
+import { automationApi, dealsApi, leadsApi } from '@/api/endpoints';
 import { RecordAutocomplete } from '@/components/RecordAutocomplete';
-import { dealStageLabel, type AutomationRule, type Deal } from '@/types';
+import { dealStageLabel, type AutomationRule, type Deal, type Lead } from '@/types';
 import { formatDate } from '@/utils/date';
-import { getAPIError } from '@/utils/apiError';
+import { getAPIError, getErrorMessage } from '@/utils/apiError';
 import { AUTOMATION_DATETIME, errorCodeLabel, stepTypeLabel } from './automationFormat';
 import { OutcomeChip } from './AutomationChips';
 import { AutomationStepDetails } from './AutomationStepDetails';
@@ -33,12 +32,24 @@ export interface DryRunDialogProps {
   onClose: () => void;
 }
 
-const DEAL_SEARCH_LIMIT = 20;
+const SEARCH_LIMIT = 20;
+
+// Same search and label as LeadAutocomplete, used directly so a failed search
+// can be reported instead of showing as an empty list.
+const searchLeads = async (term: string): Promise<Lead[]> => {
+  const result = await leadsApi.getLeads({ search: term || undefined, limit: SEARCH_LIMIT });
+  return result.data;
+};
+
+const leadOptionLabel = (lead: Lead): string => {
+  const name = lead.contact_name || lead.email;
+  return lead.company_name ? `${name} (${lead.company_name})` : name;
+};
 
 // Every stage: a rule may well be meant for won or lost deals, which the
 // shared DealAutocomplete (open deals only) would hide.
 const searchDeals = async (term: string): Promise<Deal[]> => {
-  const result = await dealsApi.getDeals({ search: term || undefined, limit: DEAL_SEARCH_LIMIT });
+  const result = await dealsApi.getDeals({ search: term || undefined, limit: SEARCH_LIMIT });
   return result.deals;
 };
 
@@ -46,12 +57,43 @@ const dealOptionLabel = (deal: Deal): string => `${deal.title} (${dealStageLabel
 
 function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () => void }) {
   const [entityId, setEntityId] = useState<number | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const dryRun = useMutation({
     mutationFn: (id: number) => automationApi.dryRun(rule.id, { entity_type: rule.entity_type, entity_id: id }),
   });
-  const report = dryRun.isSuccess ? dryRun.data : null;
-  const errorMessage = dryRun.isError ? getAPIError(dryRun.error)?.message ?? 'The dry run failed' : null;
+  const { reset: resetDryRun } = dryRun;
+  // Only the run for the record picked now is shown: a new pick drops the
+  // previous result, and an answer still in flight for an earlier pick (the
+  // mutation is reset, and the report must name the picked id) never lands.
+  const forPicked = dryRun.variables === entityId;
+  const report = dryRun.isSuccess && forPicked && dryRun.data.entity_id === entityId ? dryRun.data : null;
+  const errorMessage =
+    dryRun.isError && forPicked ? getAPIError(dryRun.error)?.message ?? 'The dry run failed' : null;
+
+  const pick = useCallback(
+    (id: number | null) => {
+      setEntityId(id);
+      resetDryRun();
+    },
+    [resetDryRun],
+  );
+
+  const reportingSearch = useCallback(
+    <T,>(search: (term: string) => Promise<T[]>) =>
+      async (term: string): Promise<T[]> => {
+        try {
+          const records = await search(term);
+          setSearchError(null);
+          return records;
+        } catch (error) {
+          setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+          throw error;
+        }
+      },
+    [],
+  );
+  const searchMessage = searchError ? `Records could not be loaded: ${searchError}` : undefined;
 
   return (
     <>
@@ -68,18 +110,32 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
             size="small"
           />
           {rule.entity_type === 'lead' ? (
-            <LeadAutocomplete label="Lead" value={entityId} onChange={(id) => setEntityId(id)} />
+            <RecordAutocomplete<Lead>
+              value={entityId}
+              onChange={(id) => pick(id)}
+              label="Lead"
+              queryKeys={['lead', 'leads-dry-run']}
+              search={reportingSearch(searchLeads)}
+              lookup={leadsApi.getLead}
+              getOptionLabel={leadOptionLabel}
+              noOptionsText="No matching leads"
+              emptySearchText="Type to search leads"
+              error={!!searchMessage}
+              helperText={searchMessage}
+            />
           ) : (
             <RecordAutocomplete<Deal>
               value={entityId}
-              onChange={(id) => setEntityId(id)}
+              onChange={(id) => pick(id)}
               label="Deal"
               queryKeys={['deal', 'deals-all']}
-              search={searchDeals}
+              search={reportingSearch(searchDeals)}
               lookup={dealsApi.getDeal}
               getOptionLabel={dealOptionLabel}
               noOptionsText="No matching deals"
               emptySearchText="Type to search deals"
+              error={!!searchMessage}
+              helperText={searchMessage}
             />
           )}
           <Box>

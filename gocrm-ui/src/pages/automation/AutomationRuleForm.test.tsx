@@ -68,6 +68,15 @@ const choose = async (container: HTMLElement, label: string, option: string) => 
   fireEvent.click(await screen.findByRole('option', { name: option }));
 };
 
+// The status / stage value is a free-text combobox that offers the known values.
+const chooseValue = async (container: HTMLElement, option: string) => {
+  const input = within(container).getByRole('combobox', { name: 'Value' });
+  input.focus();
+  fireEvent.mouseDown(input);
+  fireEvent.click(await screen.findByRole('option', { name: option }));
+  await waitFor(() => expect(input).toHaveValue(option));
+};
+
 const addStep = async (label: string) => {
   fireEvent.click(screen.getByRole('button', { name: 'Add step' }));
   fireEvent.click(await screen.findByRole('menuitem', { name: label }));
@@ -133,7 +142,7 @@ describe('AutomationRuleForm', () => {
     await addStep('Condition');
     await choose(group(2), 'Field', 'Status');
     await choose(group(2), 'Operator', 'equals');
-    await choose(group(2), 'Value', 'Qualified');
+    await chooseValue(group(2), 'qualified');
 
     await addStep('Create task');
     // Title and description both list the narrower task placeholders.
@@ -490,5 +499,61 @@ describe('AutomationRuleForm', () => {
     expect(screen.queryByTestId('step-server-error')).not.toBeInTheDocument();
     expect(automationApi.createRule).toHaveBeenCalledTimes(2);
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps free-text status values: a saved contains and an unlisted value round-trip and can be entered', async () => {
+    const rule = storedRule({
+      steps: steps(
+        ['condition', { field: 'status', operator: 'contains', value: 'qual', else: 'stop' }],
+        ['condition', { field: 'status', operator: 'eq', value: ' lost ', else: 'stop' }],
+        ['condition', { field: 'status', operator: 'neq', value: '', else: 'stop' }],
+      ),
+    });
+    vi.mocked(automationApi.updateRule).mockResolvedValue({ ...rule, version: 3 });
+    await renderEdit(rule);
+
+    expect(field(group(1), 'Value')).toHaveValue('qual');
+    expect(within(group(2)).getByRole('combobox', { name: 'Value' })).toHaveValue(' lost ');
+    expect(within(group(3)).getByRole('combobox', { name: 'Value' })).toHaveValue('');
+
+    // Untouched: re-sent exactly as stored.
+    await saveAndConfirm();
+    await waitFor(() => expect(automationApi.updateRule).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(automationApi.updateRule).mock.calls[0][1].steps).toEqual(
+      rule.steps.map(({ step_type, config }) => ({ step_type, config })),
+    );
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Save rule changes?' })).not.toBeInTheDocument());
+
+    // Edited: any text, spaces kept, empty allowed for contains.
+    type(field(group(1), 'Value'), '');
+    type(within(group(2)).getByRole('combobox', { name: 'Value' }), '  archived ');
+    await saveAndConfirm();
+    await waitFor(() => expect(automationApi.updateRule).toHaveBeenCalledTimes(2));
+    const configs = vi.mocked(automationApi.updateRule).mock.calls[1][1].steps.map((s) => s.config);
+    expect(configs[0]).toEqual({ field: 'status', operator: 'contains', value: '', else: 'stop' });
+    expect(configs[1]).toEqual({ field: 'status', operator: 'eq', value: '  archived ', else: 'stop' });
+  });
+
+  it('a failed rule read shows the server message with Retry, and a 404 says the rule was not found', async () => {
+    vi.mocked(useParams).mockReturnValue({ id: '3' });
+    const rule = storedRule({});
+    vi.mocked(automationApi.getRule)
+      .mockRejectedValueOnce(apiError(500, 'INTERNAL_ERROR', 'Database unavailable'))
+      .mockResolvedValueOnce(rule);
+    const { unmount } = render(<AutomationRuleForm />);
+
+    const alert = await screen.findByTestId('rule-load-error');
+    expect(alert).toHaveTextContent('Database unavailable');
+    expect(screen.queryByText('Rule not found')).not.toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Stored rule'));
+    expect(automationApi.getRule).toHaveBeenCalledTimes(2);
+    unmount();
+
+    vi.mocked(automationApi.getRule).mockRejectedValueOnce(apiError(404, 'NOT_FOUND', 'rule 3 not found'));
+    render(<AutomationRuleForm />);
+    expect(await screen.findByText('Rule not found')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-load-error')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render as plainRender } from '@testing-library/react';
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { MemoryRouter, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -52,6 +53,15 @@ const authState = (user: User) => ({
   logout: vi.fn(),
   refreshUser: vi.fn(),
 });
+
+const apiError = (status: number, code: string, message: string) =>
+  new AxiosError(`Request failed with status code ${status}`, 'ERR_BAD_RESPONSE', undefined, undefined, {
+    status,
+    statusText: 'Error',
+    headers: {},
+    config: {} as InternalAxiosRequestConfig,
+    data: { code, message, details: null },
+  } as AxiosResponse);
 
 const rowOf = async (text: string) => {
   const cell = await screen.findByText(text);
@@ -294,5 +304,39 @@ describe('AutomationRuleList', () => {
     expect(await screen.findByText('Unauthorized Page')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Automation rules' })).not.toBeInTheDocument();
     expect(automationApi.listRules).not.toHaveBeenCalled();
+  });
+
+  it('a failed list read shows the server message and a Retry that refetches', async () => {
+    vi.mocked(automationApi.listRules)
+      .mockRejectedValueOnce(apiError(500, 'INTERNAL_ERROR', 'Database unavailable'))
+      .mockResolvedValueOnce({ rules: [welcome], total: 1 });
+    render(<AutomationRuleList />);
+
+    const alert = await screen.findByTestId('rule-list-error');
+    expect(alert).toHaveTextContent('Database unavailable');
+    expect(screen.queryByText('No automation rules yet.')).not.toBeInTheDocument();
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Welcome new leads')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-list-error')).not.toBeInTheDocument();
+    expect(automationApi.listRules).toHaveBeenCalledTimes(2);
+  });
+
+  it('an empty list says there are no rules', async () => {
+    vi.mocked(automationApi.listRules).mockResolvedValue({ rules: [], total: 0 });
+    render(<AutomationRuleList />);
+
+    expect(await screen.findByText('No automation rules yet.')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-list-error')).not.toBeInTheDocument();
+  });
+
+  it('offers a named Edit control per rule in the Tools column', async () => {
+    render(<AutomationRuleList />);
+    const row = await rowOf('Chase proposals');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit Chase proposals' }));
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('/automation/rules/5/edit');
+    expect(screen.getByRole('button', { name: 'Edit Welcome new leads' })).toBeInTheDocument();
   });
 });

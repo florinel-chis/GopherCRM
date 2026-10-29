@@ -40,7 +40,7 @@ import {
   type AutomationTriggerType,
   type DealStage,
 } from '@/types';
-import { getAPIError } from '@/utils/apiError';
+import { getAPIError, getHTTPStatus } from '@/utils/apiError';
 import { stepTypeLabel, triggerTypeLabel } from './automationFormat';
 import { afterRuleChanged, afterRuleCreated, automationKeys } from './automationQueries';
 import { DryRunDialog } from './DryRunDialog';
@@ -90,7 +90,7 @@ export const Component: React.FC = () => {
   const triggerType = useWatch({ control, name: 'trigger_type' });
   const watchedSteps = useWatch({ control, name: 'steps' });
 
-  const { data: rule, isLoading, isError } = useQuery({
+  const { data: rule, isLoading, isError, error: loadError, refetch, isFetching } = useQuery({
     queryKey: automationKeys.rule(ruleId),
     queryFn: () => automationApi.getRule(ruleId),
     enabled: isEdit,
@@ -183,7 +183,22 @@ export const Component: React.FC = () => {
   if (isEdit && isLoading) {
     return <Loading />;
   }
-  if (isEdit && (isError || !rule)) {
+  if (isEdit && isError && getHTTPStatus(loadError) !== 404) {
+    return (
+      <Alert
+        severity="error"
+        data-testid="rule-load-error"
+        action={
+          <Button color="inherit" size="small" disabled={isFetching} onClick={() => void refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        {getAPIError(loadError)?.message ?? 'The rule could not be loaded'}
+      </Alert>
+    );
+  }
+  if (isEdit && !rule) {
     return <Alert severity="error">Rule not found</Alert>;
   }
 

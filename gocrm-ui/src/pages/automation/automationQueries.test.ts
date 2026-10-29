@@ -7,6 +7,7 @@ import {
   afterRuleDeleted,
   afterRuleEnabled,
   afterRunCancelled,
+  afterRunSettled,
   automationKeys,
   notificationKeys,
 } from './automationQueries';
@@ -103,6 +104,18 @@ describe('automationQueries', () => {
       true,
       true,
     ]);
+    expect(invalidatedRuleLists(client)).toEqual([false, false]);
+  });
+
+  it('after a cancel conflict, invalidates the run detail and every run list', async () => {
+    const client = seededClient();
+    const otherRunKey = automationKeys.run(32);
+    client.setQueryData(otherRunKey, createMockAutomationRun({ id: 32 }));
+
+    await afterRunSettled(client, 31);
+
+    expect(invalidatedRunCaches(client)).toEqual([true, true, true]);
+    expect(isInvalidated(client, otherRunKey)).toBe(false);
     expect(invalidatedRuleLists(client)).toEqual([false, false]);
   });
 

@@ -6,7 +6,8 @@ import { createMockAutomationRule, createMockAutomationRun, createMockUser } fro
 import { createProductionQueryClient } from '@/test/productionQueryClient';
 import { withClient } from '@/test/dealQueryCache';
 import { pickAutocompleteOption } from '@/test/autocomplete';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { formatDate } from '@/utils/date';
 import type { User } from '@/types';
 import { AUTOMATION_DATETIME } from './automationFormat';
@@ -57,6 +58,15 @@ const enterNumber = (label: string, value: string) => {
   fireEvent.change(input, { target: { value } });
   fireEvent.keyDown(input, { key: 'Enter' });
 };
+
+const serverError = (message: string) =>
+  new AxiosError('Request failed with status code 500', 'ERR_BAD_RESPONSE', undefined, undefined, {
+    status: 500,
+    statusText: 'Internal Server Error',
+    headers: {},
+    config: {} as InternalAxiosRequestConfig,
+    data: { code: 'INTERNAL_ERROR', message, details: null },
+  } as AxiosResponse);
 
 describe('AutomationRunList', () => {
   const mockNavigate = vi.fn();
@@ -236,6 +246,95 @@ describe('AutomationRunList', () => {
         expect.objectContaining({ status: 'completed', rule_id: 4, entity_type: undefined, entity_id: undefined })
       )
     );
+  });
+
+  it('follows a navigation to another filter set without remounting', async () => {
+    window.history.replaceState({}, '', '/automation/runs?status=failed&rule_id=4');
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [waiting, completed], total: 25 });
+    render(
+      <>
+        <RouterLink to="/automation/runs">All runs</RouterLink>
+        <RouterLink to="/automation/runs?entity_type=deal&entity_id=7">Deal 7 runs</RouterLink>
+        <AutomationRunList />
+      </>
+    );
+    await rowOf('#9');
+    expect(automationApi.listRuns).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offset: 0, status: 'failed', rule_id: 4 })
+    );
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() =>
+      expect(automationApi.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 10, status: 'failed' }))
+    );
+    await rowOf('#9');
+
+    // The nav link to the bare list clears every filter and starts at page 1.
+    fireEvent.click(screen.getByRole('link', { name: 'All runs' }));
+    await waitFor(() =>
+      expect(automationApi.listRuns).toHaveBeenLastCalledWith({
+        offset: 0,
+        limit: 10,
+        status: undefined,
+        rule_id: undefined,
+        entity_type: undefined,
+        entity_id: undefined,
+        sort_by: undefined,
+        sort_order: undefined,
+      })
+    );
+    expect(screen.getByLabelText('Rule ID')).toHaveValue(null);
+    expect(screen.getByRole('combobox', { name: /^Status/ })).toHaveTextContent('All statuses');
+
+    fireEvent.click(screen.getByRole('link', { name: 'Deal 7 runs' }));
+    await waitFor(() =>
+      expect(automationApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ offset: 0, entity_type: 'deal', entity_id: 7, status: undefined })
+      )
+    );
+    expect(screen.getByLabelText('Record ID')).toHaveValue(7);
+  });
+
+  it('gives every row a named link to its run', async () => {
+    render(<AutomationRunList />);
+    await rowOf('#9');
+
+    expect(screen.getByRole('link', { name: 'Run #9' })).toHaveAttribute('href', '/automation/runs/9');
+    expect(screen.getByRole('link', { name: 'Run #10' })).toHaveAttribute('href', '/automation/runs/10');
+  });
+
+  it('shows the server message and a Retry button when the runs cannot be loaded', async () => {
+    vi.mocked(automationApi.listRuns).mockRejectedValueOnce(serverError('database unavailable'));
+    render(<AutomationRunList />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('database unavailable');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await rowOf('#9');
+    expect(automationApi.listRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows why the rule picker is empty and retries it', async () => {
+    vi.mocked(automationApi.listRules).mockRejectedValueOnce(serverError('rules unavailable'));
+    render(<AutomationRunList />);
+    await rowOf('#9');
+
+    const input = screen.getByLabelText('Rule');
+    input.focus();
+    fireEvent.mouseDown(input);
+    // Under the field and in the empty option list.
+    expect((await screen.findAllByText(/Rules could not be loaded: rules unavailable/)).length).toBeGreaterThan(0);
+
+    vi.mocked(automationApi.listRules).mockResolvedValue({
+      rules: [createMockAutomationRule({ id: 205, name: 'Quarterly check' })],
+      total: 1,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading rules' }));
+    await waitFor(() => expect(automationApi.listRules).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryAllByText(/rules unavailable/)).toHaveLength(0));
+    // The open list now offers the rule.
+    fireEvent.click(await screen.findByRole('option', { name: 'Quarterly check (#205)' }));
+    await waitFor(() => expect(screen.getByLabelText('Rule ID')).toHaveValue(205));
   });
 
   it('pages and sorts server-side on the allowed columns only', async () => {

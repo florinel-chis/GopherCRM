@@ -1,13 +1,11 @@
 import React from 'react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
-import { Grid, MenuItem, TextField } from '@mui/material';
+import { Autocomplete, Grid, MenuItem, TextField } from '@mui/material';
 import {
   AUTOMATION_CONDITION_FIELDS,
   AUTOMATION_PLACEHOLDERS,
   AUTOMATION_TASK_PLACEHOLDERS,
-  dealStageLabel,
   type AutomationEntityType,
-  type DealStage,
 } from '@/types';
 import { operatorLabel, stepTypeLabel } from './automationFormat';
 import {
@@ -68,8 +66,6 @@ const guardedSelectRef =
         : null,
     );
 
-const valueLabel = (entity: AutomationEntityType, value: string): string =>
-  entity === 'deal' ? dealStageLabel(value as DealStage) : value.charAt(0).toUpperCase() + value.slice(1);
 
 function StepTextField({
   index,
@@ -174,6 +170,42 @@ function StepSelectField({
   );
 }
 
+// Status / stage value. The API compares these as plain strings and checks
+// none of them against the status or stage list (a saved "contains qual" or a
+// retired status is valid), so the input takes any text, kept verbatim, and
+// merely suggests the known values.
+function StepSuggestedTextField({ index, options }: { index: number; options: readonly string[] }) {
+  const { control } = useFormContext<RuleFormValues>();
+  return (
+    <Controller
+      control={control}
+      name={`steps.${index}.value_text`}
+      render={({ field, fieldState }) => (
+        <Autocomplete<string, false, true, true>
+          freeSolo
+          disableClearable
+          options={[...options]}
+          value={field.value}
+          inputValue={field.value}
+          onInputChange={(_event, text) => field.onChange(text)}
+          onChange={(_event, text) => field.onChange(text ?? '')}
+          filterOptions={(candidates) => candidates}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              onBlur={field.onBlur}
+              label="Value"
+              size="small"
+              error={!!fieldState.error}
+              helperText={fieldState.error?.message}
+            />
+          )}
+        />
+      )}
+    />
+  );
+}
+
 function StepUserField({ index, label }: { index: number; label: string }) {
   const { control } = useFormContext<RuleFormValues>();
   return (
@@ -254,7 +286,9 @@ function ConditionFields({ index, entity }: { index: number; entity: AutomationE
     }
   };
 
-  const enumerated = kind === 'string' && (step.field === 'status' || step.field === 'stage');
+  // eq / neq on status or stage suggest the known values; contains is free text.
+  const suggested =
+    kind === 'string' && (step.field === 'status' || step.field === 'stage') && step.operator !== 'contains';
   const listOperator = isListOperator(step.operator);
   const valueless = isValuelessOperator(step.operator) || !step.operator;
 
@@ -268,13 +302,8 @@ function ConditionFields({ index, entity }: { index: number; entity: AutomationE
       </Grid>
       {!valueless && !listOperator ? (
         <Grid size={{ xs: 12, sm: 4 }}>
-          {enumerated ? (
-            <StepSelectField
-              index={index}
-              name="value_text"
-              label="Value"
-              options={entityValues(entity).map((value) => ({ value, label: valueLabel(entity, value) }))}
-            />
+          {suggested ? (
+            <StepSuggestedTextField index={index} options={entityValues(entity)} />
           ) : (
             <StepTextField
               index={index}

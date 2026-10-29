@@ -143,6 +143,35 @@ describe('NotificationList', () => {
     await waitFor(() => expect(notificationsApi.list).toHaveBeenCalledTimes(2));
   });
 
+  it('shows the server message and a Retry action when the list fails, not the empty state', async () => {
+    vi.mocked(notificationsApi.list).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Database unavailable' } },
+      }),
+    );
+    render(<NotificationList />);
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Database unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('notification-row')).toHaveLength(0);
+
+    vi.mocked(notificationsApi.list).mockResolvedValue({ notifications: [unread], total: 1 });
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+
+    expect(await rowOf('Call Jane back')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(notificationsApi.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the empty state when the list loads with no notifications', async () => {
+    vi.mocked(notificationsApi.list).mockResolvedValue({ notifications: [], total: 0 });
+    render(<NotificationList />);
+
+    expect(await screen.findByText('No notifications')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('offers Open links to admin and sales but not to support', async () => {
     for (const role of ['admin', 'sales'] as const) {
       mockUseAuth.mockReturnValue(authState(createMockUser({ role })));

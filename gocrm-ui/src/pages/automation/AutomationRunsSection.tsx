@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Alert,
   Box,
+  Button,
   Link,
   Paper,
   Table,
@@ -16,6 +18,7 @@ import {
 import { automationApi, type AutomationRunFilters } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import type { AutomationEntityType } from '@/types';
+import { getAPIError } from '@/utils/apiError';
 import { formatDate } from '@/utils/date';
 import { AUTOMATION_DATETIME } from './automationFormat';
 import { automationKeys } from './automationQueries';
@@ -47,7 +50,7 @@ export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ en
   };
 
   // Under the run-list prefix, so rule changes and cancels mark it stale.
-  const { data } = useQuery({
+  const { data, error, isError, refetch, isFetching } = useQuery({
     queryKey: automationKeys.runList(filters),
     queryFn: () => automationApi.listRuns(filters),
     enabled: canView,
@@ -73,7 +76,18 @@ export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ en
           View all
         </Link>
       </Box>
-      {data && data.runs.length > 0 ? (
+      {isError ? (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
+              Retry
+            </Button>
+          }
+        >
+          {getAPIError(error)?.message ?? 'The automation runs could not be loaded.'}
+        </Alert>
+      ) : data && data.runs.length > 0 ? (
         <>
           <Table size="small" aria-label="Automation runs">
             <TableHead>

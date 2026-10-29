@@ -1,7 +1,19 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Box, FormControl, InputLabel, Link, MenuItem, Paper, Select, TextField, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  FormControl,
+  InputLabel,
+  Link,
+  MenuItem,
+  Paper,
+  Select,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { automationApi, type AutomationRunFilters, type AutomationRunSortColumn } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
@@ -14,6 +26,7 @@ import {
   type AutomationRunStatus,
 } from '@/types';
 import { formatDate } from '@/utils/date';
+import { getAPIError } from '@/utils/apiError';
 import { AUTOMATION_DATETIME, entityLabel, entityPath, runStatusLabel } from './automationFormat';
 import { automationKeys } from './automationQueries';
 import { RunStatusChip } from './AutomationChips';
@@ -25,18 +38,24 @@ const SORTABLE_COLUMNS = new Set<string>(['id', 'status', 'resume_at', 'created_
 
 const ENTITY_LABELS: Record<AutomationEntityType, string> = { lead: 'Lead', deal: 'Deal' };
 
-interface ListState {
-  page: number;
-  limit: number;
+// The filters live in the URL, so a link (the nav entry, a record section's
+// "View all") always shows exactly what it names, even while mounted.
+interface UrlFilters {
   status: AutomationRunStatus | '';
   rule_id?: number;
   entity_type: AutomationEntityType | '';
   entity_id?: number;
+}
+
+// Paging and sorting are local; the page goes back to 1 whenever the URL
+// filters change.
+interface PagingState {
+  filterKey: string;
+  page: number;
+  limit: number;
   sort_by?: AutomationRunSortColumn;
   sort_order?: 'asc' | 'desc';
 }
-
-type FilterPatch = Partial<Pick<ListState, 'status' | 'rule_id' | 'entity_type' | 'entity_id'>>;
 
 const parsePositiveInt = (text: string | null): number | undefined => {
   if (text === null || !/^\d+$/.test(text.trim())) {
@@ -52,13 +71,11 @@ const isRunStatus = (value: string | null): value is AutomationRunStatus =>
 const isEntityType = (value: string | null): value is AutomationEntityType =>
   (AUTOMATION_ENTITY_TYPES as readonly string[]).includes(value ?? '');
 
-const stateFromParams = (params: URLSearchParams): ListState => {
+const filtersFromParams = (params: URLSearchParams): UrlFilters => {
   const status = params.get('status');
   const entityType = params.get('entity_type');
   const entity_type = isEntityType(entityType) ? entityType : '';
   return {
-    page: 1,
-    limit: 10,
     status: isRunStatus(status) ? status : '',
     rule_id: parsePositiveInt(params.get('rule_id')),
     entity_type,
@@ -66,6 +83,9 @@ const stateFromParams = (params: URLSearchParams): ListState => {
     entity_id: entity_type ? parsePositiveInt(params.get('entity_id')) : undefined,
   };
 };
+
+const filterKeyOf = (f: UrlFilters): string =>
+  [f.status, f.rule_id ?? '', f.entity_type, f.entity_id ?? ''].join('|');
 
 const idText = (value: number | undefined): string => (value === undefined ? '' : String(value));
 
@@ -77,38 +97,52 @@ export const Component: React.FC = () => {
 
   // Admin and sales only (route guard); the API narrows sales to the leads and
   // deals it owns, inside the query.
-  const [state, setState] = useState<ListState>(() => stateFromParams(searchParams));
-  const [ruleIdText, setRuleIdText] = useState(() => idText(state.rule_id));
-  const [recordIdText, setRecordIdText] = useState(() => idText(state.entity_id));
+  const urlFilters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
+  const filterKey = filterKeyOf(urlFilters);
+  const [paging, setPaging] = useState<PagingState>({ filterKey, page: 1, limit: 10 });
+  const [texts, setTexts] = useState({ filterKey, ruleId: idText(urlFilters.rule_id), recordId: idText(urlFilters.entity_id) });
   const [ruleNames, setRuleNames] = useState<ReadonlyMap<number, string>>(new Map());
+
+  // A URL change made elsewhere (a link, back/forward) resets the page and
+  // the two id fields during render, before anything is requested.
+  if (paging.filterKey !== filterKey) {
+    setPaging((prev) => ({ ...prev, filterKey, page: 1 }));
+  }
+  if (texts.filterKey !== filterKey) {
+    setTexts({ filterKey, ruleId: idText(urlFilters.rule_id), recordId: idText(urlFilters.entity_id) });
+  }
+  const page = paging.filterKey === filterKey ? paging.page : 1;
+  const ruleIdText = texts.ruleId;
+  const recordIdText = texts.recordId;
+  const setRuleIdText = (ruleId: string) => setTexts((prev) => ({ ...prev, ruleId }));
+  const setRecordIdText = (recordId: string) => setTexts((prev) => ({ ...prev, recordId }));
 
   const filters: AutomationRunFilters = useMemo(
     () => ({
-      offset: (state.page - 1) * state.limit,
-      limit: state.limit,
-      status: state.status || undefined,
-      rule_id: state.rule_id,
-      entity_type: state.entity_type || undefined,
-      entity_id: state.entity_type ? state.entity_id : undefined,
-      sort_by: state.sort_by,
-      sort_order: state.sort_order,
+      offset: (page - 1) * paging.limit,
+      limit: paging.limit,
+      status: urlFilters.status || undefined,
+      rule_id: urlFilters.rule_id,
+      entity_type: urlFilters.entity_type || undefined,
+      entity_id: urlFilters.entity_type ? urlFilters.entity_id : undefined,
+      sort_by: paging.sort_by,
+      sort_order: paging.sort_order,
     }),
-    [state]
+    [page, paging.limit, paging.sort_by, paging.sort_order, urlFilters]
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: automationKeys.runList(filters),
     queryFn: () => automationApi.listRuns(filters),
   });
 
-  // Every filter change starts at page 1 and is mirrored into the URL, so a
-  // filtered list can be linked to (the record sections do).
-  const updateFilters = (patch: FilterPatch) => {
-    const next: ListState = { ...state, ...patch, page: 1 };
+  // Every filter change is written to the URL (the single source of the
+  // filters); the page then goes back to 1 through the filter key.
+  const updateFilters = (patch: Partial<UrlFilters>) => {
+    const next: UrlFilters = { ...urlFilters, ...patch };
     if (!next.entity_type) {
       next.entity_id = undefined;
     }
-    setState(next);
     const params = new URLSearchParams(searchParams);
     const write = (key: string, value: string | number | undefined) => {
       if (value === undefined || value === '') {
@@ -126,14 +160,14 @@ export const Component: React.FC = () => {
 
   const applyRuleId = () => {
     const ruleId = parsePositiveInt(ruleIdText);
-    if (ruleId !== state.rule_id) {
+    if (ruleId !== urlFilters.rule_id) {
       updateFilters({ rule_id: ruleId });
     }
   };
 
   const applyRecordId = () => {
     const entityId = parsePositiveInt(recordIdText);
-    if (entityId !== state.entity_id) {
+    if (entityId !== urlFilters.entity_id) {
       updateFilters({ entity_id: entityId });
     }
   };
@@ -144,7 +178,22 @@ export const Component: React.FC = () => {
 
   const columns: Column<AutomationRun>[] = useMemo(
     () => [
-      { id: 'id', label: 'Run', minWidth: 80, format: (_value: unknown, row: AutomationRun) => `#${row.id}` },
+      {
+        id: 'id',
+        label: 'Run',
+        minWidth: 80,
+        // A named link per row: the accessible way to open a run.
+        format: (_value: unknown, row: AutomationRun) => (
+          <Link
+            component={RouterLink}
+            to={`/automation/runs/${row.id}`}
+            aria-label={`Run #${row.id}`}
+            onClick={(event: React.MouseEvent) => event.stopPropagation()}
+          >
+            #{row.id}
+          </Link>
+        ),
+      },
       {
         id: 'status',
         label: 'Status',
@@ -202,15 +251,15 @@ export const Component: React.FC = () => {
     if (!SORTABLE_COLUMNS.has(field)) {
       return;
     }
-    setState((prev) => ({ ...prev, sort_by: field as AutomationRunSortColumn, sort_order: order, page: 1 }));
+    setPaging((prev) => ({ ...prev, sort_by: field as AutomationRunSortColumn, sort_order: order, page: 1 }));
   }, []);
 
   const handlePageChange = useCallback((page: number) => {
-    setState((prev) => ({ ...prev, page: page + 1 }));
+    setPaging((prev) => ({ ...prev, page: page + 1 }));
   }, []);
 
   const handleRowsPerPageChange = useCallback((rowsPerPage: number) => {
-    setState((prev) => ({ ...prev, limit: rowsPerPage, page: 1 }));
+    setPaging((prev) => ({ ...prev, limit: rowsPerPage, page: 1 }));
   }, []);
 
   const onEnter = (apply: () => void) => (event: React.KeyboardEvent) => {
@@ -237,7 +286,7 @@ export const Component: React.FC = () => {
             <Select
               labelId="run-status-filter-label"
               id="run-status-filter"
-              value={state.status}
+              value={urlFilters.status}
               onChange={(event) => updateFilters({ status: event.target.value as AutomationRunStatus | '' })}
               label="Status"
               displayEmpty
@@ -255,7 +304,7 @@ export const Component: React.FC = () => {
 
           {isAdmin && (
             <RuleFilterAutocomplete
-              value={state.rule_id}
+              value={urlFilters.rule_id}
               onChange={(ruleId) => {
                 setRuleIdText(idText(ruleId));
                 updateFilters({ rule_id: ruleId });
@@ -287,7 +336,7 @@ export const Component: React.FC = () => {
             <Select
               labelId="run-entity-filter-label"
               id="run-entity-filter"
-              value={state.entity_type}
+              value={urlFilters.entity_type}
               onChange={(event) => {
                 const entityType = event.target.value as AutomationEntityType | '';
                 if (!entityType) {
@@ -314,7 +363,7 @@ export const Component: React.FC = () => {
             label="Record ID"
             type="number"
             value={recordIdText}
-            disabled={!state.entity_type}
+            disabled={!urlFilters.entity_type}
             onChange={(event) => setRecordIdText(event.target.value)}
             onBlur={applyRecordId}
             onKeyDown={onEnter(applyRecordId)}
@@ -326,20 +375,40 @@ export const Component: React.FC = () => {
         </Box>
       </Paper>
 
-      <DataTable
-        columns={columns}
-        data={data?.runs ?? []}
-        totalCount={data?.total ?? 0}
-        page={state.page - 1}
-        rowsPerPage={state.limit}
-        loading={isLoading}
-        onSort={handleSort}
-        sortBy={state.sort_by ?? ''}
-        sortOrder={state.sort_order ?? 'asc'}
-        onPageChange={handlePageChange}
-        onRowsPerPageChange={handleRowsPerPageChange}
-        onRowClick={(run) => navigate(`/automation/runs/${run.id}`)}
-      />
+      {isError ? (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
+              Retry
+            </Button>
+          }
+        >
+          {getAPIError(error)?.message ?? 'The automation runs could not be loaded.'}
+        </Alert>
+      ) : (
+        <>
+          <DataTable
+            columns={columns}
+            data={data?.runs ?? []}
+            totalCount={data?.total ?? 0}
+            page={page - 1}
+            rowsPerPage={paging.limit}
+            loading={isLoading}
+            onSort={handleSort}
+            sortBy={paging.sort_by ?? ''}
+            sortOrder={paging.sort_order ?? 'asc'}
+            onPageChange={handlePageChange}
+            onRowsPerPageChange={handleRowsPerPageChange}
+            onRowClick={(run) => navigate(`/automation/runs/${run.id}`)}
+          />
+          {!isLoading && data?.runs.length === 0 && (
+            <Typography color="text.secondary" sx={{ mt: 2 }}>
+              No runs match these filters.
+            </Typography>
+          )}
+        </>
+      )}
     </Box>
   );
 };

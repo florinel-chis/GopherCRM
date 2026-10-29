@@ -1,8 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Box, Button, IconButton, Switch, Tooltip, Typography } from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon, Science as DryRunIcon } from '@mui/icons-material';
+import { Alert, Box, Button, IconButton, Paper, Switch, Tooltip, Typography } from '@mui/material';
+import { Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon, Science as DryRunIcon } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
@@ -50,7 +50,7 @@ export const Component: React.FC = () => {
     [state],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: automationKeys.ruleList(filters),
     queryFn: () => automationApi.listRules(filters),
   });
@@ -136,6 +136,18 @@ export const Component: React.FC = () => {
         sortable: false,
         format: (_value: unknown, row: AutomationRule) => (
           <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Tooltip title="Edit">
+              <IconButton
+                size="small"
+                aria-label={`Edit ${row.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  navigate(`/automation/rules/${row.id}/edit`);
+                }}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="Dry run">
               <IconButton
                 size="small"
@@ -164,7 +176,7 @@ export const Component: React.FC = () => {
         ),
       },
     ],
-    [enableRule],
+    [enableRule, navigate],
   );
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
@@ -186,6 +198,8 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
+  const rules = data?.rules ?? [];
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
@@ -195,9 +209,30 @@ export const Component: React.FC = () => {
         </Button>
       </Box>
 
+      {isError ? (
+        <Alert
+          severity="error"
+          data-testid="rule-list-error"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" disabled={isFetching} onClick={() => void refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {getAPIError(error)?.message ?? 'The rules could not be loaded'}
+        </Alert>
+      ) : null}
+
+      {!isError && rules.length === 0 && state.page === 1 ? (
+        <Paper sx={{ p: 3, mb: 2 }}>
+          <Typography color="text.secondary">No automation rules yet.</Typography>
+        </Paper>
+      ) : null}
+
       <DataTable
         columns={columns}
-        data={data?.rules || []}
+        data={rules}
         totalCount={data?.total || 0}
         page={state.page - 1}
         rowsPerPage={state.limit}

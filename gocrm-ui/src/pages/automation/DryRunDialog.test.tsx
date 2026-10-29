@@ -166,4 +166,41 @@ describe('DryRunDialog', () => {
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('clears the report when the record changes and ignores a late response for the old record', async () => {
+    const other = createMockLead({ id: 6, contact_name: 'Ana Pop', company_name: 'Acme' });
+    vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead, other], total: 2, page: 1, limit: 20, total_pages: 1 });
+    let resolveLate: (value: typeof report) => void = () => undefined;
+    vi.mocked(automationApi.dryRun)
+      .mockResolvedValueOnce(report)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveLate = resolve; }));
+    render(<DryRunDialog rule={leadRule} open onClose={vi.fn()} />);
+
+    await pickAutocompleteOption('Lead', 'Ion Ionescu (Bolt Robotics)');
+    fireEvent.click(runButton());
+    await waitFor(() => expect(within(dialog()).getAllByTestId('dry-run-step')).toHaveLength(3));
+
+    // Another record: the first record's report goes away.
+    await pickAutocompleteOption('Lead', 'Ana Pop (Acme)');
+    expect(within(dialog()).queryAllByTestId('dry-run-step')).toHaveLength(0);
+
+    // A run for Ana, then back to Ion before it answers: the late answer is not shown under Ion.
+    fireEvent.click(runButton());
+    await waitFor(() => expect(automationApi.dryRun).toHaveBeenLastCalledWith(4, { entity_type: 'lead', entity_id: 6 }));
+    await pickAutocompleteOption('Lead', 'Ion Ionescu (Bolt Robotics)');
+    resolveLate(createMockDryRunReport({ rule_id: 4, entity_id: 6 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(dialog()).queryAllByTestId('dry-run-step')).toHaveLength(0);
+    expect(runButton()).toBeEnabled();
+  });
+
+  it('reports a failed record search instead of an empty list', async () => {
+    vi.mocked(dealsApi.getDeals).mockRejectedValue(apiError(500, 'INTERNAL_ERROR', 'Database unavailable'));
+    render(<DryRunDialog rule={dealRule} open onClose={vi.fn()} />);
+
+    const input = within(dialog()).getByLabelText('Deal');
+    input.focus();
+    fireEvent.mouseDown(input);
+    expect(await within(dialog()).findByText('Records could not be loaded: Database unavailable')).toBeInTheDocument();
+  });
 });

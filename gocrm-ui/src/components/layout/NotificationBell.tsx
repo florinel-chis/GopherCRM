@@ -38,7 +38,10 @@ export const NotificationBell = () => {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const open = anchorEl !== null;
 
-  const { data: count = 0 } = useQuery({
+  // `count` stays undefined until the first successful fetch, and a failed
+  // poll keeps the last known value (React Query keeps data on error): the
+  // badge never claims "0 unread" because a request failed.
+  const { data: count } = useQuery({
     queryKey: notificationKeys.unreadCount,
     queryFn: notificationsApi.unreadCount,
     enabled: isStaff,
@@ -110,13 +113,13 @@ export const NotificationBell = () => {
         color="inherit"
         data-testid="notification-bell"
         data-unread={count}
-        aria-label={`Notifications (${count} unread)`}
+        aria-label={count === undefined ? 'Notifications' : `Notifications (${count} unread)`}
         aria-haspopup="true"
         aria-controls="notification-menu"
         aria-expanded={open ? 'true' : undefined}
         onClick={handleOpen}
       >
-        <Badge badgeContent={count} color="error" max={99}>
+        <Badge badgeContent={count ?? 0} color="error" max={99}>
           <NotificationsIcon />
         </Badge>
       </IconButton>
@@ -137,11 +140,20 @@ export const NotificationBell = () => {
             <Typography variant="body2">Loading…</Typography>
           </MenuItem>
         )}
-        {listQuery.isError && (
-          <MenuItem disabled>
-            <Typography variant="body2">Failed to load notifications</Typography>
-          </MenuItem>
-        )}
+        {listQuery.isError && [
+          <MenuItem key="error" disabled sx={{ whiteSpace: 'normal', opacity: '1 !important' }}>
+            <Typography variant="body2" color="error">
+              {getAPIError(listQuery.error)?.message || 'Failed to load notifications'}
+            </Typography>
+          </MenuItem>,
+          <MenuItem
+            key="retry"
+            disabled={listQuery.isFetching}
+            onClick={() => void refetchList()}
+          >
+            Retry
+          </MenuItem>,
+        ]}
         {listQuery.isSuccess && notifications.length === 0 && (
           <MenuItem disabled>
             <Typography variant="body2">No notifications</Typography>
@@ -170,7 +182,7 @@ export const NotificationBell = () => {
         ))}
         <Divider />
         <MenuItem
-          disabled={count === 0 || markAllMutation.isPending}
+          disabled={!count || markAllMutation.isPending}
           onClick={() => markAllMutation.mutate()}
         >
           Mark all read
