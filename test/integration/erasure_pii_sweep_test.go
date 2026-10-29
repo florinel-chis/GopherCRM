@@ -500,47 +500,6 @@ func TestErasingAConvertedLeadLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 }
 
-// --- The bulk endpoints ------------------------------------------------------
-
-// Deleting people through a bulk endpoint has to leave the database in the same
-// state as deleting them one at a time — including in the tables the bulk path's
-// own tests never mention.
-func TestBulkErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
-	db := setupFullSchemaDB(t)
-	bulkRepo := repository.NewBulkRepository(db)
-
-	owner := seedLeadOwner(t, db)
-	userSubject := newErasureSubject("bulk-user-sweep")
-	leadSubject := newErasureSubject("bulk-lead-sweep")
-	customerSubject := newErasureSubject("bulk-customer-sweep")
-
-	user := userSubject.asUser(t, db)
-	require.NoError(t, db.Create(&models.APIKey{
-		Name: "ci", KeyHash: "hash-bulk-sweep", Prefix: "gcrm_bsw", UserID: user.ID, IsActive: true,
-	}).Error)
-
-	// A converted lead: erasing it through the bulk path must take the customer
-	// it became with it.
-	lead := leadSubject.asLead(t, db, owner.ID)
-	convertLead(t, db, lead)
-
-	// ...and a customer converted from its own lead, erased from the other end.
-	customerLead := customerSubject.asLead(t, db, owner.ID)
-	customer := convertLead(t, db, customerLead)
-
-	require.Equal(t, []string{"users"}, tablesHolding(t, db, userSubject.identifiers()))
-	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, leadSubject.identifiers()))
-	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, customerSubject.identifiers()))
-
-	require.Empty(t, bulkRepo.BulkDeleteUsers([]uint{user.ID}))
-	require.Empty(t, bulkRepo.BulkDeleteLeads([]uint{lead.ID}))
-	require.Empty(t, bulkRepo.BulkDeleteCustomers([]uint{customer.ID}))
-
-	assertNoPersonalDataAnywhere(t, db, userSubject.identifiers())
-	assertNoPersonalDataAnywhere(t, db, leadSubject.identifiers())
-	assertNoPersonalDataAnywhere(t, db, customerSubject.identifiers())
-}
-
 // --- Deactivation is not erasure ---------------------------------------------
 
 // The mirror image, and the reason the sweep cannot simply be "delete
