@@ -25,7 +25,7 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - `internal/service/automation_service.go`, `automation_engine.go`, `automation_condition.go`,
   `automation_dry_run.go`, `automation_runtime.go`, `automation_events.go`,
   `notification_service.go`; the event hooks in `lead_service.go`, `deal_service.go`,
-  `form_service.go`, `bulk_operation_service.go` and `bulk_status_service.go`
+  `form_service.go` and `bulk_status_service.go`
 - `internal/repository/automation_repository.go`, `notification_repository.go`, `erasure.go`,
   `erasure_cascade.go`, `internal/utils/sort.go`
 - `cmd/main.go`, `cmd/automation_runtime.go`, `internal/config/config.go`
@@ -40,7 +40,7 @@ Priorities: 18 P0, 14 P1, 1 P2.
   deals it currently owns; support and customer get 403 there too. Notifications are the
   recipient's own; customers are never addressed and get 403.
 - **Events are recorded in the write transaction.** A write that rolls back records nothing; a
-  bulk item that fails records nothing for that item. No event or run-log column holds personal
+  refused bulk status batch records nothing for any of its leads. No event or run-log column holds personal
   data.
 - **Every claim is a conditional update.** The event claim (`processed_at IS NULL`), the run claim
   (`status = pending|waiting`), the per-step advance (`status = 'running' AND next_position = ?`)
@@ -172,13 +172,15 @@ Priorities: 18 P0, 14 P1, 1 P2.
   1. Create and update a lead through `LeadService`; update it again without a status change; make
      an update that rolls back.
   2. Submit a public form twice with the same address.
-  3. Bulk status with a missing id, then without; bulk assign with a missing id; bulk convert.
+  3. Bulk status with a missing id, then without; the same batch again; a sales caller owning
+     neither lead; bulk status to `converted`.
   4. Convert a lead to a customer.
 - **Expected:** `lead_created` (origin `user`); `lead_updated` plus `lead_status_changed` with
   `from_value`/`to_value` when the status differs, `lead_updated` alone otherwise; nothing for the
   rolled-back update; `lead_created` then `lead_updated` with origin `form`; the refused batch
   records nothing, the accepted one `lead_updated` per lead plus `lead_status_changed` where the
-  status changed (origin `bulk`, `actor_id` the admin); the failed bulk item records nothing; the
+  status changed (origin `bulk`, `actor_id` the admin); the repeated batch `lead_updated` only;
+  the sales refusal nothing; the move to `converted` a `lead_status_changed` with origin `bulk`; the
   conversion records `lead_updated` and `lead_status_changed … converted` with origin
   `conversion`; no event column holds a name, address, phone or note.
 - **Automation:** automated — `internal/service/automation_lead_events_test.go`:

@@ -200,7 +200,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	refreshTokenRepo := repository.NewRefreshTokenRepository(models.DB)
 	passwordResetRepo := repository.NewPasswordResetTokenRepository(models.DB)
 	bulkOperationRepo := repository.NewBulkOperationRepository(models.DB)
-	bulkRepo := repository.NewBulkRepository(models.DB)
+	bulkStatusRepo := repository.NewBulkStatusRepository(models.DB)
 	aeoRepo := repository.NewAEORepository(models.DB)
 	formRepo := repository.NewFormRepository(models.DB)
 	automationRepo := repository.NewAutomationRepository(models.DB)
@@ -220,7 +220,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	// Every lead and deal write path records its automation events in the
 	// transaction that commits the write (issue #164): the lead service, the
-	// deal service, the form submission path and the bulk paths all take the
+	// deal service, the form submission path and the bulk status path all take the
 	// same outbox repository. Lead conversion enforces the administrator's
 	// lead-conversion settings (issue #104).
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager,
@@ -238,9 +238,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// same mailer as the password reset and the forms.
 	productService := service.NewProductService(productRepo, configService)
 	quoteService := service.NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager)
-	bulkService := service.NewBulkOperationService(
-		bulkOperationRepo, bulkRepo, userRepo, leadRepo, customerRepo,
-		taskRepo, ticketRepo, txManager, utils.Logger,
+	bulkService := service.NewBulkStatusService(
+		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
 		service.WithBulkAutomationEvents(automationRepo),
 	)
 

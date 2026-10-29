@@ -70,8 +70,8 @@ func newAnonymizedEmail() (string, error) {
 }
 
 // erasurePlan describes how one entity is stripped of personal data. It is the
-// only thing that differs between users, customers, leads and the bulk paths —
-// the transaction handling, the placeholder generation and the ordering of the
+// only thing that differs between users, customers and leads — the
+// transaction handling, the placeholder generation and the ordering of the
 // scrub and the soft delete are shared by eraseRecord.
 type erasurePlan struct {
 	// Model is a pointer to a zero value of the entity (e.g. &models.User{}).
@@ -182,43 +182,6 @@ func runInTransaction(db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	return db.Transaction(fn)
 }
 
-// runIsolated executes fn as a unit of work that either takes effect entirely
-// or leaves the database exactly as it found it — WITHOUT disturbing the work
-// the caller has already done in the same transaction, and without taking the
-// caller's commit decision away.
-//
-// This is the one thing runInTransaction deliberately does not provide.
-// runInTransaction JOINS an open transaction, which is right for a single
-// erasure composed into a caller's unit of work: the caller owns the commit, and
-// the erasure must live or die with everything else the caller did. It is wrong
-// for one ITEM of a batch, because a batch reports per-item failures and CARRIES
-// ON. A joined item that fails half way through leaves the statements it already
-// issued sitting on the shared transaction, and the batch — having reported the
-// item as a failure and returned no error of its own — commits them. What is
-// left is the state the whole of this file exists to prevent: a live,
-// still-listed account with a placeholder address, no name, an unusable password
-// and no credentials, whose owner was told the deletion did not happen. Neither
-// intact nor erased is worse than either.
-//
-// gorm.DB.Transaction already draws exactly the boundary an item needs: BEGIN /
-// COMMIT / ROLLBACK when db is a plain handle, and SAVEPOINT / ROLLBACK TO when
-// db is already a transaction, so a failing item rolls back to its own savepoint
-// and its neighbours — before it and after it — are untouched. Savepoints are
-// supported by both engines this project runs on (InnoDB and SQLite) and by both
-// GORM drivers it uses.
-//
-// Nested transactions can be switched off globally in the GORM config, which
-// would silently turn the savepoint back into a bare join and reinstate the
-// defect. That is refused rather than downgraded: an erasure that cannot be
-// isolated must not run.
-func runIsolated(db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	if inTransaction(db) && db.DisableNestedTransaction {
-		return fmt.Errorf("erasure cannot be isolated: it is running inside a transaction " +
-			"but nested transactions (savepoints) are disabled")
-	}
-	return db.Transaction(fn)
-}
-
 // inTransaction reports whether db is already backed by an open transaction.
 // The test is the same one GORM itself uses to decide whether Transaction has
 // been called on a transaction: a connection pool that can commit and roll back
@@ -253,7 +216,7 @@ func purgeCredentials(tx *gorm.DB, userID uint) error {
 	// The in-app notifications addressed to the user go with the credentials:
 	// they are personal to the recipient, their title and body may render a
 	// lead's name, and nothing of either may outlive the person. They share
-	// this purge because every user erasure (single and bulk) reaches it.
+	// this purge because every user erasure reaches it.
 	return purgeUserNotifications(tx, userID)
 }
 

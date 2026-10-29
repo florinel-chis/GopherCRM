@@ -1,8 +1,10 @@
 package models
 
-import "time"
-
-// BulkOperationStatus represents the status of a bulk operation
+// BulkOperationStatus represents the status of a bulk operation.
+//
+// The bulk status endpoints write only pending, completed and failed.
+// processing and partial are kept because rows written by the removed generic
+// bulk subsystem may still hold them.
 type BulkOperationStatus string
 
 const (
@@ -13,16 +15,20 @@ const (
 	BulkOperationStatusPartial    BulkOperationStatus = "partial"
 )
 
-// Short aliases for BulkOperationStatus used by services
+// Short aliases for BulkOperationStatus
 var (
-	StatusPending   = BulkOperationStatusPending
+	StatusPending    = BulkOperationStatusPending
 	StatusProcessing = BulkOperationStatusProcessing
-	StatusCompleted = BulkOperationStatusCompleted
-	StatusFailed    = BulkOperationStatusFailed
-	StatusPartial   = BulkOperationStatusPartial
+	StatusCompleted  = BulkOperationStatusCompleted
+	StatusFailed     = BulkOperationStatusFailed
+	StatusPartial    = BulkOperationStatusPartial
 )
 
-// BulkOperationType represents the type of bulk operation
+// BulkOperationType represents the type of bulk operation.
+//
+// Only BulkOperationTypeAction is written now (every bulk status update is an
+// action). create, update and delete name the values that rows written by the
+// removed generic bulk subsystem may still hold.
 type BulkOperationType string
 
 const (
@@ -32,21 +38,13 @@ const (
 	BulkOperationTypeAction BulkOperationType = "action"
 )
 
-// Short aliases for BulkOperationType used by services
-var (
-	BulkCreate = BulkOperationTypeCreate
-	BulkUpdate = BulkOperationTypeUpdate
-	BulkDelete = BulkOperationTypeDelete
-	BulkAction = BulkOperationTypeAction
-)
-
-// MaxBulkItems is the maximum number of items allowed in a single bulk operation
-const MaxBulkItems = 1000
+// BulkAction is the short name of the one operation type still written.
+var BulkAction = BulkOperationTypeAction
 
 // MaxBulkStatusItems is the maximum number of records a single bulk status
-// update may touch. It is far below MaxBulkItems on purpose: a status update is
-// all-or-nothing, so every listed row is read, authorized and written inside one
-// transaction, and the cap bounds how long that transaction can hold its locks.
+// update may touch. A status update is all-or-nothing, so every listed row is
+// read, authorized and written inside one transaction, and the cap bounds how
+// long that transaction can hold its locks.
 const MaxBulkStatusItems = 100
 
 // BulkOperation represents a bulk operation record
@@ -74,140 +72,10 @@ type BulkOperationItem struct {
 	Data        string              `gorm:"type:text" json:"data,omitempty"`
 }
 
-// BulkUpdateItem represents an item to be updated in a bulk operation
-type BulkUpdateItem struct {
-	ID      uint                   `json:"id"`
-	Updates map[string]interface{} `json:"updates"`
-}
-
-// BulkItemError represents an error for a specific item in a bulk operation
-type BulkItemError struct {
-	Index   int    `json:"index"`
-	Message string `json:"message"`
-	Code    string `json:"code"`
-}
-
-// BulkCreateRequest represents a bulk create request
-type BulkCreateRequest struct {
-	Items []map[string]interface{} `json:"items"`
-}
-
-// BulkUpdateRequest represents a bulk update request
-type BulkUpdateRequest struct {
-	Items []BulkUpdateItem `json:"items"`
-}
-
-// BulkDeleteRequest represents a bulk delete request
-type BulkDeleteRequest struct {
-	IDs []uint `json:"ids"`
-}
-
-// BulkActionRequest represents a bulk action request
-type BulkActionRequest struct {
-	IDs        []uint                 `json:"ids"`
-	Action     string                 `json:"action"`
-	Params     map[string]interface{} `json:"params,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"` // Alias for Params
-}
-
-// BulkResponse represents the response from a bulk operation
-type BulkResponse struct {
-	OperationID    uint            `json:"operation_id"`
-	Status         BulkOperationStatus `json:"status,omitempty"`
-	TotalItems     int             `json:"total_items"`
-	ProcessedItems int             `json:"processed_items,omitempty"`
-	SuccessItems   int             `json:"success_items,omitempty"`
-	SuccessCount   int             `json:"success_count"`
-	FailedItems    int             `json:"failed_items,omitempty"`
-	FailureCount   int             `json:"failure_count"`
-	ProcessingTime *time.Duration  `json:"processing_time,omitempty"`
-	Errors         interface{}     `json:"errors,omitempty"` // Can be []string or []BulkItemError
-}
-
 // BulkStatusUpdateResult is what a bulk status update reports back. There are
 // no per-item results to report: the operation either updates every listed
 // record or updates none of them, so a single count says everything there is to
 // say about a success, and a failure is carried by the error instead.
 type BulkStatusUpdateResult struct {
 	Updated int `json:"updated"`
-}
-
-// Bulk action type constants for each resource
-
-// userBulkActions defines available bulk actions for users
-type userBulkActions struct {
-	Activate   string
-	Deactivate string
-	ChangeRole string
-}
-
-// UserBulkActionTypes contains the available bulk action types for users
-var UserBulkActionTypes = userBulkActions{
-	Activate:   "activate",
-	Deactivate: "deactivate",
-	ChangeRole: "change_role",
-}
-
-// leadBulkActions defines available bulk actions for leads
-type leadBulkActions struct {
-	UpdateStatus string
-	Assign       string
-	Convert      string
-	UpdateSource string
-}
-
-// LeadBulkActionTypes contains the available bulk action types for leads
-var LeadBulkActionTypes = leadBulkActions{
-	UpdateStatus: "update_status",
-	Assign:       "assign",
-	Convert:      "convert",
-	UpdateSource: "update_source",
-}
-
-// customerBulkActions defines available bulk actions for customers
-type customerBulkActions struct {
-	Activate   string
-	Deactivate string
-	UpdateType string
-	Assign     string
-}
-
-// CustomerBulkActionTypes contains the available bulk action types for customers
-var CustomerBulkActionTypes = customerBulkActions{
-	Activate:   "activate",
-	Deactivate: "deactivate",
-	UpdateType: "update_type",
-	Assign:     "assign",
-}
-
-// taskBulkActions defines available bulk actions for tasks
-type taskBulkActions struct {
-	UpdateStatus   string
-	Assign         string
-	UpdatePriority string
-	SetDueDate     string
-}
-
-// TaskBulkActionTypes contains the available bulk action types for tasks
-var TaskBulkActionTypes = taskBulkActions{
-	UpdateStatus:   "update_status",
-	Assign:         "assign",
-	UpdatePriority: "update_priority",
-	SetDueDate:     "set_due_date",
-}
-
-// ticketBulkActions defines available bulk actions for tickets
-type ticketBulkActions struct {
-	UpdateStatus   string
-	Assign         string
-	UpdatePriority string
-	UpdateCategory string
-}
-
-// TicketBulkActionTypes contains the available bulk action types for tickets
-var TicketBulkActionTypes = ticketBulkActions{
-	UpdateStatus:   "update_status",
-	Assign:         "assign",
-	UpdatePriority: "update_priority",
-	UpdateCategory: "update_category",
 }

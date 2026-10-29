@@ -12,10 +12,10 @@ import (
 )
 
 type BulkHandler struct {
-	bulkService service.BulkOperationService
+	bulkService service.BulkStatusService
 }
 
-func NewBulkHandler(bulkService service.BulkOperationService) *BulkHandler {
+func NewBulkHandler(bulkService service.BulkStatusService) *BulkHandler {
 	return &BulkHandler{bulkService: bulkService}
 }
 

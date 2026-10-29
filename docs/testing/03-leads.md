@@ -850,7 +850,7 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   2. Re-read each lead.
 - **Expected:** **200** with a `models.BulkStatusUpdateResult` body; all three leads report
   `status: "contacted"`. The write is a single all-or-nothing transaction
-  (`bulk_status_service.go:172`).
+  (`bulk_status_service.go:173`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new API-level block)
 
 ### TC-LEAD-052 — One unowned lead fails the whole sales batch
@@ -861,7 +861,7 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   1. `POST /leads/bulk/status` with both ids and `{"status":"qualified"}`.
   2. Re-read the sales user's own lead.
 - **Expected:** **403**, message "You can only update your own leads", with the not-owned id listed
-  in `error.details` (`bulk_status_service.go:191`). The user's own lead is **unchanged** — the
+  in `error.details` (`bulk_status_service.go:192`). The user's own lead is **unchanged** — the
   batch is refused in full before any write.
 - **Automation:** blocked — needs a sales role-login helper
 
@@ -875,7 +875,7 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   3. Post a valid id list with a non-existent id.
 - **Expected:** (1) and (2) return **400** — the binding tag is
   `required,min=1,max=100,dive,gt=0` (`bulk_handler.go:371`). (3) returns **404** with the missing
-  ids listed in `error.details` (`bulk_status_service.go:188`) and nothing written.
+  ids listed in `error.details` (`bulk_status_service.go:189`) and nothing written.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new API-level block)
 
 ### TC-LEAD-054 — The frontend's bulk helper can emit a status the endpoint refuses
