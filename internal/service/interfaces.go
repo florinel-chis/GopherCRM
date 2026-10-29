@@ -358,7 +358,8 @@ type APIKeyService interface {
 
 // BulkStatusService backs the three routed bulk status endpoints. Each call is
 // all-or-nothing, authorized per record against the same rules the
-// single-record update applies, and recorded as a bulk_operations row.
+// single-record update applies, and, once it passes the initial checks
+// (status, list size, role), recorded as a bulk_operations row.
 type BulkStatusService interface {
 	BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
 	BulkSetTicketStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
