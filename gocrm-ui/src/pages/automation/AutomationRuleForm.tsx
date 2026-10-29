@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Controller, FormProvider, useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -43,25 +43,44 @@ import {
 import { getAPIError, getHTTPStatus } from '@/utils/apiError';
 import { stepTypeLabel, triggerTypeLabel } from './automationFormat';
 import { afterRuleChanged, afterRuleCreated, automationKeys } from './automationQueries';
-import { DryRunDialog } from './DryRunDialog';
+import { DryRunDialog, type DryRunDraft } from './DryRunDialog';
 import { RuleStepFields } from './RuleStepFields';
 import {
   emptyFormValues,
   emptyStep,
   entityValues,
   fromRule,
+  mapServerFieldErrors,
   parseStepError,
   ruleFormSchema,
+  serverFieldErrorsOf,
   toRulePayload,
   type RuleFormValues,
 } from './ruleFormSchema';
 
 type ScalarKey = 'name' | 'description' | 'from' | 'to' | 'filter_value';
 
+// A server refusal without a field of its own: on the card of the step it
+// names (by the step's stable key), else in the form-level alert.
 interface ServerError {
-  step?: number;
+  stepKey?: string;
   text: string;
 }
+
+// A request carries the form as it was when it left, so its answer can be
+// placed on the form as it is when the answer arrives.
+interface SubmittedRule {
+  payload: AutomationRuleInput;
+  values: RuleFormValues;
+}
+
+interface DryRunState {
+  draft: DryRunDraft;
+  values: RuleFormValues;
+  token: number;
+}
+
+const snapshot = (values: RuleFormValues): RuleFormValues => structuredClone(values);
 
 const valueLabel = (entity: AutomationEntityType, value: string): string =>
   entity === 'deal' ? dealStageLabel(value as DealStage) : value.charAt(0).toUpperCase() + value.slice(1);
@@ -74,16 +93,19 @@ export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess } = useSnackbar();
 
-  const [serverError, setServerError] = useState<ServerError | null>(null);
-  const [pendingUpdate, setPendingUpdate] = useState<AutomationRuleInput | null>(null);
+  const [serverErrors, setServerErrors] = useState<ServerError[]>([]);
+  const [pendingUpdate, setPendingUpdate] = useState<SubmittedRule | null>(null);
   const [addMenu, setAddMenu] = useState<HTMLElement | null>(null);
-  const [dryRunOpen, setDryRunOpen] = useState(false);
+  const [dryRun, setDryRun] = useState<DryRunState | null>(null);
+  // Bumped whenever the dry-run dialog closes: a draft refusal that arrives
+  // later belongs to a dialog that is gone and marks nothing.
+  const dryRunToken = useRef(0);
 
   const methods = useForm<RuleFormValues>({
     resolver: zodResolver(ruleFormSchema),
     defaultValues: emptyFormValues(),
   });
-  const { control, handleSubmit, reset, setValue, getValues, trigger, formState } = methods;
+  const { control, handleSubmit, reset, setValue, getValues, trigger, formState, setError, clearErrors, watch } = methods;
   const { fields, append, remove, move } = useFieldArray({ control, name: 'steps' });
 
   const entity = useWatch({ control, name: 'entity_type' });
@@ -104,41 +126,93 @@ export const Component: React.FC = () => {
     }
   }, [rule, reset]);
 
-  const reportServerError = (error: unknown) => {
-    const message = getAPIError(error)?.message ?? 'The rule could not be saved';
-    setServerError(parseStepError(message));
+  // Field names carrying a server error; editing one clears it.
+  const serverFieldNames = useRef(new Set<string>());
+  useEffect(() => {
+    const subscription = watch((_values, { name }) => {
+      if (!name) return;
+      const touched = name.endsWith('.wait_unit') ? name.replace(/wait_unit$/, 'wait_amount') : name;
+      if (serverFieldNames.current.has(touched)) {
+        serverFieldNames.current.delete(touched);
+        clearErrors(touched as Parameters<typeof clearErrors>[0]);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [watch, clearErrors]);
+
+  /**
+   * Shows a refusal of `submitted`: every field error the server listed on
+   * its field of the CURRENT form (see mapServerFieldErrors), the rest in an
+   * alert. A server without field errors falls back to the message.
+   */
+  const reportServerError = (error: unknown, submitted: RuleFormValues, fallback: string) => {
+    const apiError = getAPIError(error);
+    const fields = serverFieldErrorsOf(apiError?.details);
+    if (!fields || fields.length === 0) {
+      const parsed = parseStepError(apiError?.message ?? fallback);
+      const stepKey = parsed.step === undefined ? undefined : submitted.steps[parsed.step - 1]?.key;
+      setServerErrors([{ stepKey, text: stepKey || parsed.step === undefined ? parsed.text : `Step ${parsed.step}: ${parsed.text}` }]);
+      return;
+    }
+    const mapped = mapServerFieldErrors(fields, submitted, getValues());
+    mapped.fields.forEach(({ name, message }, index) => {
+      serverFieldNames.current.add(name);
+      setError(name as Parameters<typeof setError>[0], { type: 'server', message }, { shouldFocus: index === 0 });
+    });
+    setServerErrors(mapped.unmapped);
   };
 
   const createMutation = useMutation({
-    mutationFn: (payload: AutomationRuleInput) => automationApi.createRule(payload),
+    mutationFn: ({ payload }: SubmittedRule) => automationApi.createRule(payload),
     onSuccess: async (created) => {
       await afterRuleCreated(queryClient, created);
       showSuccess('Rule created');
       navigate('/automation/rules');
     },
-    onError: reportServerError,
+    onError: (error, submitted) => reportServerError(error, submitted.values, 'The rule could not be saved'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: (payload: AutomationRuleInput) => automationApi.updateRule(ruleId, payload),
+    mutationFn: ({ payload }: SubmittedRule) => automationApi.updateRule(ruleId, payload),
     onSuccess: async (updated) => {
       await afterRuleChanged(queryClient, updated);
       showSuccess('Rule saved');
     },
-    onError: reportServerError,
+    onError: (error, submitted) => reportServerError(error, submitted.values, 'The rule could not be saved'),
   });
 
   const onValid = (values: RuleFormValues) => {
+    const submitted = snapshot(values);
     if (isEdit) {
-      setPendingUpdate(toRulePayload(values, 'edit'));
+      setPendingUpdate({ payload: toRulePayload(submitted, 'edit'), values: submitted });
     } else {
-      createMutation.mutate(toRulePayload(values, 'create'));
+      createMutation.mutate({ payload: toRulePayload(submitted, 'create'), values: submitted });
     }
   };
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    setServerError(null);
+    setServerErrors([]);
+    serverFieldNames.current.clear();
     void handleSubmit(onValid)(event);
+  };
+
+  // The dry run simulates the form as it is now, saved or not, once it
+  // passes the same checks a save would.
+  const openDryRun = async () => {
+    setServerErrors([]);
+    if (!(await trigger())) return;
+    const values = snapshot(getValues());
+    dryRunToken.current += 1;
+    setDryRun({
+      draft: { name: values.name, entity_type: values.entity_type, payload: toRulePayload(values, 'edit') },
+      values,
+      token: dryRunToken.current,
+    });
+  };
+
+  const closeDryRun = () => {
+    dryRunToken.current += 1;
+    setDryRun(null);
   };
 
   const changeEntity = (next: AutomationEntityType) => {
@@ -215,8 +289,11 @@ export const Component: React.FC = () => {
   const stepsError = formState.errors.steps?.root?.message ?? formState.errors.steps?.message;
   const atMax = fields.length >= AUTOMATION_MAX_STEPS;
   const saving = createMutation.isPending || updateMutation.isPending;
+  // Refusals that name no step go to the form alert; a step's own refusal
+  // shows on its card and goes away with the step.
+  const formLevelErrors = serverErrors.filter((error) => error.stepKey === undefined).map((error) => error.text);
 
-  const textField = (name: ScalarKey, label: string, multiline = false) => (
+  const textField = (name: ScalarKey, label: string, multiline = false, helper?: string) => (
     <Controller
       control={control}
       name={name}
@@ -228,7 +305,7 @@ export const Component: React.FC = () => {
           multiline={multiline}
           minRows={multiline ? 2 : undefined}
           error={!!fieldState.error}
-          helperText={fieldState.error?.message}
+          helperText={fieldState.error?.message ?? helper}
         />
       )}
     />
@@ -291,22 +368,20 @@ export const Component: React.FC = () => {
             </Typography>
           ) : null}
         </Box>
-        {isEdit && rule ? (
-          <Box textAlign="right">
-            <Button variant="outlined" startIcon={<DryRunIcon />} onClick={() => setDryRunOpen(true)}>
-              Dry run
-            </Button>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              display="block"
-              data-testid="dry-run-saved-version"
-              sx={{ mt: 0.5 }}
-            >
-              {`Simulates the saved version ${rule.version}; save first to include unsaved changes.`}
-            </Typography>
-          </Box>
-        ) : null}
+        <Box textAlign="right">
+          <Button variant="outlined" startIcon={<DryRunIcon />} onClick={() => void openDryRun()}>
+            Dry run
+          </Button>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            data-testid="dry-run-draft-notice"
+            sx={{ mt: 0.5 }}
+          >
+            Simulates the form as it is now, unsaved changes included; nothing is saved.
+          </Typography>
+        </Box>
       </Box>
 
       {loadErrorAlert}
@@ -315,7 +390,14 @@ export const Component: React.FC = () => {
         <form onSubmit={onSubmit} noValidate>
           <Paper sx={{ p: 3, mb: 3 }}>
             <Grid container spacing={2}>
-              <Grid size={12}>{textField('name', 'Name')}</Grid>
+              <Grid size={12}>
+                {textField(
+                  'name',
+                  'Name',
+                  false,
+                  'Sales users see this name on the runs of their leads and deals, also after the rule is deleted.',
+                )}
+              </Grid>
               <Grid size={12}>{textField('description', 'Description', true)}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
@@ -418,11 +500,13 @@ export const Component: React.FC = () => {
                       </IconButton>
                     </Box>
                   </Box>
-                  {serverError?.step === number ? (
-                    <Alert severity="error" data-testid="step-server-error" sx={{ mb: 2 }}>
-                      {serverError.text}
-                    </Alert>
-                  ) : null}
+                  {serverErrors
+                    .filter((error) => error.stepKey !== undefined && error.stepKey === watchedSteps?.[index]?.key)
+                    .map((error) => (
+                      <Alert key={error.text} severity="error" data-testid="step-server-error" sx={{ mb: 2 }}>
+                        {error.text}
+                      </Alert>
+                    ))}
                   <RuleStepFields index={index} step={{ step_type: stepType }} entity={entity} />
                 </Paper>
               );
@@ -458,14 +542,9 @@ export const Component: React.FC = () => {
             ) : null}
           </Box>
 
-          {serverError && serverError.step === undefined ? (
+          {formLevelErrors.length > 0 ? (
             <Alert severity="error" data-testid="rule-server-error" sx={{ mb: 2 }}>
-              {serverError.text}
-            </Alert>
-          ) : null}
-          {serverError?.step !== undefined && serverError.step > fields.length ? (
-            <Alert severity="error" data-testid="rule-server-error" sx={{ mb: 2 }}>
-              {`Step ${serverError.step}: ${serverError.text}`}
+              {formLevelErrors.join('; ')}
             </Alert>
           ) : null}
 
@@ -490,7 +569,18 @@ export const Component: React.FC = () => {
         onCancel={() => setPendingUpdate(null)}
       />
 
-      {isEdit && rule ? <DryRunDialog rule={rule} open={dryRunOpen} onClose={() => setDryRunOpen(false)} /> : null}
+      {dryRun ? (
+        <DryRunDialog
+          draft={dryRun.draft}
+          open
+          onClose={closeDryRun}
+          onValidationError={(error) => {
+            if (dryRun.token === dryRunToken.current) {
+              reportServerError(error, dryRun.values, 'The dry run failed');
+            }
+          }}
+        />
+      ) : null}
     </Box>
   );
 };

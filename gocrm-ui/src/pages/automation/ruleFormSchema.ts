@@ -550,3 +550,139 @@ export const parseStepError = (message: string): { step?: number; text: string }
   if (match) return { step: Number(match[1]), text: match[2] };
   return { text: message.replace(SENTINEL_SUFFIX, '') };
 };
+
+// --- Server field errors -----------------------------------------------------
+
+/** One entry of error.details.fields of a refused rule body. */
+export interface ServerFieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** error.details.fields when the server sent it, otherwise null. */
+export const serverFieldErrorsOf = (details: Record<string, unknown> | undefined): ServerFieldError[] | null => {
+  const fields = details?.fields;
+  if (!Array.isArray(fields)) return null;
+  return fields.filter(
+    (entry): entry is ServerFieldError =>
+      isRecord(entry) &&
+      typeof entry.field === 'string' &&
+      typeof entry.code === 'string' &&
+      typeof entry.message === 'string',
+  );
+};
+
+type TopLevelField = 'name' | 'description' | 'trigger_type' | 'from' | 'to' | 'hour_utc' | 'stale_days' | 'filter_value';
+
+const TOP_LEVEL_PATHS: Record<string, TopLevelField> = {
+  name: 'name',
+  description: 'description',
+  trigger_type: 'trigger_type',
+  'trigger.from': 'from',
+  'trigger.to': 'to',
+  'trigger.hour_utc': 'hour_utc',
+  'trigger.stale_days': 'stale_days',
+  'trigger.filters': 'filter_value',
+  'trigger.filters.status': 'filter_value',
+  'trigger.filters.stage': 'filter_value',
+};
+
+// Step config names whose form field has the same name.
+const SAME_NAME_STEP_FIELDS = new Set<keyof StepFormValues>([
+  'field',
+  'operator',
+  'currency',
+  'else',
+  'recipient',
+  'user_id',
+  'title',
+  'description',
+  'priority',
+  'due_in_days',
+  'subject',
+  'body',
+]);
+
+const STEP_PATH = /^steps\[(\d+)\]\.(?:config\.([a-z_]+)|step_type)$/;
+
+/** The form field of a step config name, with the values that decide it. */
+const stepFormField = (configName: string, step: StepFormValues): (keyof StepFormValues)[] | null => {
+  switch (configName) {
+    case 'duration_minutes':
+      return ['wait_amount', 'wait_unit'];
+    case 'value':
+      return [isListOperator(step.operator) ? 'value_list' : 'value_text', 'operator'];
+    case 'else_position':
+      return ['else_target', 'else'];
+    default:
+      return SAME_NAME_STEP_FIELDS.has(configName as keyof StepFormValues) ? [configName as keyof StepFormValues] : null;
+  }
+};
+
+export interface MappedServerErrors {
+  /** Errors to set on a form field, by react-hook-form path. */
+  fields: { name: string; message: string }[];
+  /** Errors with no field of their own, for the form-level alert. */
+  unmapped: { text: string; stepKey?: string }[];
+}
+
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Places the server's field errors on the form as it is NOW. `submitted` is
+ * the form as it was when the request left: a step error follows its step by
+ * its stable key wherever the step has moved since, and an error whose step
+ * was removed, whose step type changed, or whose field was edited while the
+ * request was in flight is dropped — it describes a value no longer there.
+ * Errors without a form field (entity type, the step list, a step type) go to
+ * the form-level alert.
+ */
+export const mapServerFieldErrors = (
+  errors: ServerFieldError[],
+  submitted: RuleFormValues,
+  current: RuleFormValues,
+): MappedServerErrors => {
+  const result: MappedServerErrors = { fields: [], unmapped: [] };
+  const seen = new Set<string>();
+  for (const error of errors) {
+    const topLevel = TOP_LEVEL_PATHS[error.field];
+    if (topLevel) {
+      if (!same(submitted[topLevel], current[topLevel]) || !same(submitted.trigger_type, current.trigger_type)) continue;
+      if (!seen.has(topLevel)) {
+        seen.add(topLevel);
+        result.fields.push({ name: topLevel, message: error.message });
+      }
+      continue;
+    }
+    const match = STEP_PATH.exec(error.field);
+    if (!match) {
+      result.unmapped.push({ text: error.message });
+      continue;
+    }
+    const index = Number(match[1]);
+    const sent = submitted.steps[index];
+    if (!sent) {
+      result.unmapped.push({ text: `Step ${index + 1}: ${error.message}` });
+      continue;
+    }
+    const now = current.steps.findIndex((step) => step.key === sent.key);
+    if (now < 0 || current.steps[now].step_type !== sent.step_type) continue;
+    const configName = match[2];
+    const formFields = configName ? stepFormField(configName, sent) : null;
+    if (!formFields) {
+      result.unmapped.push({ text: error.message, stepKey: sent.key });
+      continue;
+    }
+    if (formFields.some((name) => !same(sent[name], current.steps[now][name]))) continue;
+    const name = `steps.${now}.${formFields[0]}`;
+    if (!seen.has(name)) {
+      seen.add(name);
+      result.fields.push({ name, message: error.message });
+    }
+  }
+  return result;
+};

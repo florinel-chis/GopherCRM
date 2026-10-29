@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Follow-up automation: rule names on runs, field-level rule errors, dry run of unsaved edits.**
+  Run responses (`GET /automation/runs`, `GET /automation/runs/{id}`, the cancel answer) carry
+  `rule_name` — the rule's current name, also for a deleted rule, flagged `rule_deleted` — and
+  never the rule's trigger or steps (the `rule` association is no longer serialised at all); the
+  run list, run detail, the lead and deal Automation sections and the run list's rule filter show
+  the name. Sales users therefore see the names of the rules that ran on their records, also after
+  a rule is deleted; the rule form says so under the name. A refused rule body lists every refused
+  field in `error.details.fields` as `{field, code, message}` (`steps[2].config.title`, steps
+  counted from zero) while `error.message` and `error.code` stay those of the first refusal; the
+  editor puts each message under its field, following steps moved while the save was in flight and
+  dropping errors of fields edited or steps removed meanwhile. `POST /automation/rules/dry-run`
+  (admin) simulates an unsaved rule body after the same validation as a create, saving nothing and
+  starting no transaction; the editor's Dry run button now simulates the form as it is, on a new
+  rule too, while the rule list's dry run keeps simulating the saved version.
 - **Follow-up automation and notifications (UI).** The screens for the automation API:
   `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
   cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and

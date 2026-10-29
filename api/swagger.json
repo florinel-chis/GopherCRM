@@ -4149,7 +4149,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a follow-up automation rule with its ordered steps (admin only). entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. An invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT and writes no row; an unknown, inactive or non-staff user id is 400 INVALID_REFERENCE. A new rule is disabled unless enabled is true.",
+                "description": "Create a follow-up automation rule with its ordered steps (admin only). entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. An invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT and writes no row; an unknown, inactive or non-staff user id is 400 INVALID_REFERENCE. A new rule is disabled unless enabled is true. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4191,7 +4191,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)",
+                        "description": "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE); error.details.fields lists every refused field",
                         "schema": {
                             "allOf": [
                                 {
@@ -4201,7 +4201,19 @@
                                     "type": "object",
                                     "properties": {
                                         "error": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "details": {
+                                                            "$ref": "#/definitions/internal_handler.AutomationRuleErrorDetails"
+                                                        }
+                                                    }
+                                                }
+                                            ]
                                         }
                                     }
                                 }
@@ -4228,6 +4240,180 @@
                     },
                     "403": {
                         "description": "Forbidden - admin role required",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests - rate limit exceeded",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/automation/rules/dry-run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Simulate an unsaved rule body against one record (admin only): the rule editor's current values, for a new rule or for unsaved edits of an existing one. The body goes through the same normalisation and validation as the create (400 INVALID_INPUT or INVALID_REFERENCE with error.details.fields), then is simulated like POST /automation/rules/{id}/dry-run. Nothing is saved, no transaction is started and nothing is written, sent or notified; a saved rule's version and steps are untouched. The report has draft true and rule_id and rule_version 0. enabled in the rule body is ignored. A record of another entity type than the body's is 400 INVALID_INPUT; a missing record is 404.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "automation"
+                ],
+                "summary": "Dry-run an unsaved automation rule",
+                "parameters": [
+                    {
+                        "description": "The unsaved rule and the record to simulate against",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AutomationDraftDryRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Per-step report of the draft",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunReport"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body or rule (INVALID_INPUT, with error.details.fields for a refused rule), unknown user (INVALID_REFERENCE), or a record of the wrong entity type",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "details": {
+                                                            "$ref": "#/definitions/internal_handler.AutomationRuleErrorDetails"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden - admin role required",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Record not found",
                         "schema": {
                             "allOf": [
                                 {
@@ -4430,7 +4616,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply and leave the rule untouched.",
+                "description": "Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply, with the same error.details.fields, and leave the rule untouched.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4479,7 +4665,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)",
+                        "description": "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE); error.details.fields lists every refused field",
                         "schema": {
                             "allOf": [
                                 {
@@ -4489,7 +4675,19 @@
                                     "type": "object",
                                     "properties": {
                                         "error": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "details": {
+                                                            "$ref": "#/definitions/internal_handler.AutomationRuleErrorDetails"
+                                                        }
+                                                    }
+                                                }
+                                            ]
                                         }
                                     }
                                 }
@@ -5132,7 +5330,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of runs (admin and sales). The role scope is applied inside the query: an admin sees every run, a sales user only runs whose lead or deal it currently owns, so meta.total counts that set. Filters: status, rule_id, entity_type, entity_id. sort_by is limited to id, created_at, updated_at, status and resume_at (anything else is 400). Support and customer users get 403.",
+                "description": "One page of runs (admin and sales). The role scope is applied inside the query: an admin sees every run, a sales user only runs whose lead or deal it currently owns, so meta.total counts that set. Filters: status, rule_id, entity_type, entity_id. sort_by is limited to id, created_at, updated_at, status and resume_at (anything else is 400). Support and customer users get 403. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.",
                 "produces": [
                     "application/json"
                 ],
@@ -5333,7 +5531,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "The run with its step log (admin and sales). A sales user asking for a run on a record it does not own gets 404. Support and customer users get 403.",
+                "description": "The run with its step log (admin and sales), with rule_name and rule_deleted as in the list and never the rule's trigger or steps. A sales user asking for a run on a record it does not own gets 404. Support and customer users get 403.",
                 "produces": [
                     "application/json"
                 ],
@@ -22994,6 +23192,9 @@
         "github_com_florinel-chis_gophercrm_internal_models.AutomationDryRunReport": {
             "type": "object",
             "properties": {
+                "draft": {
+                    "type": "boolean"
+                },
                 "entity_id": {
                     "type": "integer"
                 },
@@ -23142,11 +23343,15 @@
                 "resume_at": {
                     "type": "string"
                 },
-                "rule": {
-                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationRule"
+                "rule_deleted": {
+                    "type": "boolean"
                 },
                 "rule_id": {
                     "type": "integer"
+                },
+                "rule_name": {
+                    "description": "RuleName is the rule's current name, a soft-deleted rule's included;\nRuleDeleted flags a rule that is deleted (or gone, with an empty name).\nBoth are filled by the repository's run reads and have no column.",
+                    "type": "string"
                 },
                 "rule_version": {
                     "type": "integer"
@@ -24604,6 +24809,20 @@
                 }
             }
         },
+        "github_com_florinel-chis_gophercrm_internal_service.RuleFieldError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_florinel-chis_gophercrm_internal_service.SubmitOutcome": {
             "type": "object",
             "properties": {
@@ -24768,6 +24987,29 @@
                 }
             }
         },
+        "internal_handler.AutomationDraftDryRunRequest": {
+            "type": "object",
+            "required": [
+                "entity_id",
+                "entity_type"
+            ],
+            "properties": {
+                "entity_id": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "entity_type": {
+                    "type": "string",
+                    "enum": [
+                        "lead",
+                        "deal"
+                    ]
+                },
+                "rule": {
+                    "$ref": "#/definitions/internal_handler.AutomationRuleRequest"
+                }
+            }
+        },
         "internal_handler.AutomationDryRunRequest": {
             "type": "object",
             "required": [
@@ -24785,6 +25027,17 @@
                         "lead",
                         "deal"
                     ]
+                }
+            }
+        },
+        "internal_handler.AutomationRuleErrorDetails": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_service.RuleFieldError"
+                    }
                 }
             }
         },

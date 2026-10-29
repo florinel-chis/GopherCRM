@@ -16,6 +16,9 @@ import (
 // read with plain reads and the report is built in memory.
 func (e *AutomationEngine) DryRun(rule *models.AutomationRule, entityType string, entityID uint) (*models.AutomationDryRunReport, error) {
 	if rule.EntityType != entityType {
+		if rule.ID == 0 {
+			return nil, fmt.Errorf("the rule applies to %s records, not %s: %w", rule.EntityType, entityType, apperrors.ErrValidation)
+		}
 		return nil, fmt.Errorf("rule %d applies to %s records, not %s: %w", rule.ID, rule.EntityType, entityType, apperrors.ErrValidation)
 	}
 	rec, err := e.loadRecord(entityType, entityID)

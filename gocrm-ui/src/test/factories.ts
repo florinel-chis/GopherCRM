@@ -274,12 +274,15 @@ export const createMockAutomationRule = (overrides?: Partial<AutomationRule>): A
   ...overrides,
 });
 
-// A pending run of rule #1 on lead #1; list rows carry no steps.
+// A pending run of rule #1 on lead #1; list rows carry no steps. The rule
+// name is empty (a rule row that is gone) unless a test names it.
 export const createMockAutomationRun = (overrides?: Partial<AutomationRun>): AutomationRun => ({
   id: 1,
   created_at: '2026-10-28T09:00:00Z',
   updated_at: '2026-10-28T09:00:00Z',
   rule_id: 1,
+  rule_name: '',
+  rule_deleted: false,
   rule_version: 1,
   entity_type: 'lead',
   entity_id: 1,
@@ -322,6 +325,7 @@ export const createMockDryRunReport = (
 ): AutomationDryRunReport => ({
   rule_id: 1,
   rule_version: 1,
+  draft: false,
   entity_type: 'lead',
   entity_id: 1,
   simulated_start: '2026-10-28T09:00:00Z',

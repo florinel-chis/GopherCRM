@@ -235,6 +235,24 @@ describe('automationApi', () => {
     expect(result).toEqual(report);
   });
 
+  it('posts an unsaved rule body to the draft dry-run route', async () => {
+    const rule: AutomationRuleInput = {
+      name: 'Unsaved',
+      description: '',
+      entity_type: 'lead',
+      trigger_type: 'lead_created',
+      trigger: {},
+      steps: [{ step_type: 'notify', config: { title: 'Hi', recipient: 'owner' } }],
+    };
+    const report = { rule_id: 0, rule_version: 0, draft: true, entity_type: 'lead', entity_id: 5, steps: [] };
+    vi.mocked(api.post).mockResolvedValue({ data: report });
+
+    const result = await automationApi.dryRunDraft({ rule, entity_type: 'lead', entity_id: 5 });
+
+    expect(api.post).toHaveBeenCalledWith('/automation/rules/dry-run', { rule, entity_type: 'lead', entity_id: 5 });
+    expect(result).toEqual(report);
+  });
+
   it('lists runs with status, rule_id, entity_type and entity_id as params', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: [backendRun], meta: { total: 9 } });
 
