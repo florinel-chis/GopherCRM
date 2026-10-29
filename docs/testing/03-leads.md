@@ -960,3 +960,70 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 - **Automation:** automated — `tests/lead_integration_test.go`
   `TestConvertToCustomer_EmailTakenByCustomerIsConflict`, and on MySQL and MariaDB by
   `gocrm-ui/e2e/tests/leads-convert-api.spec.ts`.
+
+### TC-LEAD-059 — The allowed conversion statuses are enforced by the server
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; `leads.conversion.allowed_statuses` at its seeded value
+  `["qualified", "contacted"]`.
+- **Steps:**
+  1. Create a lead with status `new` and `POST /api/v1/leads/{id}/convert` it.
+  2. Set `leads.conversion.allowed_statuses` to `["unqualified"]`; convert a `qualified` lead and an
+     `unqualified` one.
+  3. Restore the setting.
+- **Expected:** step 1 is **400** `VALIDATION_ERROR` "Leads with status "new" cannot be converted.
+  Allowed statuses: qualified, contacted." with `details` `{field: "status", status: "new",
+  allowed_statuses: [...]}`; no customer is created and the lead keeps its status. In step 2 the
+  `qualified` lead is refused the same way and the `unqualified` one converts (200). The setting is
+  read on every conversion, so a saved change applies at once. An empty list refuses every
+  conversion. Before #104 the server ignored the setting and only the hidden Convert button
+  (TC-LEAD-043) applied it; `unqualified` could not even be saved, because the valid values listed
+  `lost` instead.
+- **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
+  `TestLeadConversionRules{SQLite,MySQL}`; the response shape in `lead_handler_test.go`
+  `TestConvertToCustomer_ConversionRuleRefusals`.
+
+### TC-LEAD-060 — Required conversion notes are enforced by the server
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; a `qualified` lead; `leads.conversion.require_notes` set to `true`.
+- **Steps:**
+  1. Convert with no `notes`, then with `"notes": "   "`.
+  2. Convert with `"notes": "Signed the pilot order"`.
+  3. Restore the setting to `false` and convert another lead without notes.
+- **Expected:** step 1 is **400** `VALIDATION_ERROR` "Conversion notes are required." with
+  `details` `{field: "notes"}` both times (whitespace is no note), nothing written. Step 2 is 200 and
+  the customer's `notes` hold the text. Step 3 is 200.
+- **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
+  `TestLeadConversionRules{SQLite,MySQL}`.
+
+### TC-LEAD-061 — Owner assignment fills assigned_to_id, never user_id
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; a `qualified` lead owned by a sales user.
+- **Steps:**
+  1. Convert it with `leads.conversion.auto_assign_owner` at its seeded `true`.
+  2. Set the setting to `false` and convert another lead of the same owner.
+- **Expected:** the first customer has `assigned_to_id` = the lead's owner and no `user_id` (that
+  field is the customer's own login); the second has neither. Before #104 the setting was ignored and
+  no converted customer had an account manager.
+- **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
+  `TestLeadConversionRules{SQLite,MySQL}`.
+
+### TC-LEAD-062 — The company link carries over; a stale one is dropped; a failure rolls back
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; a live company; leads linked to it, to no company, and to a company
+  that has since been soft-deleted without unlinking (only possible outside the API, since deleting a
+  company clears its links).
+- **Steps:**
+  1. Convert each lead.
+  2. Force the lead write that follows the customer insert to fail (test seam).
+- **Expected:** the customer of the linked lead has the same `company_id` and the free-text
+  `company`; the unlinked one has no `company_id`; the stale link is dropped and the conversion
+  still succeeds (200) — the caller did not send it and cannot fix it in this request. In step 2 the
+  call fails, no customer row exists and the lead keeps its status, `customer_id` and `company_id`.
+  A second conversion of a converted lead stays a 400 (TC-LEAD-045). A failed settings read is a 500
+  with nothing written, never a conversion under a guessed policy.
+- **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
+  `TestLeadConversionRules{SQLite,MySQL}`, `TestLeadConversionSettingsReadFailureWritesNothing`.

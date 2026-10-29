@@ -288,6 +288,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Lead conversion keeps the company link and enforces the conversion settings (#104).**
+  `POST /leads/{id}/convert` copies the lead's `company_id` to the new customer when it still
+  names a live company (a link to a deleted company is dropped and the conversion still succeeds),
+  and now enforces the three lead-conversion settings on the server, before anything is written:
+  the lead's status must be in `leads.conversion.allowed_statuses`, non-blank `notes` are required
+  when `leads.conversion.require_notes` is on — a refusal is 400 `VALIDATION_ERROR` whose
+  `details` name the field (`status` with the allowed statuses, or `notes`) — and with
+  `leads.conversion.auto_assign_owner` on the lead's owner becomes the customer's
+  `assigned_to_id` (never `user_id`). Before, all three settings were ignored by the server. The
+  settings are read on every conversion; a failed read is a 500 with nothing written. The
+  allowed-status `valid_values` listed `lost`, which is not a lead status, instead of
+  `unqualified`; the list is now `new, contacted, qualified, unqualified`, and the boot-time seeder
+  corrects the metadata of existing rows while keeping the statuses an administrator chose.
+  `GET /configurations/ui` now also carries read-only `leads.conversion.require_notes` and
+  `leads.conversion.auto_assign_owner` entries next to the allowed statuses, with the values the
+  server enforces.
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value

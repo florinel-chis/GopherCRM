@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -19,6 +20,18 @@ type leadService struct {
 	// automation records the outbox events of every committed lead write
 	// (issue #164). Nil means no automation: the writes run as before.
 	automation repository.AutomationRepository
+	// config supplies the administrator's lead-conversion settings, which
+	// ConvertToCustomer enforces (issue #104). Nil means no settings are
+	// enforced: no status restriction, notes optional, no owner assignment.
+	config ConfigurationService
+}
+
+// WithLeadConversionRules makes ConvertToCustomer enforce the lead-conversion
+// settings (leads.conversion.allowed_statuses, require_notes and
+// auto_assign_owner) read from config on every conversion. The application
+// always wires it; services built without it convert unrestricted.
+func WithLeadConversionRules(config ConfigurationService) LeadServiceOption {
+	return func(s *leadService) { s.config = config }
 }
 
 // LeadServiceOption configures NewLeadService beyond its required
@@ -332,6 +345,94 @@ func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder 
 	return leads, total, nil
 }
 
+// LeadConversionRuleError is a conversion refused by one of the
+// administrator's lead-conversion settings. It unwraps to
+// apperrors.ErrValidation; the handler answers it with 400 VALIDATION_ERROR,
+// its message, and the field that failed.
+type LeadConversionRuleError struct {
+	// Field is the request field the rule is about: "status" (the lead's
+	// status is not one the settings allow) or "notes" (notes are required).
+	Field   string
+	Message string
+	// Status and AllowedStatuses are set for a status refusal.
+	Status          models.LeadStatus
+	AllowedStatuses []string
+}
+
+func (e *LeadConversionRuleError) Error() string { return e.Message }
+func (e *LeadConversionRuleError) Unwrap() error { return apperrors.ErrValidation }
+
+// leadConversionRules is one read of the lead-conversion settings.
+type leadConversionRules struct {
+	enforced        bool
+	allowedStatuses []string
+	requireNotes    bool
+	autoAssignOwner bool
+}
+
+// loadConversionRules reads the settings once per conversion, so a change an
+// administrator saves applies to the next conversion without a restart. A
+// failed read fails the conversion: guessing a policy would either let
+// through a conversion the administrator forbade or refuse one they allowed.
+func (s *leadService) loadConversionRules() (leadConversionRules, error) {
+	if s.config == nil {
+		return leadConversionRules{}, nil
+	}
+	statuses, err := s.config.GetLeadConversionStatuses()
+	if err != nil {
+		return leadConversionRules{}, fmt.Errorf("read allowed conversion statuses: %w", err)
+	}
+	requireNotes, err := s.config.IsLeadConversionRequireNotes()
+	if err != nil {
+		return leadConversionRules{}, fmt.Errorf("read conversion notes setting: %w", err)
+	}
+	autoAssign, err := s.config.IsLeadConversionAutoAssignOwner()
+	if err != nil {
+		return leadConversionRules{}, fmt.Errorf("read conversion owner setting: %w", err)
+	}
+	return leadConversionRules{
+		enforced:        true,
+		allowedStatuses: statuses,
+		requireNotes:    requireNotes,
+		autoAssignOwner: autoAssign,
+	}, nil
+}
+
+// checkStatus refuses a lead whose status is not in the allowed list. An
+// empty list allows nothing: that is what the administrator configured.
+func (r leadConversionRules) checkStatus(status models.LeadStatus) error {
+	if !r.enforced {
+		return nil
+	}
+	for _, allowed := range r.allowedStatuses {
+		if string(status) == allowed {
+			return nil
+		}
+	}
+	message := fmt.Sprintf("Leads with status %q cannot be converted. Allowed statuses: %s.", status, strings.Join(r.allowedStatuses, ", "))
+	if len(r.allowedStatuses) == 0 {
+		message = "Lead conversion is disabled: no lead status is allowed for conversion."
+	}
+	return &LeadConversionRuleError{
+		Field:           "status",
+		Message:         message,
+		Status:          status,
+		AllowedStatuses: append([]string{}, r.allowedStatuses...),
+	}
+}
+
+// checkNotes refuses a conversion without notes when notes are required.
+// Whitespace alone is no note.
+func (r leadConversionRules) checkNotes(notes string) error {
+	if !r.enforced || !r.requireNotes || strings.TrimSpace(notes) != "" {
+		return nil
+	}
+	return &LeadConversionRuleError{
+		Field:   "notes",
+		Message: "Conversion notes are required.",
+	}
+}
+
 // ConvertToCustomer promotes a lead to a customer.
 //
 // The lead's personal data is COPIED into the new customer and the lead row is
@@ -340,6 +441,17 @@ func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder 
 // is the only link between the two rows, and erasure follows it: deleting
 // either half erases both, or the person would survive in the other one. See
 // repository/erasure_cascade.go.
+//
+// The administrator's lead-conversion settings are enforced before anything
+// is written (issue #104): the lead's status must be one of
+// leads.conversion.allowed_statuses, the customer notes must not be blank when
+// leads.conversion.require_notes is on, and with
+// leads.conversion.auto_assign_owner on the lead's owner becomes the
+// customer's account manager (AssignedToID — never UserID, which is the
+// customer's own login). The lead's company link is carried over when it
+// still names a live company; a link to a deleted company is dropped rather
+// than failing the conversion, because the caller did not send it and cannot
+// correct it in this request, and deleting a company clears its links anyway.
 func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
 	if err := normalizeCustomerWebsite(customerData); err != nil {
 		return nil, err
@@ -358,11 +470,31 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		return nil, apperrors.NewLeadAlreadyConverted(leadID)
 	}
 
+	rules, err := s.loadConversionRules()
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to read the lead conversion settings")
+		return nil, err
+	}
+	if err := rules.checkStatus(lead.Status); err != nil {
+		logger.Warn("Lead conversion refused by the allowed statuses")
+		return nil, err
+	}
+	if err := rules.checkNotes(customerData.Notes); err != nil {
+		logger.Warn("Lead conversion refused: notes are required")
+		return nil, err
+	}
+
+	// Every attempt starts from what the caller sent: a retried attempt must
+	// not inherit the id or the derived fields of one that rolled back.
+	requested := *customerData
+
 	// Execute conversion within a transaction with retry logic
 	ctx := context.Background()
 	var convertedCustomer *models.Customer
 
 	err = s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
+		*customerData = requested
+
 		// Get transaction from context
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
@@ -381,6 +513,10 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 
 		if txLead.Status == models.LeadStatusConverted {
 			return apperrors.NewLeadAlreadyConverted(leadID)
+		}
+		// The status may have changed since the read above.
+		if err := rules.checkStatus(txLead.Status); err != nil {
+			return err
 		}
 
 		// Prepare customer data from lead data
@@ -403,6 +539,23 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		// email: refuse before anything is written.
 		if customerData.Email == "" {
 			return fmt.Errorf("lead %d: %w", leadID, apperrors.ErrLeadMissingEmail)
+		}
+
+		if customerData.CompanyID == nil && txLead.CompanyID != nil {
+			companyID := *txLead.CompanyID
+			if _, err := s.companyRepo.WithTx(tx).GetByID(companyID); err != nil {
+				if !isNotFound(err) {
+					return err
+				}
+				logger.WithField("company_id", companyID).Warn("Lead links a company that no longer exists; converting without the link")
+			} else {
+				customerData.CompanyID = &companyID
+			}
+		}
+
+		if rules.autoAssignOwner && txLead.OwnerID != 0 {
+			ownerID := txLead.OwnerID
+			customerData.AssignedToID = &ownerID
 		}
 
 		// Create customer within transaction

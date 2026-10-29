@@ -12,6 +12,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -501,6 +502,84 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+}
+
+// Issue #104: a refusal by a lead-conversion setting is a 400
+// VALIDATION_ERROR naming the field, with the allowed statuses for a status
+// refusal, so the dialog can say what to change.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_ConversionRuleRefusals() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	existingLead := &models.Lead{BaseModel: models.BaseModel{ID: 1}, Status: models.LeadStatusNew, OwnerID: 1}
+	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+
+	cases := []struct {
+		name    string
+		err     error
+		details map[string]interface{}
+	}{
+		{
+			name: "status",
+			err: &service.LeadConversionRuleError{
+				Field: "status", Message: "Leads with status \"new\" cannot be converted. Allowed statuses: qualified.",
+				Status: models.LeadStatusNew, AllowedStatuses: []string{"qualified"},
+			},
+			details: map[string]interface{}{"field": "status", "status": "new", "allowed_statuses": []interface{}{"qualified"}},
+		},
+		{
+			name:    "notes",
+			err:     &service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."},
+			details: map[string]interface{}{"field": "notes"},
+		},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+			defer call.Unset()
+
+			req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			suite.router.ServeHTTP(rec, req)
+
+			suite.Equal(http.StatusBadRequest, rec.Code)
+			var response struct {
+				Success bool `json:"success"`
+				Error   struct {
+					Code    string                 `json:"code"`
+					Message string                 `json:"message"`
+					Details map[string]interface{} `json:"details"`
+				} `json:"error"`
+			}
+			suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+			suite.False(response.Success)
+			suite.Equal(utils.ErrCodeValidation, response.Error.Code)
+			suite.Equal(tc.err.Error(), response.Error.Message)
+			suite.Equal(tc.details, response.Error.Details)
+		})
+	}
+}
+
+// The handler never sets the customer's own login, account manager or
+// company link: those come from the lead, in the service, and only under the
+// conversion settings.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LeavesDerivedLinksToTheService() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	companyID := uint(7)
+	existingLead := &models.Lead{
+		BaseModel: models.BaseModel{ID: 1}, Email: "lead@example.com", Status: models.LeadStatusQualified,
+		OwnerID: 1, CompanyID: &companyID,
+	}
+	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+	suite.mockService.On("ConvertToCustomer", uint(1), mock.MatchedBy(func(c *models.Customer) bool {
+		return c.UserID == nil && c.AssignedToID == nil && c.CompanyID == nil && c.Notes == "Pilot signed"
+	})).Return(&models.Customer{BaseModel: models.BaseModel{ID: 3}}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{"notes":"Pilot signed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.Equal(http.StatusOK, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_SalesUserForbidden() {

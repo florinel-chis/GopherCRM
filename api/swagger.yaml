@@ -1859,6 +1859,9 @@ definitions:
       company_name:
         type: string
       notes:
+        description: |-
+          Notes are stored on the new customer. They are required (non-blank)
+          when the leads.conversion.require_notes setting is on.
         type: string
       website:
         type: string
@@ -7160,9 +7163,12 @@ paths:
     get:
       description: 'Retrieve the configurations the frontend is allowed to read: the
         whole ui category, general.company_name, deals.default_currency (the currency
-        a new deal takes when none is sent), and a synthetic leads.conversion.allowed_statuses
-        entry. Available to any authenticated user. A sensitive entry (is_sensitive)
-        is masked: its value is always empty and is_set reports whether one is stored.'
+        a new deal takes when none is sent), and three synthetic read-only lead-conversion
+        entries carrying the values the convert endpoint enforces: leads.conversion.allowed_statuses
+        (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner
+        (boolean). An entry whose setting cannot be read is omitted. Available to
+        any authenticated user. A sensitive entry (is_sensitive) is masked: its value
+        is always empty and is_set reports whether one is stored.'
       produces:
       - application/json
       responses:
@@ -11307,6 +11313,7 @@ paths:
       description: |-
         Convert a lead to a customer with additional customer information (admin or owning sales user only)
         Optional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.
+        The administrator's lead-conversion settings are enforced before anything is written: the lead's status must be one of leads.conversion.allowed_statuses, and notes must be non-blank when leads.conversion.require_notes is on; a refusal is 400 VALIDATION_ERROR whose details name the field ("status" with the lead's status and the allowed statuses, or "notes"). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id). The lead's company_id is copied to the customer when it still names a live company; a link to a deleted company is dropped and the conversion succeeds without it.
       parameters:
       - description: Lead ID
         in: path
@@ -11332,8 +11339,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
               type: object
         "400":
-          description: Invalid request data, lead already converted, or lead has no
-            email address
+          description: Invalid request data, lead already converted, lead has no email
+            address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

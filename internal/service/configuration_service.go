@@ -270,25 +270,49 @@ func (s *configurationService) InitializeDefaults() error {
 
 // Specific configuration getters
 
+// The lead-conversion getters answer a missing row (a database that was never
+// seeded) with the shipped behaviour, so conversion keeps working; any other
+// failure is returned, because ConvertToCustomer enforces these settings and
+// must not silently fall back to a policy the administrator did not choose.
+const (
+	ConfigLeadConversionAllowedStatuses = "leads.conversion.allowed_statuses"
+	ConfigLeadConversionRequireNotes    = "leads.conversion.require_notes"
+	ConfigLeadConversionAutoAssignOwner = "leads.conversion.auto_assign_owner"
+)
+
+// defaultLeadConversionStatuses is what an unseeded database allows.
+var defaultLeadConversionStatuses = []string{string(models.LeadStatusQualified)}
+
 func (s *configurationService) GetLeadConversionStatuses() ([]string, error) {
-	arr, err := s.GetArray("leads.conversion.allowed_statuses")
+	arr, err := s.GetArray(ConfigLeadConversionAllowedStatuses)
 	if err != nil {
-		return []string{"qualified"}, nil // Default fallback
+		if isNotFound(err) {
+			return append([]string(nil), defaultLeadConversionStatuses...), nil
+		}
+		return nil, err
 	}
 
-	statuses := make([]string, len(arr))
-	for i, status := range arr {
-		if str, ok := status.(string); ok {
-			statuses[i] = str
+	statuses := make([]string, 0, len(arr))
+	for _, status := range arr {
+		if str, ok := status.(string); ok && str != "" {
+			statuses = append(statuses, str)
 		}
 	}
 	return statuses, nil
 }
 
 func (s *configurationService) IsLeadConversionRequireNotes() (bool, error) {
-	return s.GetBool("leads.conversion.require_notes")
+	required, err := s.GetBool(ConfigLeadConversionRequireNotes)
+	if err != nil && isNotFound(err) {
+		return false, nil
+	}
+	return required, err
 }
 
 func (s *configurationService) IsLeadConversionAutoAssignOwner() (bool, error) {
-	return s.GetBool("leads.conversion.auto_assign_owner")
+	assign, err := s.GetBool(ConfigLeadConversionAutoAssignOwner)
+	if err != nil && isNotFound(err) {
+		return true, nil
+	}
+	return assign, err
 }

@@ -68,7 +68,9 @@ type ConvertLeadRequest struct {
 	CompanyName string `json:"company_name,omitempty"`
 	Website     string `json:"website,omitempty"`
 	Address     string `json:"address,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	// Notes are stored on the new customer. They are required (non-blank)
+	// when the leads.conversion.require_notes setting is on.
+	Notes string `json:"notes,omitempty"`
 }
 
 // Create godoc
@@ -513,6 +515,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Summary Convert lead to customer
 // @Description Convert a lead to a customer with additional customer information (admin or owning sales user only)
 // @Description Optional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.
+// @Description The administrator's lead-conversion settings are enforced before anything is written: the lead's status must be one of leads.conversion.allowed_statuses, and notes must be non-blank when leads.conversion.require_notes is on; a refusal is 400 VALIDATION_ERROR whose details name the field ("status" with the lead's status and the allowed statuses, or "notes"). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id). The lead's company_id is copied to the customer when it still names a live company; a link to a deleted company is dropped and the conversion succeeds without it.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -521,7 +524,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted, or lead has no email address"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted, lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
@@ -576,7 +579,15 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
+		var ruleErr *service.LeadConversionRuleError
 		switch {
+		case errors.As(err, &ruleErr):
+			details := gin.H{"field": ruleErr.Field}
+			if ruleErr.Field == "status" {
+				details["status"] = ruleErr.Status
+				details["allowed_statuses"] = ruleErr.AllowedStatuses
+			}
+			utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, ruleErr.Message, details)
 		case errors.Is(err, apperrors.ErrValidation):
 			utils.RespondBadRequest(c, err.Error())
 		case errors.Is(err, apperrors.ErrLeadConverted):
