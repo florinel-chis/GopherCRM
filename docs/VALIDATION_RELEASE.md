@@ -120,7 +120,8 @@ The mailer interface/factory, log transport, unmapped production helpers, servic
 changes, schema/configuration changes and other mixed application changes retain full fallback. Workflow changes add runner checks.
 
 `python3 scripts/ci/check-go.py mailer` runs API build, vet and uncached race checks for all
-mailer tests, log-error sanitation and eight existing password-reset/form mail caller roots.
+mailer tests, log-error sanitation and thirteen existing mail caller roots (password reset, forms, quote email and the automation
+`send_email` step).
 It requires `TestSMTPDeadlines`, `TestSMTPHeaders`, `TestSMTPTLSAuth` and
 `TestSMTPFailureRedaction`, and every selected caller root, before starting Go commands.
 Selection requires all four SMTP test declarations exactly once in committed regular

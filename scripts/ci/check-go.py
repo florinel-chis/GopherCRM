@@ -8,7 +8,8 @@ from gophercrm_runner.validation import AEO_REQUIRED_ROOTS, MAILER_REQUIRED_ROOT
 
 MAILER_SOURCES = {
     'internal/mailer': ('*_test.go',),
-    'internal/service': ('auth_session_test.go', 'form_service_test.go'),
+    'internal/service': ('auth_session_test.go', 'form_service_test.go', 'quote_email_test.go',
+                         'automation_step_execution_test.go', 'automation_log_privacy_test.go'),
     'internal/utils': ('log_error_test.go',),
 }
 # Only the mail-delivery callers in these larger test files are affected by a
@@ -22,6 +23,12 @@ MAILER_CALLER_ROOTS = {
     'TestFormServiceConfirmCompletesTheSubmission',
     'TestFormServiceConfirmationMailUsesTheFormsOwnCopy',
     'TestFormServiceConfirmationMailAppendsAMissingPlaceholder',
+    'TestQuoteEmailDelivery',
+    'TestQuoteEmailLogsOmitPersonalData',
+    'TestQuoteEmailRevisedDuringSend',
+    # The SQLite half covers send_email; the MySQL twin needs a SQL server this profile omits.
+    'TestAutomationStepExecutionSQLite',
+    'TestAutomationLogsOmitPersonalData',
 }
 
 TRANSACTION_SOURCES = {

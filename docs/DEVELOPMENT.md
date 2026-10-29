@@ -802,7 +802,7 @@ profile; changing active settings or unsupported syntax retains full fallback. A
 changed candidate needs another inspection. See [operations](../automation/langflow/OPERATIONS.md).
 
 For changes confined to `internal/mailer/smtp.go` and mailer package tests, `python3 scripts/ci/check-go.py mailer`
-requires the SMTP deadline/header/TLS/privacy roots and selected password-reset/form delivery
+requires the SMTP deadline/header/TLS/privacy roots and selected password-reset/form/quote/automation delivery
 callers, then runs API build, vet and uncached race checks. Local browser coverage is SQLite
 health smoke; CI retains all engine health and migration gates. No SMTP account or external
 relay is needed by these tests. See [validation policy](VALIDATION_RELEASE.md) for the exact

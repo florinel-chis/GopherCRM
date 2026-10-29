@@ -154,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [operations runbook](automation/langflow/OPERATIONS.md#adopt-a-maintainer-commit).
 
 - A shared bounded mailer validation profile: API build/vet, SMTP transport/header/privacy
-  regressions, focused password-reset/form delivery callers and browser health smoke.
+  regressions, focused password-reset/form/quote/automation delivery callers and browser health smoke.
   Required tests cannot be absent or skipped; mixed application changes and explicit
   full/release runs retain complete coverage.
 

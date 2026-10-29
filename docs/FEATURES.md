@@ -37,7 +37,7 @@ real SQLite/MySQL rotation and transaction boundaries, migrations and auth brows
 additional MariaDB coverage in CI. It requires all six rotation boundary roots at the candidate;
 shared-interface edits also need proof that only the refresh-token interface body changed.
 The bounded mailer profile uses SMTP deadline/header/TLS/privacy race tests, focused
-password-reset/form delivery callers, API/frontend builds and health smoke; no full frontend
+password-reset/form/quote/automation delivery callers, API/frontend builds and health smoke; no full frontend
 unit suite or unrelated feature browser is selected. Missing or skipped required roots fail.
 It changes no database behavior; the existing migration gates and all-engine CI health remain.
 Other shared repository/schema/mixed changes retain full fallback. The bounded transaction-helper profile uses API build/vet, transaction
