@@ -95,19 +95,30 @@ func (r *customerRepository) Update(customer *models.Customer) error {
 // foreign key; erasure is achieved by making the retained row non-personal, not
 // by destroying business history.
 //
-// UserID is deliberately left alone. It is a foreign key describing which
-// account owned this record, not personal data in itself, and the linked user
-// account has its own independent erasure path.
+// The customer is the same person as every lead converted into it and, when
+// customers.user_id names a customer-role account, as that login: all of them
+// are erased with it in the same unit (erasure_cascade.go). A staff account
+// in user_id is never erased this way, and AssignedToID (the account manager)
+// and CompanyID are business links that stay. UserID itself is kept: it is an
+// id, not personal data, and it lets a repeated erasure find the login again.
 //
 // The free-text Notes column is the highest-risk field here: it is the one
 // place where unstructured personal data accumulates, so it is cleared
 // outright rather than trimmed.
 //
-// As with users, the transaction is the caller's when this repository was
-// obtained through WithTx and a fresh one otherwise. See erasure.go for the
-// shared machinery and the full GDPR rationale.
+// As with users, the unit is a savepoint of the caller's transaction when this
+// repository was obtained through WithTx and a fresh transaction otherwise.
+// See erasure.go for the shared machinery and the full GDPR rationale.
 func (r *customerRepository) Delete(id uint) error {
-	return eraseRecord(r.db, id, erasurePlan{
+	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
+		return c.eraseCustomer(tx, id)
+	})
+}
+
+// customerErasurePlan lists what counts as personal data on a customer. It is
+// the only copy.
+func customerErasurePlan() erasurePlan {
+	return erasurePlan{
 		Model:       &models.Customer{},
 		EmailColumn: "email",
 		Scrub: map[string]interface{}{
@@ -124,7 +135,7 @@ func (r *customerRepository) Delete(id uint) error {
 			"postal_code": "",
 			"notes":       "",
 		},
-	})
+	}
 }
 
 func (r *customerRepository) List(offset, limit int) ([]models.Customer, error) {

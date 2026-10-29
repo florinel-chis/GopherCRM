@@ -223,17 +223,17 @@ func (_m *LeadService) GetCountByClassification(classification models.LeadClassi
 	return r0, r1
 }
 
-// Delete provides a mock function with given fields: id
-func (_m *LeadService) Delete(id uint) error {
-	ret := _m.Called(id)
+// Delete provides a mock function with given fields: id, actorRole
+func (_m *LeadService) Delete(id uint, actorRole models.UserRole) error {
+	ret := _m.Called(id, actorRole)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(uint) error); ok {
-		r0 = rf(id)
+	if rf, ok := ret.Get(0).(func(uint, models.UserRole) error); ok {
+		r0 = rf(id, actorRole)
 	} else {
 		r0 = ret.Error(0)
 	}

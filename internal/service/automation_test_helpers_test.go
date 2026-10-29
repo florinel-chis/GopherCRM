@@ -181,7 +181,7 @@ func newAutomationEnv(t *testing.T, db *gorm.DB) *automationEnv {
 		users:         repository.NewUserRepository(db),
 		leads:         repository.NewLeadRepository(db),
 		deals:         repository.NewDealRepository(db),
-		customers:     repository.NewCustomerRepositoryWithLeadErasure(db),
+		customers:     repository.NewCustomerRepository(db),
 		mailer:        &quoteTestMailer{},
 		txManager:     utils.NewTransactionManager(db),
 		clock:         &automationClock{now: time.Date(2026, time.October, 28, 10, 0, 0, 0, time.UTC)},

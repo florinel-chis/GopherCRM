@@ -479,7 +479,7 @@ func TestErasingAConvertedCustomerLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, subject.identifiers()),
 		"the conversion must have left a copy in each table for this test to mean anything")
 
-	require.NoError(t, repository.NewCustomerRepositoryWithLeadErasure(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 }
@@ -498,6 +498,83 @@ func TestErasingAConvertedLeadLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+}
+
+// --- The customer/login link (#108) ------------------------------------------
+
+// seedCustomerWithLogin stores one person three times: as a customer-role login
+// with a credential and a ticket comment, as a customer whose user_id is that
+// login, and as the lead the customer was converted from.
+func seedCustomerWithLogin(t *testing.T, db *gorm.DB, subject erasureSubject) (*models.User, *models.Customer, *models.Lead) {
+	t.Helper()
+	owner := seedLeadOwner(t, db)
+	lead := subject.asLead(t, db, owner.ID)
+	customer := convertLead(t, db, lead)
+
+	login := subject.asUser(t, db)
+	require.NoError(t, db.Model(login).Update("role", models.RoleCustomer).Error)
+	require.NoError(t, db.Model(customer).Update("user_id", login.ID).Error)
+	require.NoError(t, db.Create(&models.APIKey{
+		Name: "portal key", KeyHash: "login-hash-" + subject.ExternalID, Prefix: "gcrm_lgn", UserID: login.ID, IsActive: true,
+	}).Error)
+	ticket := &models.Ticket{
+		Title: "Portal access", Description: "Cannot open invoices", Status: models.TicketStatusOpen,
+		Priority: models.TicketPriorityMedium, CustomerID: customer.ID,
+	}
+	require.NoError(t, db.Create(ticket).Error)
+	require.NoError(t, db.Create(&models.TicketComment{
+		TicketID: ticket.ID, AuthorUserID: login.ID, Body: "Reach me on " + subject.Phone,
+	}).Error)
+
+	require.Equal(t, []string{"customers", "leads", "ticket_comments", "users"}, tablesHolding(t, db, subject.identifiers()),
+		"the person must be visible in all four tables before the erasure")
+	return login, customer, lead
+}
+
+// Erasing a customer's login used to leave the customer record — and the lead
+// it came from — holding the person's name, email and phone.
+func TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable(t *testing.T) {
+	db := setupFullSchemaDB(t)
+	subject := newErasureSubject("login-sweep")
+	bystander := newErasureSubject("login-bystander")
+	login, _, _ := seedCustomerWithLogin(t, db, subject)
+	bystander.asCustomer(t, db)
+
+	require.NoError(t, repository.NewUserRepository(db).Delete(login.ID))
+
+	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+	assert.Equal(t, []string{"customers"}, tablesHolding(t, db, bystander.identifiers()))
+}
+
+// Erasing the customer used to leave its login — names, email, a working
+// credential — behind.
+func TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable(t *testing.T) {
+	db := setupFullSchemaDB(t)
+	subject := newErasureSubject("customer-login-sweep")
+	login, customer, _ := seedCustomerWithLogin(t, db, subject)
+
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+
+	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+	var keys int64
+	require.NoError(t, db.Model(&models.APIKey{}).Where("user_id = ?", login.ID).Count(&keys).Error)
+	assert.Zero(t, keys, "the login's credentials must not outlive it")
+}
+
+// A staff account in customers.user_id is a data error, not the same person:
+// erasing that account leaves the customer record alone.
+func TestErasingAStaffUserLeavesTheCustomerLinkedToItIntact(t *testing.T) {
+	db := setupFullSchemaDB(t)
+	staff := newErasureSubject("staffacct")
+	customerSubject := newErasureSubject("staff-linked-customer")
+	user := staff.asUser(t, db) // sales
+	customer := customerSubject.asCustomer(t, db)
+	require.NoError(t, db.Model(customer).Update("user_id", user.ID).Error)
+
+	require.NoError(t, repository.NewUserRepository(db).Delete(user.ID))
+
+	assertNoPersonalDataAnywhere(t, db, staff.identifiers())
+	assert.Equal(t, []string{"customers"}, tablesHolding(t, db, customerSubject.identifiers()))
 }
 
 // --- Deactivation is not erasure ---------------------------------------------

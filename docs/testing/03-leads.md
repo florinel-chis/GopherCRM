@@ -433,11 +433,32 @@ the frontend gating.
   2. Return to `/leads` and delete the converted lead.
   3. Navigate to `/customers` and search for the original email address.
 - **Expected:** 204 on the delete. The customer row no longer appears in the customer list and the
-  original email is not found there either — `leadRepository.Delete` calls
-  `eraseLeadWithConversionLink` (`lead_repository.go:139`), which follows `leads.customer_id` and
-  erases both halves in one transaction (`erasure_cascade.go:234`).
+  original email is not found there either — `leadRepository.Delete` runs the identity cascade
+  (`erasure_cascade.go`, `eraseLead`), which follows `leads.customer_id` and erases both halves in
+  one transaction, together with the customer's customer-role login if it has one (#108). Only an
+  admin may do this: see TC-LEAD-059 for the owning sales user.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; requires the customers
   page object for the verification step)
+
+### TC-LEAD-059 — The owning sales user cannot delete a converted lead
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Sales user logged in; a lead owned by that sales user, converted to a customer
+  by the admin.
+- **Steps:**
+  1. As the sales user, delete the converted lead from `/leads`.
+  2. As the admin, open the lead and the customer it became.
+- **Expected:** Step 1 → **403** "Only an admin can delete a converted lead: it also erases the
+  customer it became". Nothing changed: the lead and the customer are live with their original
+  data. Erasing a converted lead erases a customer, and deleting a customer is admin-only, so
+  `LeadService.Delete` gives a non-admin `DeleteUnconverted`, which refuses inside the erasure
+  transaction before any write (#108). The same sales user can still delete an unconverted lead it
+  owns (204).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (needs the sales login
+  helper). Go coverage: `tests/lead_integration_test.go`
+  `TestDeleteConvertedLead_SalesOwnerForbiddenAndNothingChanges`,
+  `TestDeleteUnconvertedLead_SalesOwnerSucceeds`; `identity_erasure_test.go`
+  `unconverted_only_refuses_a_converted_lead_and_changes_nothing`.
 
 ### TC-LEAD-026 — A sales user cannot delete a lead they do not own
 - **Priority:** P0

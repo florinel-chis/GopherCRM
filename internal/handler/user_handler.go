@@ -312,7 +312,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a user (irreversible erasure of personal data)
-// @Description Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.
+// @Description Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers; erasing a staff user leaves the records it owns, manages or is linked to untouched. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.
 // @Tags users
 // @Produce json
 // @Security BearerAuth

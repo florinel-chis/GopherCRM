@@ -8647,7 +8647,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. If the customer originated from a converted lead, that lead is erased in the same transaction. Use deactivation instead when the data must be recoverable.",
+                "description": "Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. The same person is erased everywhere in the same transaction: every lead converted into the customer and, when user_id names a customer-role account, that login (credentials purged) and its other customer records. A staff account in user_id, the account manager (assigned_to_id) and other business links are never erased. Use deactivation instead when the data must be recoverable.",
                 "produces": [
                     "application/json"
                 ],
@@ -14966,7 +14966,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row; a converted lead's customer record is erased in the same transaction.",
+                "description": "Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row. A converted lead is the same person as the customer it became, so erasing it also erases that customer, the customer's own customer-role login (credentials included) and every other lead converted into it, in one transaction; staff accounts, owners and assignees are never erased. Only an admin may delete a converted lead: an owning sales user gets 403 and nothing changes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15027,7 +15027,7 @@
                         }
                     },
                     "403": {
-                        "description": "Forbidden - sales users can only delete their own leads",
+                        "description": "Forbidden - sales users can only delete their own leads, and only leads that were never converted",
                         "schema": {
                             "allOf": [
                                 {
@@ -22051,7 +22051,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.",
+                "description": "Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers; erasing a staff user leaves the records it owns, manages or is linked to untouched. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.",
                 "produces": [
                     "application/json"
                 ],

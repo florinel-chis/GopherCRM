@@ -425,7 +425,7 @@ Represents confirmed customers in the system.
 | country | string | No | - | max 100 | Country |
 | postal_code | string | No | - | max 20 | ZIP/Postal code |
 | notes | text | No | - | - | Additional notes |
-| user_id | uint | No | - | FK to users | Associated user account |
+| user_id | uint | No | - | FK to users | The customer's own login (a `customer`-role account). Erasure treats the two as one person and erases them together; a staff account here is never followed (#108). Not the account manager, which is `assigned_to_id` |
 | company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
 
 ### Relationships

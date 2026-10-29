@@ -25,18 +25,23 @@ package repository
 // touch a single field of personal data. Everything in this file is
 // irreversible by design: there is nothing left to restore afterwards.
 //
-// The scrub and the soft delete always run in ONE transaction. A crash between
-// the two steps would otherwise leave a live, still-listed, already-anonymised
-// account behind — the worst of both worlds.
+// The scrub and the soft delete always run in ONE unit (runErasureUnit), and
+// so does every other row of the same person (erasure_cascade.go). A crash
+// between the steps would otherwise leave a live, still-listed,
+// already-anonymised account behind — the worst of both worlds.
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"reflect"
+	"sync/atomic"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -119,67 +124,103 @@ func (p erasurePlan) newModel() interface{} {
 	return reflect.New(reflect.TypeOf(p.Model).Elem()).Interface()
 }
 
+// erasureScrubObserver, when set, is told about every row eraseRecord scrubs.
+// It exists for the tests that prove every node of an identity graph is
+// scrubbed exactly once; it is nil in production.
+var erasureScrubObserver func(table string, id uint)
+
 // eraseRecord performs a GDPR Article 17 erasure of a single row: it overwrites
 // the personal-data columns named by the plan, runs the plan's extra in-place
-// clean-up, and only then soft-deletes the row — all atomically.
+// clean-up, and only then soft-deletes the row.
 //
-// It runs inside a transaction, but starts one only if db is not already backed
-// by one. Repositories expose WithTx, so db may well BE a transaction handle
-// already, and calling Begin on a transaction is invalid; when that is the case
-// the caller's transaction is used and the caller keeps control of the commit.
-// Either way the scrub and the soft delete cannot be separated by a failure.
-func eraseRecord(db *gorm.DB, id uint, plan erasurePlan) error {
-	return runInTransaction(db, func(tx *gorm.DB) error {
-		if plan.BeforeScrub != nil {
-			if err := plan.BeforeScrub(tx, id); err != nil {
-				return err
-			}
-		}
-
-		erased := make(map[string]interface{}, len(plan.Scrub)+1)
-		for column, value := range plan.Scrub {
-			erased[column] = value
-		}
-
-		if plan.EmailColumn != "" {
-			placeholder, err := newAnonymizedEmail()
-			if err != nil {
-				return err
-			}
-			erased[plan.EmailColumn] = placeholder
-		}
-
-		// Unscoped so that re-running an erasure over an already soft-deleted
-		// row — a legacy row soft-deleted before deletion became an erasure, and
-		// therefore still holding personal data — still scrubs it.
-		if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased).Error; err != nil {
+// tx must already be the transactional handle of the erasure unit (see
+// runErasureUnit): a person is erased as a whole graph of rows, and the unit
+// that makes the graph atomic belongs to the cascade, never to a single row.
+func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
+	if plan.BeforeScrub != nil {
+		if err := plan.BeforeScrub(tx, id); err != nil {
 			return err
 		}
+	}
 
-		if plan.AfterScrub != nil {
-			if err := plan.AfterScrub(tx, id); err != nil {
-				return err
-			}
+	erased := make(map[string]interface{}, len(plan.Scrub)+1)
+	for column, value := range plan.Scrub {
+		erased[column] = value
+	}
+
+	if plan.EmailColumn != "" {
+		placeholder, err := newAnonymizedEmail()
+		if err != nil {
+			return err
 		}
+		erased[plan.EmailColumn] = placeholder
+	}
 
-		return tx.Delete(plan.newModel(), id).Error
-	})
+	// Unscoped so that re-running an erasure over an already soft-deleted
+	// row — a legacy row soft-deleted before deletion became an erasure, and
+	// therefore still holding personal data — still scrubs it.
+	scrub := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased)
+	if scrub.Error != nil {
+		return scrub.Error
+	}
+	if erasureScrubObserver != nil {
+		erasureScrubObserver(scrub.Statement.Table, id)
+	}
+
+	if plan.AfterScrub != nil {
+		if err := plan.AfterScrub(tx, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Delete(plan.newModel(), id).Error
 }
 
-// runInTransaction executes fn against a transactional handle, starting a
-// transaction only when db is not already one.
+// erasureSavepointSeq numbers the savepoints of erasure units so that two
+// erasures joined to the same caller transaction never reuse a name.
+var erasureSavepointSeq atomic.Uint64
+
+// runErasureUnit runs fn as ONE all-or-nothing unit.
 //
-// This exists because every repository implements WithTx(tx) as part of its
-// published interface: the *gorm.DB a repository holds may be the database
-// handle or an open transaction, and the two need opposite treatment. Beginning
-// a transaction on a handle that is already one is invalid, while running a
-// multi-statement erasure without any transaction at all would sacrifice
-// atomicity.
-func runInTransaction(db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	if inTransaction(db) {
-		return fn(db)
+// Every repository exposes WithTx, so the handle may be the database or a
+// transaction the caller opened. On the database a transaction is begun and
+// committed or rolled back here. On a caller's transaction the unit is
+// bracketed by a SAVEPOINT of its own: joining the caller's transaction bare
+// would let a caller that handles a late erasure error and then commits keep
+// half a person's erasure — some rows scrubbed, some credentials purged, the
+// rest intact.
+//
+// The SAVEPOINT statement is checked (utils.ErrSavepointFailed). On failure the
+// unit is rolled back to it; when that ROLLBACK TO SAVEPOINT itself fails, the
+// unit's writes may still be in the caller's transaction, so the whole caller
+// transaction is rolled back through its committer and the error carries
+// utils.ErrRollbackFailed and utils.ErrTransactionPoisoned: nothing of it can be
+// committed any more. Nothing is retried here; a deadlock or lock timeout
+// reaches the caller, whose whole transaction is the only safe unit to replay.
+func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	if !inTransaction(db) {
+		return db.Transaction(fn)
 	}
-	return db.Transaction(fn)
+
+	name := fmt.Sprintf("gocrm_erasure_%d", erasureSavepointSeq.Add(1))
+	if err := db.Exec("SAVEPOINT " + name).Error; err != nil {
+		return fmt.Errorf("%w: %w", utils.ErrSavepointFailed, err)
+	}
+
+	err := fn(db)
+	if err == nil {
+		return nil
+	}
+	if rbErr := db.Exec("ROLLBACK TO SAVEPOINT " + name).Error; rbErr != nil {
+		abort := fmt.Errorf("%w: %w: %w", utils.ErrTransactionPoisoned, utils.ErrRollbackFailed, rbErr)
+		if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
+			if rootErr := committer.Rollback(); rootErr != nil && !errors.Is(rootErr, sql.ErrTxDone) {
+				abort = errors.Join(abort, fmt.Errorf("%w: %w", utils.ErrRollbackFailed, rootErr))
+			}
+		}
+		return errors.Join(err, abort)
+	}
+	return err
 }
 
 // inTransaction reports whether db is already backed by an open transaction.
@@ -273,8 +314,12 @@ func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) er
 // scrubUserTicketComments redacts the body of ticket comments authored by this
 // user to "[deleted]" so personal data in comment text is scrubbed while the
 // ticket discussion history remains coherent.
+//
+// Unscoped: a comment soft-deleted earlier still holds its body, and a hidden
+// copy of the person is still a copy. Each comment keeps its own deletion
+// state; only the body changes.
 func scrubUserTicketComments(tx *gorm.DB, userID uint) error {
-	if err := tx.Model(&models.TicketComment{}).Where("author_user_id = ?", userID).Update("body", "[deleted]").Error; err != nil {
+	if err := tx.Unscoped().Model(&models.TicketComment{}).Where("author_user_id = ?", userID).Update("body", "[deleted]").Error; err != nil {
 		return fmt.Errorf("scrubbing ticket comments of user %d: %w", userID, err)
 	}
 	return nil

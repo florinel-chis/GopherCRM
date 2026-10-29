@@ -626,6 +626,23 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended; needs the login
   helper for arbitrary credentials)
 
+### TC-USER-040 — Deleting a customer-role user erases its customer records
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin logged in; a `customer`-role user linked as `user_id` to two customer
+  records, one of them converted from a lead.
+- **Steps:**
+  1. Delete the user from `/users`.
+  2. Search `/customers` and `/leads` for the person's email and name.
+- **Expected:** Step 1 → 204. Step 2 finds nothing: the user's customer records and the lead they
+  were converted from are erased in the same transaction (#108). Deleting a staff user (admin,
+  sales, support) erases that user only — customers, leads, deals and tickets it owns, manages or
+  is assigned to keep their links and data.
+- **Automation:** planned — needs a fixture that links a login to a customer. Go coverage:
+  `internal/repository/identity_erasure_test.go` (`user_root_erases_the_whole_graph`,
+  `staff_login_link_is_never_followed`); `erasure_pii_sweep_test.go`
+  `TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable`.
+
 ### TC-USER-036 — Attempt to delete your own account from the row action
 - **Priority:** P0
 - **Type:** negative

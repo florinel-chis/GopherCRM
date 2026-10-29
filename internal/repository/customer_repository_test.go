@@ -23,7 +23,9 @@ func setupCustomerExportDB(t *testing.T) *gorm.DB {
 	// tables are dropped and recreated rather than accumulating rows between
 	// tests.
 	require.NoError(t, db.Migrator().DropTable(&models.Customer{}, &models.User{}))
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
+		// The erasure closure: deleting a customer erases the whole person.
+		&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
