@@ -119,11 +119,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # The Makefile owns the package lists and the exact commands, so a
-      # local `make verify` and CI cannot drift apart.
+      # The Makefile and shared profile checkers own the commands used both
+      # locally and in CI.
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
+        if: needs.plan.outputs.profile != 'mailer' && needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-backend
+      - name: SMTP transport and mail caller regressions
+        if: needs.plan.outputs.profile == 'mailer'
+        run: python3 scripts/ci/check-go.py mailer
       - name: AEO runtime and persistence regressions on SQLite and MySQL
         if: needs.plan.outputs.profile == 'aeo'
         env:
@@ -188,10 +191,10 @@ jobs:
           cache-dependency-path: gocrm-ui/package-lock.json
       # npm ci, the production build (tsc -b plus vite), lint and Vitest.
       - name: Install, build, lint, test
-        if: needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
+        if: needs.plan.outputs.profile != 'mailer' && needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
         run: make verify-frontend
       - name: Frontend build health check
-        if: needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'migration'
+        if: needs.plan.outputs.profile == 'mailer' || needs.plan.outputs.profile == 'runner' || needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'migration'
         working-directory: gocrm-ui
         run: npm ci && npm run build
 

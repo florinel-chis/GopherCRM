@@ -152,6 +152,13 @@ Include that literal documentation path before freezing when its guidance change
 settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
 plan before continuing. Install reviewed main and verify module identity as above.
 
+Version 0.9.1 adds a bounded SMTP transport profile with four required boundary roots and focused
+delivery callers. Its checker rejects missing/skipped tests; it does not need a SQL server
+for SMTP fixtures. The local browser set is SQLite health smoke; CI retains all-engine health
+and migration gates. Include operational SMTP documentation and environment-example comments
+before freezing. Other application changes retain full fallback; explicit full/release runs
+remain complete. See the exact [scope and commands](../../docs/VALIDATION_RELEASE.md).
+
 ### Recover a change outside the frozen scope
 
 An implementation that edits a path outside the frozen `scope_paths` is committed to the
@@ -337,7 +344,7 @@ the fresh policy when no repair rounds remain. A failed check or rejected review
 before reserving a repair or calling an implementation provider; no gate is waived. Record
 the old and remaining allowances in the migration evidence. Do not edit an admitted policy.
 
-The `check-go.py` profiles (AEO, transaction and migration) remove application
+The `check-go.py` profiles (AEO, transaction, migration and mailer) remove application
 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`,
 `DB_NAME`, `DB_DRIVER` and `DB_PATH` only from their Go subprocesses. They retain
 `TEST_MYSQL_DSN` for disposable SQL fixtures. This prevents inherited server settings from

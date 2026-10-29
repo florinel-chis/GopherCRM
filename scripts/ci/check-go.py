@@ -4,7 +4,32 @@
 import argparse
 import os
 import go_checks
-from gophercrm_runner.validation import AEO_REQUIRED_ROOTS
+from gophercrm_runner.validation import AEO_REQUIRED_ROOTS, MAILER_REQUIRED_ROOTS
+
+MAILER_SOURCES = {
+    'internal/mailer': ('*_test.go',),
+    'internal/service': ('auth_session_test.go', 'form_service_test.go', 'quote_email_test.go',
+                         'automation_step_execution_test.go', 'automation_log_privacy_test.go'),
+    'internal/utils': ('log_error_test.go',),
+}
+# Only the mail-delivery callers in these larger test files are affected by a
+# transport-only change. Missing or renamed roots must fail before Go execution.
+MAILER_CALLER_ROOTS = {
+    'TestAuthService_RequestPasswordReset',
+    'TestFormServiceSubmitCreatesLeadAndNotifies',
+    'TestFormServiceSubmitSendsImmediateFollowUpWhenNotOptIn',
+    'TestFormServiceSubmitSurvivesMailFailure',
+    'TestFormServiceOptInDefersEverythingToConfirmation',
+    'TestFormServiceConfirmCompletesTheSubmission',
+    'TestFormServiceConfirmationMailUsesTheFormsOwnCopy',
+    'TestFormServiceConfirmationMailAppendsAMissingPlaceholder',
+    'TestQuoteEmailDelivery',
+    'TestQuoteEmailLogsOmitPersonalData',
+    'TestQuoteEmailRevisedDuringSend',
+    # The SQLite half covers send_email; the MySQL twin needs a SQL server this profile omits.
+    'TestAutomationStepExecutionSQLite',
+    'TestAutomationLogsOmitPersonalData',
+}
 
 TRANSACTION_SOURCES = {
     'internal/utils': ('transaction*_test.go',),
@@ -37,8 +62,16 @@ KNOWN_SKIPS = {
 
 
 def run(profile, *, storage_only=False, root=go_checks.ROOT):
-    if profile not in {'transaction', 'migration', 'aeo'} or (storage_only and profile != 'transaction'):
+    if profile not in {'transaction', 'migration', 'aeo', 'mailer'} or (storage_only and profile != 'transaction'):
         raise go_checks.GateError('Unknown Go validation profile')
+    if profile == 'mailer':
+        selected = go_checks.discover(MAILER_SOURCES, root=root, label='Mailer')
+        if (not MAILER_REQUIRED_ROOTS.issubset(selected.get('internal/mailer', ())) or
+                not MAILER_CALLER_ROOTS.issubset(selected.get('internal/service', ()))):
+            raise go_checks.GateError('Missing required SMTP boundary or mail caller regressions')
+        selected['internal/service'] = sorted(MAILER_CALLER_ROOTS)
+        go_checks.run(selected, root=root, label='Mailer')
+        return
     if not os.environ.get('TEST_MYSQL_DSN'):
         raise go_checks.GateError('Database checks require a disposable TEST_MYSQL_DSN server')
     sources = ({'internal/utils': TRANSACTION_SOURCES['internal/utils']}
@@ -72,7 +105,7 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('profile', choices=['transaction', 'migration', 'aeo'])
+    parser.add_argument('profile', choices=['transaction', 'migration', 'aeo', 'mailer'])
     parser.add_argument('--storage-only', action='store_true',
                         help='Only transaction boundaries; used for the additional MariaDB CI engine')
     args = parser.parse_args()
