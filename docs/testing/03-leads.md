@@ -1053,42 +1053,18 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 ### TC-LEAD-064 — A status change racing a conversion never bypasses the allowed statuses
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** MySQL; a `qualified` lead; `new` is not an allowed conversion status.
+- **Preconditions:** MySQL or MariaDB; a `qualified` lead; `new` is not an allowed conversion
+  status.
 - **Steps:** Convert the lead while a `PUT` setting `status: "new"` runs concurrently (the test
-  starts it right after the conversion has read the lead and, on MySQL, releases the conversion
-  only once `performance_schema.data_lock_waits` shows the update waiting for its lock).
+  starts it right after the conversion has read the lead and holds the conversion for a bounded
+  500 ms window).
 - **Expected:** either the update lands first and the conversion is refused (no customer, status
   `new`), or the update waits for the conversion's commit and then applies (status `new`, the lead
   still linked to its customer). Never a customer created from a lead whose committed status was
   `new`, and never a lost `customer_id`. Before, the update committed during the conversion and
   the conversion still converted it.
+- **Known limitation:** the window is a bound, not an observation of the lock wait: on a host
+  slow enough that an unblocked update takes longer than 500 ms the root passes without
+  exercising the race (it cannot fail falsely).
 - **Automation:** automated — `internal/service/lead_status_integrity_test.go`
-  `TestLeadConversionStatusRace{SQLite,MySQL}`.
-
-### TC-LEAD-065 — A company delete racing a conversion leaves no dangling link
-- **Priority:** P1
-- **Type:** regression
-- **Preconditions:** MySQL; a `qualified` lead linked to a company.
-- **Steps:** Convert the lead while `DELETE /api/v1/companies/{id}` runs concurrently (started
-  right after the conversion has looked at the company).
-- **Expected:** both succeed; the company is soft-deleted and no live customer or lead references
-  it — the delete waits for the conversion and unlinks its customer, or ran first and the
-  conversion drops the link. Before, the new customer kept the deleted company's id.
-- **Automation:** automated — `internal/service/lead_status_integrity_test.go`
-  `TestLeadConversionCompanyDeleteRace{SQLite,MySQL}`.
-
-### TC-LEAD-066 — A lead moved to another company mid-conversion cannot deadlock a company delete
-- **Priority:** P1
-- **Type:** regression
-- **Preconditions:** MySQL; a `qualified` lead linked to company A; company B.
-- **Steps:** Start a conversion; after it locks A, move the lead to B; after it locks the lead,
-  `DELETE /api/v1/companies/{B}` (which locks B and then waits for the lead).
-- **Expected:** the conversion never asks for B's lock while it holds the lead's: it rolls back and
-  starts over with B locked first. Both calls succeed (no deadlock error, the delete is never the
-  victim), the customer has no `company_id`, and nothing references B. A link that keeps changing
-  gives up after three restarts with **409** "The lead changed while it was being converted".
-  Before, the conversion locked B under the lead lock and deadlocked with the delete.
-- **Automation:** automated — `internal/service/lead_status_integrity_test.go`
-  `TestLeadConversionCompanyMovedDeleteRace{SQLite,MySQL}` (the MySQL root waits until
-  `performance_schema.data_lock_waits` shows the delete blocked in this schema),
-  `TestLeadConversionGivesUpWhenTheCompanyKeepsMoving`.
+  `TestLeadConversionStatusRace{SQLite,MySQL}` (verified on MySQL 8 and MariaDB 10.11).

@@ -897,7 +897,6 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheRespo
 	}{
 		{&service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."}, http.StatusBadRequest, logrus.WarnLevel},
 		{fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail), http.StatusConflict, logrus.WarnLevel},
-		{fmt.Errorf("lead 1: %w", service.ErrLeadChangedDuringConversion), http.StatusConflict, logrus.WarnLevel},
 		{errors.New("connection refused"), http.StatusInternalServerError, logrus.ErrorLevel},
 	}
 	for _, tc := range cases {

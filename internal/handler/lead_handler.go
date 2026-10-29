@@ -546,7 +546,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A customer with the lead's email address already exists, or the lead's company link kept changing during the conversion"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A customer with the lead's email address already exists"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
 // @Router /leads/{id}/convert [post]
@@ -616,9 +616,6 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			warn("Failed to convert lead")
 			utils.RespondConflict(c, "customer with this email already exists")
-		case errors.Is(err, service.ErrLeadChangedDuringConversion):
-			warn("Failed to convert lead")
-			utils.RespondConflict(c, "The lead changed while it was being converted. Reload it and try again.")
 		default:
 			logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
 			utils.RespondInternalError(c)

@@ -98,16 +98,6 @@ func (s *companyService) Delete(id uint) error {
 			return utils.ErrNoTransaction
 		}
 		repo := s.companyRepo.WithTx(tx)
-		// Lock the company row before unlinking: a lead conversion holds the
-		// same lock while it links its new customer, so the two serialise —
-		// a conversion that committed first has its customer unlinked below,
-		// and one that starts after this commit finds no live company.
-		if err := repo.LockByID(id); err != nil {
-			if isNotFound(err) {
-				return fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
-			}
-			return err
-		}
 		if err := repo.UnlinkLeads(id); err != nil {
 			return err
 		}

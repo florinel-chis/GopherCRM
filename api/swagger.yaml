@@ -11383,8 +11383,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "409":
-          description: A customer with the lead's email address already exists, or
-            the lead's company link kept changing during the conversion
+          description: A customer with the lead's email address already exists
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
