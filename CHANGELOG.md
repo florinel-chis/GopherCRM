@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Follow-up automation and notifications (UI).** The screens for the automation API:
+  `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
+  cancels the rule's active runs), a Dry run tool and delete; `/automation/rules/new` and
+  `/automation/rules/{id}/edit` build the trigger and up to 20 steps with a sub-form per step
+  type, forward-only jumps, placeholder help and the API's limits checked client-side, and an edit
+  asks for confirmation before it creates a new version; the dry-run dialog simulates the saved
+  rule on a chosen lead or deal and shows each step's outcome, simulated time and details.
+  `/automation/runs` (admin and sales; sales sees runs on records it owns) filters by status,
+  rule, entity and record, and `/automation/runs/{id}` shows the step log with an admin-only
+  Cancel run. Lead and deal detail pages gain an Automation section with the record's runs. Staff
+  users get a notification bell in the app bar (unread count polled every 60 s and on window
+  focus, the latest ten in its menu, mark read, mark all read) and a `/notifications` page with an
+  unread filter; customers see neither. The e2e spec `automation-rules.spec.ts` builds a rule in
+  the form and dry-runs it; eight captures are in `docs/screenshots/automation/`.
+
 - **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
   sales; name, SKU, price with currency, active chip, search, active filter, server pagination and
   sorting) with an admin-only form at `/products/new` and `/products/{id}/edit` (name ≤ 200,
@@ -70,8 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the scrub; user erasure hard-deletes the user's notifications. Logs carry ids, statuses,
   step types, outcomes and error codes only. Schema: AutoMigrate plus the MySQL/MariaDB migration
   `20261028120000_add_follow_up_automation` (six new tables, nothing altered). The worker assumes a
-  single API replica and no retention pruning exists yet. The frontend (rule, run and notification
-  screens, the lead and deal detail sections) is a separate follow-up. (#164)
+  single API replica and no retention pruning exists yet. The screens are described in the
+  "Follow-up automation and notifications (UI)" entry above. (#164)
 
 - **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
   integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
@@ -269,6 +284,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merges. Production deploys still follow only CI runs of pushes to `main`.
 
 ### Fixed
+
+- **An automation rule update no longer undoes a concurrent disable.** `PUT
+  /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
+  inside the update transaction; before, the handler read the rule first and wrote that value
+  back, so a disable committed in between was silently reverted.
+- **`make swagger` resolves the notification handler's types.** The handler now imports the
+  models package its annotations reference, so the spec generates again.
 
 - **Runner recovery and gate gaps.** Every `gocrm-ui/vitest.*` file is now an existing
   validation gate, because Vitest discovers `vitest.workspace.*` and `vitest.projects.*` beside

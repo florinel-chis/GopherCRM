@@ -3,19 +3,18 @@
 Cases for the follow-up automation and notifications area added 2026-10-28 (issue #164): admin
 rules with ordered steps, the outbox events every lead and deal write records, the dispatcher,
 the step executor, waits and schedules that survive a restart, the dry run, the run history, the
-in-app notifications, the boot reconciliation, the erasure hooks and the migration. This release
-ships the backend and API; the frontend slice (rule list and form, dry-run dialog, run list and
-detail, the lead and deal "Automation" sections, the notification bell and page) is the separate
-`follow-up-automation-ui` task, so its cases below are *planned* against spec files that do not
-exist yet.
+in-app notifications, the boot reconciliation, the erasure hooks and the migration, and the
+screens added 2026-10-29: rule list and form, dry-run dialog, run list and detail, the lead and
+deal "Automation" sections, the notification bell and page.
 
 Every **Expected** states what the build does **today**, traced to the handlers, services and
-repositories; every automated case names the exact Go test that pins it. As in
-[15-products-quotes.md](15-products-quotes.md), "automated" means automated at the Go level: there
-is no Playwright spec behind this section yet.
+repositories; every automated case names the exact test that pins it. Cases 001 to 027 are automated at the Go
+level; the frontend cases 028 to 033 by Vitest and by the Playwright spec
+`gocrm-ui/e2e/tests/automation-rules.spec.ts`, which covers the admin flow only (as in
+[15-products-quotes.md](15-products-quotes.md), the sales and support behaviour is pinned in
+Vitest because no role-login e2e helper exists).
 
-33 cases: 27 automated (Go), 6 planned (the UI slice, against
-`gocrm-ui/e2e/tests/automation-rules.spec.ts` and the Vitest files named in each case), 0 blocked.
+33 cases: 33 automated (27 Go, 6 Vitest/Playwright), 0 planned, 0 blocked.
 Priorities: 18 P0, 14 P1, 1 P2.
 
 **Sources**
@@ -502,29 +501,44 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Automation:** automated — `internal/service/automation_log_privacy_test.go`:
   `TestAutomationLogsOmitPersonalData`.
 
-## 16.6 Frontend slice (planned, separate task)
+## 16.6 Frontend
 
 ### TC-AUT-028 — Rule list with pagination, sorting and the enable switch
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** Rules in the API; the admin.
-- **Steps:** Open `/automation/rules`; sort and page; flip a switch; open the route as sales.
-- **Expected:** Rows from the server (name, entity type, trigger, switch, version, updated_at);
-  the switch calls `POST /automation/rules/{id}/enable|disable` and refreshes the row; sales is
-  redirected to `/unauthorized`.
-- **Automation:** planned — `gocrm-ui/src/pages/automation/AutomationRuleList.test.tsx`.
+- **Steps:** Open `/automation/rules`; sort and page; flip a switch on and off; open the route as
+  sales.
+- **Expected:** Rows from the server (name, entity type, trigger summary, switch, version,
+  updated time) with Dry run and Delete rule tools; sorting is server-side on the allowlisted
+  columns; switching on calls `POST /automation/rules/{id}/enable` straight away, switching off
+  asks for confirmation (it cancels the rule's active runs) and then calls `disable`, and the list
+  refreshes; delete asks first; sales is redirected to `/unauthorized`.
+- **Automation:** automated — `gocrm-ui/src/pages/automation/AutomationRuleList.test.tsx`:
+  "renders name, entity, trigger, enabled switch, version and updated time from a mocked list
+  response", "pages with Next and page size: offset follows the zero-based table page and a size
+  change resets to the first page", "sorts server-side on the allowed columns and never on Tools",
+  "enabling calls the enable endpoint and refreshes the list", "disabling asks for confirmation,
+  then calls the disable endpoint and refreshes the list", "a sales user on the route renders the
+  unauthorized redirect".
 
 ### TC-AUT-029 — Rule form mirrors the server limits
 - **Priority:** P1
 - **Type:** validation
 - **Preconditions:** The admin.
 - **Steps:** On `/automation/rules/new`, build a `lead_status_changed` rule with wait, condition,
-  task and notify steps and save; add a 21st step; set a backward `else_position`; edit an
-  existing rule.
-- **Expected:** The POST payload matches the API; the 21st step and the backward jump are refused
-  client-side; server 400 field errors show inline; editing warns that the rule's pending, waiting
-  and running runs will be cancelled.
-- **Automation:** planned — `gocrm-ui/src/pages/automation/AutomationRuleForm.test.tsx`.
+  task and notify steps and save; try a 21st step; try a backward jump; edit an existing rule;
+  submit a rule the server refuses.
+- **Expected:** The POST payload matches the API; Add step is disabled at 20 steps and a jump can
+  target only a later step; the server's 400 message is shown on the step it names (`step N: ...`)
+  or above the buttons (the API returns a message, not a field map); saving an edit asks for
+  confirmation, warns that the rule's pending, waiting and running runs will be cancelled, and
+  sends no `enabled`.
+- **Automation:** automated — `gocrm-ui/src/pages/automation/AutomationRuleForm.test.tsx`: "builds
+  a lead_status_changed rule with wait, condition, task and notify steps and asserts the POST
+  payload", "refuses a 21st step client-side", "refuses a backward else_position client-side",
+  "editing shows the cancellation warning before the PUT and omits enabled", "shows a server 400
+  message on the step it names and other messages above the buttons".
 
 ### TC-AUT-030 — Dry-run dialog
 - **Priority:** P1
@@ -533,20 +547,34 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Steps:** Open "Dry run" from the list and from the edit page; pick the record; submit; repeat
   with a record that answers 404.
 - **Expected:** One row per step with its outcome chip, simulated time and details, a persistent
-  notice that nothing was written, sent or notified; the 404 shows inline.
-- **Automation:** planned — `gocrm-ui/src/pages/automation/DryRunDialog.test.tsx`.
+  notice that nothing is written, sent or notified; the record type is fixed to the rule's entity
+  type; from the edit page the saved version is simulated (a caption says so); the 404 shows
+  inline.
+- **Automation:** automated — `gocrm-ui/src/pages/automation/DryRunDialog.test.tsx`: "a mocked
+  report renders every step row and the no-side-effects notice", "fixes the record type to the
+  rule entity type and offers deals of every stage", "a 404 shows the error inline";
+  `AutomationRuleList.test.tsx`: "opens the dry-run dialog from the Tools column without opening
+  the editor"; `AutomationRuleForm.test.tsx`: "opens the dry run from the edit page for the saved
+  rule even with unsaved changes".
 
 ### TC-AUT-031 — Run list, run detail and the lead and deal "Automation" sections
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** Runs in the API; an admin and a sales user.
+- **Preconditions:** Runs in the API; an admin, a sales and a support user.
 - **Steps:** Open `/automation/runs`, filter by status, rule and entity; open a run; open a lead
   and a deal detail.
-- **Expected:** The filters build the query string; the detail shows the step log and, for the
-  admin only, a Cancel button on pending, waiting and running runs; the detail pages list the
-  record's runs through `GET /automation/runs?entity_type=&entity_id=`.
-- **Automation:** planned — `gocrm-ui/src/pages/automation/AutomationRunList.test.tsx`,
-  `AutomationRunDetail.test.tsx`, `AutomationRunsSection.test.tsx`.
+- **Expected:** The filters build the query string (sales filters by rule ID and never requests
+  the rule list); runs show `Rule #<id> · v<n>` because the API does not return the rule name;
+  the detail shows the step log and, for the admin only, a Cancel run button on pending, waiting
+  and running runs; the detail pages list the record's runs through
+  `GET /automation/runs?entity_type=&entity_id=`; support and customers see no section.
+- **Automation:** automated — `gocrm-ui/src/pages/automation/AutomationRunList.test.tsx`: "list
+  filters build the query: status, rule, entity type and record id", "lets a sales user filter by
+  rule id without requesting the rule list"; `AutomationRunDetail.test.tsx`: "the detail shows
+  step rows with outcome, time and details", "Cancel is visible for admin only on pending,
+  waiting and running runs"; `AutomationRunsSection.test.tsx`: "lists the record runs through
+  entity_type and entity_id", "renders nothing for support and customer users", "LeadDetail
+  renders the section", "DealDetail renders the section".
 
 ### TC-AUT-032 — Notification bell and page
 - **Priority:** P1
@@ -556,15 +584,28 @@ Priorities: 18 P0, 14 P1, 1 P2.
   `/notifications` with the unread filter.
 - **Expected:** Admin, sales and support see the bell with the unread count (refetched every 60 s
   and on focus) and the latest 10; marking read updates the count; the page is paginated with an
-  unread filter; customers see no bell.
-- **Automation:** planned — `gocrm-ui/src/components/layout/NotificationBell.test.tsx`,
-  `gocrm-ui/src/pages/notifications/NotificationList.test.tsx`.
+  unread filter; customers see no bell and nothing is requested for them.
+- **Automation:** automated — `gocrm-ui/src/components/layout/NotificationBell.test.tsx`: "shows
+  the unread count badge for admin, sales and support", "renders no bell and requests nothing for
+  the customer role", "opens the latest 10 notifications and marks one read on click", "marks all
+  read from the menu", "refetches the unread count at 60,000 ms and not at 59,999 ms", "refetches
+  the unread count when the window regains focus";
+  `gocrm-ui/src/pages/notifications/NotificationList.test.tsx`: "lists notifications with server
+  pagination", "the unread filter sends unread=true".
 
 ### TC-AUT-033 — End to end: create a disabled rule, dry-run it, the count is unchanged
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** The seeded admin and a seeded lead; `make e2e E2E_DB_DRIVER=sqlite`.
-- **Steps:** Log in; open `/automation/rules/new`; fill a `lead_created` rule with a condition and
-  a notify step; save it disabled; open the dry run; choose the seeded lead.
-- **Expected:** The step rows render and the bell's unread count is unchanged.
-- **Automation:** planned — `gocrm-ui/e2e/tests/automation-rules.spec.ts`.
+- **Preconditions:** The seeded admin and a lead created by the spec through the API (removed
+  again afterwards with the rule); `make e2e` (MySQL) or `make e2e E2E_DB_DRIVER=sqlite`.
+- **Steps:** Log in; note the bell's unread count; open `/automation/rules/new`; fill a
+  `lead_created` rule with a condition (status equals new) and a notify step to the record owner;
+  save it disabled; find it in the list with its switch off; open the dry run from the Tools
+  column; choose the lead; run it; go back to the dashboard.
+- **Expected:** The POST carries `enabled: false` and both steps; two step rows render (condition
+  succeeded and continues, notify succeeded for the admin); the bell's unread count and
+  `GET /notifications/unread-count` are unchanged.
+- **Automation:** automated (partial: admin only; the sales and support behaviour is in the
+  Vitest files of TC-AUT-028 to 032) — `gocrm-ui/e2e/tests/automation-rules.spec.ts`: "admin
+  creates a disabled lead_created rule with a condition and a notify step, dry-runs it on a lead
+  and the unread count stays the same".
