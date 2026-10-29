@@ -638,8 +638,10 @@ Expected field still describes it and a **Known issue** line records the defect.
   1. Open `/users` and search for the admin's own email so its row is visible.
   2. Click the trash icon on that row.
   3. Confirm the dialog.
-- **Expected:** The dialog opens — the per-row delete icon is **not** guarded against self-deletion
-  (only the unreachable overflow menu item is disabled, see TC-USER-032). Confirming issues `DELETE
+- **Expected:** The dialog opens — the per-row delete (trash) icon is **not** guarded against
+  self-deletion. The row's "More actions" menu offers only Activate/Deactivate (Deactivate is
+  disabled on your own row, see TC-USER-032); it has no Delete item, so the trash icon is the only
+  delete control in the list. Confirming issues `DELETE
   /users/<own id>`, which the handler rejects with **400** and `error.message = "You cannot delete
   your own account"`. The frontend's generic `onError` shows "Failed to delete user" instead of the
   server message, and the dialog stays open. The account is untouched — reloading `/users` still

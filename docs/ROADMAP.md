@@ -31,14 +31,17 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
     passes 38 of 38 files.
   - **Fix options:** longer timeouts for these interaction-heavy tests, fewer Vitest workers in
     `make verify`, or run the frontend gate before the race-enabled Go tests.
-- **Sortable columns the backend has no mapping for** — the customers **Total Revenue** and
-  **Status** (`is_active`) headers, and the tickets **Customer** / **Assigned To** and the tasks
-  **Assigned To** header, are deliberately non-sortable in the list pages: `utils.AllowedSortColumns`
-  has no `total_revenue` and no customers `is_active` entry, and tickets/tasks allow only the
+- **Sortable columns the backend has no mapping for** — the customers **Total Revenue** header
+  (the customer list has had no Status column since #118), and the tickets **Customer** /
+  **Assigned To** and the tasks **Assigned To** header, are deliberately non-sortable in the list
+  pages: `utils.AllowedSortColumns` has no `total_revenue` entry, and tickets/tasks allow only the
   `customer_id` / `assigned_to_id` foreign keys, which order by id rather than by the name the
   column renders. Restoring the affordance needs an allowlist design first — widen it with real
   orderable columns (or joined expressions) and map each UI column onto one, rather than letting
-  the frontend send a column the validator rejects.
+  the frontend send a column the validator rejects. The customers **Phone** header is the
+  opposite case: it is offered as sortable and sends `sort_by=phone`, but the customer handler's
+  own allowlist (`customerSortColumns`) lacks `phone`, so the request comes back unsorted
+  (TC-CUST-031).
 
 ## Backend and delivery
 

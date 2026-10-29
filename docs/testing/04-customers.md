@@ -331,12 +331,16 @@ depend on that are flagged.
   1. Open the customer's edit form.
   2. Clear the "Notes" field and the "City" field entirely.
   3. Click "Update Customer", then reopen the record.
-- **Expected:** 200, but the original Notes and City are still present. `CustomerHandler.Update`
-  applies each field only `if req.X != ""`, so an empty string is read as "leave unchanged". The UI
-  gives no indication that the deletion was ignored.
-- **Known issue:** There is no way to blank an optional customer field through the API or the UI. The
-  behaviour is documented in the handler's swagger `@Description` ("empty fields leave the stored
-  value unchanged") but not in FEATURES.md row 4.3.
+- **Expected:** The form sends `notes: ""` and `city: ""` and the API answers 200, but the original
+  Notes and City are still present after the reload. `CustomerHandler.Update` applies each text
+  field only `if req.X != ""`, so an empty string is read as "leave unchanged". The UI gives no
+  indication that the clearing was ignored. Website is the exception: it is a pointer in the
+  request, so clearing it does persist (TC-CUST-012a), and `company_id: 0` clears the company link.
+- **Known issue:** Address, city, state, country, postal code and notes cannot be blanked through
+  the API or the UI; website and the company link can. The behaviour is documented in the
+  handler's swagger `@Description` ("empty fields leave the stored value unchanged"), listed as a
+  gap in FEATURES.md row 4.3 and recorded as a defect in `docs/ROADMAP.md` ("Customer update
+  cannot clear optional text fields"). TC-CUST-012 shows the same split for the full form.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-019 — Support user cannot update a customer
@@ -527,23 +531,24 @@ depend on that are flagged.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new), mirroring
   `leads-sorting-search.spec.ts`
 
-### TC-CUST-031 — Sorting by Phone, Total Revenue or Status is silently ignored
+### TC-CUST-031 — Phone sorts nothing, Total Revenue is not sortable, there is no Status column
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Admin logged in; several customers with different phone numbers.
 - **Steps:**
-  1. `/customers`.
+  1. `/customers` and read the column headers.
   2. Click the "Phone" column header; note the request and the row order.
-  3. Repeat for "Total Revenue" and "Status".
-- **Expected:** Each click sends `sort_by=phone` / `sort_by=total_revenue` / `sort_by=is_active`, but
-  none is in `customerSortColumns` (`created_at, updated_at, first_name, last_name, email, company`),
-  so the handler blanks `sort_by` and falls through to the unsorted `List` path. The response is 200
-  and the row order does not change, while the `TableSortLabel` arrow flips as if it had.
-- **Known issue:** Three of the seven headers are sortable-looking but inert. `DataTable` marks every
-  column sortable unless `sortable: false` is set, and `CustomerList` sets it nowhere. Dropping the
-  unknown column is the deliberate SQL-injection guard (`utils.ValidateSort`), so the fix belongs on
-  the frontend. Since #118 there is no Status column; this case predates the `sortable: false`
-  markings now on Total Revenue and needs re-checking against the current list.
+  3. Try to click the "Total Revenue" header.
+- **Expected:** The headers are Company, Primary Contact, Email, Phone, Total Revenue and Customer
+  Since; there is no Status column (removed in #118). Step 2 sends `sort_by=phone`, which is not in
+  the handler's `customerSortColumns` (`created_at, updated_at, first_name, last_name, email,
+  company`), so the handler blanks `sort_by` and returns the unsorted list with 200: the row order
+  does not change while the `TableSortLabel` arrow flips as if it had. Step 3: Total Revenue is
+  plain text with no sort control (`sortable: false` in `CustomerList.tsx`), so no request is sent.
+- **Known issue:** The Phone header looks sortable but is inert. Dropping the unknown column is
+  the deliberate SQL-injection guard, so the fix is either `sortable: false` on Phone or `phone`
+  in the handler allowlist (`utils.AllowedSortColumns` already lists it for customers). Recorded
+  in `docs/ROADMAP.md` ("Sortable columns the backend has no mapping for").
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ---

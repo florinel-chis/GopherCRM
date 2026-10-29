@@ -526,13 +526,16 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** Logged in as the `customer` account.
-- **Steps:** On `/`, click **New Lead**, fill the form and save.
+- **Steps:** On `/`, look at the Quick Actions panel, then click **New Lead**; go back and click
+  **New Ticket**.
 - **Expected:** All four Quick Action buttons render — the panel has no role gate at all. **New
-  Lead** navigates to `/leads/new` (no SPA gate on lead routes), the form renders, and only on save
-  does `POST /api/v1/leads` return **403** (`routes.go:24`). **New Ticket** is the one that is
-  properly refused, redirecting to `/unauthorized`.
-- **Known issue:** The dashboard offers three actions that a customer-role user cannot complete, and
-  two of them fail only after the form has been filled in.
+  Lead** is refused by the route guard: since #120 `/leads/new` sits under an admin+sales
+  `ProtectedRoute`, so the app redirects to `/unauthorized` ("Access Denied") before any form
+  renders, matching `RequireRole(admin, sales)` on the API (`routes.go:24`). **New Ticket** is
+  refused the same way (admin+support guard). **New Task** still opens a form whose save is
+  refused by the API, and **View Customers** opens a list whose request is 403.
+- **Known issue:** The dashboard offers four actions to a customer-role user and none of them
+  works; two now end on Access Denied, the task form still fails only after it has been filled in.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ---
