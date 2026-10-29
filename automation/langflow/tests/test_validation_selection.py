@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import test_runner as fixtures
+from test_contracts import VITEST_CHECK, frontend_manifest
 from gophercrm_runner.config import DATABASE_CHECKS, GateError
 from gophercrm_runner.engine import Runner
 from gophercrm_runner.pull_requests import PullRequestRunner
@@ -180,11 +181,95 @@ class ValidationSelectionTests(fixtures.EngineTests):
             checks = await runner.validation_checks(record, ['README.md'])
         self.assertEqual([c[1] for c in checks if c[0].startswith('database-')], list(DATABASE_CHECKS))
 
+    async def frontend_runner(self, number=96):
+        selected, record = self.selected_runner()
+        config = replace(selected.config, acceptance_checks=dict(selected.config.acceptance_checks,
+                                                                 **{'ui-deals': VITEST_CHECK}))
+        runner = Runner(config, self.commands)
+        raw = dict(frontend_manifest(), issue=number)
+        path = self.root / f'frontend-{number}.json'
+        path.write_text(json.dumps(raw))
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            await runner.freeze(number, path, refresh=True)
+        return runner, dict(record, issue=number)
+
+    async def test_frontend_contract_requires_selected_browser_matrix_and_vitest_evidence(self):
+        runner, record = await self.frontend_runner()
+        paths = ['gocrm-ui/src/pages/tickets/TicketList.tsx']
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await runner.validation_checks(record, paths)
+        ids = [c[0] for c in checks]
+        self.assertEqual(checks[0][1], ('make', 'verify'))
+        self.assertLess(ids.index('acceptance-ui-deals'), ids.index('database-0'))
+        acceptance = checks[ids.index('acceptance-ui-deals')]
+        self.assertEqual(acceptance[1], tuple(VITEST_CHECK['argv']))
+        self.assertEqual(acceptance[2], VITEST_CHECK['tests'])
+        self.assertEqual(acceptance[2].kind, 'vitest')
+        database = [c for c in checks if c[0].startswith('database-')]
+        self.assertEqual(len(database), len(DATABASE_CHECKS))
+        self.assertIn('e2e/tests/admin-tickets.spec.ts', database[0][1][-1])
+        self.assertIn('E2E_DB_DRIVER=mysql', database[1][1])
+        self.assertEqual(database[-1][1], DATABASE_CHECKS[-1])
+        self.assertNotIn('browser-0', ids)
+        # The same UI path under a backend contract keeps the SQLite smoke only.
+        backend = await runner.validation_checks(dict(record, issue=95), paths)
+        self.assertEqual([c[0] for c in backend if c[0].startswith(('browser-', 'database-'))], ['browser-0'])
+        self.assertEqual(getattr(backend[[c[0] for c in backend].index('acceptance-regression')][2],
+                                 'kind', 'go'), 'go')
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(GateError, 'TEST_MYSQL_DSN'):
+            await runner.validation_checks(record, paths)
+
+    async def test_frontend_contract_without_a_selection_falls_back_to_the_full_matrix(self):
+        runner, record = await self.frontend_runner()
+        (self.checkout / 'gocrm-ui' / SMOKE).unlink()
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await runner.validation_checks(record, ['gocrm-ui/src/pages/tickets/TicketList.tsx'])
+        self.assertEqual([c[1] for c in checks if c[0].startswith('database-')], list(DATABASE_CHECKS))
+
+    async def test_frontend_freeze_requires_mysql_validation_environment(self):
+        selected, _ = self.selected_runner()
+        runner = Runner(replace(selected.config, acceptance_checks={'ui-deals': VITEST_CHECK}), self.commands)
+        path = self.root / 'frontend.json'
+        path.write_text(json.dumps(dict(frontend_manifest(), issue=96)))
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(GateError, 'TEST_MYSQL_DSN'):
+            await runner.freeze(96, path, refresh=True)
+        bare = Runner(replace(self.config, acceptance_checks={'ui-deals': VITEST_CHECK}), self.commands)
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'), \
+                self.assertRaisesRegex(GateError, 'database validation'):
+            await bare.freeze(96, path, refresh=True)
+
+    async def test_pr_completion_of_a_frontend_ticket_keeps_its_database_and_vitest_checks(self):
+        runner, record = await self.frontend_runner()
+        pr = PullRequestRunner(runner.config, self.commands)
+        frozen = json.loads((runner.config.state_dir / 'tasks/96/contract.json').read_text())
+        record.update(criteria=frozen['acceptance'], database_profile=True)
+        with patch.dict(os.environ, TEST_MYSQL_DSN='test-dsn'):
+            checks = await pr.validation_checks(record, ['gocrm-ui/src/pages/tickets/TicketList.tsx'])
+        acceptance = [c for c in checks if c[0] == 'acceptance-ui-deals']
+        self.assertEqual(acceptance[0][2].kind, 'vitest')
+        self.assertEqual(len([c for c in checks if c[0].startswith('database-')]), len(DATABASE_CHECKS))
+
+    async def test_frontend_prompt_states_named_vitest_lint_build_and_dependency_rules(self):
+        runner, record = await self.frontend_runner()
+        issue = dict(number=96, title='Deal list', body='Acceptance')
+        prompt = runner.prompt(issue, record)
+        self.assertIn('FRONTEND PROFILE', prompt)
+        self.assertIn('src/pages/deals/DealList.test.tsx', prompt)
+        self.assertIn('exact full test name', prompt)
+        self.assertIn('npm run lint', prompt)
+        self.assertIn('zero warnings', prompt)
+        self.assertIn('npm run build', prompt)
+        self.assertIn('package.json', prompt)
+        self.assertIn('package-lock.json', prompt)
+        backend = runner.prompt(dict(issue, number=95), dict(record, issue=95))
+        self.assertNotIn('FRONTEND PROFILE', backend)
+
     async def test_legacy_policy_hash_remains_compatible_and_mode_change_invalidates(self):
         policy = asdict(self.config)
         for key in ('issues', 'agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',
                     'ci_poll_seconds', 'max_provider_calls', 'issue_timeout_seconds', 'validation_mode',
-                    'documentation_mode', 'validation_review_required'):
+                    'documentation_mode', 'validation_review_required', 'analysis_output_dir',
+                    'analysis_max_calls', 'analysis_context_refs', 'analysis_rules_dir'):
             policy.pop(key)
         old = hashlib.sha256(json.dumps(policy, default=str, sort_keys=True).encode()).hexdigest()
         self.assertEqual(self.runner.policy, old)

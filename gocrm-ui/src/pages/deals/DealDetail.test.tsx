@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as DealDetail } from './DealDetail';
-import { dealsApi } from '@/api/endpoints';
+import { automationApi, dealsApi, quotesApi } from '@/api/endpoints';
 import {
   createMockCompany,
   createMockCustomer,
   createMockDeal,
   createMockDealStageChange,
   createMockLead,
+  createMockQuote,
   createMockUser,
 } from '@/test/factories';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -27,6 +28,20 @@ vi.mock('@/api/endpoints', () => ({
     getDealHistory: vi.fn(),
     changeStage: vi.fn(),
     deleteDeal: vi.fn(),
+  },
+  quotesApi: {
+    getDealQuotes: vi.fn(),
+  },
+  automationApi: {
+    listRuns: vi.fn(),
+  },
+  // Reached by the Quotes section's create dialog, which stays closed here.
+  customersApi: {
+    getCustomers: vi.fn(),
+    getCustomer: vi.fn(),
+  },
+  configurationsApi: {
+    getUIConfigurations: vi.fn(),
   },
 }));
 
@@ -98,6 +113,35 @@ describe('DealDetail', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
     vi.mocked(dealsApi.getDeal).mockResolvedValue(deal);
     vi.mocked(dealsApi.getDealHistory).mockResolvedValue(history);
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [], total: 0 });
+    vi.mocked(quotesApi.getDealQuotes).mockResolvedValue({
+      quotes: [
+        createMockQuote({ id: 42, number: 'Q-000042', title: 'First offer', status: 'accepted', total_cents: 225000, currency: 'EUR' }),
+      ],
+      total: 1,
+    });
+  });
+
+  it('renders the Quotes section for the deal', async () => {
+    render(<DealDetail />);
+    await screen.findByRole('heading', { name: 'Website redesign' });
+
+    const section = (await screen.findByRole('heading', { name: 'Quotes (1)' })).closest('section') as HTMLElement;
+    await waitFor(() => expect(quotesApi.getDealQuotes).toHaveBeenCalledWith(9, { offset: 0, limit: 5 }));
+    const row = within(section).getByTestId('deal-quote-row');
+    expect(within(row).getByRole('link', { name: 'Q-000042' })).toHaveAttribute('href', '/quotes/42');
+    expect(within(row).getByTestId('quote-status-chip')).toHaveTextContent('Accepted');
+    expect(within(row).getByText(formatDealAmount(225000, 'EUR'))).toBeInTheDocument();
+    // An open deal offers a new quote.
+    expect(within(section).getByRole('button', { name: 'New quote' })).toBeInTheDocument();
+  });
+
+  it('hides New quote in the Quotes section of a lost deal', async () => {
+    vi.mocked(dealsApi.getDeal).mockResolvedValue({ ...deal, stage: 'lost', probability: 0, lost_reason: 'Budget cut' });
+    render(<DealDetail />);
+
+    const section = (await screen.findByRole('heading', { name: 'Quotes (1)' })).closest('section') as HTMLElement;
+    expect(within(section).queryByRole('button', { name: 'New quote' })).not.toBeInTheDocument();
   });
 
   it('renders the fields, the links and the history timeline', async () => {

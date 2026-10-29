@@ -39,6 +39,27 @@ func TestValidateSort_ValidColumns(t *testing.T) {
 	}
 }
 
+// The automation run allowlist is exactly id, created_at, updated_at, status
+// and resume_at (AC-11); the rule allowlist is what the rule list sorts by.
+func TestValidateSortAutomationAllowlists(t *testing.T) {
+	for _, column := range []string{"id", "created_at", "updated_at", "status", "resume_at"} {
+		col, dir, err := ValidateSort("automation_runs", column, "asc")
+		require.NoError(t, err, column)
+		assert.Equal(t, column, col)
+		assert.Equal(t, "asc", dir)
+	}
+	for _, column := range []string{"rule_id", "entity_id", "dedupe_key", "next_position", "cancel_reason", "id; DROP TABLE"} {
+		_, _, err := ValidateSort("automation_runs", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable run column", column)
+	}
+	for _, column := range []string{"id", "name", "entity_type", "trigger_type", "enabled", "version", "created_at", "updated_at"} {
+		_, _, err := ValidateSort("automation_rules", column, "desc")
+		require.NoError(t, err, column)
+	}
+	_, _, err := ValidateSort("automation_rules", "trigger_config", "asc")
+	assert.Error(t, err)
+}
+
 func TestValidateSort_EmptySortBy_ReturnsDefault(t *testing.T) {
 	col, dir, err := ValidateSort("users", "", "asc")
 	require.NoError(t, err)
@@ -67,6 +88,41 @@ func TestValidateSort_InvalidColumn_ReturnsError(t *testing.T) {
 	for _, column := range []string{"owner_id", "company_id", "customer_id", "lead_id", "currency", "notes", "lost_reason"} {
 		_, _, err := ValidateSort("deals", column, "asc")
 		assert.Errorf(t, err, "%q must not be a sortable deal column", column)
+	}
+}
+
+// Products and quotes: the allowlist is exactly the documented columns. The
+// links, the free text and the other money columns exist but are not sortable.
+func TestValidateSortProductsAndQuotes(t *testing.T) {
+	for _, column := range []string{"id", "name", "sku", "unit_price_cents", "currency", "is_active", "created_at", "updated_at"} {
+		col, dir, err := ValidateSort("products", column, "asc")
+		require.NoErrorf(t, err, "%q is a sortable product column", column)
+		assert.Equal(t, column, col)
+		assert.Equal(t, "asc", dir)
+	}
+	for _, column := range []string{"description", "deleted_at", "owner_id", "quote_id", "title", "status", "total_cents", "price"} {
+		_, _, err := ValidateSort("products", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable product column", column)
+	}
+
+	for _, column := range []string{"id", "title", "status", "total_cents", "currency", "valid_until", "sent_at", "created_at", "updated_at"} {
+		col, dir, err := ValidateSort("quotes", column, "desc")
+		require.NoErrorf(t, err, "%q is a sortable quote column", column)
+		assert.Equal(t, column, col)
+		assert.Equal(t, "desc", dir)
+	}
+	for _, column := range []string{"subtotal_cents", "discount_cents", "notes", "closed_at", "last_emailed_at", "deal_id", "customer_id", "owner_id", "name", "sku"} {
+		_, _, err := ValidateSort("quotes", column, "asc")
+		assert.Errorf(t, err, "%q must not be a sortable quote column", column)
+	}
+
+	for _, entity := range []string{"products", "quotes"} {
+		_, _, err := ValidateSort(entity, "id; DROP TABLE quotes;--", "asc")
+		assert.Error(t, err, entity)
+		col, dir, err := ValidateSort(entity, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, "created_at", col, "the default sort is newest first")
+		assert.Equal(t, "desc", dir)
 	}
 }
 

@@ -1,4 +1,4 @@
-import { createBrowserRouter, Outlet } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 import { MainLayout } from '@/layouts/MainLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { RouteErrorBoundary } from '@/components/ErrorBoundary';
@@ -160,6 +160,95 @@ export const router = createBrowserRouter([
         ],
       },
       {
+        // Products and quotes share the deal guard on the API: admin and
+        // sales only, support and customer get 403 on everything. The product
+        // writes are admin only, so the form routes sit under a nested,
+        // narrower guard, as the company forms do. Same pathless-layout shape
+        // as the admin block — a static `element` on the children themselves
+        // would shadow `lazy`.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'products',
+            lazy: () => import('@/pages/products/ProductList'),
+          },
+          {
+            element: (
+              <ProtectedRoute requiredRole="admin">
+                <Outlet />
+              </ProtectedRoute>
+            ),
+            children: [
+              {
+                path: 'products/new',
+                lazy: () => import('@/pages/products/ProductForm'),
+              },
+              {
+                path: 'products/:id/edit',
+                lazy: () => import('@/pages/products/ProductForm'),
+              },
+            ],
+          },
+          {
+            path: 'quotes',
+            lazy: () => import('@/pages/quotes/QuoteList'),
+          },
+          {
+            path: 'quotes/:id',
+            lazy: () => import('@/pages/quotes/QuoteDetail'),
+          },
+          {
+            // A print-styled route inside the shell: the layout hides its
+            // chrome under @media print.
+            path: 'quotes/:id/print',
+            lazy: () => import('@/pages/quotes/QuotePrint'),
+          },
+        ],
+      },
+      {
+        // The run history is admin and sales on the API (sales narrowed to its
+        // own leads and deals inside the query); cancelling is admin-only and
+        // gated on the page. Same pathless-layout shape as the admin block.
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // /automation itself has no page; the breadcrumb links here.
+            path: 'automation',
+            element: <Navigate to="/automation/runs" replace />,
+          },
+          {
+            path: 'automation/runs',
+            lazy: () => import('@/pages/automation/AutomationRunList'),
+          },
+          {
+            path: 'automation/runs/:id',
+            lazy: () => import('@/pages/automation/AutomationRunDetail'),
+          },
+        ],
+      },
+      {
+        // A staff user's own notifications: RequireRole(admin, sales, support).
+        element: (
+          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'notifications',
+            lazy: () => import('@/pages/notifications/NotificationList'),
+          },
+        ],
+      },
+      {
         path: 'tickets',
         lazy: () => import('@/pages/tickets/TicketList'),
       },
@@ -299,6 +388,20 @@ export const router = createBrowserRouter([
           {
             path: 'settings/configuration',
             lazy: () => import('@/pages/settings/ConfigurationSettings'),
+          },
+          {
+            // Every /automation/rules route (and the dry run) is
+            // RequireRole(admin) on the API.
+            path: 'automation/rules',
+            lazy: () => import('@/pages/automation/AutomationRuleList'),
+          },
+          {
+            path: 'automation/rules/new',
+            lazy: () => import('@/pages/automation/AutomationRuleForm'),
+          },
+          {
+            path: 'automation/rules/:id/edit',
+            lazy: () => import('@/pages/automation/AutomationRuleForm'),
           },
         ],
       },

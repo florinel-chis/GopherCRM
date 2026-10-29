@@ -37,6 +37,19 @@ ACCEPTANCE_REVIEW_SCHEMA = {
 }
 
 
+READER_TOOLS = 'Read,Glob,Grep,WebFetch,WebSearch'
+
+
+def reader_arguments(config, *, schema):
+    """Read-only analysis agent: file tools confined to the working directory, web tools allowed."""
+    args = ['claude', '--safe-mode', '--restricted', '-p', '--permission-mode', 'dontAsk',
+            '--tools', READER_TOOLS, '--allowedTools', READER_TOOLS, '--no-session-persistence',
+            '--output-format', 'json', '--json-schema', json.dumps(schema)]
+    if config.agent_model:
+        args += ['--model', config.agent_model]
+    return args
+
+
 def arguments(config, *, review=False, criteria=None):
     tools = 'Read,Glob,Grep' if review else 'Read,Glob,Grep,Edit,Write'
     schema = deepcopy(ACCEPTANCE_REVIEW_SCHEMA if review else CLAIM_SCHEMA)
@@ -72,14 +85,19 @@ def parse(output, *, review, criteria, documentation_plan=None):
                 or len(set(report['addressed_criteria'])) != len(report['addressed_criteria'])
                 or not set(report['addressed_criteria']).issubset(c['id'] for c in criteria)):
             raise GateError('Invalid structured implementation claims')
+    return report, metadata(raw)
+
+
+def metadata(raw):
+    """Provider-reported usage, observed models and cost; never a billing estimate."""
     usage = raw.get('usage')
     usage = {k: v for k, v in usage.items() if k in {
         'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'}
         and type(v) is int and v >= 0} if isinstance(usage, dict) else None
     observed = raw.get('modelUsage')
     cost = raw.get('total_cost_usd')
-    metadata = {'observed_models': sorted(observed) if isinstance(observed, dict) and observed else None,
-                'usage': usage or None, 'cost': {'status': 'unavailable', 'usd': None}}
+    result = {'observed_models': sorted(observed) if isinstance(observed, dict) and observed else None,
+              'usage': usage or None, 'cost': {'status': 'unavailable', 'usd': None}}
     if type(cost) in {int, float} and math.isfinite(cost) and cost >= 0:
-        metadata['cost'] = {'status': 'provider-reported', 'usd': cost}
-    return report, metadata
+        result['cost'] = {'status': 'provider-reported', 'usd': cost}
+    return result

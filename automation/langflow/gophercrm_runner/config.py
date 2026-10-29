@@ -38,6 +38,63 @@ class BudgetError(GateError):
     """Durable execution limits prohibit another mutating step or provider call."""
 
 
+CHECK_KINDS = ('go', 'vitest')
+# Run from the repository root. `--silent` keeps npm's script banner off stdout,
+# so the Vitest JSON report is the command's only standard output.
+VITEST_ARGV = ('npm', '--prefix', 'gocrm-ui', 'test', '--silent', '--', '--run', '--reporter=json')
+VITEST_FILE = re.compile(r'src/(?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.test\.tsx?')
+
+
+def check_kind(check):
+    """An entry without `kind` is a Go check, so existing registries keep their hashes."""
+    return check.get('kind', 'go')
+
+
+def validate_vitest_check(argv, tests):
+    files = argv[len(VITEST_ARGV):] if isinstance(argv, list) else []
+    if (not isinstance(argv, list) or tuple(argv[:len(VITEST_ARGV)]) != VITEST_ARGV or not files
+            or any(not isinstance(f, str) or not VITEST_FILE.fullmatch(f) or '..' in f.split('/')
+                   for f in files) or len(set(files)) != len(files)):
+        raise GateError('Vitest acceptance checks require the exact npm JSON reporter argument array '
+                        'and unique test files under gocrm-ui/src')
+    if (not isinstance(tests, list) or not tests or any(
+            not isinstance(t, dict) or set(t) != {'file', 'name'} or t['file'] not in files
+            or not isinstance(t['name'], str) or not t['name'].strip() or '\x00' in t['name']
+            for t in tests)):
+        raise GateError('Vitest acceptance checks require exact file/test identities from their argv files')
+    if len({(t['file'], t['name']) for t in tests}) != len(tests):
+        raise GateError('Duplicate acceptance test identity')
+
+
+def validate_acceptance_checks(registry):
+    """The trusted check registry: uncached go test -json argument arrays, or the exact Vitest JSON
+    reporter command, with exact test identities."""
+    if not isinstance(registry, dict):
+        raise GateError('acceptance_checks must be a trusted check registry')
+    for check_id, check in registry.items():
+        if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', check_id):
+            raise GateError('Invalid acceptance check ID')
+        if not isinstance(check, dict) or set(check) - {'kind'} != {'argv', 'tests'}:
+            raise GateError('Acceptance checks require argv and named tests')
+        if check_kind(check) not in CHECK_KINDS:
+            raise GateError('Acceptance check kind must be go or vitest')
+        argv, tests = check['argv'], check['tests']
+        if check_kind(check) == 'vitest':
+            validate_vitest_check(argv, tests)
+            continue
+        if (not isinstance(argv, list) or any(not isinstance(a, str) or not a or '\x00' in a for a in argv)
+                or argv[:2] != ['go', 'test'] or '-json' not in argv or '-count=1' not in argv):
+            raise GateError('MVP acceptance checks require uncached go test -json argument arrays')
+        if (not isinstance(tests, list) or not tests or any(
+                not isinstance(t, dict) or set(t) != {'package', 'name'}
+                or not isinstance(t['package'], str) or not t['package']
+                or not isinstance(t['name'], str) or not re.fullmatch(r'Test[A-Za-z0-9_]+', t['name'])
+                for t in tests)):
+            raise GateError('Acceptance checks require exact package/test identities')
+        if len({(t['package'], t['name']) for t in tests}) != len(tests):
+            raise GateError('Duplicate acceptance test identity')
+
+
 @dataclass(frozen=True)
 class Config:
     repository: str
@@ -70,6 +127,11 @@ class Config:
     documentation_mode: str = 'legacy'
     # Operator inspection of the committed plan, before any local checks.
     validation_review_required: bool = False
+    # Feature analysis workflow settings. Never part of the execution policy hash.
+    analysis_output_dir: str = 'docs/specs'
+    analysis_max_calls: int = 8
+    analysis_context_refs: tuple[str, ...] = ('AGENTS.md', 'docs/DEVELOPMENT.md')
+    analysis_rules_dir: str = ''
 
     @classmethod
     def load(cls, path: str | Path) -> 'Config':
@@ -79,7 +141,7 @@ class Config:
             if not value.is_absolute():
                 raise GateError(f'{name} must be an absolute path')
             raw[name] = value.resolve()
-        for name in ('issues', 'required_checks', 'workflow_addition_issues'):
+        for name in ('issues', 'required_checks', 'workflow_addition_issues', 'analysis_context_refs'):
             if name in raw:
                 raw[name] = tuple(raw[name])
         for name in ('test_commands', 'database_test_commands'):
@@ -109,25 +171,20 @@ class Config:
             raise GateError('The database validation matrix requires SQLite, MySQL and uncached JSON migration checks')
         if not isinstance(self.agent_model, str) or '\x00' in self.agent_model:
             raise GateError('agent_model must be a string')
-        if not isinstance(self.acceptance_checks, dict):
-            raise GateError('acceptance_checks must be a trusted check registry')
-        for check_id, check in self.acceptance_checks.items():
-            if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', check_id):
-                raise GateError('Invalid acceptance check ID')
-            if not isinstance(check, dict) or set(check) != {'argv', 'tests'}:
-                raise GateError('Acceptance checks require argv and named tests')
-            argv, tests = check['argv'], check['tests']
-            if (not isinstance(argv, list) or any(not isinstance(a, str) or not a or '\x00' in a for a in argv)
-                    or argv[:2] != ['go', 'test'] or '-json' not in argv or '-count=1' not in argv):
-                raise GateError('MVP acceptance checks require uncached go test -json argument arrays')
-            if (not isinstance(tests, list) or not tests or any(
-                    not isinstance(t, dict) or set(t) != {'package', 'name'}
-                    or not isinstance(t['package'], str) or not t['package']
-                    or not isinstance(t['name'], str) or not re.fullmatch(r'Test[A-Za-z0-9_]+', t['name'])
-                    for t in tests)):
-                raise GateError('Acceptance checks require exact package/test identities')
-            if len({(t['package'], t['name']) for t in tests}) != len(tests):
-                raise GateError('Duplicate acceptance test identity')
+        validate_acceptance_checks(self.acceptance_checks)
+        output_dir = self.analysis_output_dir
+        if (not isinstance(output_dir, str) or not output_dir or output_dir.startswith('/') or '\x00' in output_dir
+                or '..' in output_dir.split('/')):
+            raise GateError('analysis_output_dir must be a relative path inside the checkout')
+        if type(self.analysis_max_calls) is not int or self.analysis_max_calls <= 0:
+            raise GateError('analysis_max_calls must be a positive integer')
+        refs = self.analysis_context_refs
+        if (not isinstance(refs, tuple) or not refs or 'AGENTS.md' not in refs or len(set(refs)) != len(refs)
+                or any(not isinstance(r, str) or not r.endswith('.md') or r.startswith('/') or '..' in r.split('/')
+                       or '\x00' in r for r in refs)):
+            raise GateError('analysis_context_refs must be unique Markdown paths including AGENTS.md')
+        if not isinstance(self.analysis_rules_dir, str) or (self.analysis_rules_dir and not self.analysis_rules_dir.startswith('/')):
+            raise GateError('analysis_rules_dir must be empty or an absolute operator-owned directory')
         if type(self.disposable_database) is not bool or not isinstance(self.chromium_path, str):
             raise GateError('disposable_database must be boolean and chromium_path a string')
         if self.completion_target not in {'pr', 'merge'}:

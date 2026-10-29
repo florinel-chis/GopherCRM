@@ -93,7 +93,9 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   server can no longer mint two sessions or strand one. What remains is client-side: a shared
   in-flight refresh promise so only one request is sent (#115).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
-  `SMTP_*` is configured.
+  `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
+  email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment
+  check (refuse to start, or refuse to stamp, without a configured transport) is a candidate.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
   hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
 
@@ -113,6 +115,26 @@ candidate follow-up, not an accident:
   visitor data (values, IP) and are outside lead erasure; they currently live forever.
 - **Field-definition migrations** — editing a form's fields does not rewrite historical
   submission data; renamed fields simply start a new key in `data`.
+
+## Follow-up automation — deliberate v1 cuts
+
+The automation subsystem (#164) shipped its backend, API and screens with these decided out,
+each a candidate follow-up:
+
+- **Rule names on runs** — runs carry only `rule_id` and `rule_version` (sales cannot read
+  rules), so the run screens show "Rule #id"; admins see names where the rule list is loaded.
+- **Field-level validation errors** — a rejected rule returns one message; the editor shows it on
+  the step it names, not on the individual field.
+- **Dry run of unsaved edits** — the dry run simulates the saved rule version only.
+- **Email to leads and customers** — `send_email` reaches staff users only until a consent and
+  opt-out model exists.
+- **Multi-replica leases** — the worker assumes one API replica: runs are recovered at boot, not
+  by a lease timeout on `claimed_at`, so two workers would double-execute.
+- **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
+  sweep is a retention decision, not an erasure one (the rows hold ids only).
+- **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer,
+  ticket and company triggers, a `deal_id` on tasks** — none of them exist; a deal run links its
+  task to the deal's customer, else its lead.
 
 ## Sensitive settings — follow-ups
 

@@ -28,7 +28,9 @@ that the test was executed as part of writing this catalog.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
-| **Total** | | **551** | **161** | **246** | **144** | **140** | **327** | **84** |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
+| [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 33 | 18 | 14 | 1 | 33 | 0 | 0 |
+| **Total** | | **606** | **192** | **267** | **147** | **195** | **327** | **84** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -69,6 +71,25 @@ same change, automates TC-DEAL-027, 029 and 030 and TC-DASH-039 (all partial) an
 remaining planned ones (TC-DEAL-028 and 032, which need an API-level test, and TC-DASH-038, the
 chart); the blocked ones are the sales and support role cases (lesson 8)
 and the UTC month boundary, which needs a controllable clock and is pinned in Go.
+
+[15-products-quotes.md](15-products-quotes.md) was added 2026-10-26 with the products and quotes
+API (issue #158). Seventeen cases are automated at the Go level by the named acceptance roots
+(handler, service, repository, integration, mailer and migration tests, the MySQL ones on a
+disposable `TEST_MYSQL_DSN` schema). The frontend slice (2026-10-28, issue #167) automated the
+five UI cases of section 15.8: each names its Vitest file and test titles, and the single test of
+`gocrm-ui/e2e/tests/admin-quotes.spec.ts` walks the admin flow from product to accepted quote,
+including the print page under Playwright's print-media emulation (TC-PQ-018 to 021 are
+*automated (partial)* by that spec: the sales behaviour and the support/customer redirects are
+pinned in Vitest, as the role-login e2e helper still does not exist). Nothing is blocked.
+
+[16-follow-up-automation.md](16-follow-up-automation.md) was added 2026-10-28 with the follow-up
+automation and notifications API (issue #164). Twenty-seven cases are automated at the Go level
+by the named acceptance roots (service, repository, HTTP, cmd and migration tests, the MySQL ones
+on a disposable `TEST_MYSQL_DSN` schema, including the paused-step races that only a second
+connection can produce). The six screen cases, added with the UI on 2026-10-29, are automated by
+Vitest and by `gocrm-ui/e2e/tests/automation-rules.spec.ts`; TC-AUT-033 is *automated (partial)*
+because that spec drives the admin only, the sales and support behaviour being pinned in Vitest.
+Nothing is blocked.
 
 ## Case format
 

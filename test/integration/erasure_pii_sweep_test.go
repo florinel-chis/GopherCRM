@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -251,10 +254,112 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		"users", "leads", "customers", "companies", "deals", "deal_stage_changes", "tickets", "ticket_comments", "tasks",
 		"api_keys", "configurations", "refresh_tokens",
 		"bulk_operations", "bulk_operation_items",
+		"products", "quotes", "quote_lines", "quote_status_changes",
+		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)
 	}
+}
+
+// The quotes release added four tables. A quote copies no personal data by
+// design, but the sweep is what proves it: it has to run against a schema
+// that has the tables, and it has to be able to see the person through them
+// before the erasure for its silence afterwards to mean anything.
+func TestThePersonalDataSweepCoversQuoteTables(t *testing.T) {
+	db := setupFullSchemaDB(t)
+
+	tables, err := db.Migrator().GetTables()
+	require.NoError(t, err)
+	for _, expected := range []string{"products", "quotes", "quote_lines", "quote_status_changes"} {
+		assert.Contains(t, tables, expected, "the sweep schema must contain %s", expected)
+	}
+
+	// A canary written into each new table is found by the sweep, so the
+	// tables are read, soft-delete scopes and all.
+	owner := seedLeadOwner(t, db)
+	// A short tag, so the last name fits the status column it is planted in.
+	canary := newErasureSubject("qtc")
+	require.LessOrEqual(t, len(canary.LastName), models.QuoteStatusMaxLength)
+	product := &models.Product{Name: "Service for " + canary.FirstName, SKU: canary.Phone, UnitPriceCents: 100, Currency: "EUR", IsActive: true}
+	require.NoError(t, db.Create(product).Error)
+	quote := &models.Quote{Title: "Quote for " + canary.LastName, Status: models.QuoteStatusDraft, Currency: "EUR", Notes: canary.Email, OwnerID: owner.ID}
+	require.NoError(t, db.Create(quote).Error)
+	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: canary.FirstName, Quantity: 1, UnitPriceCents: 100, LineTotalCents: 100}).Error)
+	from := models.QuoteStatusDraft
+	require.NoError(t, db.Create(&models.QuoteStatusChange{QuoteID: quote.ID, FromStatus: &from, ToStatus: models.QuoteStatus(canary.LastName), ChangedByID: owner.ID, ChangedAt: time.Now()}).Error)
+	require.NoError(t, db.Delete(product).Error, "a soft-deleted product is still read")
+
+	assert.Equal(t, []string{"products", "quote_lines", "quote_status_changes", "quotes"}, tablesHolding(t, db, canary.identifiers()),
+		"the sweep must see every one of the four tables")
+}
+
+// --- Customers with quotes ----------------------------------------------------
+
+// A customer with a deal, a quote on that deal with lines and history. The
+// quote links the customer by id and copies nothing, so the erasure leaves
+// the quote, its lines and its history exactly where they are and the sweep
+// finds nothing of the person in any table.
+func TestCustomerErasureWithQuotesLeavesNoPersonalData(t *testing.T) {
+	db := setupFullSchemaDB(t)
+	// The quote service runs transactions; on an in-memory database a second
+	// pooled connection would be a second, empty database.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	subject := newErasureSubject("customer-quotes-sweep")
+
+	owner := seedLeadOwner(t, db)
+	customer := subject.asCustomer(t, db)
+	deal := &models.Deal{Title: "Engine upgrade", Stage: models.DealStageProposal, Probability: 40, Currency: "EUR", OwnerID: owner.ID, CustomerID: &customer.ID}
+	require.NoError(t, db.Create(deal).Error)
+	product := &models.Product{Name: "Engine licence", SKU: "ENG-1", UnitPriceCents: 125000, Currency: "EUR", IsActive: true}
+	require.NoError(t, db.Create(product).Error)
+
+	quoteService := service.NewQuoteService(
+		repository.NewQuoteRepository(db), repository.NewProductRepository(db), repository.NewDealRepository(db),
+		repository.NewCustomerRepository(db), repository.NewUserRepository(db), nil, nil, utils.NewTransactionManager(db),
+	)
+	quote := &models.Quote{Title: "Engine upgrade quote", Currency: "EUR", DealID: &deal.ID, OwnerID: owner.ID}
+	require.NoError(t, quoteService.Create(quote, owner.ID, models.RoleSales))
+	require.Equal(t, &customer.ID, quote.CustomerID, "the customer comes from the deal")
+	_, err = quoteService.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: 2, DiscountBP: 1000})
+	require.NoError(t, err)
+	_, err = quoteService.ChangeStatus(quote.ID, models.QuoteStatusSent, owner.ID)
+	require.NoError(t, err)
+	_, err = quoteService.ChangeStatus(quote.ID, models.QuoteStatusAccepted, owner.ID)
+	require.NoError(t, err)
+
+	// The person is in the customers table and nowhere else: the quote
+	// copied nothing.
+	require.Equal(t, []string{"customers"}, tablesHolding(t, db, subject.identifiers()),
+		"the sweep must see the person before the erasure, and only in customers")
+
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+
+	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+
+	// The business records survive with their links.
+	var kept models.Quote
+	require.NoError(t, db.Preload("Lines").First(&kept, quote.ID).Error)
+	assert.Equal(t, &customer.ID, kept.CustomerID, "the quote keeps customer_id")
+	assert.Equal(t, &deal.ID, kept.DealID)
+	assert.Equal(t, models.QuoteStatusAccepted, kept.Status)
+	require.Len(t, kept.Lines, 1)
+	assert.Equal(t, "Engine licence", kept.Lines[0].Description)
+	assert.Equal(t, int64(225000), kept.TotalCents, "2 × 1250.00 at 10% off")
+	var history int64
+	require.NoError(t, db.Model(&models.QuoteStatusChange{}).Where("quote_id = ?", quote.ID).Count(&history).Error)
+	assert.EqualValues(t, 3, history, "create, sent, accepted")
+	var keptDeal models.Deal
+	require.NoError(t, db.First(&keptDeal, deal.ID).Error)
+	assert.Equal(t, &customer.ID, keptDeal.CustomerID)
+
+	// And the erased customer is no recipient any more: the email path
+	// refuses rather than mailing the placeholder address.
+	_, err = quoteService.Email(quote.ID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, apperrors.ErrQuoteNoRecipient)
 }
 
 // --- Users -------------------------------------------------------------------

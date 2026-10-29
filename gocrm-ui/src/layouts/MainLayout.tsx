@@ -36,6 +36,8 @@ import {
   AccountCircle,
   ContactPhone,
   Handshake,
+  Inventory2,
+  RequestQuote,
   ChevronLeft,
   Tune,
   LocalOffer,
@@ -44,7 +46,11 @@ import {
   Timeline,
   QuestionAnswer,
   Link as LinkIcon,
+  AutoMode,
+  Rule,
+  History,
 } from '@mui/icons-material';
+import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
 
 const drawerWidth = 280;
@@ -76,6 +82,41 @@ const navItems: NavItem[] = [
     path: '/deals',
     icon: <Handshake />,
     roles: ['admin', 'sales'],
+  },
+  {
+    // The catalogue is read by admin and sales (the API group guard); only
+    // admin writes it, which the page itself narrows.
+    title: 'Products',
+    path: '/products',
+    icon: <Inventory2 />,
+    roles: ['admin', 'sales'],
+  },
+  {
+    // Quotes share the deal guard: admin and sales only.
+    title: 'Quotes',
+    path: '/quotes',
+    icon: <RequestQuote />,
+    roles: ['admin', 'sales'],
+  },
+  {
+    // Rules are admin-only; the run history is admin and sales (the API
+    // narrows sales to its own leads and deals).
+    title: 'Automation',
+    icon: <AutoMode />,
+    roles: ['admin', 'sales'],
+    children: [
+      {
+        title: 'Rules',
+        path: '/automation/rules',
+        icon: <Rule />,
+        roles: ['admin'],
+      },
+      {
+        title: 'Runs',
+        path: '/automation/runs',
+        icon: <History />,
+      },
+    ],
   },
   {
     title: 'Customers',
@@ -277,14 +318,20 @@ export const MainLayout: React.FC = () => {
     </Box>
   );
 
+  // The application chrome (app bar, navigation drawers, breadcrumbs) is
+  // hidden under `@media print` so that a print-styled page such as
+  // /quotes/:id/print prints its content alone. `displayPrint` is the MUI
+  // system shorthand for exactly that media query.
   return (
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
       <AppBar
         position="fixed"
+        data-testid="app-bar"
         sx={{
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           ml: { sm: `${drawerWidth}px` },
+          displayPrint: 'none',
         }}
       >
         <Toolbar>
@@ -300,6 +347,8 @@ export const MainLayout: React.FC = () => {
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             {/* Dynamic page title can be added here */}
           </Typography>
+
+          <NotificationBell />
 
           <IconButton
             onClick={handleMenuOpen}
@@ -345,7 +394,7 @@ export const MainLayout: React.FC = () => {
       </AppBar>
       <Box
         component="nav"
-        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
+        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 }, displayPrint: 'none' }}
         aria-label="mailbox folders"
       >
         <Drawer
@@ -357,6 +406,7 @@ export const MainLayout: React.FC = () => {
           }}
           sx={{
             display: { xs: 'block', sm: 'none' },
+            displayPrint: 'none',
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
         >
@@ -364,8 +414,10 @@ export const MainLayout: React.FC = () => {
         </Drawer>
         <Drawer
           variant="permanent"
+          data-testid="app-navigation"
           sx={{
             display: { xs: 'none', sm: 'block' },
+            displayPrint: 'none',
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
           open
@@ -381,10 +433,13 @@ export const MainLayout: React.FC = () => {
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           minHeight: '100vh',
           backgroundColor: 'background.default',
+          '@media print': { p: 0, width: '100%', minHeight: 'auto', backgroundColor: 'transparent' },
         }}
       >
-        <Toolbar />
-        <Breadcrumbs />
+        <Toolbar sx={{ displayPrint: 'none' }} />
+        <Box sx={{ displayPrint: 'none' }}>
+          <Breadcrumbs />
+        </Box>
         <Outlet />
       </Box>
     </Box>

@@ -91,6 +91,46 @@ func SetupDealRoutes(router *gin.RouterGroup, handler *DealHandler) {
 	router.GET("/customers/:id/deals", guard, handler.ListByCustomer)
 }
 
+// SetupProductRoutes mounts the catalogue endpoints. Reading is open to admin
+// and sales, the roles that quote; writing is admin only. Support and customer
+// have no access at all.
+func SetupProductRoutes(router *gin.RouterGroup, handler *ProductHandler) {
+	products := router.Group("/products")
+	products.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales))
+	{
+		products.POST("", middleware.RequireRole(models.RoleAdmin), handler.Create)
+		products.GET("", handler.List)
+		products.GET("/:id", handler.Get)
+		products.PUT("/:id", middleware.RequireRole(models.RoleAdmin), handler.Update)
+		products.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+	}
+}
+
+// SetupQuoteRoutes mounts the quotes endpoints under the deals guard: admin
+// and sales only, with the handler narrowing sales to its own quotes. The two
+// sub-lists live under the deal and customer paths but are registered here,
+// with the same guard, so the other Setup* signatures stay as they are.
+func SetupQuoteRoutes(router *gin.RouterGroup, handler *QuoteHandler) {
+	guard := middleware.RequireRole(models.RoleAdmin, models.RoleSales)
+	quotes := router.Group("/quotes")
+	quotes.Use(guard)
+	{
+		quotes.POST("", handler.Create)
+		quotes.GET("", handler.List)
+		quotes.GET("/:id", handler.Get)
+		quotes.PUT("/:id", handler.Update)
+		quotes.DELETE("/:id", handler.Delete)
+		quotes.POST("/:id/lines", handler.AddLine)
+		quotes.PUT("/:id/lines/:lineId", handler.UpdateLine)
+		quotes.DELETE("/:id/lines/:lineId", handler.DeleteLine)
+		quotes.POST("/:id/status", handler.ChangeStatus)
+		quotes.GET("/:id/history", handler.History)
+		quotes.POST("/:id/email", handler.Email)
+	}
+	router.GET("/deals/:id/quotes", guard, handler.ListByDeal)
+	router.GET("/customers/:id/quotes", guard, handler.ListByCustomer)
+}
+
 func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
 	tickets := router.Group("/tickets")
 	{
@@ -177,6 +217,48 @@ func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 		// Same dashboard guard; the handler (and the deal service behind it)
 		// then refuses support, which has no access to deals.
 		dashboard.GET("/pipeline", guard, handler.GetPipeline)
+	}
+}
+
+// SetupAutomationRoutes mounts the follow-up automation endpoints. Rules and
+// the dry run are admin-only on every route; the run history is admin and
+// sales (the service narrows sales to its own leads and deals inside the
+// query), and cancelling a run is admin-only.
+func SetupAutomationRoutes(router *gin.RouterGroup, handler *AutomationHandler) {
+	admin := middleware.RequireRole(models.RoleAdmin)
+	rules := router.Group("/automation/rules")
+	rules.Use(admin)
+	{
+		rules.POST("", handler.CreateRule)
+		rules.GET("", handler.ListRules)
+		rules.GET("/:id", handler.GetRule)
+		rules.PUT("/:id", handler.UpdateRule)
+		rules.DELETE("/:id", handler.DeleteRule)
+		rules.POST("/:id/enable", handler.EnableRule)
+		rules.POST("/:id/disable", handler.DisableRule)
+		rules.POST("/:id/dry-run", handler.DryRun)
+	}
+	runs := router.Group("/automation/runs")
+	runs.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales))
+	{
+		runs.GET("", handler.ListRuns)
+		runs.GET("/:id", handler.GetRun)
+		runs.POST("/:id/cancel", admin, handler.CancelRun)
+	}
+}
+
+// SetupNotificationRoutes mounts a staff user's own notifications. Customers
+// are never addressed by a rule and get 403 on every route.
+func SetupNotificationRoutes(router *gin.RouterGroup, handler *NotificationHandler) {
+	notifications := router.Group("/notifications")
+	notifications.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport))
+	{
+		notifications.GET("", handler.List)
+		// Static segments registered before the parameter route, as the
+		// deals group does with /pipeline.
+		notifications.GET("/unread-count", handler.UnreadCount)
+		notifications.POST("/read-all", handler.MarkAllRead)
+		notifications.POST("/:id/read", handler.MarkRead)
 	}
 }
 

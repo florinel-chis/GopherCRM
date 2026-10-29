@@ -41,6 +41,9 @@ const (
 	ErrCodeInternal        = "INTERNAL_ERROR"
 	ErrCodeBadRequest      = "BAD_REQUEST"
 	ErrCodeTooManyRequests = "TOO_MANY_REQUESTS"
+	// ErrCodeMailDeliveryFailed is answered with 502 when the mailer refused
+	// or failed to deliver a message the request asked for.
+	ErrCodeMailDeliveryFailed = "MAIL_DELIVERY_FAILED"
 )
 
 // RespondSuccess sends a successful response
@@ -61,7 +64,7 @@ func RespondSuccessWithMeta(c *gin.Context, statusCode int, data interface{}, me
 		meta = &APIMeta{}
 	}
 	meta.RequestID = c.GetString("request_id")
-	
+
 	response := APIResponse{
 		Success: true,
 		Data:    data,
@@ -161,4 +164,3 @@ func ParseOffsetLimit(c *gin.Context) (offset, limit int) {
 
 	return offset, limit
 }
-

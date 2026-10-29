@@ -3,8 +3,9 @@
 Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
 captured from the running application — a MySQL-backed backend and the Vite dev server — by the
 Playwright suite in `gocrm-ui/e2e/screenshots/`, at a 1440x900 viewport with `deviceScaleFactor: 2`.
-46 captures: 41 regenerated 2026-08-08 when tasks gained labels, plus the five AEO captures added
-2026-08-11 with the module itself.
+64 captures: 41 regenerated 2026-08-08 when tasks gained labels, the five AEO captures added
+2026-08-11 with the module itself, the ten products and quotes captures added 2026-10-28, and the
+eight follow-up automation captures added 2026-10-29.
 
 The captures record the application as it actually is. Where a screen is a placeholder or a control
 does not exist yet, the image shows that rather than a mock-up, and the difference is noted in the
@@ -109,6 +110,123 @@ The edit form populated from the stored record.
 ![Delete customer confirmation](screenshots/customers/05-delete-confirm.png)
 The admin-only delete confirmation. Confirming erases personal data and cascades to the lead the
 customer was converted from.
+
+## Products and quotes
+
+FEATURES.md section 4d (4d.9 for the screens). The suite seeds a product catalogue, one customer,
+three deals and quotes in every status through the API, then walks one quote through the UI: it
+is started from its deal's Quotes section, given two lines, marked as sent, printed and accepted.
+The catalogue entries use fixed names and are created only when missing; the quotes and deals are
+created on every run. These ten were captured against the e2e driver's SQLite backend. To regenerate only these images, on free ports against the e2e database:
+`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/11-quotes.spec.ts`.
+
+![Products list](screenshots/quotes/01-products-list.png)
+The product catalogue at `/products`: name, SKU, price formatted with its currency and the
+Active/Inactive chip, with the search box, the active filter and server pagination. The edit and
+delete actions and New Product are shown to admins only.
+
+![Product form](screenshots/quotes/02-product-form.png)
+The admin-only create form at `/products/new`, filled in and not submitted: name, SKU,
+description, price in major units (stored as integer minor units), ISO 4217 currency and the
+active switch.
+
+![Quotes list](screenshots/quotes/03-quotes-list.png)
+The quotes table at `/quotes` with number, title, status chip, customer, deal, total with
+currency and valid-until date, over quotes in all five statuses (draft, sent, accepted, rejected,
+expired), with the status filter and server pagination.
+
+![Create quote dialog](screenshots/quotes/04-quote-create-dialog.png)
+The New quote dialog opened from a deal's Quotes section, filled in and not yet submitted: the
+deal is prefilled and the customer and currency follow from it; title, valid until and notes are
+typed in.
+
+![Draft quote detail](screenshots/quotes/05-quote-detail-draft.png)
+A draft quote at `/quotes/{id}` with two lines (one at 10 % off) and the subtotal, discount and
+total as computed by the server. While the quote is a draft, the Edit button, Add line and the
+per-line edit and delete actions are available, and the only status action is Mark as sent.
+
+![Add line dialog](screenshots/quotes/06-quote-add-line-dialog.png)
+The Add line dialog: the product picker lists active products in the quote's currency and shows
+the unit price; description, quantity, discount percentage (sent as basis points) and an optional
+unit-price override complete the line.
+
+![Sent quote detail](screenshots/quotes/07-quote-detail-sent.png)
+The same quote after Mark as sent: the status buttons for the valid transitions (Accept, Reject,
+Mark expired, Revise), the Email quote action, the sent time, and a status history of two rows.
+The line and edit controls are gone outside the draft status.
+
+![Quote print page](screenshots/quotes/08-quote-print.png)
+The print layout at `/quotes/{id}/print` on screen: application name, quote number, title, date,
+valid until, status, the customer it is prepared for, the lines, the totals and the notes, below
+the Back to quote and Print buttons.
+
+![Quote print page under print media](screenshots/quotes/09-quote-print-media.png)
+The same page with print media emulated: the app bar, the navigation drawer, the breadcrumbs and
+the page's own toolbar are hidden, leaving only the quote document.
+
+![Deal Quotes section](screenshots/quotes/10-deal-quotes-section.png)
+The deal detail page after the quote was accepted: its Quotes section lists the accepted quote and
+the earlier rejected proposal with number, title, status and total, next to the New quote button.
+Accepting a quote leaves the deal's stage unchanged.
+
+## Follow-up automation
+
+FEATURES.md section 4e (4e.17 for the screens). The suite seeds three rules through the API with
+fixed names, created only when missing: the enabled "New lead follow-up" (lead created: notify the
+owner, wait two days, create a follow-up task), the disabled "Proposal sent: check in after three
+days" (deal stage changed to proposal: wait, a stage condition, an email to the owner) and the
+disabled "Daily nudge for stale contacted leads" (a daily schedule at 08:00 UTC). Two leads owned
+by the admin are then created, and the suite polls `GET /automation/runs` until the worker has run
+each of them up to its wait step, so the run list, the step log, the lead section and the
+notifications show real data. The worker polls every `AUTOMATION_POLL_INTERVAL_SECONDS`
+(default 30); these eight were captured against a SQLite backend on :8090 started with
+`AUTOMATION_POLL_INTERVAL_SECONDS=2`. A backend with `AUTOMATION_ENABLED=false` fails the
+run-dependent captures. To regenerate only these images, on free ports against the e2e database:
+`AUTOMATION_POLL_INTERVAL_SECONDS=2 scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/12-automation.spec.ts`.
+
+![Automation rules list](screenshots/automation/01-rules-list.png)
+The admin-only rule list at `/automation/rules`: name, entity, a readable trigger summary, the
+Enabled switch (switching a rule off asks for confirmation, because it cancels the rule's active
+runs), version, last update, and the Edit, Dry run and Delete rule tools. A row click opens the
+editor too.
+
+![Rule form](screenshots/automation/02-rule-form.png)
+The editor of the deal rule at `/automation/rules/{id}/edit`: name, description, entity type,
+trigger with its from/to stage, and three step cards (wait, condition, send email) with move up,
+move down and remove controls and the placeholders each text field accepts. The condition's value
+is free text that suggests the known stages and is stored verbatim (here `proposal`). The Dry run
+button simulates the saved version; saving creates a new version after a confirmation.
+
+![Dry-run dialog](screenshots/automation/03-dry-run-dialog.png)
+The dry run of "New lead follow-up" on a seeded lead, opened from the rule list: the notice that
+nothing is written, sent or notified, the lead picker, and the simulated step report (notify
+succeeded, the wait resumes two days later, the task would be created with its assignee, due date
+and lead).
+
+![Automation runs list](screenshots/automation/04-runs-list.png)
+The run list at `/automation/runs` with the status, rule, rule ID, entity and record ID filters,
+over the two runs waiting on their two-day wait; each run number links to its detail. Admins see every run, sales only runs on records
+it owns.
+
+![Run detail](screenshots/automation/05-run-detail.png)
+A waiting run at `/automation/runs/{id}`: rule and version, record, next step, attempts, the
+timestamps and the step log (notify succeeded with its recipient and notification, wait waiting
+with its resume time). The Cancel run button is shown to admins while the run is still active.
+
+![Lead Automation section](screenshots/automation/06-lead-automation-section.png)
+The lead detail page with its Automation section: the lead's runs with rule, status chip, resume
+time and creation time, and a View all link to the run list filtered to this lead. Deals carry the
+same section; support and customers do not see it.
+
+![Notification bell menu](screenshots/automation/07-notification-bell-menu.png)
+The app bar's bell for staff users with its unread badge and the menu open: the latest ten
+notifications (unread ones in bold), Mark all read and View all. The count is polled every minute
+and on window focus.
+
+![Notifications page](screenshots/automation/08-notifications-page.png)
+The full list at `/notifications` with the All/Unread filter, Mark all read, and per row the
+title and body, received time, read status, Mark read and Open (to the lead or deal; support only
+marks read).
 
 ## Tickets
 

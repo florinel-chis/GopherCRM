@@ -152,12 +152,163 @@ Include that literal documentation path before freezing when its guidance change
 settings, unsupported syntax and missing proofs retain full fallback; inspect the actual
 plan before continuing. Install reviewed main and verify module identity as above.
 
-Version 0.8.5 adds a bounded SMTP transport profile with four required boundary roots and focused
+Version 0.9.1 adds a bounded SMTP transport profile with four required boundary roots and focused
 delivery callers. Its checker rejects missing/skipped tests; it does not need a SQL server
 for SMTP fixtures. The local browser set is SQLite health smoke; CI retains all-engine health
 and migration gates. Include operational SMTP documentation and environment-example comments
 before freezing. Other application changes retain full fallback; explicit full/release runs
 remain complete. See the exact [scope and commands](../../docs/VALIDATION_RELEASE.md).
+
+### Recover a change outside the frozen scope
+
+An implementation that edits a path outside the frozen `scope_paths` is committed to the
+runner branch and stops at stage `validate` with `last_error` naming the first such path.
+Protected or private paths and changed validation gates are still refused before any commit;
+they leave the worktree uncommitted at `finalize_implementation` and are not recoverable by
+this procedure. Inspect the committed diff against the journal's `base` and `head` in the
+recorded worktree:
+
+```sh
+git -C /absolute/worktree diff --stat BASE_SHA HEAD_SHA
+git -C /absolute/worktree diff BASE_SHA HEAD_SHA -- path/outside/scope
+```
+
+When the acceptance criteria require the path, add it (or a narrow glob) to `scope_paths` in
+the operator manifest, then:
+
+```sh
+# Only when live main has advanced since the journal's base:
+gophercrm-runner revalidate --config /absolute/private/config.json --issue 158
+gophercrm-runner freeze --config /absolute/private/config.json --issue 158 \
+  --manifest /absolute/path/to/task.json --refresh
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+`freeze --refresh` refuses while the journal's base differs from live main, which is why
+`revalidate` comes first in that case; it merges current main into the clean worktree.
+The refreshed execution keeps stage `validate`, spent calls, repair rounds and deadline,
+and validates the existing commit without another implementation call. A refresh that
+leaves the scope unchanged fails validation with the same error. If the change is not
+wanted, do not widen the scope; leave the execution stopped for an explicit disposition.
+For a batch child, resume with `start-batch --batch ID --resume` instead of `run`.
+
+## Adopt a maintainer commit
+
+A ticket whose repair budget is exhausted, or whose candidate must be corrected by hand,
+continues only through an audited maintainer commit. `revalidate` refuses a worktree whose
+HEAD differs from the journal, and `freeze --refresh` keeps a `repair_pending` stage that
+still meets the exhausted repair limit; `adopt-commit` is the ticket counterpart of
+`complete-pr --refresh --head`. Inspect the journal (`report --issue N --markdown`) and the
+review findings or failure first, then commit the correction on the ticket branch in the
+recorded runner worktree:
+
+```sh
+git -C /absolute/worktree status --short          # must be clean before committing
+# Edit files within the frozen scope, then:
+git -C /absolute/worktree commit -am 'fix(scope): address the inspected review finding'
+git -C /absolute/worktree rev-parse HEAD           # FULL_SHA
+# Only when the journal records a pull request:
+git -C /absolute/worktree push origin automation/remediate-158
+gophercrm-runner adopt-commit --config /absolute/private/config.json --issue 158 \
+  --head FULL_SHA --reason 'Corrected the rejected edge case after the repair budget was exhausted'
+# Only when the policy sets validation_review_required: the next run records the plan and holds.
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+gophercrm-runner confirm-validation --config /absolute/private/config.json --issue 158 \
+  --head FULL_SHA --plan-hash PLAN_HASH --reason 'Inspected the adopted diff and the complete command plan'
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+The command accepts an unfinished execution under the current policy at stage `validate`,
+`review`, `repair_pending`, `publish`, `ci`, `finalize_implementation`, or `implement` with
+a committed candidate. It refuses `merged`, `pr_ready`, `abandoned` and `retired` journals,
+legacy journals, a different policy, a running provider invocation, a dirty worktree, a HEAD
+other than `--head`, an abbreviated SHA, and a commit that does not descend from the recorded
+head. The diff from the journal's base passes the same protected-path, private-path and
+validation-gate checks as an implementation commit, and the frozen-scope check; an
+out-of-scope path is refused and names `freeze --refresh`, which widens the scope after
+inspection. When the journal records a pull request, it must be open with `--head` as its
+head; push the commit before adopting it.
+
+On success the journal records an `adoptions` entry with `at`, `from_head`, `to_head` and the
+redacted reason, the new `head`, and stage `validate`. `tested_head`, `reviewed_head`,
+`receipts`, `review`, `review_receipt`, `pending_review` and `last_error` are cleared, as by
+`freeze --refresh`. Spent provider calls, repair rounds and the deadline are unchanged, and
+adoption consumes no repair round. The next run validates the adopted commit in a fresh
+checkout and requests a new independent review, which needs one remaining provider call; use
+`extend-budget --calls` after inspection when none remains. A rejected review or a failed
+check with no remaining repair round stops again for another adoption. Repeating the command
+for the already adopted head while it awaits validation returns the recorded adoption without
+a second entry.
+
+When main has advanced, do not merge it into the branch by hand: the diff from the recorded
+base would then contain main's own changes and fail the scope gate. Let `revalidate` merge
+main, which records the new base. A clean merge keeps a `repair_pending` stage and returns
+other stages to `validate`; adopt the maintainer commit before or after it, then run
+`freeze --refresh` for the new base. A conflicting merge records the new base, leaves the
+worktree in conflict and returns the execution to `repair_pending` or `implement`. Resolve the conflict, commit the merge, and adopt the merge commit:
+
+```sh
+gophercrm-runner revalidate --config /absolute/private/config.json --issue 158
+# On "Main has merge conflicts": resolve the files in the runner worktree, then:
+git -C /absolute/worktree add path/with/conflict
+git -C /absolute/worktree commit --no-edit
+gophercrm-runner adopt-commit --config /absolute/private/config.json --issue 158 \
+  --head FULL_MERGE_SHA --reason 'Resolved the main merge conflict after the repair budget was exhausted'
+gophercrm-runner freeze --config /absolute/private/config.json --issue 158 \
+  --manifest /absolute/path/to/task.json --refresh
+gophercrm-runner run --config /absolute/private/config.json --limit 1 --execute
+```
+
+Adoption never modifies GitHub, never pushes, and never grants a repair round. Tests and
+independent review are repeated for the adopted commit and are never inferred from the
+maintainer's own checks. The command takes the runner lock without a batch identity, so it is
+refused while a prepared batch owns the queue.
+
+## Retire a ticket closed outside the runner
+
+A ticket execution remains admitted when its GitHub issue is closed by work this execution
+did not merge, for example a maintainer merge or a separate `complete-pr` completion of the
+same branch at a later head. `run` refuses such a journal because no runner merge was
+confirmed, so the active marker and admission slot stay occupied. Inspect the journal, the
+issue and the closing pull requests, then retire the execution:
+
+```sh
+gophercrm-runner retire-issue --config /absolute/private/config.json --issue 158 \
+  --reason 'Closed by PR #159, merged through complete-pr in another state directory'
+```
+
+Use `retire-issue` only for an unfinished execution (any stage except `merged`, `pr_ready`,
+`abandoned` and `retired`) whose issue GitHub reports as `CLOSED`. An open issue is refused;
+resume it with `run`. A missing journal, a legacy journal or a journal admitted under a
+different policy is refused. Use `abandon-issue` instead for a merged ticket whose post-merge
+documentation verification failed, and `abandon-pr` for an explicit PR completion. A running
+provider invocation, or a validation command recorded as running in `current_check` after
+a hard crash, requires `--processes-stopped` after the orphaned process has been inspected
+and stopped. A provider acknowledgement is recorded as for `abandon-issue`; the validation
+command is marked `operator-resolved` with `ended_at`, and a `check_dispositions` entry
+records its check, PID, process identity and the redacted reason.
+
+The command reads `gh issue view --json state,stateReason,closedByPullRequestsReferences` and
+reads each closing pull request of the configured repository, together with any pull request
+the journal records, through `gh pr view`. The journal records `stage: retired`,
+`completed_at`, a redacted `retirements` entry and `remote_disposition` with the issue state,
+its state reason and each pull request's number, state, head and merge commit. The disposition
+is marked `validated_by_this_execution: false`: the closing work was not tested, reviewed or
+merged by this execution. The admission slot and active marker are released and the queue is
+stopped; resume it explicitly with `resume-queue`. A repeated call returns the recorded
+disposition without a second entry, and a later `run` reports the retirement.
+
+The command never closes, reopens, comments on or edits issues or pull requests. It never
+deletes the worktree, branch, receipts, artifacts or spent budgets, never refunds provider
+calls and never relabels the execution as merged.
+
+## Maintenance outside executions
+
+Changes to the runner itself, its validation gates and fixes for CI flakes are maintainer work.
+They are prepared as ordinary pull requests and merged through `complete-pr`, never admitted as
+ticket executions, because implementation agents cannot edit the protected runner, workflow and
+validation paths. When such a pull request closes an issue that a ticket execution still holds,
+retire that execution as described above.
 
 ## Reclaim completed dependencies
 

@@ -3,13 +3,21 @@
 import fnmatch
 import hashlib
 import json
+import os
 from pathlib import PurePosixPath
 import re
 
-from .config import GateError
+from .config import GateError, check_kind
 from .evidence import safe_artifact
 
 
+# The acceptance check kind each validation profile admits.
+PROFILE_CHECK_KINDS = {'backend': 'go', 'backend-database': 'go', 'frontend': 'vitest'}
+# Profiles whose browser checks run on the configured SQLite/MySQL database matrix.
+DATABASE_PROFILES = ('backend-database', 'frontend')
+# A frontend task never changes Go code, even when a scope glob would admit it.
+FRONTEND_PATHS = ('gocrm-ui/', 'docs/')
+FRONTEND_FILES = {'README.md', 'CHANGELOG.md'}
 MANIFEST_FIELDS = {'schema_version', 'repository', 'issue', 'objective', 'non_goals',
                    'scope_paths', 'dependencies', 'validation_profile', 'context_refs', 'acceptance'}
 CONTRACT_FIELDS = MANIFEST_FIELDS | {'source', 'source_hash', 'base', 'documents', 'context_hash',
@@ -51,10 +59,13 @@ def validate_manifest(config, raw, number):
         safe_path(value)
     if 'AGENTS.md' not in raw['context_refs'] or any(not p.endswith('.md') for p in raw['context_refs']):
         raise GateError('Context must include AGENTS.md and explicit Markdown guidance paths')
-    if raw['validation_profile'] not in {'backend', 'backend-database'}:
-        raise GateError('Unsupported MVP profile; manual/UI evidence is not implemented')
+    if raw['validation_profile'] not in PROFILE_CHECK_KINDS:
+        raise GateError('Unsupported profile; use backend, backend-database or frontend '
+                        '(manual evidence is not implemented)')
     if raw['validation_profile'] == 'backend-database' and not config.database_test_commands:
         raise GateError('Database profile requires configured database validation')
+    if raw['validation_profile'] == 'frontend' and not config.database_test_commands:
+        raise GateError('Frontend profile requires configured database validation for its browser checks')
     criteria = raw['acceptance']
     if not isinstance(criteria, list) or not criteria:
         raise GateError('Acceptance criteria are required')
@@ -71,6 +82,12 @@ def validate_manifest(config, raw, number):
                 or verification['kind'] != 'automated' or not isinstance(verification['check_id'], str)
                 or verification['check_id'] not in config.acceptance_checks):
             raise GateError('Unsupported or unregistered acceptance evidence')
+        # One evidence model per ticket: Go JSON events or the Vitest JSON report.
+        if check_kind(config.acceptance_checks[verification['check_id']]) != PROFILE_CHECK_KINDS[
+                raw['validation_profile']]:
+            raise GateError('Frontend profile requires Vitest acceptance checks'
+                            if raw['validation_profile'] == 'frontend'
+                            else 'Backend profiles require Go acceptance checks')
     deps = raw['dependencies']
     if not isinstance(deps, list):
         raise GateError('dependencies must be a list')
@@ -102,6 +119,10 @@ def check_registry_hash(config, raw):
 
 def create_contract(config, raw, issue, base, documents):
     validate_manifest(config, raw, issue['number'])
+    # Browser checks are the frontend profile's mandatory evidence; refuse to freeze
+    # a contract the execution environment cannot validate.
+    if raw['validation_profile'] == 'frontend' and not os.environ.get('TEST_MYSQL_DSN'):
+        raise GateError('Frontend profile requires database_test_commands and TEST_MYSQL_DSN')
     if [d['path'] for d in documents] != raw['context_refs']:
         raise GateError('Context does not exactly cover the selected guidance')
     result = dict(raw, source=source(issue), source_hash=digest(source(issue)), base=base,
@@ -134,9 +155,15 @@ def verify_current(contract, issue, base, documents):
 
 
 def check_scope(contract, paths):
+    frontend = contract['validation_profile'] == 'frontend'
     for path in paths:
-        if path.startswith(('gocrm-ui/', 'internal/handler/assets/')):
-            raise GateError('Frontend edits require unsupported UI evidence; outside this backend MVP')
+        if path.startswith('internal/handler/assets/'):
+            raise GateError('Embedded handler assets are outside every task profile')
+        if path.startswith('gocrm-ui/') and not frontend:
+            raise GateError('Frontend edits require the frontend profile and its Vitest evidence')
+        if frontend and ('..' in path.split('/') or not (
+                path.startswith(FRONTEND_PATHS) or path in FRONTEND_FILES)):
+            raise GateError(f'Frontend task changes only gocrm-ui/, docs/, README.md and CHANGELOG.md: {path}')
         if not any(fnmatch.fnmatchcase(path, scope) for scope in contract['scope_paths']):
             raise GateError(f'Change outside frozen task scope: {path}')
 

@@ -9,6 +9,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Follow-up automation and notifications (UI).** The screens for the automation API:
+  `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
+  cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and
+  `/automation/rules/{id}/edit` build the trigger and up to 20 steps with a sub-form per step
+  type, forward-only jumps, placeholder help, status and stage condition values as free text with
+  the known values suggested (kept verbatim, as the API compares plain strings), the API's limits
+  checked client-side, and an edit
+  asks for confirmation before it creates a new version; the dry-run dialog simulates the saved
+  rule on a chosen lead or deal and shows each step's outcome, simulated time and details.
+  `/automation/runs` (admin and sales; sales sees runs on records it owns) filters by status,
+  rule, entity and record, and `/automation/runs/{id}` shows the step log with an admin-only
+  Cancel run. Lead and deal detail pages gain an Automation section with the record's runs. Staff
+  users get a notification bell in the app bar (unread count polled every 60 s and on window
+  focus, the latest ten in its menu, mark read, mark all read) and a `/notifications` page with an
+  unread filter; customers see neither. Failed loads show the server message with a retry. The e2e
+  spec `automation-rules.spec.ts` builds a rule in
+  the form and dry-runs it; eight captures are in `docs/screenshots/automation/`.
+
+- **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
+  sales; name, SKU, price with currency, active chip, search, active filter, server pagination and
+  sorting) with an admin-only form at `/products/new` and `/products/{id}/edit` (name ≤ 200,
+  SKU ≤ 64, price in major units sent as `unit_price_cents`, currency defaulting to
+  `deals.default_currency`, active switch); `/quotes` (number, title, status, customer, deal,
+  total, valid until; status filter, server pagination) with a create dialog (title, deal and
+  customer pickers, currency, valid until, notes); `/quotes/{id}` with the lines table, add/edit/
+  delete of lines and an edit dialog while the quote is a draft and no edit control otherwise,
+  the server's subtotal, discount and total, status buttons for the valid transitions only (the
+  server message on `INVALID_STATUS_TRANSITION` and `CONFLICT`), a Print link, an "Email quote"
+  confirmation on sent and accepted quotes that names the customer and distinguishes a 409 from a
+  502, and the status history; `/quotes/{id}/print`, a print-styled route whose app chrome is
+  hidden under `@media print` and whose Print button calls `window.print()`; a "Quotes" section on
+  the deal detail page with "New quote" prefilled with the deal and hidden on won or lost deals;
+  Products and Quotes navigation entries and routes for admin and sales only, the product form
+  routes for admin only. Discounts are typed as percentages and sent as basis points; totals are
+  never recomputed in the browser. New endpoint modules `src/api/endpoints/products.ts` and
+  `quotes.ts`; Vitest coverage per screen and the Playwright spec
+  `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (product → deal → quote → line → sent → print →
+  accepted, with print-media emulation). No new dependency. (#167)
+
+- **Products and quotes screenshots.** Ten documentation captures under
+  `docs/screenshots/quotes/` (product list and form, quote list, the create dialog from a deal,
+  the draft detail with two lines, the add-line dialog, the sent detail with its status actions,
+  the print page on screen and under print media, and the deal's Quotes section with an accepted
+  quote), produced by the new screenshot spec `gocrm-ui/e2e/screenshots/11-quotes.spec.ts` and
+  indexed in `docs/SCREENSHOTS.md`. The capture review also fixed the "Active" filter on
+  `/products` and the "Status" filter on `/quotes`, whose floating label overlapped the empty
+  "All products" / "All statuses" value: the label is now shrunk and the outline notched.
+
+- **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
+  start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
+  (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
+  schedule, and run ordered steps: `wait`, `condition` (allowlisted fields and operators, `else`
+  stop or forward jump, `amount_cents` only in the deal's currency), `create_task`, `assign_owner`,
+  `send_email` to a staff user and `notify` (in-app). Every lead and deal write path — the lead
+  service, form submissions, bulk status/assign/convert, conversion, and deal create/update/stage —
+  records an outbox event inside the transaction that commits the write; automation-originated
+  writes record `origin=automation` events that start no run. A worker (`AUTOMATION_ENABLED`,
+  `AUTOMATION_POLL_INTERVAL_SECONDS`, see `.env.example`) claims events with a conditional update,
+  starts one run per enabled matching rule (`clause.OnConflict{DoNothing: true}` on the dedupe
+  key, so a duplicate is neither an error nor a row on SQLite or MySQL), executes each step in one
+  transaction behind a locking read of the record and a conditional advance of the run row, parks
+  waits in `resume_at` so they survive a restart, continues schedule passes from a persisted
+  cursor (500 records per tick, one pass per UTC day, same-day catch-up, no backfill) and
+  reconciles interrupted runs at boot (a `send_email` left in `sending` is failed with
+  `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
+  neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
+  step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
+  only the non-personal placeholders (`lead.id`, `lead.status`, `lead.source`, the `deal.*`
+  fields) because a task survives the erasure of its lead; the name, email, phone, company and
+  owner placeholders stay available to the email and notification text, which does not outlive
+  the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
+  `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
+  run (`POST /automation/rules/{id}/dry-run`) reports each step's would-be outcome and writes,
+  sends and notifies nothing. The run history (`/automation/runs`) follows lead and deal
+  visibility inside the query; `/notifications` serves a staff user's own notifications. Lead
+  erasure cancels the lead's active runs (`record_deleted`) and hard-deletes its notifications,
+  before the scrub; user erasure hard-deletes the user's notifications. Logs carry ids, statuses,
+  step types, outcomes and error codes only. Schema: AutoMigrate plus the MySQL/MariaDB migration
+  `20261028120000_add_follow_up_automation` (six new tables, nothing altered). The worker assumes a
+  single API replica and no retention pruning exists yet. The screens are described in the
+  "Follow-up automation and notifications (UI)" entry above. (#164)
+
+- **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
+  integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
+  quotes linked to a deal and/or a customer (`/quotes`, `/deals/{id}/quotes`,
+  `/customers/{id}/quotes`; admin and sales, sales narrowed to its own quotes inside the query).
+  Lines copy the product's name and price when they are added, take a per-line discount in basis
+  points, and the server recomputes the totals with round-half-up on every line change; the line
+  gross and the quote total are capped at 10^12 minor units and a quote holds at most 100 lines.
+  The lifecycle is draft → sent → accepted/rejected/expired (sent → draft to revise): each
+  transition is a conditional claim plus one `quote_status_changes` row in a single transaction,
+  draft → sent reads the line count after the claim and refuses an empty quote, and acceptance is
+  refused after `valid_until`. Only drafts are editable. `POST /quotes/{id}/email` sends a
+  plaintext rendering of a sent or accepted quote to the linked customer's current address with a
+  fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
+  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. Without `SMTP_HOST` the
+  quote email takes the same logging fallback as the password reset: it is logged, not delivered,
+  and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
+  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
+  the code of a relay reply without the text, which can echo the recipient. Quotes copy no personal
+  data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:
+  AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
+  frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
+  (#158)
+
+- **Feature analysis workflow (runner 0.9.0).** `automation/langflow/flows/analysis.json` and
+  `gophercrm-runner analyze` turn one feature request into a gitignored
+  `docs/specs/<date>-<slug>.md`: a one-page summary, then acceptance criteria in the task
+  manifest shape, the data model with both migration halves, API, screens, permissions, Mermaid
+  diagrams, test plan, documentation to update, cited research notes, an independent review with
+  one bounded revision and the open questions. Agents are read-only and restricted to a detached
+  worktree at `origin/main`; the runner writes the file, records provider-reported cost and
+  duration per call, and verifies a digest chain between stages. Refinements re-enter with
+  numbered owner comments and inherit the parent run's journals. See the
+  [runner guide](automation/langflow/README.md#analyse-a-feature-request).
+
+- **Frontend task profile with named Vitest evidence (runner).** A task manifest may now set
+  `validation_profile: "frontend"`. Its acceptance checks are registry entries of the new
+  optional `kind: "vitest"` (`go` remains the default, so existing entries and frozen contract
+  hashes are unchanged) whose argument array is exactly `npm --prefix gocrm-ui test --silent --
+  --run --reporter=json` followed by test files under `gocrm-ui/src`; each named test is a file
+  and the exact `fullName` the JSON reporter prints, and must report `passed` exactly once.
+  Failed, skipped, pending or todo cases, a required file without results, and duplicates fail
+  acceptance. A frontend ticket changes only `gocrm-ui/`, `docs/`, `README.md` and
+  `CHANGELOG.md`, cannot mix Go and Vitest checks, keeps `make verify` (build, zero-warning lint,
+  unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
+  `database_test_commands` and `TEST_MYSQL_DSN`. For every profile, the Vitest and Playwright
+  configuration, the Vitest setup files and the whole `gocrm-ui/e2e/` suite are now protected
+  validation gates that no agent may change; only a newly added `gocrm-ui/e2e/tests/*.spec.ts`
+  is admitted. See the [runner guide](automation/langflow/README.md#execute-the-queue).
+- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
+  closed outside the runner, recording the closure and its closing pull requests as unvalidated
+  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
+- **Maintainer-commit adoption for ticket executions (runner).** `gophercrm-runner adopt-commit
+  --issue N --head FULL_SHA --reason ...` continues an unfinished ticket whose repair budget is
+  exhausted, or whose candidate must be corrected by hand, with an inspected maintainer commit on
+  the ticket branch: the counterpart of `complete-pr --refresh --head`. The worktree must be
+  clean at that exact commit, the commit must descend from the recorded head, its diff from the
+  journal base must pass the protected-path and frozen-scope gates, and a recorded pull request
+  must already carry it. Adoption records an `adoptions` entry, invalidates tests and review as
+  `freeze --refresh` does and returns the execution to `validate`; it consumes no repair round
+  and leaves spent calls and the deadline unchanged. See the
+  [operations runbook](automation/langflow/OPERATIONS.md#adopt-a-maintainer-commit).
+
 - A shared bounded mailer validation profile: API build/vet, SMTP transport/header/privacy
   regressions, focused password-reset/form delivery callers and browser health smoke.
   Required tests cannot be absent or skipped; mixed application changes and explicit
@@ -149,6 +293,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An automation rule update no longer undoes a concurrent disable.** `PUT
+  /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
+  inside the update transaction; before, the handler read the rule first and wrote that value
+  back, so a disable committed in between was silently reverted.
+- **`make swagger` resolves the notification handler's types.** The handler now imports the
+  models package its annotations reference, so the spec generates again.
+
+- **Runner recovery and gate gaps.** Every `gocrm-ui/vitest.*` file is now an existing
+  validation gate, because Vitest discovers `vitest.workspace.*` and `vitest.projects.*` beside
+  its configuration; previously only `vitest.config*` was protected. `retire-issue` now also
+  requires `--processes-stopped` when a validation command is recorded as running, and records
+  its disposition in `check_dispositions`. A Vitest receipt now records the validation checkout
+  that produced it and is verified against that checkout, so a receipt reused across two
+  interrupted resumes no longer fails the exact-path match and discards every retained check.
+  A failed `gh` invocation (for example a TLS handshake timeout against the GitHub API) is now
+  an environment failure: validation stops at its stage, records the attempt as `environment`
+  and is resumed by the same command, instead of treating the failure as a test failure and
+  spending a provider call and a repair round on an agent with nothing to change.
+- **The remediation runner no longer strands an implementation that changes a path outside the
+  frozen task scope.** Finalization checked the frozen scope before committing, so a single
+  out-of-scope edit left the agent's work uncommitted at `finalize_implementation`, where `run`
+  repeated the same refusal, `freeze --refresh` required a revalidation first and `revalidate`
+  refused both the stage and the dirty worktree. Protected and private paths and changed
+  validation gates are still refused before anything is written. The scope check now runs after
+  the commit: the implementation and its claims are kept on the runner branch, `last_error`
+  records the violation and the execution stops at `validate`, where the same check still blocks
+  testing, review and publication. The operator inspects the diff and either widens the scope
+  (`revalidate` when main has advanced, then `freeze --refresh` and `run --execute`, which
+  validates the existing commit without another implementation call) or leaves the execution
+  for an explicit disposition.
+- **Feature analysis checks anticipate the execution gates.** The specification and revision
+  stages now report context references that are not Markdown, are missing at the base commit or
+  exceed the 128 KiB guidance cap; Go test-plan names that are not bare identifiers or appear in
+  more than one registry entry; `./cmd/migrate` registry entries whose `-run` pattern and tests
+  do not cover `TestMigrationFresh_FullUpAndDown` and
+  `TestMigrationUpgrade_FromMainAutoMigratedSchema`; and migration or CHANGELOG changes whose
+  scope omits `cmd/migrate/*_test.go` or `CHANGELOG.md`. An over-budget one-pager note states
+  the excess and the largest fields, and the revision reports a one-pager it did not shrink. The
+  stage rules state each requirement.
+- **The remediation runner waits for an in-progress workflow run before it collects failed-job
+  logs.** A required check that failed while other jobs of the same run were still running made
+  the runner request the run's failed-job logs, which `gh` refuses until the run completes; the
+  ticket or PR completion then stopped on that refusal instead of entering its repair loop. The
+  runner now waits, within the CI deadline, until every failed run has completed and then fetches
+  the logs once.
 - **Sorted customer CSV exports no longer lose rows (#105).** `GET /customers/export` read the
   book in 500-row primary-key batches through GORM's `FindInBatches` while also applying the
   requested `sort_by`. The batch continuation is `id > last id of the previous batch`, which is

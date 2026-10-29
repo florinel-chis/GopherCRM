@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from gophercrm_runner.config import CommandError, Config, GateError, REQUIRED_CHECKS
-from gophercrm_runner.engine import Runner
+from gophercrm_runner.config import CommandError, Config, EnvironmentError, GateError, REQUIRED_CHECKS
+from gophercrm_runner.engine import CIFailure, Runner
 from gophercrm_runner.gates import agent_result, check_state, merge_gate, migration_coverage, validate_paths
 from gophercrm_runner.process import Commands
 from gophercrm_runner.state import Store
@@ -26,6 +26,9 @@ def ready_pr():
                 isDraft=False, headRefOid='head', baseRefOid='base', mergeable='MERGEABLE',
                 reviewDecision='', statusCheckRollup=green_checks(), mergeCommit=None,
                 headRefName='automation/remediate-95', baseRefName='main')
+
+
+GH_TRANSPORT_FAILURE = 'Post "https://api.github.com/graphql": net/http: TLS handshake timeout\n'
 
 
 def fixture_manifest(number):
@@ -82,6 +85,42 @@ class GateTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(GateError):
                 validate_paths([name])
 
+    def test_frontend_validation_files_are_protected_gates(self):
+        for name in ['gocrm-ui/vitest.config.ts', 'gocrm-ui/vitest.config.mts',
+                     'gocrm-ui/playwright.config.ts', 'gocrm-ui/playwright.config.screenshots.ts',
+                     'gocrm-ui/src/test/setup.ts', 'gocrm-ui/src/test/globals.d.ts',
+                     'gocrm-ui/e2e/global-setup.ts', 'gocrm-ui/e2e/global-teardown.ts',
+                     'gocrm-ui/e2e/helpers/auth.ts', 'gocrm-ui/e2e/fixtures/data.ts',
+                     'gocrm-ui/e2e/pages/LoginPage.ts', 'gocrm-ui/e2e/scripts/seed.ts',
+                     'gocrm-ui/e2e/screenshots/capture.spec.ts', 'gocrm-ui/e2e/README.md',
+                     'gocrm-ui/e2e/tests/health-smoke.spec.ts']:
+            with self.subTest(name=name), self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name])
+            with self.subTest(name=name, added=True), \
+                    self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name], added={name})
+
+    def test_every_vitest_root_configuration_is_a_protected_gate(self):
+        # Vitest discovers workspace and project files beside its configuration.
+        for name in ['gocrm-ui/vitest.workspace.ts', 'gocrm-ui/vitest.projects.ts',
+                     'gocrm-ui/vitest.workspace.json', 'gocrm-ui/vitest.setup.ts']:
+            for added in (set(), {name}):
+                with self.subTest(name=name, added=bool(added)), \
+                        self.assertRaisesRegex(GateError, 'existing validation gate'):
+                    validate_paths([name], added=added)
+        validate_paths(['gocrm-ui/src/vitest.helpers.ts', 'gocrm-ui/src/pages/Deals.test.tsx'])
+
+    def test_only_a_newly_added_browser_spec_is_admitted(self):
+        spec = 'gocrm-ui/e2e/tests/deal-board.spec.ts'
+        validate_paths([spec, 'gocrm-ui/src/pages/Deals.tsx'], added={spec})
+        with self.assertRaisesRegex(GateError, 'existing validation gate'):
+            validate_paths([spec])
+        for name in ['gocrm-ui/e2e/tests/Deal-Board.spec.ts', 'gocrm-ui/e2e/tests/nested/x.spec.ts',
+                     'gocrm-ui/e2e/tests/deal-board.ts', 'gocrm-ui/e2e/helpers/new-helper.ts']:
+            with self.subTest(name=name), self.assertRaisesRegex(GateError, 'existing validation gate'):
+                validate_paths([name], added={name})
+        validate_paths(['gocrm-ui/src/test/utils.tsx', 'gocrm-ui/src/pages/Deals.test.tsx'])
+
     def test_migration_success_cannot_be_a_skip_or_empty_output(self):
         for output in ['', '{}', '{"Action":"skip","Test":"TestMigrationFresh_FullUpAndDown"}']:
             with self.assertRaises(GateError):
@@ -102,13 +141,19 @@ class FakeCommands:
         self.ci_repair = False
         self.pr_data = None
         self.pushed_head = None
+        # GitHub state reads that fail at the transport layer, as `gh` reports them.
+        self.gh_transport_failures = 0
 
     async def run(self, args, *, cwd, **kwargs):
         args = tuple(args)
         self.calls.append(args)
+        if (self.gh_transport_failures and args[0] == 'gh'
+                and args[1:2] in {('issue',), ('pr',), ('run',)}):
+            self.gh_transport_failures -= 1
+            raise CommandError('gh exited 1; log gh.log', stdout='', stderr=GH_TRANSPORT_FAILURE)
         versions = {('git', '--version'): 'git version 2.54.0',
                     ('gh', '--version'): 'gh version 2.92.0',
-                    ('claude', '--version'): '2.1.303 (Claude Code)',
+                    ('claude', '--version'): '2.1.303',
                     ('go', 'version'): 'go version go1.26.3 darwin/arm64',
                     ('node', '--version'): 'v26.12.0', ('npm', '--version'): '11.20.0',
                     ('make', '--version'): 'GNU Make 3.81',
@@ -181,6 +226,8 @@ class FakeCommands:
         if args[:3] == ('gh', 'pr', 'edit'):
             return 0, ''
         if args[:3] == ('gh', 'run', 'view'):
+            if '--json' in args:
+                return 0, json.dumps(dict(status='completed', conclusion='failure'))
             return 0, 'A regression assertion failed on CI'
         if args[:3] == ('gh', 'pr', 'merge'):
             assert args[args.index('--match-head-commit') + 1] == self.pushed_head
@@ -242,6 +289,70 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=invalid), self.assertRaisesRegex(GateError, 'max_repair_rounds'):
                 replace(config, max_repair_rounds=invalid).validate()
 
+    def failed_check_runner(self, statuses, config=None):
+        """Script one failed required check on run 123 whose run reports `statuses` in order."""
+        runner = Runner(config or self.config, self.commands)
+        pr = ready_pr()
+        pr['statusCheckRollup'][0].update(conclusion='FAILURE',
+            detailsUrl='https://github.com/example/repo/actions/runs/123/job/456')
+        calls = []
+        pending = list(statuses)
+
+        async def gh(*args):
+            calls.append(args)
+            if args == ('run', 'view', '123', '--json', 'status,conclusion'):
+                status = pending.pop(0) if len(pending) > 1 else pending[0]
+                return json.dumps(dict(status=status, conclusion='failure' if status == 'completed' else ''))
+            if args == ('run', 'view', '123', '--log-failed'):
+                return 'backend job: assertion failed'
+            raise AssertionError(f'unexpected gh call {args}')
+
+        async def view(number):
+            calls.append(('pr', number))
+            return json.loads(json.dumps(pr))
+
+        runner.gh = gh
+        runner.pr = view
+        return runner, calls
+
+    async def test_ci_failure_waits_for_in_progress_run_before_fetching_logs(self):
+        runner, calls = self.failed_check_runner(['in_progress', 'in_progress', 'completed'])
+        record = dict(pr=122, head='head', base='base')
+        with patch.object(runner, 'ci_pause', new_callable=AsyncMock) as pause:
+            with self.assertRaisesRegex(CIFailure, 'backend job: assertion failed'):
+                await runner.wait_ci(record)
+        self.assertEqual(pause.await_count, 2)
+        log_calls = [c for c in calls if c[-1] == '--log-failed']
+        self.assertEqual(log_calls, [('run', 'view', '123', '--log-failed')])
+        self.assertEqual(calls.index(log_calls[0]), len(calls) - 1)
+        self.assertEqual(calls[-2], ('run', 'view', '123', '--json', 'status,conclusion'))
+        # The PR head and base are re-read on every iteration while waiting.
+        self.assertEqual(sum(1 for c in calls if c[0] == 'pr'), 3)
+
+    async def test_ci_failure_on_completed_run_raises_without_waiting(self):
+        runner, calls = self.failed_check_runner(['completed'])
+        record = dict(pr=122, head='head', base='base')
+        with patch.object(runner, 'ci_pause', new_callable=AsyncMock) as pause:
+            with self.assertRaisesRegex(CIFailure, 'backend job: assertion failed'):
+                await runner.wait_ci(record)
+        pause.assert_not_awaited()
+        self.assertEqual(sum(1 for c in calls if c[-1] == '--log-failed'), 1)
+
+    async def test_ci_deadline_applies_while_failed_run_is_in_progress(self):
+        config = replace(self.config, ci_timeout_seconds=60)
+        runner, calls = self.failed_check_runner(['in_progress'], config)
+        record = dict(pr=122, head='head', base='base')
+        clock = [1000.0]
+
+        async def advance(_record):
+            clock[0] += 30
+
+        with patch('gophercrm_runner.engine.time.monotonic', side_effect=lambda: clock[0]), \
+                patch.object(runner, 'ci_pause', side_effect=advance):
+            with self.assertRaisesRegex(GateError, 'CI deadline exceeded'):
+                await runner.wait_ci(record)
+        self.assertFalse(any(c[-1] == '--log-failed' for c in calls))
+
     async def test_preview_has_no_mutations_or_agent_calls(self):
         before = {str(p): p.read_bytes() for p in self.config.state_dir.rglob('*') if p.is_file()}
         result = await self.runner.run_issue(95)
@@ -269,6 +380,57 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         # A repeated request reconciles the existing merge without another agent or PR.
         await self.runner.run_issue(95, execute=True)
         self.assertEqual((self.commands.implementations, self.commands.merges), (2, 1))
+
+    async def test_github_transport_failure_during_validation_is_resumable_without_repair(self):
+        original = self.runner.validate
+
+        async def validate(record):
+            # The first GitHub read inside validation fails at the transport layer.
+            self.commands.gh_transport_failures = 1
+            return await original(record)
+
+        with patch.object(self.runner, 'validate', side_effect=validate):
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed: .*TLS handshake timeout') as caught:
+                await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.gh_transport_failures, 0)
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        record = self.runner.store.read('issue-95')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertEqual((record['attempts'][-1]['stage'], record['attempts'][-1]['outcome'],
+                          record['attempts'][-1]['category']), ('validation', 'failed', 'environment'))
+        self.assertEqual(record['last_failure']['category'], 'environment')
+        self.assertEqual((record['provider_calls'], record['repairs']), (1, 0))
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (1, 0, 0))
+        self.assertEqual(self.runner.store.read('active'), {'issue': 95})
+        # A plain resume validates the same commit once GitHub answers again.
+        result = await self.runner.run_issue(95, execute=True)
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (1, 1, 1))
+        record = self.runner.store.read('issue-95')
+        self.assertEqual((record['provider_calls'], record['repairs']), (2, 0))
+
+    async def test_failed_log_retrieval_stops_ci_wait_without_a_repair(self):
+        self.commands.pr_data = dict(ready_pr(), statusCheckRollup=[dict(green_checks()[0], conclusion='FAILURE',
+            detailsUrl='https://github.com/example/repo/actions/runs/123/job/456')])
+        original = self.commands.run
+
+        async def boundary(args, **kwargs):
+            if tuple(args[:3]) == ('gh', 'run', 'view') and '--log-failed' in args:
+                self.commands.calls.append(tuple(args))
+                raise CommandError('gh exited 1; log gh.log', stdout='', stderr=GH_TRANSPORT_FAILURE)
+            return await original(args, **kwargs)
+
+        self.commands.run = boundary
+        record = dict(pr=122, head='head', base='base')
+        with patch.object(self.runner, 'ci_pause', new_callable=AsyncMock) as pause:
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed') as caught:
+                await self.runner.wait_ci(record)
+        self.assertNotIsInstance(caught.exception, CIFailure)
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        pause.assert_not_awaited()
+        gh = [c[1:5] for c in self.commands.calls if c[0] == 'gh']
+        self.assertEqual(gh, [('pr', 'view', '122', '--json'), ('run', 'view', '123', '--json'),
+                              ('run', 'view', '123', '--log-failed')])
 
     async def test_failed_tests_are_repaired_before_review(self):
         self.commands.fail_tests = 1
@@ -408,6 +570,58 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
         self.commands.run = bad_agent
         with self.assertRaisesRegex(GateError, 'existing validation gate'):
+            await self.runner.run_issue(95, execute=True)
+        self.assertEqual(self.commands.tests, 0)
+
+    async def agent_writes(self, files):
+        original = self.commands.run
+
+        async def writing_agent(args, **kwargs):
+            result = await original(args, **kwargs)
+            if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                for name, content in files.items():
+                    path = kwargs['cwd'] / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content)
+            return result
+
+        self.commands.run = writing_agent
+
+    def commit_fixture(self, files):
+        for name, content in files.items():
+            path = self.checkout / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        subprocess.run(['git', 'add', '.'], cwd=self.checkout, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', 'browser suite'], cwd=self.checkout, check=True,
+                       capture_output=True)
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.checkout, text=True).strip()
+
+    async def test_added_paths_lists_only_paths_absent_from_the_base(self):
+        existing = 'gocrm-ui/e2e/tests/login.spec.ts'
+        base = self.commit_fixture({existing: 'old\n'})
+        (self.checkout / existing).write_text('weakened\n')
+        spec = self.checkout / 'gocrm-ui/e2e/tests/deal-board.spec.ts'
+        spec.write_text('new\n')
+        paths = await self.runner.changed_paths(self.checkout, base)
+        self.assertEqual(await self.runner.added_paths(self.checkout, base, paths),
+                         {'gocrm-ui/e2e/tests/deal-board.spec.ts'})
+
+    async def test_agent_cannot_edit_the_browser_suite_or_vitest_setup(self):
+        for name in ['gocrm-ui/e2e/helpers/auth.ts', 'gocrm-ui/playwright.config.ts',
+                     'gocrm-ui/vitest.config.ts', 'gocrm-ui/src/test/setup.ts']:
+            with self.subTest(name=name):
+                self.tearDown()  # Each path starts from a fresh fixture repository.
+                self.setUp()
+                await self.asyncSetUp()
+                await self.agent_writes({name: 'export {}\n'})
+                with self.assertRaisesRegex(GateError, 'existing validation gate'):
+                    await self.runner.run_issue(95, execute=True)
+                self.assertEqual(self.commands.tests, 0)
+
+    async def test_new_browser_spec_passes_the_gate_and_reaches_the_scope_check(self):
+        await self.agent_writes({'gocrm-ui/e2e/tests/deal-board.spec.ts': 'export {}\n'})
+        with self.assertRaisesRegex(GateError, 'Frontend edits require the frontend profile'):
             await self.runner.run_issue(95, execute=True)
         self.assertEqual(self.commands.tests, 0)
 

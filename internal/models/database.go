@@ -56,6 +56,11 @@ func MigrateDatabase() error {
 			&Customer{},
 			&Deal{},
 			&DealStageChange{},
+			// Product and Quote before QuoteLine: the line references both.
+			&Product{},
+			&Quote{},
+			&QuoteLine{},
+			&QuoteStatusChange{},
 			&Ticket{},
 			&TicketComment{},
 			&Label{},
@@ -74,6 +79,14 @@ func MigrateDatabase() error {
 			&Form{},
 			&FormSubmission{},
 			&FormConfirmationToken{},
+			// Follow-up automation: rules before steps and runs (both reference
+			// the rule), runs before run steps, notifications last.
+			&AutomationRule{},
+			&AutomationStep{},
+			&AutomationEvent{},
+			&AutomationRun{},
+			&AutomationRunStep{},
+			&Notification{},
 		)
 	})
 }

@@ -6,6 +6,8 @@ export interface UserFilters extends PaginationParams {
   role?: string;
   is_active?: boolean;
   search?: string;
+  // GET /users pages by offset (ParseOffsetLimit).
+  offset?: number;
 }
 
 export interface CreateUserData {

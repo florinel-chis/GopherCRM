@@ -269,6 +269,125 @@ type DealRepository interface {
 	WithTx(tx *gorm.DB) DealRepository
 }
 
+// ProductListFilter narrows ProductRepository.List. A nil IsActive and an
+// empty string mean "no filter"; Search matches name and SKU. SortBy is
+// checked against utils.AllowedSortColumns["products"] and an empty one means
+// newest first.
+type ProductListFilter struct {
+	Search    string
+	IsActive  *bool
+	Currency  string
+	SortBy    string
+	SortOrder string
+}
+
+// ProductRepository backs the catalogue. Products hold no personal data, so
+// nothing here takes part in the erasure; Delete is a plain soft delete and
+// quote lines keep referencing the row.
+type ProductRepository interface {
+	Create(product *models.Product) error
+	// GetByID returns the live product; a soft-deleted one is a not-found.
+	GetByID(id uint) (*models.Product, error)
+	// Update saves every column of the product, zero values included.
+	Update(product *models.Product) error
+	// Delete soft-deletes the product and reports gorm.ErrRecordNotFound when
+	// no live row matched.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same filter.
+	List(offset, limit int, filter ProductListFilter) ([]models.Product, int64, error)
+	WithTx(tx *gorm.DB) ProductRepository
+}
+
+// QuoteListFilter narrows QuoteRepository.List. Every pointer that is nil and
+// every empty string means "no filter". SortBy is checked against
+// utils.AllowedSortColumns["quotes"] and an empty one means newest first.
+type QuoteListFilter struct {
+	Status     models.QuoteStatus
+	DealID     *uint
+	CustomerID *uint
+	OwnerID    *uint
+	SortBy     string
+	SortOrder  string
+}
+
+// QuoteStatusStamps are the timestamps a status claim writes next to the new
+// status: sent_at and closed_at, both written as given (nil clears).
+type QuoteStatusStamps struct {
+	SentAt   *time.Time
+	ClosedAt *time.Time
+}
+
+// QuoteRepository backs the quotes module. Quotes copy no personal data, so
+// nothing here takes part in the erasure; the status history is append-only.
+//
+// The conditional updates (UpdateDraft, UpdateTotals, ClaimStatus,
+// StampEmailed) report how many rows matched their WHERE clause. On MySQL the
+// driver counts changed rows rather than matched rows, so each of them
+// re-checks its own conditions when the driver reports zero and answers 1
+// when the row already held exactly the written values.
+type QuoteRepository interface {
+	Create(quote *models.Quote) error
+	// GetByID returns the live quote with Owner, Customer, Deal and Lines
+	// (ordered by position) preloaded.
+	GetByID(id uint) (*models.Quote, error)
+	// GetByIDForUpdate is the locking read of a write transaction: the bare
+	// row, `SELECT ... FOR UPDATE` on MySQL and a plain read on SQLite, where
+	// the single connection serialises writers anyway.
+	GetByIDForUpdate(id uint) (*models.Quote, error)
+	// UpdateDraft writes every scalar column of the quote WHERE the stored
+	// status is still draft and returns the matched row count (0 or 1).
+	UpdateDraft(quote *models.Quote) (int64, error)
+	// UpdateTotals writes the three totals WHERE the status is still draft
+	// and returns the matched row count.
+	UpdateTotals(id uint, subtotal, discount, total int64) (int64, error)
+	// ClaimStatus moves the quote from one status to another with one
+	// conditional update (WHERE id = ? AND status = from), writing the stamps
+	// with it, and returns the matched row count: exactly one row is a
+	// successful claim, zero means another transition got there first.
+	ClaimStatus(id uint, from, to models.QuoteStatus, stamps QuoteStatusStamps) (int64, error)
+	// StampEmailed sets last_emailed_at WHERE the status is sent or accepted
+	// and no history row moved the quote to draft after afterHistoryID, and
+	// returns the matched row count.
+	StampEmailed(id uint, afterHistoryID uint, at time.Time) (int64, error)
+	// Delete soft-deletes the quote and reports gorm.ErrRecordNotFound when no
+	// live row matched. Lines and history rows stay.
+	Delete(id uint) error
+	// List returns one page plus the total matching the same filter, without
+	// lines but with Owner, Customer and Deal.
+	List(offset, limit int, filter QuoteListFilter) ([]models.Quote, int64, error)
+
+	CreateLine(line *models.QuoteLine) error
+	// GetLine returns the line only when it belongs to the quote; a line of
+	// another quote is gorm.ErrRecordNotFound.
+	GetLine(quoteID, lineID uint) (*models.QuoteLine, error)
+	// UpdateLine saves every column of the line, zero values included.
+	UpdateLine(line *models.QuoteLine) error
+	// DeleteLine removes the line when it belongs to the quote and reports
+	// gorm.ErrRecordNotFound otherwise. Lines are not soft-deleted.
+	DeleteLine(quoteID, lineID uint) error
+	// ListLines returns the quote's lines ordered by position, then id.
+	ListLines(quoteID uint) ([]models.QuoteLine, error)
+	// CountLines counts the quote's lines with a plain read.
+	CountLines(quoteID uint) (int64, error)
+	// CountLinesForUpdate counts the quote's lines with a locking read (FOR
+	// UPDATE on MySQL, plain on SQLite), so inside a transaction it sees every
+	// committed line and no uncommitted one.
+	CountLinesForUpdate(quoteID uint) (int64, error)
+	// NextLinePosition is max(position) + 1 over the quote's lines, 1 for the
+	// first line.
+	NextLinePosition(quoteID uint) (int64, error)
+
+	// CreateStatusChange appends one history row.
+	CreateStatusChange(change *models.QuoteStatusChange) error
+	// ListStatusChanges returns the quote's history oldest first with
+	// ChangedBy preloaded.
+	ListStatusChanges(quoteID uint) ([]models.QuoteStatusChange, error)
+	// LatestStatusChangeID is the highest history id of the quote, 0 when it
+	// has none; the marker StampEmailed compares against.
+	LatestStatusChangeID(quoteID uint) (uint, error)
+	WithTx(tx *gorm.DB) QuoteRepository
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)
@@ -454,6 +573,169 @@ type AEORepository interface {
 	// run context and its finalization to a short, independent cleanup
 	// context; a nil ctx returns the receiver unchanged.
 	WithContext(ctx context.Context) AEORepository
+}
+
+// AutomationRuleListFilter narrows AutomationRepository.ListRules. SortBy is
+// checked against utils.AllowedSortColumns["automation_rules"]; an empty one
+// means newest first.
+type AutomationRuleListFilter struct {
+	EntityType string
+	Enabled    *bool
+	SortBy     string
+	SortOrder  string
+}
+
+// AutomationRunListFilter narrows AutomationRepository.ListRuns. SortBy is
+// checked against utils.AllowedSortColumns["automation_runs"] (id,
+// created_at, updated_at, status, resume_at); an empty one means newest first.
+type AutomationRunListFilter struct {
+	Status     string
+	RuleID     *uint
+	EntityType string
+	EntityID   *uint
+	SortBy     string
+	SortOrder  string
+}
+
+// AutomationRunScope is the role scope of a run listing. A nil OwnerID is the
+// admin scope (every run); a non-nil one is the sales scope: only runs whose
+// lead or deal the user currently owns, applied inside the SQL before offset
+// and limit, so the total counts the same filtered set.
+type AutomationRunScope struct {
+	OwnerID *uint
+}
+
+// AutomationRunAdvance is what a step's conditional advance writes onto the
+// run: the status it moves to, the position it continues at, the resume time
+// of a wait, and the stamps of a terminal status.
+type AutomationRunAdvance struct {
+	Status       string
+	NextPosition int
+	ResumeAt     *time.Time
+	FinishedAt   *time.Time
+	CancelReason string
+	ErrorCode    string
+}
+
+// AutomationScheduleQuery selects one batch of a schedule pass: the live
+// records of the entity type matching the status (leads) or stage (deals)
+// filter, with updated_at before StaleBefore when set, with ids strictly
+// above AfterID, in id order, at most Limit of them.
+type AutomationScheduleQuery struct {
+	EntityType  string
+	Status      string
+	Stage       string
+	StaleBefore *time.Time
+	AfterID     uint
+	Limit       int
+}
+
+// AutomationRepository backs the follow-up automation module: the rules and
+// their steps, the outbox events, the runs and their step log, plus the
+// locking reads and owner writes the executor makes on leads and deals.
+//
+// Every conditional update reports the affected-row count and changes a
+// column value whenever it matches, so the count is the matched count on
+// MySQL too. The locking reads carry FOR UPDATE on MySQL and are plain reads
+// on SQLite. Nothing here holds personal data; the record reads return the
+// live row for the executor to evaluate and render from.
+type AutomationRepository interface {
+	// CreateRule inserts the rule and its steps numbered 1..n in order.
+	CreateRule(rule *models.AutomationRule) error
+	// GetRuleByID returns the live rule with its steps in position order.
+	GetRuleByID(id uint) (*models.AutomationRule, error)
+	// GetRuleByIDForUpdate is the locking read of a rule write: the bare row.
+	GetRuleByIDForUpdate(id uint) (*models.AutomationRule, error)
+	ListRules(offset, limit int, filter AutomationRuleListFilter) ([]models.AutomationRule, int64, error)
+	// UpdateRule writes the editable columns and the version by primary key.
+	UpdateRule(rule *models.AutomationRule) error
+	// ReplaceSteps deletes the rule's steps and inserts the given ones 1..n.
+	ReplaceSteps(ruleID uint, steps []models.AutomationStep) error
+	SetRuleEnabled(id uint, enabled bool) error
+	// DeleteRule soft-deletes the rule; gorm.ErrRecordNotFound when none matched.
+	DeleteRule(id uint) error
+	// ListMatchingRules returns the enabled live rules of the entity and
+	// trigger type with their steps.
+	ListMatchingRules(entityType, triggerType string) ([]models.AutomationRule, error)
+	// ListScheduleRules returns the enabled live schedule rules with steps.
+	ListScheduleRules() ([]models.AutomationRule, error)
+	// AdvanceScheduleCursor is the conditional update of a schedule pass on
+	// (schedule_pass_on, schedule_cursor); it returns the matched row count.
+	AdvanceScheduleCursor(ruleID uint, expectedPassOn *string, expectedCursor uint, passOn string, cursor uint, completedOn *string, now time.Time) (int64, error)
+
+	RecordEvent(event *models.AutomationEvent) error
+	ListUnprocessedEvents(limit int) ([]models.AutomationEvent, error)
+	// ClaimEvent stamps processed_at WHERE it is still NULL and returns the
+	// affected row count (0 or 1).
+	ClaimEvent(id uint, now time.Time) (int64, error)
+
+	// CreateRunIgnoringDuplicate inserts with clause.OnConflict{DoNothing:
+	// true} on the unique dedupe_key and reports whether a row was added.
+	CreateRunIgnoringDuplicate(run *models.AutomationRun) (bool, error)
+	// GetRunByID returns the run with its step log in position order.
+	GetRunByID(id uint) (*models.AutomationRun, error)
+	// GetRunByIDForUpdate is the locking read of the bare run row.
+	GetRunByIDForUpdate(id uint) (*models.AutomationRun, error)
+	// ListRuns returns one page plus the total, the scope applied in SQL.
+	ListRuns(offset, limit int, filter AutomationRunListFilter, scope AutomationRunScope) ([]models.AutomationRun, int64, error)
+	// RunInScope reports whether the run exists inside the scope.
+	RunInScope(id uint, scope AutomationRunScope) (bool, error)
+	// ListClaimableRuns returns pending runs and waiting runs whose resume_at
+	// is at or before now, in id order.
+	ListClaimableRuns(now time.Time, limit int) ([]models.AutomationRun, error)
+	// ClaimRun moves the run from fromStatus to running conditionally (a
+	// waiting run only once resume_at <= now) and returns the matched count.
+	ClaimRun(id uint, fromStatus string, now time.Time) (int64, error)
+	// AdvanceRun is UPDATE ... WHERE id = ? AND status = 'running' AND
+	// next_position = ?; it returns the matched count.
+	AdvanceRun(id uint, expectedPosition int, advance AutomationRunAdvance, now time.Time) (int64, error)
+	// ReleaseRun hands a running run back to pending at the same position
+	// after a failed attempt, incrementing attempts; the matched count.
+	ReleaseRun(id uint, expectedPosition int, now time.Time) (int64, error)
+	// CancelRun and the two bulk cancels set status cancelled with the reason
+	// on pending, waiting and running runs and return the affected count.
+	CancelRun(id uint, reason string, now time.Time) (int64, error)
+	CancelRunsForRule(ruleID uint, reason string, now time.Time) (int64, error)
+	CancelRunsForEntity(entityType string, entityID uint, reason string, now time.Time) (int64, error)
+	ListRunsByStatus(status string) ([]models.AutomationRun, error)
+	FailRun(id uint, errorCode string, now time.Time) error
+	ResetRunToPending(id uint, now time.Time) error
+
+	CreateRunStep(step *models.AutomationRunStep) error
+	// GetRunStep returns the step row at the position or gorm.ErrRecordNotFound.
+	GetRunStep(runID uint, position int) (*models.AutomationRunStep, error)
+	// LastRunStep returns the highest-positioned step row, or (nil, nil).
+	LastRunStep(runID uint) (*models.AutomationRunStep, error)
+	UpdateRunStepOutcome(id uint, outcome, errorCode string, details map[string]interface{}) error
+	ListRunSteps(runID uint) ([]models.AutomationRunStep, error)
+
+	// GetLeadForUpdate and GetDealForUpdate are the locking reads of a step
+	// transaction; the plain Get variants back the dry run and the API.
+	GetLeadForUpdate(id uint) (*models.Lead, error)
+	GetDealForUpdate(id uint) (*models.Deal, error)
+	GetLead(id uint) (*models.Lead, error)
+	GetDeal(id uint) (*models.Deal, error)
+	SetLeadOwner(id uint, ownerID uint, now time.Time) error
+	SetDealOwner(id uint, ownerID uint, now time.Time) error
+	ListScheduleCandidateIDs(query AutomationScheduleQuery) ([]uint, error)
+
+	WithTx(tx *gorm.DB) AutomationRepository
+}
+
+// NotificationRepository backs the in-app notifications a notify step
+// creates. Every read and write is keyed by the recipient, so one user can
+// never reach another's rows.
+type NotificationRepository interface {
+	Create(notification *models.Notification) error
+	GetByID(id uint) (*models.Notification, error)
+	// ListByUser returns one page of the user's notifications, newest first,
+	// plus the total; unreadOnly narrows both to read_at IS NULL.
+	ListByUser(userID uint, unreadOnly bool, offset, limit int) ([]models.Notification, int64, error)
+	CountUnread(userID uint) (int64, error)
+	// MarkRead stamps the user's own unread notification; the affected count.
+	MarkRead(id, userID uint, now time.Time) (int64, error)
+	MarkAllRead(userID uint, now time.Time) (int64, error)
+	WithTx(tx *gorm.DB) NotificationRepository
 }
 
 // FormRepository backs the forms module: the form definitions, the submissions

@@ -38,7 +38,10 @@ See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
 If a merged ticket fails documentation verification, inspect its evidence and either restore
 verification prerequisites or explicitly use `abandon-issue` with a reason. This retains the
 unverified result and leaves the queue stopped; it does not close issues or claim a successful
-handoff. Existing PR completions retain their `abandon-pr` recovery path.
+handoff. Existing PR completions retain their `abandon-pr` recovery path. An unfinished ticket
+whose issue GitHub closed outside the runner, for example through a separate `complete-pr`
+merge, is disposed with `retire-issue`; see
+[operations](OPERATIONS.md#retire-a-ticket-closed-outside-the-runner).
 
 Run these commands from the repository root. Use an isolated environment outside the checkout:
 
@@ -70,7 +73,7 @@ Version 0.8.3 lets proven comment-only edits in the root `.env.example` accompan
 bounded profile. Active settings and ambiguous dotenv syntax retain full fallback;
 see [validation policy](../../docs/VALIDATION_RELEASE.md) for the conservative proof.
 
-Version 0.8.5 adds the bounded mailer profile shared by local execution and CI. It requires
+Version 0.9.1 adds the bounded mailer profile shared by local execution and CI. It requires
 SMTP transport/header/TLS/privacy regressions and affected mail callers, with health smoke.
 Install reviewed main and verify module identity before admitting a fresh mailer task; retain
 every named acceptance check and inspect the committed selection before expensive validation.
@@ -83,7 +86,7 @@ gophercrm-runner serve --directory "$HOME/.local/share/gophercrm-runner"
 
 Open <http://127.0.0.1:7860>. Log in as `runner`, using the generated password in the private `server.env` file printed by setup. Import `automation/langflow/flows/remediation.json`. The queue component uses `GOPHERCRM_RUNNER_CONFIG` from the server environment when its configuration field is blank. Leave **Mode = preview** for the first run. Set **Maximum tickets** to the desired batch size.
 
-The server binds to loopback, disables signup, and restricts custom component authoring to administrators. Keep it local: this workflow can edit code and merge PRs using the host's credentials. A worktree is not an operating-system sandbox. The implementation agent has Read/Glob/Grep/Edit/Write tools; its independent reviewer has only Read/Glob/Grep. Shell commands and GitHub mutations belong to the runner. Repository and issue text are task data, never command or merge policy. Existing validation commands, workflow files, and the runner itself are protected from agent edits. The local policy explicitly allows issue #121 to add a new workflow for migration coverage; it cannot weaken an existing workflow.
+The server binds to loopback, disables signup, and restricts custom component authoring to administrators. Keep it local: this workflow can edit code and merge PRs using the host's credentials. A worktree is not an operating-system sandbox. The implementation agent has Read/Glob/Grep/Edit/Write tools; its independent reviewer has only Read/Glob/Grep. Shell commands and GitHub mutations belong to the runner. Repository and issue text are task data, never command or merge policy. Existing validation commands, workflow files, the frontend test configuration and browser suite (listed with the `frontend` profile below), and the runner itself are protected from agent edits. The local policy explicitly allows issue #121 to add a new workflow for migration coverage; it cannot weaken an existing workflow.
 
 ## Execute the queue
 
@@ -103,7 +106,38 @@ Every new execution requires a frozen task contract. The operator owns its objec
 }
 ```
 
-These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the selected browser tests on SQLite/MySQL and migration tests. The backend MVP rejects manual/UI profiles and frontend edits explicitly.
+These example test names are acceptance requirements for the task to implement, not a claim that they already exist. A generic success exit cannot replace their exact Go JSON pass events; missing, skipped, failed, wrong-package or duplicate results fail acceptance. A required suite with any skipped or failing descendant also fails, even if its parent reports success. Database profiles additionally require the selected browser tests on SQLite/MySQL and migration tests. Manual evidence profiles remain rejected explicitly.
+
+A manifest's `validation_profile` selects one evidence model for the whole ticket:
+
+| Profile | Acceptance check kind | Changes admitted | Browser checks |
+| --- | --- | --- | --- |
+| `backend` | `go` | `scope_paths`, never `gocrm-ui/` | contextual policy |
+| `backend-database` | `go` | `scope_paths`, never `gocrm-ui/` | configured SQLite/MySQL matrix, mandatory |
+| `frontend` | `vitest` | `scope_paths` within `gocrm-ui/`, `docs/`, `README.md` and `CHANGELOG.md` | configured SQLite/MySQL matrix, mandatory |
+
+A manifest that references a check of the other kind is refused, so Go and Vitest evidence never mix inside one ticket. `internal/handler/assets/` is outside every profile. A `frontend` ticket never changes Go code, even when a scope glob would admit it; the protected paths (`gocrm-ui/package.json`, `gocrm-ui/package-lock.json` and the TypeScript, Vite and ESLint configuration) stay protected, so it cannot add a dependency.
+
+The inputs of the frontend evidence are existing validation gates for every profile, so no agent can narrow the Vitest suite or weaken the browser matrix: every `gocrm-ui/vitest.*` file (the configuration and the automatically discovered `vitest.workspace.*` and `vitest.projects.*`), `gocrm-ui/playwright.config*`, `gocrm-ui/src/test/setup.ts`, `gocrm-ui/src/test/globals.d.ts` and every path under `gocrm-ui/e2e/` (existing specs including `tests/health-smoke.spec.ts`, `global-setup.ts`, `global-teardown.ts`, `helpers/`, `fixtures/`, `pages/`, `scripts/`, `screenshots/` and `README.md`). The single exception is a new browser spec: a file absent from the base commit whose path matches `gocrm-ui/e2e/tests/[a-z0-9-]+\.spec\.ts` only adds coverage and is admitted, subject to the ticket's scope. A change to any other of these paths is refused with "Agent changed an existing validation gate", for initial implementations and repairs alike. When the runner checks named Vitest identities, a report result matches a registered file only when its path is exactly `<validation checkout>/gocrm-ui/<file>`, so a nested copy of a test file cannot stand in for it. Its core check is `make verify`, which runs `npm run build`, `npm run lint` with `--max-warnings=0` and the full Vitest suite. Freezing a `frontend` contract requires `database_test_commands` and `TEST_MYSQL_DSN`, as its browser checks are mandatory evidence: the selected specs on SQLite and MySQL (the full browser matrix when the selection falls back to `full`) plus the migration check.
+
+A registry entry may carry `kind`: `"go"` (the default when absent; existing entries and their frozen `checks_hash` are unchanged) or `"vitest"`. A Vitest entry's `argv` is exactly the prefix below followed by one or more unique test files relative to `gocrm-ui`, each matching `^src/.*\.test\.tsx?$`; the runner executes it from the repository root of a fresh validation checkout after `npm ci`. `--silent` keeps npm's script banner off standard output, so the Vitest JSON report is the command's only stdout. Each named test is `{file, name}`: `file` is one of the argv files, `name` is the test's `fullName` exactly as the JSON reporter prints it (the `describe` titles and the test title joined by single spaces). Identities are unique.
+
+```json
+{
+  "acceptance_checks": {
+    "deal-detail-ui": {
+      "kind": "vitest",
+      "argv": ["npm", "--prefix", "gocrm-ui", "test", "--silent", "--", "--run", "--reporter=json",
+               "src/pages/deals/DealDetail.test.tsx"],
+      "tests": [
+        {"file": "src/pages/deals/DealDetail.test.tsx", "name": "DealDetail flags a past expected close on an open deal"}
+      ]
+    }
+  }
+}
+```
+
+Vitest evidence is as strict as Go evidence. The runner reads the one JSON report on standard output, tolerating leading non-JSON lines and refusing any content after it. Every named identity must report `status: "passed"` exactly once in the result of its own file; a `failed`, `skipped`, `pending`, `todo` or any other status fails acceptance, as does a required file that reports no results or a non-passed file status, a missing or renamed test, a duplicate file result or a duplicate passing case. A same-named case in another file never satisfies the identity.
 
 ```sh
 gophercrm-runner freeze --config "$HOME/.local/share/gophercrm-runner/config.json" --issue 96 --manifest /absolute/path/to/task.json
@@ -138,9 +172,9 @@ To process one issue through its configured completion target:
 gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" --limit 1 --execute
 ```
 
-The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected backend tickets. The full audit queue includes unsupported UI work and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
+The legacy queue requires a frozen contract for every ticket. Pre-freezing multiple tickets does not make an unattended merge batch: the first merge advances main and invalidates the next frozen base. Use the opt-in [prepared batch workflow](BATCHES.md) for up to three explicitly selected tickets (backend or `frontend` profile) or backend pull requests. The full audit queue includes work without an executable profile, such as manual-evidence items, and must not be enabled as an unattended batch. No batch is enabled by installing the runner.
 
-The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree.
+The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. When a required check fails while other jobs of the same workflow run are still in progress, the runner waits, within the CI deadline, for the whole workflow run to finish before it collects the failed-job logs. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree. GitHub transport or API failures (a failed `gh` invocation, such as a TLS handshake timeout) stop execution as environment failures, are recorded with the `environment` category, and are resumed by running the same command again; they never consume a provider call or a repair round. An exhausted repair budget never grants another automatic round; the execution continues only through an audited maintainer commit adopted with `adopt-commit` (see [Inspect and resume](#inspect-and-resume) and the [operations runbook](OPERATIONS.md#adopt-a-maintainer-commit)).
 
 All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
@@ -217,6 +251,11 @@ references in `validation_restarts`, starts a new validation attempt and reruns 
 check in a fresh checkout. It never treats the unusable checkpoint as passing evidence or
 overwrites its old artifacts. The source and policy must still match, and expired budgets
 still stop execution; this fallback does not reset the deadline, calls or repairs.
+A Vitest receipt also records the validation checkout that produced its report, and the
+named results are matched against that checkout's paths. A receipt reused across more than
+one interrupted resume therefore remains verifiable after later resumes have replaced the
+current validation checkout; the recorded checkout must be one of the issue's validation
+checkouts under `state_dir`. Go receipts are unchanged.
 
 Remaining checks run in a fresh checkout. Browser checks install locked frontend dependencies
 there when the earlier installation/core check was already completed. Ignored files and
@@ -286,9 +325,13 @@ gophercrm-runner run --config "$HOME/.local/share/gophercrm-runner/config.json" 
 
 Issue, guidance, check-registry or contract changes stop execution. Inspect them, update the operator manifest when needed, then use `freeze --refresh`. Refresh preserves old contract snapshots/history and spent work, invalidates prior tests/review/receipts, and requires fresh validation. It cannot silently adopt a changed executable policy or promote a completed PR-ready execution. If main changed, revalidate the candidate first and update the trusted checkout's guidance to that base before refreshing.
 
-Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted. Queue additions and per-command timeout changes are permitted during an active ticket; validation policy changes are not. Editing configured total limits never changes an admitted execution’s persisted limits. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
+Any merge conflicts are left for the next implementation pass. Interrupted worktree creation and commit responses are reconciled when their recorded branch/tree match. Unexpected external commits, changed validation policy, and exhausted repair budgets require inspecting the journal before recovery; they are not silently accepted, and an external commit enters the execution only through an explicit `adopt-commit`. Queue additions and per-command timeout changes are permitted during an active ticket; validation policy changes are not. Editing configured total limits never changes an admitted execution’s persisted limits. Cancellation terminates the active command process group and releases the lock; already completed remote actions are reconciled on resume.
 
 An issue repair reserved before main advances can use `revalidate` followed by `freeze --refresh`; both preserve its reserved stage and spent budget. A conflicting main merge retains rejected-review findings and still enforces the repair limit. If that limit is exhausted, the worktree remains in conflict for maintainer inspection; automatic execution does not resolve it or grant another round. Revalidation also refuses an already dirty cancelled issue repair. These are explicit operator boundaries, not successful completion.
+
+When a repair budget is exhausted, or a candidate must be corrected by hand, a maintainer commits the correction on the ticket branch in the runner worktree and adopts it with `adopt-commit --config PATH --issue N --head FULL_SHA --reason '...'`. This is the ticket counterpart of `complete-pr --refresh --head`. The journal must be an unfinished execution under the current policy at stage `validate`, `review`, `repair_pending`, `publish`, `ci`, `finalize_implementation`, or `implement` with a committed candidate; completed, abandoned, retired and legacy journals, a different policy and a running provider invocation are refused. The worktree must be clean, its HEAD must equal `--head`, and `--head` must descend from the recorded head (`git merge-base --is-ancestor`). The diff from the journal's base must pass the same protected-path and frozen-scope gates as an implementation commit; an out-of-scope path is refused with a pointer to `freeze --refresh`. When the journal records a pull request, it must be open with `--head` as its head, so push the commit first. Adoption appends a redacted `adoptions` entry (`at`, `from_head`, `to_head`, `reason`), records the new head, clears `tested_head`, `reviewed_head`, receipts, the review, its receipt, any pending review and `last_error` exactly as `freeze --refresh` does, and sets the stage to `validate`. Spent provider calls, repair rounds and the deadline are unchanged and no repair round is consumed. The next `run --execute` validates and independently reviews the adopted commit through the normal stages, including the `validation_review_required` hold; a rejection with no remaining repair round stops again for another adoption. When main has advanced, merge it with `revalidate` rather than by hand, because main's own changes would otherwise appear in the diff from the recorded base and fail the scope gate. A conflicting `revalidate` records the new base and leaves the merge for the maintainer to resolve and commit, and that merge commit is then adopted. See the [operations runbook](OPERATIONS.md#adopt-a-maintainer-commit).
+
+Implementation finalization refuses a protected or private path, or a changed validation gate, before anything is written: the edits stay uncommitted in the worktree and the stage remains `finalize_implementation`. A change outside the frozen task scope is handled differently. The implementation is formatted and committed to the runner branch as usual, `last_error` records the scope violation, and execution stops at stage `validate`. Validation repeats the same scope check on the committed diff, so the candidate cannot be tested, reviewed or published while the violation stands, and a refresh with an unchanged scope fails the same way without another provider call. Inspect the committed diff; if the out-of-scope path is required by the acceptance criteria, widen `scope_paths` in the operator manifest, run `revalidate` first when main has advanced since the journal's base, then `freeze --refresh` and `run --execute`. The refreshed execution resumes at validation of the existing commit without a new implementation call. Otherwise leave the execution stopped for an explicit disposition; the runner never discards the commit. See the [operations runbook](OPERATIONS.md#recover-a-change-outside-the-frozen-scope).
 
 ## Limits and operational reports
 
@@ -334,6 +377,92 @@ and retained execution evidence, separates delivered fixes from remaining gaps, 
 prioritized improvements to recovery, resource management, browser reliability and reporting.
 Its proposals do not change current execution or validation policy.
 
+## Analyse a feature request
+
+The feature analysis workflow turns one request into one Markdown document the owner reviews in
+one sitting: a one-page summary first, the implementation detail after it. Import
+[analysis.json](flows/analysis.json) for seven nodes, one per stage, each re-runnable on its own:
+
+```mermaid
+flowchart LR
+  Intake --> Research --> Analysis --> Specification --> Review --> Revision --> Document
+```
+
+Type the request into the Intake node (optional reference links, one absolute http(s) URL per
+line, at most ten) and run the Document node. The CLI runs the identical serialized graph:
+
+```sh
+gophercrm-runner analyze --config "$HOME/.local/share/gophercrm-runner/config.json" \
+  --wish 'Follow-up automation: rules that react to lead and deal events' \
+  --link https://frappe.io/crm/follow-ups-automation
+```
+
+Every agent stage runs the `claude` CLI in safe mode and restricted mode with the read-only tools
+`Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`, in a detached worktree at `origin/main` under
+the private state directory; file tools cannot leave that worktree, and the agent never writes a
+file. Guidance (`AGENTS.md` from the checkout, the other `analysis_context_refs` at the base
+commit) is inlined into every prompt because safe mode disables discovery. Intake writes the brief;
+Research establishes the current state with `file:line` citations that the runner resolves (an
+unresolvable citation moves to the gaps) and the external context the agent chooses to read
+(reported by the agent; the runner does not verify web citations); Analysis writes the one-pager
+(500 words, breaches are reported); Specification writes the acceptance criteria in the task
+manifest shape of `freeze --manifest` plus the check registry entries they name, UI criteria for
+the frontend slice with their own verification (Vitest, browser, or manual with exact steps), the
+data model with both migration halves, the
+API, screens, permissions, Mermaid diagrams, the test plan and the documentation to update; Review
+is a second, independent process that returns severity-graded findings and is overruled when it
+approves with an open P0 or P1; Revision addresses every finding by id, once. Only a UI criterion
+verified by Vitest, naming its test file under `gocrm-ui/src` and the exact full test name, can be
+frozen as a named check of a `frontend` task (a separate ticket with `vitest` registry entries; the
+analysis manifest itself remains a backend profile); browser criteria are proved by the browser
+matrix, and manual criteria are not executable by the runner. Deterministic checks
+(manifest validity through the same validators as `freeze`, contiguous `AC` ids, registry test
+names matching their `-run` pattern, Mermaid keywords, word budgets) are recorded as rules-check
+notes, given to the reviewer as runner findings, and listed at the end of the document. The
+specification checks also anticipate the gates an execution would stop at: context references
+must be Markdown files that exist at the base commit and fit the 128 KiB guidance cap; Go
+test-plan entries must be bare test names, each in exactly one registry entry; every
+`./cmd/migrate` entry must cover `TestMigrationFresh_FullUpAndDown` and
+`TestMigrationUpgrade_FromMainAutoMigratedSchema` for the migration coverage gate, and a change
+with a migration pair must name such an entry and put `cmd/migrate/*_test.go` in scope; a
+CHANGELOG.md named in the documentation to update must be in scope. An over-budget one-pager
+note states the excess and the largest fields, and Revision reports a one-pager it did not shrink.
+
+Document writes `<checkout>/docs/specs/<date>-<slug>.md` only after `git check-ignore` confirms
+the path is ignored, never overwrites, and keeps a private copy (`feature-analysis.md`), the
+`manifest.json` and the `acceptance_checks.json` fragment under
+`state_dir/analysis/<run id>/` together with `run.json` (the call ledger with provider-reported
+usage and cost, which is not a billing figure) and every prompt and raw result under `calls/`.
+The document header states the base commit, the number of agent calls, the cost and duration from
+that ledger, and the models observed. From approval to execution: create the GitHub issue, set
+`issue` in the manifest, merge the registry fragment into the private policy, then
+`gophercrm-runner freeze --manifest`.
+
+To refine, write comments (blank lines separate them; the runner numbers them `C-1`, `C-2`, …)
+and start a new run from the Intake node with the previous run id, or:
+
+```sh
+gophercrm-runner analyze --config "$HOME/.local/share/gophercrm-runner/config.json" \
+  --refine RUN_ID --comments-file /absolute/private/comments.txt --from research
+```
+
+A refinement keeps the parent's request, links and base commit, inherits the stages before
+`--from` by reading the journals of the run that recorded them in place (verified against the
+parent's document journal, so a chain r1 → r2 → r3 keeps every citation), re-runs the rest with
+the comments, requires a disposition for every comment, and writes `<parent name>-r<revision>.md`.
+Comments and `--from` are refused without a previous run id, and a second refinement of the same
+parent is refused at Intake before any agent call because its document name already exists:
+refine the latest revision instead. A run that stops before Document (a failed stage, or one the
+owner abandons after reading the brief) keeps its directory under `state_dir/analysis/<run id>/`
+and, except after a failed Intake, its registered worktree; remove it with
+`git worktree remove --force <state_dir>/analysis/<run id>/worktree` (then `git worktree prune`
+for a directory deleted by hand). Nothing cleans these up automatically. Each stage reloads the run from its private journal under
+the node's own configuration and verifies the digests of what the previous stage consumed; a
+re-run stage invalidates every later journal of its run. Configuration: `analysis_output_dir`
+(`docs/specs`), `analysis_max_calls` (8 per run), `analysis_context_refs`, `analysis_rules_dir`
+(operator Markdown appended to the packaged stage rules); none of them is part of the execution
+policy hash. `agent_model` and `agent_timeout_seconds` apply to analysis calls as well.
+
 ## Maintain and test the runner
 
 Install the `flows` extra in the active Python environment before validation.
@@ -351,6 +480,7 @@ make e2e E2E_DB_DRIVER=sqlite SPECS='e2e/tests/health-smoke.spec.ts'
 gophercrm-runner export automation/langflow/flows/remediation.json
 gophercrm-runner export --pr automation/langflow/flows/pr-completion.json
 gophercrm-runner export --batch automation/langflow/flows/batch.json
+gophercrm-runner export --analysis automation/langflow/flows/analysis.json
 ```
 
 Tests use real temporary Git worktrees and commits with deterministic Claude/GitHub boundaries, plus the real LFX engine for serialized workflow execution. They do not merge live PRs or spend Claude quota. The separate `Remediation runner` CI workflow calls the same `make verify-runner` target, including on merge-group events. Verification compares the export without rewriting it; the target also tests the read-only Go database probe. Changes to the runner itself are excluded from the automated issue agent's writable paths.

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import test_runner as fixtures
-from gophercrm_runner.config import GateError
+from gophercrm_runner.config import CommandError, EnvironmentError, GateError
 from gophercrm_runner.engine import Runner
 from gophercrm_runner.pull_requests import PullRequestRunner
 
@@ -90,6 +90,36 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runner.store.read('active'), {})
         self.assertEqual((await self.complete())['status'], 'merged')
         self.assertEqual((self.commands.tests, self.commands.reviews, self.commands.merges), (1, 1, 1))
+
+    async def test_github_transport_failure_during_validation_is_resumable_without_repair(self):
+        original = self.runner.validate
+
+        async def validate(record):
+            # The PR re-read inside validation fails at the transport layer.
+            self.commands.gh_transport_failures = 1
+            return await original(record)
+
+        with patch.object(self.runner, 'validate', side_effect=validate):
+            with self.assertRaisesRegex(EnvironmentError, 'GitHub command failed: .*TLS handshake timeout') as caught:
+                await self.complete()
+        self.assertIsInstance(caught.exception.__cause__, CommandError)
+        self.assertEqual(self.commands.gh_transport_failures, 0)
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual(record['stage'], 'validate')
+        self.assertEqual((record['attempts'][-1]['stage'], record['attempts'][-1]['outcome'],
+                          record['attempts'][-1]['category']), ('validation', 'failed', 'environment'))
+        self.assertEqual((record['provider_calls'], record['repairs']), (0, 0))
+        self.assertNotIn('feedback', record)
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews), (0, 0, 0))
+        self.assertEqual(self.runner.store.read('active'), {'pr': 122})
+        # A plain resume validates, reviews and merges the unchanged head.
+        result = await self.complete()
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual((self.commands.implementations, self.commands.tests, self.commands.reviews,
+                          self.commands.merges), (0, 1, 1, 1))
+        record = self.runner.store.read('completion-pr-122')
+        self.assertEqual((record['provider_calls'], record['repairs']), (1, 0))
+        self.assertEqual(record['head'], self.head)
 
     async def test_zero_repair_allowance_keeps_successful_validation_review_and_merge(self):
         self.runner = PullRequestRunner(replace(self.config, max_repair_rounds=0), self.commands)
@@ -268,6 +298,32 @@ class PullRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final['repairs'], 1)
         self.assertEqual(final['provider_calls'], 4)
         self.assertEqual(self.commands.merges, 1)
+
+    async def test_repair_may_add_a_browser_spec_but_not_a_browser_helper(self):
+        for name, admitted in [('gocrm-ui/e2e/tests/repair-flow.spec.ts', True),
+                               ('gocrm-ui/e2e/helpers/repair.ts', False)]:
+            with self.subTest(name=name):
+                self.tearDown()  # Each path starts from a fresh fixture repository.
+                self.setUp()
+                await self.asyncSetUp()
+                self.commands.reject_reviews = 1
+                original = self.commands.run
+
+                async def change(args, **kwargs):
+                    result = await original(args, **kwargs)
+                    if args[0] == 'claude' and '-p' in args and 'Edit' in args[args.index('--tools') + 1]:
+                        path = kwargs['cwd'] / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text('export {}\n')
+                    return result
+
+                with patch.object(self.commands, 'run', side_effect=change):
+                    if admitted:
+                        await self.complete()
+                    else:
+                        with self.assertRaisesRegex(GateError, 'validation gate'):
+                            await self.complete()
+                self.assertEqual(self.commands.merges, int(admitted))
 
     async def test_runner_changes_require_local_and_remote_runner_checks(self):
         path = self.source / '.github/workflows/remediation-runner.yml'

@@ -190,6 +190,141 @@ export interface DashboardPipeline extends DealPipeline {
   won_this_month: WonThisMonth;
 }
 
+// A catalogue product (GET /products). The price is integer minor units next
+// to an ISO 4217 code, the deal money convention; a quote line copies the
+// name and the price when it is added, so a later edit here never changes an
+// existing quote.
+export interface Product {
+  id: number;
+  name: string;
+  sku: string;
+  description: string;
+  unit_price_cents: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Quote statuses in lifecycle order, as the API spells them.
+export const QUOTE_STATUSES = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'sent', label: 'Sent' },
+  { value: 'accepted', label: 'Accepted' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'expired', label: 'Expired' },
+] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number]['value'];
+
+export const QUOTE_STATUS_VALUES = QUOTE_STATUSES.map((status) => status.value) as [
+  QuoteStatus,
+  ...QuoteStatus[],
+];
+
+export const quoteStatusLabel = (status: QuoteStatus): string =>
+  QUOTE_STATUSES.find((candidate) => candidate.value === status)?.label ?? status;
+
+// The only moves the API allows (models.quoteTransitions): a draft is sent; a
+// sent quote is accepted, rejected or expired, or taken back to draft to be
+// revised. The three closing statuses are final. The UI offers exactly these,
+// and a move that lost its race still comes back as INVALID_STATUS_TRANSITION.
+export const QUOTE_TRANSITIONS: Readonly<Record<QuoteStatus, readonly QuoteStatus[]>> = {
+  draft: ['sent'],
+  sent: ['accepted', 'rejected', 'expired', 'draft'],
+  accepted: [],
+  rejected: [],
+  expired: [],
+};
+
+export const quoteTransitionsFrom = (status: QuoteStatus): readonly QuoteStatus[] =>
+  QUOTE_TRANSITIONS[status] ?? [];
+
+// Only a draft is editable (lines included); only a sent or accepted quote can
+// be emailed.
+export const isDraftQuote = (status: QuoteStatus): boolean => status === 'draft';
+
+export const canEmailQuote = (status: QuoteStatus): boolean =>
+  status === 'sent' || status === 'accepted';
+
+// One priced row of a quote. The discount is a percentage in basis points
+// (12.5% = 1250) and line_total_cents is computed by the server.
+export interface QuoteLine {
+  id: number;
+  quote_id: number;
+  product_id: number;
+  position: number;
+  description: string;
+  quantity: number;
+  unit_price_cents: number;
+  discount_bp: number;
+  line_total_cents: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// What a quote discloses about its customer: the display fields, never the
+// contact details (the email dialog names the person, not the address).
+export interface QuoteCustomerSummary {
+  id: number;
+  first_name: string;
+  last_name: string;
+  company: string;
+}
+
+export interface QuoteDealSummary {
+  id: number;
+  title: string;
+  stage: DealStage;
+}
+
+export interface QuoteOwnerSummary {
+  id: number;
+  first_name: string;
+  last_name: string;
+}
+
+// A quote as GET /quotes/:id returns it. The totals are the server's and are
+// never recomputed in the UI; `number` is the human-readable Q-000042.
+export interface Quote {
+  id: number;
+  number: string;
+  title: string;
+  status: QuoteStatus;
+  currency: string;
+  subtotal_cents: number;
+  discount_cents: number;
+  total_cents: number;
+  // Calendar date as YYYY-MM-DD, or null.
+  valid_until: string | null;
+  notes: string;
+  sent_at: string | null;
+  closed_at: string | null;
+  last_emailed_at: string | null;
+  deal_id?: number;
+  deal?: QuoteDealSummary;
+  customer_id?: number;
+  customer?: QuoteCustomerSummary;
+  owner_id: number;
+  owner?: QuoteOwnerSummary;
+  // Empty on the list endpoints, ordered by position on the detail endpoint.
+  lines: QuoteLine[];
+  created_at: string;
+  updated_at: string;
+}
+
+// One row of GET /quotes/:id/history. `from_status` is null on the row written
+// when the quote was created.
+export interface QuoteStatusChange {
+  id: number;
+  quote_id: number;
+  from_status: QuoteStatus | null;
+  to_status: QuoteStatus;
+  changed_by_id: number;
+  changed_by?: QuoteOwnerSummary;
+  changed_at: string;
+}
+
 export interface Ticket {
   id: number;
   subject: string;
@@ -387,3 +522,5 @@ export interface DashboardStats {
   conversion_rate: number;
   average_ticket_resolution_time: number;
 }
+
+export * from './automation';
