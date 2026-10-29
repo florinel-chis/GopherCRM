@@ -7,6 +7,9 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"io"
+	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -47,6 +51,16 @@ type relayOptions struct {
 	auth          bool        // advertise AUTH PLAIN
 	rcptReply     string      // default "250 2.1.5 Ok"
 	authReply     string      // default "235 2.7.0 Authentication successful"
+	// stallHandshake answers STARTTLS with 220, reads the ClientHello and
+	// then never answers it.
+	stallHandshake bool
+	// stallAfterTLS never answers the first command after the handshake.
+	stallAfterTLS bool
+	// freezeAfter answers this verb and then neither reads nor writes until
+	// release is closed, so a client writing a large message fills the
+	// socket buffers and blocks.
+	freezeAfter string
+	release     chan struct{}
 }
 
 // relaySession is what the fake relay observed.
@@ -131,7 +145,7 @@ func serveRelay(conn net.Conn, opts relayOptions) (s relaySession) {
 			verb = verb[:i]
 		}
 		s.tlsAt[verb] = encrypted
-		if verb == opts.stallOn {
+		if verb == opts.stallOn || (encrypted && opts.stallAfterTLS) {
 			return waitForClose(active)
 		}
 		switch verb {
@@ -150,6 +164,14 @@ func serveRelay(conn net.Conn, opts relayOptions) (s relaySession) {
 		case "STARTTLS":
 			if err = write("220 2.0.0 Ready to start TLS"); err != nil {
 				break
+			}
+			if opts.stallHandshake {
+				hello := make([]byte, 5)
+				if _, readErr := reader.Read(hello); readErr != nil || hello[0] != 0x16 {
+					s.err = errors.New("expected a TLS ClientHello record")
+					return s
+				}
+				return waitForClose(active)
 			}
 			tlsConn := tls.Server(active, opts.tls)
 			if err = tlsConn.Handshake(); err != nil {
@@ -174,6 +196,13 @@ func serveRelay(conn net.Conn, opts relayOptions) (s relaySession) {
 		case "DATA":
 			if err = write("354 End data with <CR><LF>.<CR><LF>"); err != nil {
 				break
+			}
+			if opts.freezeAfter == "DATA" {
+				select {
+				case <-opts.release:
+				case <-time.After(2 * watchdog):
+				}
+				return s
 			}
 			var data strings.Builder
 			for {
@@ -315,14 +344,41 @@ func TestSMTPDeadlines(t *testing.T) {
 		})
 	}
 
-	t.Run("stalled STARTTLS handshake", func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts relayOptions
+	}{
+		{"stalled STARTTLS reply", relayOptions{stallOn: "STARTTLS"}},
+		{"stalled TLS handshake", relayOptions{stallHandshake: true}},
+		{"stalled after the TLS handshake", relayOptions{stallAfterTLS: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			serverTLS, pool := testCertificate(t)
+			tc.opts.tls = serverTLS
+			addr, done := startRelay(t, tc.opts)
+			m := newTestMailer(t, addr, remoteHost, config.SMTPConfig{})
+			m.tlsConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+			err, elapsed := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", "body") })
+			assertTimedOut(t, err, elapsed, done)
+		})
+	}
+
+	t.Run("frozen relay during DATA over TLS", func(t *testing.T) {
+		// The client blocks writing a large message to a relay that stopped
+		// reading. Cleanup must not add the TLS close_notify grace period on
+		// top of the overall deadline.
 		t.Parallel()
 		serverTLS, pool := testCertificate(t)
-		addr, done := startRelay(t, relayOptions{tls: serverTLS, stallOn: "STARTTLS"})
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		addr, _ := startRelay(t, relayOptions{tls: serverTLS, freezeAfter: "DATA", release: release})
 		m := newTestMailer(t, addr, remoteHost, config.SMTPConfig{})
 		m.tlsConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-		err, elapsed := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", "body") })
-		assertTimedOut(t, err, elapsed, done)
+		body := strings.Repeat(strings.Repeat("x", 70)+"\n", 40000) // ~2.8 MB, beyond the socket buffers
+		err, elapsed := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", body) })
+		require.Error(t, err)
+		assert.Less(t, elapsed, testTimeout+500*time.Millisecond, "the overall deadline is a hard bound")
 	})
 
 	t.Run("one deadline covers the whole conversation", func(t *testing.T) {
@@ -455,6 +511,17 @@ func TestSMTPHeaders(t *testing.T) {
 		{"recipient with an unterminated angle address", "", "Jane <jane@example.com"},
 		{"sender without an address", "GopherCRM", "jane@example.com"},
 		{"sender list", "a@example.com, b@example.com", "jane@example.com"},
+		// net/mail accepts quoted local parts; their unquoted Address would
+		// smuggle ESMTP parameters into RCPT TO or lose its quoting.
+		{"quoted local part with ESMTP parameters", "", `"x> NOTIFY=NEVER ORCPT=rfc822;a@b"@example.com`},
+		{"quoted local part with a space", "", `"a b"@example.com`},
+		{"quoted local part behind a display name", "", `Jane <"x>y"@example.com>`},
+		{"domain literal", "", "jane@[127.0.0.1]"},
+		{"non-ASCII local part", "", "jané@example.com"},
+		{"leading dot", "", ".jane@example.com"},
+		{"double dot", "", "ja..ne@example.com"},
+		{"quoted sender local part", `"no reply"@example.com`, "jane@example.com"},
+		{"sender with ESMTP parameters", `"x> SIZE=1"@example.com`, "jane@example.com"},
 	} {
 		t.Run("invalid address: "+tc.name, func(t *testing.T) {
 			from := tc.from
@@ -465,6 +532,9 @@ func TestSMTPHeaders(t *testing.T) {
 			err := m.Send(tc.to, "Hello", "body")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrInvalidAddress)
+			if tc.to != "" {
+				assert.NotContains(t, err.Error(), tc.to, "the value is not echoed")
+			}
 			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrInvalidAddress)
@@ -501,24 +571,79 @@ func TestSMTPHeaders(t *testing.T) {
 		})
 	}
 
-	t.Run("multiline body", func(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"multiline body",
+			"Line one\nLine two\r\n.leading dot\n\n..two dots\rbare CR\n.\nlast",
+			"Line one\r\nLine two\r\n.leading dot\r\n\r\n..two dots\r\nbare CR\r\n.\r\nlast"},
+		{"non-ASCII body with a 2,000-character line",
+			"Grüße, Zoë\n" + strings.Repeat("ä", 1000) + strings.Repeat("y", 1000) + "\nEnde",
+			"Grüße, Zoë\r\n" + strings.Repeat("ä", 1000) + strings.Repeat("y", 1000) + "\r\nEnde"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr, done := startRelay(t, relayOptions{})
+			m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
+			err, _ := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", tc.body) })
+			require.NoError(t, err)
+			s := awaitSession(t, done)
+			require.NoError(t, s.err)
+
+			headers, wireBody, found := strings.Cut(s.data, "\r\n\r\n")
+			require.True(t, found, "headers and body are separated by an empty line")
+			assert.Contains(t, headers, "Subject: Hello")
+			assert.Equal(t, 1, strings.Count(headers, "Subject:"))
+			assert.Contains(t, headers, "Content-Type: text/plain; charset=UTF-8")
+			assert.Contains(t, headers, "Content-Transfer-Encoding: quoted-printable")
+			assert.NotRegexp(t, `[^\r]\n`, s.data, "no bare LF anywhere in the message")
+			assert.NotRegexp(t, "\r[^\n]", s.data, "no bare CR anywhere in the message")
+			for _, line := range strings.Split(s.data, "\r\n") {
+				assert.LessOrEqual(t, len(line), 998, "RFC 5322 line limit")
+				for _, b := range []byte(line) {
+					require.Less(t, b, byte(0x80), "the wire carries 7-bit data only")
+				}
+			}
+
+			// Undo the SMTP dot-stuffing, then the quoted-printable encoding.
+			lines := strings.Split(strings.TrimSuffix(wireBody, "\r\n"), "\r\n")
+			for i, line := range lines {
+				lines[i] = strings.TrimPrefix(line, ".")
+			}
+			decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(strings.Join(lines, "\r\n"))))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(decoded))
+		})
+	}
+
+	t.Run("long non-ASCII subject is folded", func(t *testing.T) {
 		addr, done := startRelay(t, relayOptions{})
 		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
-		body := "Line one\nLine two\r\n.leading dot\n\n..two dots\rbare CR\n.\nlast"
-		err, _ := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", body) })
+		subject := strings.Repeat("é", 200) + " " + strings.Repeat("ab ", 17) + "abc"
+		require.Equal(t, 255, utf8.RuneCountInString(subject))
+		err, _ := sendWithin(t, func() error { return m.Send("jane@example.com", subject, "body") })
 		require.NoError(t, err)
 		s := awaitSession(t, done)
-		require.NoError(t, s.err)
-
-		headers, wireBody, found := strings.Cut(s.data, "\r\n\r\n")
-		require.True(t, found, "headers and body are separated by an empty line")
-		assert.Contains(t, headers, "Subject: Hello")
-		assert.Equal(t, 1, strings.Count(headers, "Subject:"))
-		assert.Equal(t,
-			"Line one\r\nLine two\r\n..leading dot\r\n\r\n...two dots\r\nbare CR\r\n..\r\nlast\r\n",
-			wireBody, "CRLF line endings and dot-stuffing on the wire")
-		assert.NotRegexp(t, `[^\r]\n`, s.data, "no bare LF anywhere in the message")
-		assert.NotRegexp(t, "\r[^\n]", s.data, "no bare CR anywhere in the message")
+		headers, _, _ := strings.Cut(s.data, "\r\n\r\n")
+		for _, line := range strings.Split(headers, "\r\n") {
+			assert.LessOrEqual(t, len(line), 998, "RFC 5322 line limit")
+			assert.LessOrEqual(t, len(line), 90, "folded close to the recommended 78")
+		}
+		// Unfold (CRLF followed by whitespace) and decode.
+		var raw string
+		for _, line := range strings.Split(headers, "\r\n") {
+			switch {
+			case strings.HasPrefix(line, "Subject: "):
+				raw = strings.TrimPrefix(line, "Subject: ")
+			case raw != "" && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")):
+				raw += line
+			case raw != "":
+				goto done
+			}
+		}
+	done:
+		decoded, err := new(mime.WordDecoder).DecodeHeader(raw)
+		require.NoError(t, err)
+		assert.Equal(t, subject, decoded)
 	})
 
 	t.Run("non-ASCII subject is encoded", func(t *testing.T) {
@@ -661,6 +786,7 @@ func TestSMTPFailureRedaction(t *testing.T) {
 	}{
 		{"relay rejects the recipient", relayOptions{rcptReply: "550 5.1.1 <" + recipient + ">: " + replyText}, "smtp_code=550"},
 		{"relay rejects the credentials", relayOptions{auth: true, authReply: "535 5.7.8 " + replyText + " " + password}, "smtp_code=535"},
+		{"relay sends a malformed reply", relayOptions{rcptReply: "550X " + recipient + " " + replyText}, "smtp_protocol_error"},
 	} {
 		t.Run(tc.name+" (password reset)", func(t *testing.T) {
 			hook := captureLogs(t)
@@ -674,8 +800,7 @@ func TestSMTPFailureRedaction(t *testing.T) {
 			logs := renderedLogs(t, hook)
 			// The returned error is the relay's reply for errors.As; it is
 			// the caller's to sanitise. Only the logs are checked for the text.
-			var reply *textproto.Error
-			require.ErrorAs(t, err, &reply)
+			require.Error(t, err)
 			if strings.Contains(tc.opts.authReply, password) {
 				// A relay that echoes the password is beyond the mailer's
 				// control in the returned error, but never in the log.
@@ -735,6 +860,22 @@ func TestSMTPFailureRedaction(t *testing.T) {
 			assertClean(t, err, renderedLogs(t, hook))
 		})
 	}
+
+	t.Run("subject is not logged", func(t *testing.T) {
+		// Automation subjects are rendered from templates such as
+		// {{lead.email}}, so the subject can carry personal data.
+		const personal = "lead.person@example.org"
+		hook := captureLogs(t)
+		addr, done := startRelay(t, relayOptions{rcptReply: "550 5.1.1 rejected"})
+		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
+		err, _ := sendWithin(t, func() error { return m.Send(recipient, "Follow up with "+personal, "body") })
+		awaitSession(t, done)
+		require.Error(t, err)
+		logs := renderedLogs(t, hook)
+		assert.Contains(t, logs, "smtp_code=550")
+		assert.NotContains(t, logs, personal)
+		assert.NotContains(t, logs, "Follow up")
+	})
 
 	t.Run("connection refused", func(t *testing.T) {
 		hook := captureLogs(t)

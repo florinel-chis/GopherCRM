@@ -26,6 +26,7 @@ func TestLogError_OmitsQuotedInputAndKeepsDiagnostics(t *testing.T) {
 		{"embedded quote", errors.New("Duplicate entry 'first'" + canary), "Duplicate entry [redacted]"},
 		{"unmatched quote", errors.New("Duplicate entry '" + canary), "Duplicate entry [redacted]"},
 		{"SMTP response", fmt.Errorf("send mail: %w", &textproto.Error{Code: 550, Msg: "5.1.1 " + canary + ": Recipient address rejected"}), "smtp_code=550"},
+		{"malformed SMTP reply", fmt.Errorf("send mail: %w", textproto.ProtocolError("invalid response code: 550X "+canary+" secret")), "smtp_protocol_error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

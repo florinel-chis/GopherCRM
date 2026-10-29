@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -31,14 +33,18 @@ const (
 // change how the relay treats the message, so the delivery fails.
 var errAuthNotOffered = errors.New("smtp: relay does not offer AUTH")
 
-// SMTPMailer sends mail through a real SMTP relay using net/smtp.
+// SMTPMailer sends mail through an SMTP relay. It drives the conversation
+// itself with a net/smtp Client over a connection it dials and bounds; it does
+// not use smtp.SendMail, which has no timeout.
 //
 // Every delivery is one bounded exchange: the dial is limited by
-// DefaultDialTimeout and the whole conversation by DefaultSendTimeout, after
-// which the connection is closed. STARTTLS is used whenever the relay
-// advertises it, verifying the certificate against the configured host name;
-// a failed handshake aborts the delivery. Implicit TLS (port 465) is not
-// supported. PLAIN auth is used when a username is configured, and net/smtp's
+// DefaultDialTimeout and the whole conversation, cleanup included, by
+// DefaultSendTimeout, at which point the TCP connection is closed. STARTTLS is
+// opportunistic: it is used whenever the relay advertises it, verifying the
+// certificate against the configured host name, and a failed handshake aborts
+// the delivery; a relay that does not offer it (or an attacker who strips the
+// offer) receives an unauthenticated message in cleartext. Implicit TLS (port
+// 465) is not supported. PLAIN auth is used when a username is configured, and net/smtp's
 // PlainAuth refuses to send the credentials over a connection that is not
 // encrypted unless the relay is localhost.
 type SMTPMailer struct {
@@ -112,18 +118,16 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 		return fmt.Errorf("send mail: %w", err)
 	}
 	if err := m.send(to, subject, body); err != nil {
-		// Subject only. The body may carry a single-use link, and the recipient
-		// is a person's address: the quote email in particular promises that
-		// no log line of the call carries it, so the generic failure line
-		// keeps the fixed subject (every caller passes a constant) and the
-		// transport error sanitised by utils.LogError. A relay that rejects a
-		// recipient normally echoes the address in its reply text ("550 5.1.1
-		// <who@example.com>: Recipient address rejected"), so the log keeps the
-		// SMTP code, which is what a diagnosis needs, and drops the text. The
-		// raw error is still returned for errors.As.
-		log().WithError(utils.LogError(err)).
-			WithField("subject", subject).
-			Error("Failed to send email")
+		// The transport error only, sanitised by utils.LogError. The body may
+		// carry a single-use link, the recipient is a person's address, and
+		// the subject can be rendered from personal data (automation subjects
+		// expand {{lead.email}} and similar placeholders), so none of them is
+		// logged. A relay that rejects a recipient normally echoes the address
+		// in its reply text ("550 5.1.1 <who@example.com>: Recipient address
+		// rejected"), so the log keeps the SMTP code, which is what a
+		// diagnosis needs, and drops the text. The raw error is still returned
+		// for errors.As.
+		log().WithError(utils.LogError(err)).Error("Failed to send email")
 		return fmt.Errorf("send mail: %w", err)
 	}
 	return nil
@@ -148,24 +152,39 @@ func (m *SMTPMailer) send(to, subject, body string) error {
 	if err != nil {
 		return err
 	}
+	encodedBody, err := encodeBody(body)
+	if err != nil {
+		return err
+	}
 	msg := strings.Join([]string{
 		"From: " + sender.String(),
 		"To: " + recipient.String(),
-		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
+		"Subject: " + encodeSubject(subject),
 		"MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=UTF-8",
+		"Content-Transfer-Encoding: quoted-printable",
 		"",
-		normalizeLineEndings(body),
+		encodedBody,
 	}, "\r\n")
 
 	return m.deliver(sender.Address, recipient.Address, []byte(msg))
 }
 
 // deliver runs one bounded SMTP exchange. The connection carries a single
-// deadline for the whole conversation and is closed on every path.
+// deadline for the whole conversation and is closed on every path. A failure
+// caused by the deadline matches os.ErrDeadlineExceeded through errors.Is,
+// whichever way it surfaced (an I/O timeout, or the watchdog's close).
 func (m *SMTPMailer) deliver(envelopeFrom, envelopeTo string, msg []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
+	err := m.converse(ctx, envelopeFrom, envelopeTo, msg)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, context.DeadlineExceeded) {
+		err = fmt.Errorf("%w: %w", os.ErrDeadlineExceeded, err)
+	}
+	return err
+}
+
+func (m *SMTPMailer) converse(ctx context.Context, envelopeFrom, envelopeTo string, msg []byte) error {
 
 	dialCtx, cancelDial := context.WithTimeout(ctx, m.dialTimeout)
 	conn, err := m.dial(dialCtx, "tcp", net.JoinHostPort(m.host, strconv.Itoa(m.port)))
@@ -173,20 +192,23 @@ func (m *SMTPMailer) deliver(envelopeFrom, envelopeTo string, msg []byte) error 
 	if err != nil {
 		return fmt.Errorf("smtp connect: %w", err)
 	}
+	// The raw TCP connection is closed on every path, and at the latest when
+	// the overall deadline passes: the watchdog unblocks anything the
+	// connection deadline does not cover, such as the TLS close_notify, which
+	// sets its own five-second write deadline. Closing the raw connection
+	// rather than the TLS layer on error paths skips that close_notify.
+	stopWatchdog := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopWatchdog()
+	defer func() { _ = conn.Close() }()
 	deadline, _ := ctx.Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
-		_ = conn.Close()
 		return fmt.Errorf("smtp connect: %w", err)
 	}
 
 	client, err := smtp.NewClient(conn, m.host)
 	if err != nil {
-		_ = conn.Close()
 		return fmt.Errorf("smtp greeting: %w", err)
 	}
-	// Close tears down the connection, including the TLS layer after
-	// STARTTLS. After a successful QUIT it is a harmless second close.
-	defer func() { _ = client.Close() }()
 
 	if err := client.Hello("localhost"); err != nil {
 		return fmt.Errorf("smtp hello: %w", err)
@@ -218,7 +240,6 @@ func (m *SMTPMailer) deliver(envelopeFrom, envelopeTo string, msg []byte) error 
 	}
 	// The data writer dot-stuffs the body and ends it with CRLF.CRLF.
 	if _, err := w.Write(msg); err != nil {
-		_ = w.Close()
 		return fmt.Errorf("smtp data: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -240,14 +261,78 @@ func (m *SMTPMailer) startTLSConfig() *tls.Config {
 }
 
 // parseAddress accepts exactly one RFC 5322 address, with or without a
-// display name. The value is not part of the error: a malformed recipient
+// display name, whose addr-spec is a plain ASCII dot-atom (see
+// isEnvelopeSafe). The value is not part of the error: a malformed recipient
 // may be someone's address, a malformed one an injection attempt.
 func parseAddress(role, value string) (*mail.Address, error) {
 	addr, err := mail.ParseAddress(value)
-	if err != nil {
+	if err != nil || !isEnvelopeSafe(addr.Address) {
 		return nil, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
 	}
 	return addr, nil
+}
+
+// isEnvelopeSafe reports whether an addr-spec can go into MAIL FROM/RCPT TO
+// as it is. net/mail accepts quoted local parts and returns them unquoted, so
+// "x> NOTIFY=NEVER"@example.com would come back as an address that ends the
+// angle brackets and smuggles ESMTP parameters into the command, and
+// "a b"@example.com would lose its quoting. Only dot-atoms are accepted: one
+// @, ASCII letters, digits and the atom specials on the left, letters,
+// digits, hyphens and dots on the right, no empty, leading or trailing labels.
+// Domain literals and internationalised addresses are refused.
+func isEnvelopeSafe(addr string) bool {
+	local, domain, ok := strings.Cut(addr, "@")
+	if !ok || strings.Contains(domain, "@") {
+		return false
+	}
+	return isDotAtom(local, "!#$%&'*+-/=?^_`{|}~") && isDotAtom(domain, "-")
+}
+
+func isDotAtom(s, specials string) bool {
+	if s == "" || len(s) > 255 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" {
+			return false
+		}
+		for _, r := range label {
+			alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+			if !alnum && !strings.ContainsRune(specials, r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// encodeSubject returns the Subject value: unchanged when it is plain ASCII,
+// otherwise as RFC 2047 encoded words folded onto continuation lines.
+// mime.QEncoding keeps each encoded word within 75 characters but separates
+// the words with a single space, so a long non-ASCII subject would otherwise
+// be one line far beyond the 998-byte limit; whitespace between encoded words
+// is not part of the decoded text, so folding at those spaces is lossless.
+func encodeSubject(subject string) string {
+	encoded := mime.QEncoding.Encode("utf-8", subject)
+	if encoded == subject {
+		return subject
+	}
+	return strings.ReplaceAll(encoded, " ", "\r\n ")
+}
+
+// encodeBody normalises the line endings and encodes the body as
+// quoted-printable, which keeps the wire 7-bit and wraps long lines with soft
+// breaks. Dot-stuffing is left to the SMTP data writer.
+func encodeBody(body string) (string, error) {
+	var b strings.Builder
+	w := quotedprintable.NewWriter(&b)
+	if _, err := w.Write([]byte(normalizeLineEndings(body))); err != nil {
+		return "", fmt.Errorf("encode body: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("encode body: %w", err)
+	}
+	return b.String(), nil
 }
 
 // normalizeLineEndings converts a body to the CRLF endings mail expects:
