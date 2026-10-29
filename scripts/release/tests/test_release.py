@@ -176,7 +176,7 @@ class ReleaseTests(unittest.TestCase):
         (folder / 'example_test.go').write_text('func TestExampleMySQL(t *testing.T) {}\n')
         events = [{'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/cmd/migrate', 'Test': name} for name in
                   ['TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema',
-                   'TestCustomerWebsiteMigration']]
+                   'TestCustomerWebsiteMigration', 'TestLookupIndexesMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})

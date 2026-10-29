@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"strings"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
@@ -67,7 +69,8 @@ func (r *companyRepository) scopeSearch(db *gorm.DB, search string) *gorm.DB {
 // List returns one page of companies with their owners and counts, plus the
 // total matching the same search. sortBy goes through the companies allowlist
 // in utils.AllowedSortColumns; an unknown column is an error, never
-// interpolated, and an empty one means newest first.
+// interpolated, and an empty one means newest first. The id follows the sort
+// column in the same direction so tied rows page deterministically.
 func (r *companyRepository) List(offset, limit int, search, sortBy, sortOrder string) ([]models.Company, int64, error) {
 	column, direction, err := utils.ValidateSort("companies", sortBy, sortOrder)
 	if err != nil {
@@ -80,8 +83,7 @@ func (r *companyRepository) List(offset, limit int, search, sortBy, sortOrder st
 	}
 
 	companies := []models.Company{}
-	err = r.scopeSearch(r.db.Preload("Owner"), search).
-		Order(column + " " + direction).
+	err = orderByColumnThenID(r.scopeSearch(r.db.Preload("Owner"), search), "companies", column, direction == "desc").
 		Offset(offset).Limit(limit).
 		Find(&companies).Error
 	if err != nil {
@@ -103,12 +105,18 @@ func (r *companyRepository) List(offset, limit int, search, sortBy, sortOrder st
 // about to write; pass 0 for a create.
 //
 // Live rows only, on purpose: a soft-deleted company must not reserve its
-// domain forever, which is why there is no unique index on the column. LOWER()
-// on both sides makes MySQL (case-insensitive collation) and SQLite
-// (case-sensitive) agree; the service also normalises the domain to lower case
-// before it gets here, so this is the backstop for rows written another way.
+// domain forever, which is why the index on the column is not unique.
+//
+// The comparison is a plain equality against the lower-cased argument so the
+// planner can use idx_companies_domain (#109); LOWER(domain) hid the column
+// from every index on SQLite and on MySQL/MariaDB alike. That is safe because
+// the stored value is always lower case: the service normalises it on every
+// create and update (NormalizeCompanyDomain), and the migration that added the
+// index lower-cases any MySQL row written another way. MySQL and MariaDB also
+// compare under a case-insensitive collation, so there the result is the same
+// either way.
 func (r *companyRepository) ExistsByDomain(domain string, excludeID uint) (bool, error) {
-	query := r.db.Model(&models.Company{}).Where("LOWER(domain) = LOWER(?)", domain)
+	query := r.db.Model(&models.Company{}).Where("domain = ?", strings.ToLower(domain))
 	if excludeID != 0 {
 		query = query.Where("id <> ?", excludeID)
 	}
@@ -143,7 +151,7 @@ func (r *companyRepository) UnlinkDeals(companyID uint) error {
 }
 
 // ListCustomers returns one page of the live customers linked to the company,
-// newest first, plus the total.
+// newest first (id breaking ties), plus the total.
 func (r *companyRepository) ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error) {
 	base := r.db.Model(&models.Customer{}).Where("company_id = ?", companyID)
 
@@ -153,15 +161,14 @@ func (r *companyRepository) ListCustomers(companyID uint, offset, limit int) ([]
 	}
 
 	customers := []models.Customer{}
-	err := r.db.Where("company_id = ?", companyID).
-		Order("created_at DESC").
+	err := orderByColumnThenID(r.db.Where("company_id = ?", companyID), "customers", "created_at", true).
 		Offset(offset).Limit(limit).
 		Find(&customers).Error
 	return customers, total, err
 }
 
 // ListLeads returns one page of the live leads linked to the company, newest
-// first, with their owners preloaded, plus the total. A nil ownerID means every
+// first (id breaking ties), with their owners preloaded, plus the total. A nil ownerID means every
 // owner; a non-nil one narrows to that owner's leads, which is how the sales
 // scoping is pushed down to SQL rather than filtered after the fact.
 func (r *companyRepository) ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error) {
@@ -179,8 +186,7 @@ func (r *companyRepository) ListLeads(companyID uint, ownerID *uint, offset, lim
 	}
 
 	leads := []models.Lead{}
-	err := scope(r.db.Preload("Owner")).
-		Order("created_at DESC").
+	err := orderByColumnThenID(scope(r.db.Preload("Owner")), "leads", "created_at", true).
 		Offset(offset).Limit(limit).
 		Find(&leads).Error
 	return leads, total, err

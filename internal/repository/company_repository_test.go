@@ -147,7 +147,7 @@ func TestCompanyRepository_ExistsByDomainIsCaseInsensitiveAmongLiveRows(t *testi
 
 	exists, err := repo.ExistsByDomain("ACME.example", 0)
 	require.NoError(t, err)
-	assert.True(t, exists, "LOWER() on both sides makes SQLite agree with MySQL")
+	assert.True(t, exists, "the argument is lower-cased to match the normalised column, so SQLite agrees with MySQL")
 
 	exists, err = repo.ExistsByDomain("acme.example", company.ID)
 	require.NoError(t, err)

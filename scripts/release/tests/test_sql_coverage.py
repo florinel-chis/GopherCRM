@@ -21,6 +21,7 @@ class MigrationCoverageTests(unittest.TestCase):
                     'TestMigrationFresh_FullUpAndDown',
                     'TestMigrationUpgrade_FromMainAutoMigratedSchema',
                     'TestCustomerWebsiteMigration',
+                    'TestLookupIndexesMigration',
                 ],
                 'internal/models': [
                     'TestMigrateDatabase_SQLiteUpgradeFromV120',
@@ -28,17 +29,20 @@ class MigrationCoverageTests(unittest.TestCase):
                     'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
                     'TestCustomerWebsiteUpgradeFromSQLiteFixture',
                 ],
+                'internal/repository': [
+                    'TestLookupIndexesServeLookupsSQLite',
+                ],
             }.items() for name in names
         ]
         self.events.extend({'Action': 'pass', 'Package': PREFIX + package}
-                           for package in ['cmd/migrate', 'internal/models'])
+                           for package in ['cmd/migrate', 'internal/models', 'internal/repository'])
 
     def check(self):
         return sql.check('\n'.join(json.dumps(event) for event in self.events), ROOT,
                          migrations_only=True)
 
     def test_accepts_complete_sql_and_sqlite_evidence(self):
-        self.assertEqual(len(self.check()), 7)
+        self.assertEqual(len(self.check()), 9)
 
     def test_unavailable_database_cannot_pass_as_skips(self):
         for event in self.events:
@@ -57,6 +61,22 @@ class MigrationCoverageTests(unittest.TestCase):
         self.events = [event for event in self.events
                        if event.get('Test') != 'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120']
         with self.assertRaisesRegex(ValueError, 'HalfAppliedV120'):
+            self.check()
+
+    def test_missing_lookup_index_roots_fail(self):
+        for name in ('TestLookupIndexesMigration', 'TestLookupIndexesServeLookupsSQLite'):
+            with self.subTest(name=name):
+                kept = self.events
+                self.events = [event for event in kept if event.get('Test') != name]
+                with self.assertRaisesRegex(ValueError, name):
+                    self.check()
+                self.events = kept
+
+    def test_skipped_lookup_index_migration_fails(self):
+        for event in self.events:
+            if event.get('Test') == 'TestLookupIndexesMigration':
+                event['Action'] = 'skip'
+        with self.assertRaisesRegex(ValueError, 'skipped'):
             self.check()
 
     def test_skipped_or_failed_descendant_fails_even_with_passed_parent(self):

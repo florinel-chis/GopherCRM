@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -40,7 +39,7 @@ func (r *taskRepository) GetByID(id uint) (*models.Task, error) {
 // preloaded so the handler can decide whether the caller may see it.
 func (r *taskRepository) GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := r.db.Preload("Labels").Preload("Lead").Where("assigned_to_id = ?", assignedToID).Offset(offset).Limit(limit).Find(&tasks).Error
+	err := orderByID(r.db.Preload("Labels").Preload("Lead").Where("assigned_to_id = ?", assignedToID), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -57,7 +56,7 @@ func (r *taskRepository) Delete(id uint) error {
 
 func (r *taskRepository) List(offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead").Offset(offset).Limit(limit).Find(&tasks).Error
+	err := orderByID(r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead"), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -85,16 +84,11 @@ func (r *taskRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortO
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("tasks", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			query = query.Order(orderClause)
-		}
+	query, err := orderPage(query, "tasks", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
+	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -109,16 +103,11 @@ func (r *taskRepository) Search(query string, offset, limit int, sortBy, sortOrd
 		"title LIKE ? OR description LIKE ?",
 		searchPattern, searchPattern,
 	)
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("tasks", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+	db, err := orderPage(db, "tasks", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := db.Offset(offset).Limit(limit).Find(&tasks).Error
+	err = db.Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -252,20 +241,14 @@ func (r *taskRepository) ListByLabel(labelID uint, assignedToID *uint, offset, l
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("tasks", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			// The join puts a second table in scope, so the validated column is
-			// qualified before it reaches the SQL. Every name in the allowlist is
-			// a tasks column, and the allowlist is what makes the concatenation
-			// safe.
-			query = query.Order("tasks." + orderClause)
-		}
+	// The join puts a second table in scope, so both the validated sort column
+	// and the id tie-breaker are qualified with the tasks table. The join can
+	// match a task only once per label id, so the filtered rows stay unique.
+	query, err := orderPage(query, "tasks", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&tasks).Error
+	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 

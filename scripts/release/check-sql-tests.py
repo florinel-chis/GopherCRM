@@ -11,6 +11,7 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationFresh_FullUpAndDown'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationUpgrade_FromMainAutoMigratedSchema'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestCustomerWebsiteMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestLookupIndexesMigration'),
     }
     if migrations_only:
         required.update(('github.com/florinel-chis/gophercrm/internal/models', name) for name in (
@@ -19,11 +20,13 @@ def check(output, root, *, migrations_only=False):
             'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
             'TestCustomerWebsiteUpgradeFromSQLiteFixture',
         ))
+        required.add(('github.com/florinel-chis/gophercrm/internal/repository',
+                      'TestLookupIndexesServeLookupsSQLite'))
     else:
         for path in (root / 'internal/integration').glob('*_test.go'):
             required.update(('github.com/florinel-chis/gophercrm/internal/integration', name)
                             for name in re.findall(r'^func (Test\w+MySQL)\(t \*testing.T\)', path.read_text(), re.M))
-        if len(required) <= 3:
+        if len(required) <= 4:
             raise ValueError('No real SQL integration roots found')
     events = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
     passes = [(event.get('Package'), event.get('Test')) for event in events if event.get('Action') == 'pass']
