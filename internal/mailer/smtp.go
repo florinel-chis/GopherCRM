@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -167,24 +169,44 @@ func (m *SMTPMailer) send(to, subject, body string) error {
 		encodedBody,
 	}, "\r\n")
 
-	return m.deliver(sender.Address, recipient.Address, []byte(msg))
+	envelopeFrom, err := envelopeAddress("sender", sender.Address)
+	if err != nil {
+		return err
+	}
+	envelopeTo, err := envelopeAddress("recipient", recipient.Address)
+	if err != nil {
+		return err
+	}
+	return m.deliver(envelopeFrom, envelopeTo, []byte(msg))
 }
 
 // deliver runs one bounded SMTP exchange. The connection carries a single
 // deadline for the whole conversation and is closed on every path. A failure
 // caused by the deadline matches os.ErrDeadlineExceeded through errors.Is,
-// whichever way it surfaced (an I/O timeout, or the watchdog's close).
-func (m *SMTPMailer) deliver(envelopeFrom, envelopeTo string, msg []byte) error {
+// whichever way it surfaced (an I/O timeout, or the watchdog's close). Any
+// other error — a relay reply such as a 535, a TLS or protocol failure — is
+// returned as it is, even when cleanup after it ran into the deadline.
+func (m *SMTPMailer) deliver(envelopeFrom, envelopeTo envelope, msg []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	err := m.converse(ctx, envelopeFrom, envelopeTo, msg)
-	if err != nil && ctx.Err() != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, context.DeadlineExceeded) {
+	if err != nil && ctx.Err() != nil && causedByDeadline(err) && !errors.Is(err, os.ErrDeadlineExceeded) {
 		err = fmt.Errorf("%w: %w", os.ErrDeadlineExceeded, err)
 	}
 	return err
 }
 
-func (m *SMTPMailer) converse(ctx context.Context, envelopeFrom, envelopeTo string, msg []byte) error {
+// causedByDeadline reports whether err is the I/O failure the deadline or the
+// watchdog's close produces, as opposed to a reply or protocol error.
+func causedByDeadline(err error) bool {
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func (m *SMTPMailer) converse(ctx context.Context, envelopeFrom, envelopeTo envelope, msg []byte) error {
 
 	dialCtx, cancelDial := context.WithTimeout(ctx, m.dialTimeout)
 	conn, err := m.dial(dialCtx, "tcp", net.JoinHostPort(m.host, strconv.Itoa(m.port)))
@@ -228,10 +250,22 @@ func (m *SMTPMailer) converse(ctx context.Context, envelopeFrom, envelopeTo stri
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
-	if err := client.Mail(envelopeFrom); err != nil {
+	if envelopeFrom.needsUTF8 || envelopeTo.needsUTF8 {
+		// net/smtp's Client.Mail adds the SMTPUTF8 parameter itself when the
+		// relay advertises the extension; without it the address cannot be
+		// sent at all.
+		if ok, _ := client.Extension("SMTPUTF8"); !ok {
+			role := "recipient"
+			if envelopeFrom.needsUTF8 {
+				role = "sender"
+			}
+			return fmt.Errorf("%s: relay does not offer SMTPUTF8: %w", role, ErrInvalidAddress)
+		}
+	}
+	if err := client.Mail(envelopeFrom.wire); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
-	if err := client.Rcpt(envelopeTo); err != nil {
+	if err := client.Rcpt(envelopeTo.wire); err != nil {
 		return fmt.Errorf("smtp rcpt to: %w", err)
 	}
 	w, err := client.Data()
@@ -261,33 +295,65 @@ func (m *SMTPMailer) startTLSConfig() *tls.Config {
 }
 
 // parseAddress accepts exactly one RFC 5322 address, with or without a
-// display name, whose addr-spec is a plain ASCII dot-atom (see
-// isEnvelopeSafe). The value is not part of the error: a malformed recipient
+// display name, whose addr-spec can be put on the envelope (see
+// envelopeAddress). The value is not part of the error: a malformed recipient
 // may be someone's address, a malformed one an injection attempt.
 func parseAddress(role, value string) (*mail.Address, error) {
 	addr, err := mail.ParseAddress(value)
-	if err != nil || !isEnvelopeSafe(addr.Address) {
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
+	}
+	if _, err := envelopeAddress(role, addr.Address); err != nil {
+		return nil, err
 	}
 	return addr, nil
 }
 
-// isEnvelopeSafe reports whether an addr-spec can go into MAIL FROM/RCPT TO
-// as it is. net/mail accepts quoted local parts and returns them unquoted, so
-// "x> NOTIFY=NEVER"@example.com would come back as an address that ends the
-// angle brackets and smuggles ESMTP parameters into the command, and
-// "a b"@example.com would lose its quoting. Only dot-atoms are accepted: one
-// @, ASCII letters, digits and the atom specials on the left, letters,
-// digits, hyphens and dots on the right, no empty, leading or trailing labels.
-// Domain literals and internationalised addresses are refused.
-func isEnvelopeSafe(addr string) bool {
-	local, domain, ok := strings.Cut(addr, "@")
-	if !ok || strings.Contains(domain, "@") {
-		return false
-	}
-	return isDotAtom(local, "!#$%&'*+-/=?^_`{|}~") && isDotAtom(domain, "-")
+// envelope is an addr-spec serialised for MAIL FROM / RCPT TO.
+type envelope struct {
+	wire      string
+	needsUTF8 bool // non-ASCII: only deliverable when the relay offers SMTPUTF8
 }
 
+const atomSpecials = "!#$%&'*+-/=?^_`{|}~"
+
+// envelopeAddress serialises the addr-spec net/mail returned (with any
+// quoting removed) for the SMTP envelope, following RFC 5321: a dot-atom local
+// part goes out as is, any other local part as a quoted string with '"' and
+// '\' escaped. Refused with ErrInvalidAddress, without echoing the value:
+// CR, LF and every other control character; '<' and '>' anywhere, even where
+// quoting would make them legal, because they are what lets text escape the
+// angle brackets of the command and inject ESMTP parameters
+// ("x> NOTIFY=NEVER"@example.com); and domain literals. Non-ASCII is allowed
+// (RFC 6531) but flagged, so the delivery can insist on SMTPUTF8.
+func envelopeAddress(role, addr string) (envelope, error) {
+	invalid := envelope{}
+	at := strings.LastIndex(addr, "@")
+	if at <= 0 || at == len(addr)-1 {
+		return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
+	}
+	local, domain := addr[:at], addr[at+1:]
+	needsUTF8 := false
+	for _, r := range addr {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && !unicode.IsPrint(r)) || r == '<' || r == '>' || r == utf8.RuneError {
+			return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
+		}
+		if r >= 0x80 {
+			needsUTF8 = true
+		}
+	}
+	if !isDotAtom(domain, "-") {
+		return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
+	}
+	if !isDotAtom(local, atomSpecials) {
+		local = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(local) + `"`
+	}
+	return envelope{wire: local + "@" + domain, needsUTF8: needsUTF8}, nil
+}
+
+// isDotAtom reports whether s is a dot-atom: non-empty labels separated by
+// single dots, made of ASCII letters and digits, the given specials, or
+// non-ASCII letters, digits and marks (RFC 6531 UTF8-non-ascii).
 func isDotAtom(s, specials string) bool {
 	if s == "" || len(s) > 255 {
 		return false
@@ -298,7 +364,8 @@ func isDotAtom(s, specials string) bool {
 		}
 		for _, r := range label {
 			alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-			if !alnum && !strings.ContainsRune(specials, r) {
+			unicodeWord := r >= 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r))
+			if !alnum && !unicodeWord && !strings.ContainsRune(specials, r) {
 				return false
 			}
 		}
@@ -313,11 +380,48 @@ func isDotAtom(s, specials string) bool {
 // be one line far beyond the 998-byte limit; whitespace between encoded words
 // is not part of the decoded text, so folding at those spaces is lossless.
 func encodeSubject(subject string) string {
-	encoded := mime.QEncoding.Encode("utf-8", subject)
-	if encoded == subject {
+	if mime.QEncoding.Encode("utf-8", subject) == subject {
 		return subject
 	}
-	return strings.ReplaceAll(encoded, " ", "\r\n ")
+	const (
+		prefix   = "=?utf-8?q?"
+		suffix   = "?="
+		maxLine  = 76 // RFC 2047 section 2: lines with encoded words
+		firstPad = len("Subject: ")
+		contPad  = len(" ")
+	)
+	var lines []string
+	var word strings.Builder
+	limit := maxLine - firstPad - len(prefix) - len(suffix)
+	for _, r := range subject {
+		chunk := qEncodeRune(r)
+		if word.Len() > 0 && word.Len()+len(chunk) > limit {
+			lines = append(lines, prefix+word.String()+suffix)
+			word.Reset()
+			limit = maxLine - contPad - len(prefix) - len(suffix)
+		}
+		word.WriteString(chunk)
+	}
+	lines = append(lines, prefix+word.String()+suffix)
+	return strings.Join(lines, "\r\n ")
+}
+
+// qEncodeRune returns the RFC 2047 Q encoding of one rune's UTF-8 bytes, so
+// an encoded word never splits a character.
+func qEncodeRune(r rune) string {
+	var buf [utf8.UTFMax]byte
+	var b strings.Builder
+	for _, c := range buf[:utf8.EncodeRune(buf[:], r)] {
+		switch {
+		case c == ' ':
+			b.WriteByte('_')
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("!*+-/", c) >= 0:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "=%02X", c)
+		}
+	}
+	return b.String()
 }
 
 // encodeBody normalises the line endings and encodes the body as

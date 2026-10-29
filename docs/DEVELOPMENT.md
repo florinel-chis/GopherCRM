@@ -336,13 +336,22 @@ require-TLS setting (see the roadmap); implicit TLS (port 465) is not supported.
 credentials over an unencrypted connection unless the host is `localhost`/`127.0.0.1`/`::1`. A
 failed QUIT after the relay accepted DATA is not a failure. The recipient and `SMTP_FROM` are
 parsed with `net/mail.ParseAddress` — exactly one address, display name allowed — and the
-addr-spec must then be a plain ASCII dot-atom (no quoted local part, no domain literal, no
-internationalised address): `net/mail` returns quoted local parts unquoted, so
+addr-spec is then serialised for the envelope (`envelopeAddress`): a dot-atom local part as is,
+any other local part as an RFC 5321 quoted string with `"` and `\` escaped
+(`RCPT TO:<"a b"@example.com>`), because `net/mail` returns quoted local parts unquoted and
 `"x> NOTIFY=NEVER"@example.com` would otherwise end `RCPT TO:<…>` early and inject ESMTP
-parameters. Anything else is `mailer.ErrInvalidAddress`, without echoing the value. The envelope
-uses the bare address while the headers carry the formatted one; CR/LF in the sender is
-`ErrInvalidHeader` like the recipient and subject. A non-ASCII subject is Q-encoded and folded
-between encoded words, so no header line approaches the 998-byte limit. The body is sent as
+parameters. Control characters, `<` and `>` anywhere in the address — refused even inside
+quotes, where RFC 5321 would allow the brackets, because they are what lets text escape the
+command's angle brackets — and domain literals are `mailer.ErrInvalidAddress`, without echoing
+the value. Non-ASCII addresses (RFC 6531) are delivered only when the relay advertises SMTPUTF8
+after EHLO (net/smtp's `Client.Mail` then adds the `SMTPUTF8` parameter itself) and are refused
+with `ErrInvalidAddress` before `MAIL FROM` otherwise. The headers carry
+`mail.Address.String()`; CR/LF in the sender is `ErrInvalidHeader` like the recipient and
+subject. A non-ASCII subject is Q-encoded into encoded words that never split a character and
+folded so that every line holding encoded words, `Subject: ` included, is at most 76 characters
+(RFC 2047 section 2). Only I/O failures caused by the deadline (a timeout, or the watchdog's
+close) are reported as `os.ErrDeadlineExceeded`; a relay reply such as a 535 that decided the
+outcome is returned as it is even when net/smtp's abort and QUIT afterwards stall. The body is sent as
 `Content-Transfer-Encoding: quoted-printable` (7-bit on the wire, long lines soft-wrapped) after
 its line endings (CRLF, bare LF, bare CR) are normalised to CRLF; dot-stuffing is left to the SMTP
 data writer. The `Send` failure log carries neither the recipient nor the subject (automation

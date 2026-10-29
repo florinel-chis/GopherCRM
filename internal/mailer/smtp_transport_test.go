@@ -49,6 +49,7 @@ type relayOptions struct {
 	stallOn       string      // verb (upper case) the relay never answers; "DATA-END" stalls after the message
 	tls           *tls.Config // non-nil: advertise STARTTLS
 	auth          bool        // advertise AUTH PLAIN
+	smtputf8      bool        // advertise SMTPUTF8
 	rcptReply     string      // default "250 2.1.5 Ok"
 	authReply     string      // default "235 2.7.0 Authentication successful"
 	// stallHandshake answers STARTTLS with 220, reads the ClientHello and
@@ -156,6 +157,9 @@ func serveRelay(conn net.Conn, opts relayOptions) (s relaySession) {
 			}
 			if opts.auth {
 				lines = append(lines, "250-AUTH PLAIN")
+			}
+			if opts.smtputf8 {
+				lines = append(lines, "250-SMTPUTF8")
 			}
 			lines = append(lines, "250 SIZE 1048576")
 			err = write(lines...)
@@ -511,16 +515,15 @@ func TestSMTPHeaders(t *testing.T) {
 		{"recipient with an unterminated angle address", "", "Jane <jane@example.com"},
 		{"sender without an address", "GopherCRM", "jane@example.com"},
 		{"sender list", "a@example.com, b@example.com", "jane@example.com"},
-		// net/mail accepts quoted local parts; their unquoted Address would
-		// smuggle ESMTP parameters into RCPT TO or lose its quoting.
+		// net/mail accepts quoted local parts and returns them unquoted; an
+		// angle bracket would let the address end RCPT TO early and smuggle
+		// ESMTP parameters, so it is refused even inside quotes.
 		{"quoted local part with ESMTP parameters", "", `"x> NOTIFY=NEVER ORCPT=rfc822;a@b"@example.com`},
-		{"quoted local part with a space", "", `"a b"@example.com`},
 		{"quoted local part behind a display name", "", `Jane <"x>y"@example.com>`},
+		{"quoted local part with an opening bracket", "", `"x<y"@example.com`},
 		{"domain literal", "", "jane@[127.0.0.1]"},
-		{"non-ASCII local part", "", "jané@example.com"},
 		{"leading dot", "", ".jane@example.com"},
 		{"double dot", "", "ja..ne@example.com"},
-		{"quoted sender local part", `"no reply"@example.com`, "jane@example.com"},
 		{"sender with ESMTP parameters", `"x> SIZE=1"@example.com`, "jane@example.com"},
 	} {
 		t.Run("invalid address: "+tc.name, func(t *testing.T) {
@@ -556,6 +559,14 @@ func TestSMTPHeaders(t *testing.T) {
 		{"plus addressing and subdomains", "no-reply@mail.example.com", "jane+crm@sub.example.co.uk",
 			"RCPT TO:<jane+crm@sub.example.co.uk>", "MAIL FROM:<no-reply@mail.example.com>",
 			"To: <jane+crm@sub.example.co.uk>", "From: <no-reply@mail.example.com>"},
+		// Quoted local parts are accepted elsewhere in the CRM, so they are
+		// delivered, re-quoted for the envelope.
+		{"quoted local part with a space", `"no reply"@example.com`, `"a b"@example.com`,
+			`RCPT TO:<"a b"@example.com>`, `MAIL FROM:<"no reply"@example.com>`,
+			`To: <"a b"@example.com>`, `From: <"no reply"@example.com>`},
+		{"quoted local part with a quote, a backslash and an at sign", "no-reply@example.com", `"a\"b\\c@d"@example.com`,
+			`RCPT TO:<"a\"b\\c@d"@example.com>`, "MAIL FROM:<no-reply@example.com>",
+			`To: <"a\"b\\c@d"@example.com>`, "From: <no-reply@example.com>"},
 	} {
 		t.Run("legitimate addresses: "+tc.name, func(t *testing.T) {
 			addr, done := startRelay(t, relayOptions{})
@@ -570,6 +581,31 @@ func TestSMTPHeaders(t *testing.T) {
 			assert.Contains(t, s.data, tc.fromHeader+"\r\n")
 		})
 	}
+
+	t.Run("internationalised address with SMTPUTF8", func(t *testing.T) {
+		addr, done := startRelay(t, relayOptions{smtputf8: true})
+		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
+		err, _ := sendWithin(t, func() error { return m.Send("jané@exämple.com", "Hello", "body") })
+		require.NoError(t, err)
+		s := awaitSession(t, done)
+		require.NoError(t, s.err)
+		assert.Contains(t, s.commands, "MAIL FROM:<no-reply@example.com> SMTPUTF8", "the SMTPUTF8 parameter is sent")
+		assert.Contains(t, s.commands, "RCPT TO:<jané@exämple.com>")
+	})
+
+	t.Run("internationalised address without SMTPUTF8", func(t *testing.T) {
+		hook := captureLogs(t)
+		addr, done := startRelay(t, relayOptions{})
+		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
+		err, _ := sendWithin(t, func() error { return m.Send("jané@exämple.com", "Hello", "body") })
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidAddress)
+		assert.NotContains(t, err.Error(), "jané")
+		assert.NotContains(t, renderedLogs(t, hook), "jané")
+		s := awaitSession(t, done)
+		assert.False(t, s.sawVerb("MAIL"), "refused before MAIL FROM")
+		assert.False(t, s.sawVerb("RCPT"))
+	})
 
 	for _, tc := range []struct {
 		name, body, want string
@@ -626,7 +662,7 @@ func TestSMTPHeaders(t *testing.T) {
 		headers, _, _ := strings.Cut(s.data, "\r\n\r\n")
 		for _, line := range strings.Split(headers, "\r\n") {
 			assert.LessOrEqual(t, len(line), 998, "RFC 5322 line limit")
-			assert.LessOrEqual(t, len(line), 90, "folded close to the recommended 78")
+			assert.LessOrEqual(t, len(line), 76, "RFC 2047: a line with encoded words is at most 76 characters")
 		}
 		// Unfold (CRLF followed by whitespace) and decode.
 		var raw string
@@ -703,6 +739,22 @@ func TestSMTPTLSAuth(t *testing.T) {
 			assert.NotContains(t, c, base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+password)))
 		}
 		assert.NotContains(t, renderedLogs(t, hook), password)
+	})
+
+	t.Run("AUTH rejection is not reported as a timeout", func(t *testing.T) {
+		// net/smtp aborts a failed AUTH with "*" and QUIT; a relay that stalls
+		// there runs the delivery into the deadline, but the error that
+		// decided the outcome is the 535.
+		addr, done := startRelay(t, relayOptions{auth: true, authReply: "535 5.7.8 Authentication failed", stallOn: "*"})
+		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{User: user, Password: password})
+		err, elapsed := sendWithin(t, func() error { return m.Send("jane@example.com", "Hello", "body") })
+		require.Error(t, err)
+		var reply *textproto.Error
+		require.ErrorAs(t, err, &reply)
+		assert.Equal(t, 535, reply.Code)
+		assert.False(t, errors.Is(err, os.ErrDeadlineExceeded), "not a timeout: %v", err)
+		assert.Less(t, elapsed, testTimeout+time.Second)
+		awaitSession(t, done)
 	})
 
 	t.Run("AUTH required but not offered", func(t *testing.T) {
