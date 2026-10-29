@@ -15232,7 +15232,7 @@
                         }
                     },
                     "409": {
-                        "description": "A customer with the lead's email address already exists",
+                        "description": "A customer with the lead's email address already exists, or the lead's company link kept changing during the conversion",
                         "schema": {
                             "allOf": [
                                 {

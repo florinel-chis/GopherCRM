@@ -17,6 +17,8 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -367,4 +369,52 @@ func TestLeadConversionSettingsReadFailureWritesNothing(t *testing.T) {
 	assert.False(t, errors.Is(err, apperrors.ErrValidation), "an outage is not a validation failure")
 	assert.Zero(t, env.customersWithEmail(lead.Email))
 	assert.Equal(t, models.LeadStatusQualified, env.committedLead(lead.ID).Status)
+}
+
+// A conversion the caller can correct — refused by a setting, an email that
+// already belongs to a customer, an already converted lead — is logged as a
+// warning; only a failure the server owns is logged as an error, matching the
+// handler's 4xx/500 split.
+func TestLeadConversionLogLevels(t *testing.T) {
+	env := newLeadConversionEnv(t, openQuoteTestSQLite(t))
+	env.reset()
+	hook := logtest.NewLocal(utils.Logger)
+
+	errorEntries := func() []string {
+		var messages []string
+		for _, entry := range hook.AllEntries() {
+			if entry.Level <= logrus.ErrorLevel {
+				messages = append(messages, entry.Message)
+			}
+		}
+		return messages
+	}
+
+	hook.Reset()
+	refused := env.newLead(models.LeadStatusNew, nil)
+	_, err := env.svc.ConvertToCustomer(refused.ID, &models.Customer{})
+	require.Error(t, err)
+	assert.Empty(t, errorEntries(), "a status refusal is not a server error")
+
+	hook.Reset()
+	taken := env.newLead(models.LeadStatusQualified, nil)
+	require.NoError(t, env.db.Create(&models.Customer{FirstName: "Existing", LastName: "Customer", Email: taken.Email}).Error)
+	_, err = env.svc.ConvertToCustomer(taken.ID, &models.Customer{})
+	require.True(t, errors.Is(err, apperrors.ErrDuplicateEmail), "got %v", err)
+	assert.Empty(t, errorEntries(), "a duplicate email is not a server error")
+
+	hook.Reset()
+	converted := env.newLead(models.LeadStatusQualified, nil)
+	_, err = env.svc.ConvertToCustomer(converted.ID, &models.Customer{})
+	require.NoError(t, err)
+	hook.Reset()
+	_, err = env.svc.ConvertToCustomer(converted.ID, &models.Customer{})
+	require.True(t, errors.Is(err, apperrors.ErrLeadConverted))
+	assert.Empty(t, errorEntries(), "an already converted lead is not a server error")
+
+	hook.Reset()
+	broken := env.newLead(models.LeadStatusQualified, nil)
+	_, err = env.failing.ConvertToCustomer(broken.ID, &models.Customer{})
+	require.Error(t, err)
+	assert.NotEmpty(t, errorEntries(), "a failed write is a server error")
 }

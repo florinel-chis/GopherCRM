@@ -317,7 +317,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the commit (and keeps the new `customer_id`) instead of being lost or bypassing the
   allowed statuses. The conversion also locks the lead's company row, and a company delete now
   locks it before unlinking, so a customer can no longer be left linked to a company deleted
-  concurrently. Refused conversions and duplicate emails are logged as warnings, not errors.
+  concurrently. Locks are always taken company first, then lead: if the lead moved to another
+  company before its row was locked, the conversion starts over for the new company (at most
+  three times, then 409 "The lead changed while it was being converted") instead of locking it
+  under the lead lock, which could deadlock with a delete of that company. Refused conversions,
+  duplicate emails, already converted or missing leads are logged as warnings by both the handler
+  and the service; only server failures are logged as errors.
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value

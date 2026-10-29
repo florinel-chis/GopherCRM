@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -501,6 +502,46 @@ func (r leadConversionRules) checkNotes(notes string) error {
 	}
 }
 
+// maxConversionRestarts bounds how often a conversion starts over because the
+// lead moved to another company between reading it and locking it.
+const maxConversionRestarts = 3
+
+// ErrLeadChangedDuringConversion is a conversion given up because the lead's
+// company link kept changing under it; nothing was written and the caller
+// may try again (409).
+var ErrLeadChangedDuringConversion = errors.New("the lead changed while it was being converted")
+
+// leadCompanyMovedError abandons a conversion attempt whose lead, once its row
+// was locked, links another company than the one locked first. It is not a
+// retryable database error: ConvertToCustomer catches it and starts a new
+// transaction that locks companyID first.
+type leadCompanyMovedError struct {
+	companyID uint
+}
+
+func (e *leadCompanyMovedError) Error() string {
+	return fmt.Sprintf("lead moved to company %d during conversion", e.companyID)
+}
+
+// logConversionFailure logs a refusal the caller can act on — a setting, a
+// missing or taken email, an already converted or missing lead, a lead that
+// kept changing — as a warning, and anything else as an error. The handler
+// answers the first kind with 4xx and the second with 500.
+func logConversionFailure(logger *logrus.Entry, err error, message string) {
+	entry := logger.WithError(utils.LogError(err))
+	switch {
+	case errors.Is(err, apperrors.ErrValidation),
+		errors.Is(err, apperrors.ErrLeadConverted),
+		errors.Is(err, apperrors.ErrLeadMissingEmail),
+		errors.Is(err, apperrors.ErrDuplicateEmail),
+		errors.Is(err, ErrLeadChangedDuringConversion),
+		isNotFound(err):
+		entry.Warn(message)
+	default:
+		entry.Error(message)
+	}
+}
+
 // lockLiveCompany locks the company a conversion is about to link and reports
 // whether it is live. A nil id locks nothing.
 func lockLiveCompany(companies repository.CompanyRepository, companyID *uint) (*uint, bool, error) {
@@ -551,7 +592,7 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 	// First, validate the lead outside of transaction
 	lead, err := s.leadRepo.GetByID(leadID)
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Lead not found")
+		logConversionFailure(logger, err, "Lead not found")
 		return nil, err
 	}
 
@@ -578,118 +619,141 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 	// not inherit the id or the derived fields of one that rolled back.
 	requested := *customerData
 
-	// Execute conversion within a transaction with retry logic
+	// Execute conversion within a transaction with retry logic. The company
+	// to lock first is the one the lead linked when last read; if the lead
+	// has moved to another company by the time its row is locked, the
+	// attempt is abandoned and started over for the new company (see
+	// leadCompanyMovedError), at most maxConversionRestarts times.
 	ctx := context.Background()
 	var convertedCustomer *models.Customer
+	expectedCompanyID := lead.CompanyID
 
-	err = s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
-		*customerData = requested
+	for restarts := 0; ; restarts++ {
+		err = s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
+			*customerData = requested
 
-		// Get transaction from context
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok {
-			return utils.ErrNoTransaction
-		}
+			// Get transaction from context
+			tx, ok := utils.GetTxFromContext(ctx)
+			if !ok {
+				return utils.ErrNoTransaction
+			}
 
-		// Use transaction-aware repositories
-		txLeadRepo := s.leadRepo.WithTx(tx)
-		txCustomerRepo := s.customerRepo.WithTx(tx)
-		txCompanyRepo := s.companyRepo.WithTx(tx)
+			// Use transaction-aware repositories
+			txLeadRepo := s.leadRepo.WithTx(tx)
+			txCustomerRepo := s.customerRepo.WithTx(tx)
+			txCompanyRepo := s.companyRepo.WithTx(tx)
 
-		// Lock order: the company first, then the lead — the order a
-		// company delete takes them (its row, then the leads it unlinks) —
-		// so the two serialise instead of deadlocking. The company id comes
-		// from the read above; a link changed since is locked below.
-		lockedCompanyID, companyLive, err := lockLiveCompany(txCompanyRepo, lead.CompanyID)
-		if err != nil {
-			return err
-		}
-
-		// Re-read the lead with a row lock: the status checked here is the
-		// status the commit converts, since a concurrent status change or
-		// update waits for this transaction (it takes the same lock).
-		txLead, err := s.lockedLeadRead(tx).GetByID(leadID)
-		if err != nil {
-			return err
-		}
-		if !sameCompanyID(txLead.CompanyID, lockedCompanyID) {
-			lockedCompanyID, companyLive, err = lockLiveCompany(txCompanyRepo, txLead.CompanyID)
+			// Lock order: the company first, then the lead — the order a
+			// company delete takes them (its row, then the leads it unlinks) —
+			// so the two serialise instead of deadlocking. The company id comes
+			// from the last read of the lead; a link changed since restarts the
+			// attempt below rather than locking a company under the lead lock.
+			lockedCompanyID, companyLive, err := lockLiveCompany(txCompanyRepo, expectedCompanyID)
 			if err != nil {
 				return err
 			}
-		}
 
-		if txLead.Status == models.LeadStatusConverted {
-			return apperrors.NewLeadAlreadyConverted(leadID)
-		}
-		// The status may have changed since the read above.
-		if err := rules.checkStatus(txLead.Status); err != nil {
-			return err
-		}
-
-		// Prepare customer data from lead data
-		if customerData.Email == "" {
-			customerData.Email = txLead.Email
-		}
-		if customerData.FirstName == "" {
-			customerData.FirstName = txLead.FirstName
-		}
-		if customerData.LastName == "" {
-			customerData.LastName = txLead.LastName
-		}
-		if customerData.Phone == "" {
-			customerData.Phone = txLead.Phone
-		}
-		if customerData.Company == "" {
-			customerData.Company = txLead.Company
-		}
-		// A lead may carry only a phone number, but customers need a unique
-		// email: refuse before anything is written.
-		if customerData.Email == "" {
-			return fmt.Errorf("lead %d: %w", leadID, apperrors.ErrLeadMissingEmail)
-		}
-
-		// The company row stays locked until the commit, so a concurrent
-		// delete either finished before the lock (the link is dropped here)
-		// or waits and then unlinks this customer with the others.
-		if customerData.CompanyID == nil && lockedCompanyID != nil {
-			if companyLive {
-				companyID := *lockedCompanyID
-				customerData.CompanyID = &companyID
-			} else {
-				logger.WithField("company_id", *lockedCompanyID).Warn("Lead links a company that no longer exists; converting without the link")
+			// Re-read the lead with a row lock: the status checked here is the
+			// status the commit converts, since a concurrent status change or
+			// update waits for this transaction (it takes the same lock).
+			txLead, err := s.lockedLeadRead(tx).GetByID(leadID)
+			if err != nil {
+				return err
 			}
-		}
+			if !sameCompanyID(txLead.CompanyID, lockedCompanyID) {
+				if txLead.CompanyID != nil {
+					// Locking the new company now would take it under the lead
+					// lock, the reverse of a company delete's order. Roll back
+					// and start over with the new company locked first.
+					return &leadCompanyMovedError{companyID: *txLead.CompanyID}
+				}
+				// Unlinked since the read: there is no company to link.
+				lockedCompanyID, companyLive = nil, false
+			}
 
-		if rules.autoAssignOwner && txLead.OwnerID != 0 {
-			ownerID := txLead.OwnerID
-			customerData.AssignedToID = &ownerID
-		}
+			if txLead.Status == models.LeadStatusConverted {
+				return apperrors.NewLeadAlreadyConverted(leadID)
+			}
+			// The status may have changed since the read above.
+			if err := rules.checkStatus(txLead.Status); err != nil {
+				return err
+			}
 
-		// Create customer within transaction
-		if err := txCustomerRepo.Create(customerData); err != nil {
-			logger.WithError(utils.LogError(err)).Error("Failed to create customer within transaction")
-			return err
-		}
+			// Prepare customer data from lead data
+			if customerData.Email == "" {
+				customerData.Email = txLead.Email
+			}
+			if customerData.FirstName == "" {
+				customerData.FirstName = txLead.FirstName
+			}
+			if customerData.LastName == "" {
+				customerData.LastName = txLead.LastName
+			}
+			if customerData.Phone == "" {
+				customerData.Phone = txLead.Phone
+			}
+			if customerData.Company == "" {
+				customerData.Company = txLead.Company
+			}
+			// A lead may carry only a phone number, but customers need a unique
+			// email: refuse before anything is written.
+			if customerData.Email == "" {
+				return fmt.Errorf("lead %d: %w", leadID, apperrors.ErrLeadMissingEmail)
+			}
 
-		// Update lead status within transaction
-		if err := txLeadRepo.ConvertToCustomer(leadID, customerData.ID); err != nil {
-			logger.WithError(utils.LogError(err)).Error("Failed to update lead status within transaction")
-			return err
-		}
+			// The company row stays locked until the commit, so a concurrent
+			// delete either finished before the lock (the link is dropped here)
+			// or waits and then unlinks this customer with the others.
+			if customerData.CompanyID == nil && lockedCompanyID != nil {
+				if companyLive {
+					companyID := *lockedCompanyID
+					customerData.CompanyID = &companyID
+				} else {
+					logger.WithField("company_id", *lockedCompanyID).Warn("Lead links a company that no longer exists; converting without the link")
+				}
+			}
 
-		// The conversion's events ride in the same transaction: lead_updated
-		// and the status change into converted, origin conversion.
-		if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, txLead.Status, models.LeadStatusConverted, models.AutomationOriginConversion, nil); err != nil {
-			return err
-		}
+			if rules.autoAssignOwner && txLead.OwnerID != 0 {
+				ownerID := txLead.OwnerID
+				customerData.AssignedToID = &ownerID
+			}
 
-		convertedCustomer = customerData
-		return nil
-	}, 3) // Retry up to 3 times for deadlocks
+			// Create customer within transaction
+			if err := txCustomerRepo.Create(customerData); err != nil {
+				logConversionFailure(logger, err, "Failed to create customer within transaction")
+				return err
+			}
+
+			// Update lead status within transaction
+			if err := txLeadRepo.ConvertToCustomer(leadID, customerData.ID); err != nil {
+				logger.WithError(utils.LogError(err)).Error("Failed to update lead status within transaction")
+				return err
+			}
+
+			// The conversion's events ride in the same transaction: lead_updated
+			// and the status change into converted, origin conversion.
+			if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, txLead.Status, models.LeadStatusConverted, models.AutomationOriginConversion, nil); err != nil {
+				return err
+			}
+
+			convertedCustomer = customerData
+			return nil
+		}, 3) // Retry up to 3 times for deadlocks
+
+		var moved *leadCompanyMovedError
+		if errors.As(err, &moved) {
+			if restarts < maxConversionRestarts {
+				companyID := moved.companyID
+				expectedCompanyID = &companyID
+				continue
+			}
+			err = fmt.Errorf("lead %d: %w", leadID, ErrLeadChangedDuringConversion)
+		}
+		break
+	}
 
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Lead conversion transaction failed")
+		logConversionFailure(logger, err, "Lead conversion transaction failed")
 		return nil, err
 	}
 
