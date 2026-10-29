@@ -131,6 +131,17 @@ func (_m *CompanyRepository) UnlinkDeals(companyID uint) error {
 	return ret.Error(0)
 }
 
+// LockByID provides a mock function with given fields: id
+func (_m *CompanyRepository) LockByID(id uint) error {
+	ret := _m.Called(id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockByID")
+	}
+
+	return ret.Error(0)
+}
+
 // ListCustomers provides a mock function with given fields: companyID, offset, limit
 func (_m *CompanyRepository) ListCustomers(companyID uint, offset int, limit int) ([]models.Customer, int64, error) {
 	ret := _m.Called(companyID, offset, limit)

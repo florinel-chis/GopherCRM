@@ -307,7 +307,11 @@ every `POST /leads/:id/convert` before anything is written (a refusal is 400 `VA
 - `leads.conversion.require_notes`: Whether non-blank conversion notes are required
 - `leads.conversion.auto_assign_owner`: Make the lead's owner the customer's assigned user
 
-The lead's company link is carried over to the customer as well. `GET /configurations/ui` exposes
+If the `leads.conversion.allowed_statuses` row is missing (seeding never ran), conversion falls back
+to `qualified` only, the entry's default value, rather than the seeded `qualified, contacted`; the
+next start re-seeds the row. A lead reaches `converted` only through the convert endpoint: lead
+create/update and the bulk status endpoint refuse it. The lead's company link is carried over to
+the customer as well. `GET /configurations/ui` exposes
 the three settings read-only, so the conversion dialog can follow them.
 
 ### Answer Engine Optimization (AEO)

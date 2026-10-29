@@ -280,7 +280,12 @@ const (
 	ConfigLeadConversionAutoAssignOwner = "leads.conversion.auto_assign_owner"
 )
 
-// defaultLeadConversionStatuses is what an unseeded database allows.
+// defaultLeadConversionStatuses is what a database without the
+// leads.conversion.allowed_statuses row allows. It is deliberately the
+// narrower list — the entry's DefaultValue (what Reset restores) — and not
+// the seeded value ["qualified", "contacted"]: the row only goes missing when
+// seeding never ran or someone removed it, and then the conservative policy
+// is the safer guess. InitializeDefaults recreates the row on the next boot.
 var defaultLeadConversionStatuses = []string{string(models.LeadStatusQualified)}
 
 func (s *configurationService) GetLeadConversionStatuses() ([]string, error) {

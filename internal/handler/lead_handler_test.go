@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"errors"
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -16,6 +17,8 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -834,4 +837,86 @@ func (suite *LeadHandlerTestSuite) TestList_CustomerUserWithClassificationSeesOn
 
 func TestLeadHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(LeadHandlerTestSuite))
+}
+
+// Issue #104, round 2: a lead create or update cannot set converted — only
+// the conversion endpoint does, with the customer and the settings. The
+// refusal is 400 VALIDATION_ERROR naming the status field and pointing at the
+// convert endpoint.
+func (suite *LeadHandlerTestSuite) decodeLeadRuleRefusal(rec *httptest.ResponseRecorder) {
+	suite.Equal(http.StatusBadRequest, rec.Code)
+	var response struct {
+		Error struct {
+			Code    string                 `json:"code"`
+			Message string                 `json:"message"`
+			Details map[string]interface{} `json:"details"`
+		} `json:"error"`
+	}
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+	suite.Equal(utils.ErrCodeValidation, response.Error.Code)
+	suite.Contains(response.Error.Message, "/convert")
+	suite.Equal(map[string]interface{}{"field": "status"}, response.Error.Details)
+}
+
+func (suite *LeadHandlerTestSuite) TestCreate_ConvertedStatusIsRefused() {
+	suite.router.POST("/leads", suite.handler.Create)
+	req := httptest.NewRequest(http.MethodPost, "/leads",
+		bytes.NewBufferString(`{"first_name":"A","last_name":"B","email":"a@example.com","status":"converted","owner_id":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.decodeLeadRuleRefusal(rec)
+	suite.mockService.AssertNotCalled(suite.T(), "Create", mock.Anything)
+}
+
+func (suite *LeadHandlerTestSuite) TestUpdate_ConvertedStatusIsAValidationError() {
+	suite.router.PUT("/leads/:id", suite.handler.Update)
+	suite.mockService.On("GetByID", uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1, Status: models.LeadStatusQualified}, nil)
+	suite.mockService.On("Update", uint(1), mock.Anything).Return(nil, service.ConvertedStatusRefusal())
+
+	req := httptest.NewRequest(http.MethodPut, "/leads/1", bytes.NewBufferString(`{"status":"converted"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.decodeLeadRuleRefusal(rec)
+}
+
+// A refused conversion (400) and a duplicate email (409) are the caller's
+// doing and log at Warn; only a failure the server owns (500) logs at Error.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheResponse() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	suite.mockService.On("GetByID", uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1}, nil)
+	hook := logtest.NewLocal(utils.Logger)
+
+	cases := []struct {
+		err   error
+		code  int
+		level logrus.Level
+	}{
+		{&service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."}, http.StatusBadRequest, logrus.WarnLevel},
+		{fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail), http.StatusConflict, logrus.WarnLevel},
+		{errors.New("connection refused"), http.StatusInternalServerError, logrus.ErrorLevel},
+	}
+	for _, tc := range cases {
+		hook.Reset()
+		call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+		req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		suite.router.ServeHTTP(rec, req)
+		call.Unset()
+
+		suite.Equal(tc.code, rec.Code)
+		var failure *logrus.Entry
+		for _, entry := range hook.AllEntries() {
+			if entry.Message == "Failed to convert lead" {
+				failure = entry
+			}
+		}
+		if suite.NotNil(failure, "the failure is logged (%d)", tc.code) {
+			suite.Equal(tc.level, failure.Level, "log level for %d", tc.code)
+		}
+	}
 }

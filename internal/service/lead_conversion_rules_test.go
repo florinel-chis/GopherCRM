@@ -169,11 +169,22 @@ func (e *leadConversionEnv) assertRefused(err error, field string, lead *models.
 func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 	root := newLeadConversionEnv(t, db)
 
+	// First, before any subtest changes a setting: the configuration exactly
+	// as InitializeDefaults seeded it.
 	t.Run("seeded defaults allow qualified and contacted and refuse new", func(t *testing.T) {
 		env := root.bind(t)
-		env.reset()
+		statuses, err := env.config.GetLeadConversionStatuses()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"qualified", "contacted"}, statuses, "the seeded allowed statuses")
+		requireNotes, err := env.config.IsLeadConversionRequireNotes()
+		require.NoError(t, err)
+		assert.False(t, requireNotes, "notes are optional as seeded")
+		autoAssign, err := env.config.IsLeadConversionAutoAssignOwner()
+		require.NoError(t, err)
+		assert.True(t, autoAssign, "owner assignment is on as seeded")
+
 		lead := env.newLead(models.LeadStatusNew, nil)
-		_, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		_, err = env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
 		env.assertRefused(err, "status", lead)
 		var ruleErr *LeadConversionRuleError
 		require.True(t, errors.As(err, &ruleErr))

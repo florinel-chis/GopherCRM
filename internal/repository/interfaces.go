@@ -210,6 +210,13 @@ type CompanyRepository interface {
 	// company, newest first. A nil ownerID means every owner.
 	ListCustomers(companyID uint, offset, limit int) ([]models.Customer, int64, error)
 	ListLeads(companyID uint, ownerID *uint, offset, limit int) ([]models.Lead, int64, error)
+	// LockByID takes a row lock (SELECT ... FOR UPDATE) on the live company
+	// and reports gorm.ErrRecordNotFound when there is none. Called on a
+	// transaction handle it serialises a company delete against anything
+	// that links to the company in another transaction (lead conversion);
+	// SQLite, which ignores the clause, is serialised by its single
+	// connection. Only the id column is read, so no other table is locked.
+	LockByID(id uint) error
 	WithTx(tx *gorm.DB) CompanyRepository
 }
 

@@ -14353,7 +14353,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a new lead (sales and admin roles only). Optional company_id links the lead to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.",
+                "description": "Create a new lead (sales and admin roles only). Optional company_id links the lead to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link. status \"converted\" is refused with 400 VALIDATION_ERROR (details.field \"status\"): a lead becomes converted only through POST /leads/{id}/convert.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14395,7 +14395,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request data, missing owner_id for admin users, or an unknown company_id (INVALID_REFERENCE)",
+                        "description": "Invalid request data, missing owner_id for admin users, an unknown company_id (INVALID_REFERENCE), or status converted (VALIDATION_ERROR)",
                         "schema": {
                             "allOf": [
                                 {
@@ -14497,7 +14497,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Sets the same status on up to 100 leads in a single all-or-nothing transaction. Requires the sales or admin role; sales users may only update leads they own. If any listed lead is missing or not owned by the caller, nothing is written and the offending IDs are named in the error details.",
+                "description": "Sets the same status on up to 100 leads in a single all-or-nothing transaction. Requires the sales or admin role; sales users may only update leads they own. If any listed lead is missing or not owned by the caller, nothing is written and the offending IDs are named in the error details. status \"converted\" is refused with 400 VALIDATION_ERROR (details.field \"status\"): a lead becomes converted only through POST /leads/{id}/convert, which creates the customer.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14539,7 +14539,7 @@
                         }
                     },
                     "400": {
-                        "description": "Empty ID list, more than 100 IDs, or an invalid lead status",
+                        "description": "Empty ID list, more than 100 IDs, an invalid lead status, or status converted (VALIDATION_ERROR)",
                         "schema": {
                             "allOf": [
                                 {
@@ -14799,7 +14799,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner). company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.",
+                "description": "Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner). company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link. status \"converted\" is refused with 400 VALIDATION_ERROR (details.field \"status\") unless the lead is already converted: a lead becomes converted only through POST /leads/{id}/convert. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14848,7 +14848,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid lead ID or request data, or an unknown company_id (INVALID_REFERENCE)",
+                        "description": "Invalid lead ID or request data, an unknown company_id (INVALID_REFERENCE), or status converted (VALIDATION_ERROR)",
                         "schema": {
                             "allOf": [
                                 {

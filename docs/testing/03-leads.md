@@ -1027,3 +1027,51 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   with nothing written, never a conversion under a guessed policy.
 - **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
   `TestLeadConversionRules{SQLite,MySQL}`, `TestLeadConversionSettingsReadFailureWritesNothing`.
+
+### TC-LEAD-063 — Converted is reachable only through the convert endpoint
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; a `qualified` lead and a `new` lead.
+- **Steps:**
+  1. `POST /api/v1/leads` with `"status": "converted"`.
+  2. `PUT /api/v1/leads/{id}` with `{"status":"converted"}` on the qualified lead.
+  3. `POST /api/v1/leads/bulk/status` with both ids and `"status":"converted"`.
+  4. Convert the qualified lead through `/convert`, then `PUT` it with `{"status":"converted","notes":"…"}`
+     and then with `{"status":"contacted"}`.
+  5. Open the lead form (create, and edit of a non-converted lead) and list the Status options.
+- **Expected:** steps 1–3 are **400** `VALIDATION_ERROR` whose message points at
+  `POST /leads/{id}/convert` and whose `details` are `{field: "status"}`; nothing is created or
+  changed, no customer appears. Step 4: both updates are 200, the lead keeps its `customer_id`.
+  Step 5: no "Converted" option (a converted lead's edit form shows it as the current value).
+  Before, steps 1–3 marked leads converted without a customer and outside the conversion settings.
+- **Automation:** automated — `internal/service/lead_status_integrity_test.go`
+  `TestLeadConvertedStatusOnlyByConversion{SQLite,MySQL}`; `lead_handler_test.go`
+  `TestCreate_ConvertedStatusIsRefused`, `TestUpdate_ConvertedStatusIsAValidationError`;
+  `bulk_handler_test.go` `TestBulkUpdateLeadStatus_ConvertedIsAValidationError`;
+  `LeadForm.test.tsx`.
+
+### TC-LEAD-064 — A status change racing a conversion never bypasses the allowed statuses
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** MySQL; a `qualified` lead; `new` is not an allowed conversion status.
+- **Steps:** Convert the lead while a `PUT` setting `status: "new"` runs concurrently (the test
+  starts it right after the conversion has read the lead).
+- **Expected:** either the update lands first and the conversion is refused (no customer, status
+  `new`), or the update waits for the conversion's commit and then applies (status `new`, the lead
+  still linked to its customer). Never a customer created from a lead whose committed status was
+  `new`, and never a lost `customer_id`. Before, the update committed during the conversion and
+  the conversion still converted it.
+- **Automation:** automated — `internal/service/lead_status_integrity_test.go`
+  `TestLeadConversionStatusRace{SQLite,MySQL}`.
+
+### TC-LEAD-065 — A company delete racing a conversion leaves no dangling link
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** MySQL; a `qualified` lead linked to a company.
+- **Steps:** Convert the lead while `DELETE /api/v1/companies/{id}` runs concurrently (started
+  right after the conversion has looked at the company).
+- **Expected:** both succeed; the company is soft-deleted and no live customer or lead references
+  it — the delete waits for the conversion and unlinks its customer, or ran first and the
+  conversion drops the link. Before, the new customer kept the deleted company's id.
+- **Automation:** automated — `internal/service/lead_status_integrity_test.go`
+  `TestLeadConversionCompanyDeleteRace{SQLite,MySQL}`.

@@ -46,7 +46,7 @@ type BulkTaskStatusRequest struct {
 
 // BulkUpdateLeadStatus godoc
 // @Summary Update the status of several leads at once
-// @Description Sets the same status on up to 100 leads in a single all-or-nothing transaction. Requires the sales or admin role; sales users may only update leads they own. If any listed lead is missing or not owned by the caller, nothing is written and the offending IDs are named in the error details.
+// @Description Sets the same status on up to 100 leads in a single all-or-nothing transaction. Requires the sales or admin role; sales users may only update leads they own. If any listed lead is missing or not owned by the caller, nothing is written and the offending IDs are named in the error details. status "converted" is refused with 400 VALIDATION_ERROR (details.field "status"): a lead becomes converted only through POST /leads/{id}/convert, which creates the customer.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -54,7 +54,7 @@ type BulkTaskStatusRequest struct {
 // @Security ApiKeyAuth
 // @Param request body BulkLeadStatusRequest true "Lead IDs and the status to set"
 // @Success 200 {object} utils.APIResponse{data=models.BulkStatusUpdateResult} "Every listed lead was updated"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Empty ID list, more than 100 IDs, or an invalid lead status"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Empty ID list, more than 100 IDs, an invalid lead status, or status converted (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only update leads they own, and the not-owned IDs are listed in the error details"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "One or more leads do not exist; the missing IDs are listed in the error details"
@@ -185,7 +185,10 @@ func respondBulkStatusError(c *gin.Context, err error) {
 		message = appErr.Message
 	}
 
+	var ruleErr *service.LeadConversionRuleError
 	switch {
+	case errors.As(err, &ruleErr):
+		respondLeadRuleError(c, ruleErr)
 	case errors.Is(err, apperrors.ErrForbidden):
 		utils.RespondError(c, http.StatusForbidden, utils.ErrCodeForbidden, message, details)
 	case apperrors.IsNotFound(err):

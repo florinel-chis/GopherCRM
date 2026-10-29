@@ -10,6 +10,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type leadService struct {
@@ -78,10 +81,14 @@ func (s *leadService) writeWithEvents(write func(leads repository.LeadRepository
 // apperrors.ErrCompanyNotFound, which the handler answers with 400
 // INVALID_REFERENCE. A nil id is no link and always fine.
 func (s *leadService) checkCompanyLink(companyID *uint) error {
+	return checkLeadCompanyLink(s.companyRepo, companyID)
+}
+
+func checkLeadCompanyLink(companies repository.CompanyRepository, companyID *uint) error {
 	if companyID == nil {
 		return nil
 	}
-	if _, err := s.companyRepo.GetByID(*companyID); err != nil {
+	if _, err := companies.GetByID(*companyID); err != nil {
 		if isNotFound(err) {
 			return fmt.Errorf("unknown company_id %d: %w", *companyID, apperrors.ErrCompanyNotFound)
 		}
@@ -169,10 +176,48 @@ func (s *leadService) GetByClassification(classification models.LeadClassificati
 	return leads, total, nil
 }
 
+// lockedLeadRead returns a lead repository bound to tx whose reads take a row
+// lock (SELECT ... FOR UPDATE; SQLite drops the clause and is serialised by
+// its single connection). The fresh Session keeps the clause off every later
+// statement on tx: writes go through s.leadRepo.WithTx(tx).
+func (s *leadService) lockedLeadRead(tx *gorm.DB) repository.LeadRepository {
+	return s.leadRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{}))
+}
+
+// Update applies a partial update. The lead is re-read with a row lock inside
+// the transaction that writes it, so the whole-row save never carries back a
+// stale copy of what a concurrent write (a conversion setting status and
+// customer_id) committed in between.
+//
+// `converted` is not a status an update can set: a lead becomes converted
+// only through ConvertToCustomer, which creates the customer and enforces the
+// conversion settings. Sending the status a converted lead already has (the
+// edit form does) is fine.
 func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.Lead, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Update")
 
-	lead, err := s.leadRepo.GetByID(id)
+	if s.txManager == nil {
+		return s.applyUpdate(logger, id, updates, s.leadRepo, s.leadRepo, s.companyRepo, nil)
+	}
+	var updated *models.Lead
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		var err error
+		updated, err = s.applyUpdate(logger, id, updates, s.lockedLeadRead(tx), s.leadRepo.WithTx(tx), s.companyRepo.WithTx(tx), automationTx(s.automation, tx))
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("Lead updated successfully")
+	return updated, nil
+}
+
+func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[string]interface{}, reader, writer repository.LeadRepository, companies repository.CompanyRepository, events repository.AutomationRepository) (*models.Lead, error) {
+	lead, err := reader.GetByID(id)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Lead not found")
 		return nil, err
@@ -202,6 +247,10 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 		lead.Source = source
 	}
 	if status, ok := updates["status"].(models.LeadStatus); ok {
+		if status == models.LeadStatusConverted && previousStatus != models.LeadStatusConverted {
+			logger.Warn("Lead update refused: converted is set only by conversion")
+			return nil, ConvertedStatusRefusal()
+		}
 		lead.Status = status
 	}
 	if classification, ok := updates["classification"].(models.LeadClassification); ok {
@@ -220,7 +269,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	// name a live company. The key being absent leaves the link alone.
 	if raw, ok := updates["company_id"]; ok {
 		companyID, _ := raw.(*uint)
-		if err := s.checkCompanyLink(companyID); err != nil {
+		if err := checkLeadCompanyLink(companies, companyID); err != nil {
 			logger.WithError(utils.LogError(err)).Warn("Lead update rejected")
 			return nil, err
 		}
@@ -228,18 +277,13 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 		lead.CompanyRecord = nil
 	}
 
-	err = s.writeWithEvents(func(leads repository.LeadRepository, events repository.AutomationRepository) error {
-		if err := leads.Update(lead); err != nil {
-			return err
-		}
-		return automationLeadUpdated(events, lead.ID, previousStatus, lead.Status, models.AutomationOriginUser, nil)
-	})
-	if err != nil {
+	if err := writer.Update(lead); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
 		return nil, err
 	}
-
-	logger.Info("Lead updated successfully")
+	if err := automationLeadUpdated(events, lead.ID, previousStatus, lead.Status, models.AutomationOriginUser, nil); err != nil {
+		return nil, err
+	}
 	return lead, nil
 }
 
@@ -362,6 +406,30 @@ type LeadConversionRuleError struct {
 func (e *LeadConversionRuleError) Error() string { return e.Message }
 func (e *LeadConversionRuleError) Unwrap() error { return apperrors.ErrValidation }
 
+// Details is the error's `details` object: the field, and for a refusal by
+// the allowed statuses the lead's status and the allowed list.
+func (e *LeadConversionRuleError) Details() map[string]interface{} {
+	details := map[string]interface{}{"field": e.Field}
+	if e.Field == "status" && e.AllowedStatuses != nil {
+		details["status"] = e.Status
+		details["allowed_statuses"] = e.AllowedStatuses
+	}
+	return details
+}
+
+// ConvertedStatusRefusal is the answer to any write other than the
+// conversion that would set a lead's status to converted: a lead create, a
+// lead update or a bulk status change. Conversion is the only way to reach
+// the status, because it creates the customer and enforces the conversion
+// settings.
+func ConvertedStatusRefusal() *LeadConversionRuleError {
+	return &LeadConversionRuleError{
+		Field:   "status",
+		Status:  models.LeadStatusConverted,
+		Message: "A lead's status cannot be set to converted directly. Convert the lead with POST /leads/{id}/convert, which creates the customer.",
+	}
+}
+
 // leadConversionRules is one read of the lead-conversion settings.
 type leadConversionRules struct {
 	enforced        bool
@@ -431,6 +499,28 @@ func (r leadConversionRules) checkNotes(notes string) error {
 		Field:   "notes",
 		Message: "Conversion notes are required.",
 	}
+}
+
+// lockLiveCompany locks the company a conversion is about to link and reports
+// whether it is live. A nil id locks nothing.
+func lockLiveCompany(companies repository.CompanyRepository, companyID *uint) (*uint, bool, error) {
+	if companyID == nil {
+		return nil, false, nil
+	}
+	if err := companies.LockByID(*companyID); err != nil {
+		if isNotFound(err) {
+			return companyID, false, nil
+		}
+		return nil, false, err
+	}
+	return companyID, true, nil
+}
+
+func sameCompanyID(a, b *uint) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // ConvertToCustomer promotes a lead to a customer.
@@ -504,11 +594,29 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		// Use transaction-aware repositories
 		txLeadRepo := s.leadRepo.WithTx(tx)
 		txCustomerRepo := s.customerRepo.WithTx(tx)
+		txCompanyRepo := s.companyRepo.WithTx(tx)
 
-		// Re-check lead status within transaction to prevent race conditions
-		txLead, err := txLeadRepo.GetByID(leadID)
+		// Lock order: the company first, then the lead — the order a
+		// company delete takes them (its row, then the leads it unlinks) —
+		// so the two serialise instead of deadlocking. The company id comes
+		// from the read above; a link changed since is locked below.
+		lockedCompanyID, companyLive, err := lockLiveCompany(txCompanyRepo, lead.CompanyID)
 		if err != nil {
 			return err
+		}
+
+		// Re-read the lead with a row lock: the status checked here is the
+		// status the commit converts, since a concurrent status change or
+		// update waits for this transaction (it takes the same lock).
+		txLead, err := s.lockedLeadRead(tx).GetByID(leadID)
+		if err != nil {
+			return err
+		}
+		if !sameCompanyID(txLead.CompanyID, lockedCompanyID) {
+			lockedCompanyID, companyLive, err = lockLiveCompany(txCompanyRepo, txLead.CompanyID)
+			if err != nil {
+				return err
+			}
 		}
 
 		if txLead.Status == models.LeadStatusConverted {
@@ -541,15 +649,15 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 			return fmt.Errorf("lead %d: %w", leadID, apperrors.ErrLeadMissingEmail)
 		}
 
-		if customerData.CompanyID == nil && txLead.CompanyID != nil {
-			companyID := *txLead.CompanyID
-			if _, err := s.companyRepo.WithTx(tx).GetByID(companyID); err != nil {
-				if !isNotFound(err) {
-					return err
-				}
-				logger.WithField("company_id", companyID).Warn("Lead links a company that no longer exists; converting without the link")
-			} else {
+		// The company row stays locked until the commit, so a concurrent
+		// delete either finished before the lock (the link is dropped here)
+		// or waits and then unlinks this customer with the others.
+		if customerData.CompanyID == nil && lockedCompanyID != nil {
+			if companyLive {
+				companyID := *lockedCompanyID
 				customerData.CompanyID = &companyID
+			} else {
+				logger.WithField("company_id", *lockedCompanyID).Warn("Lead links a company that no longer exists; converting without the link")
 			}
 		}
 

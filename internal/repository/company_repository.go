@@ -4,6 +4,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type companyRepository struct {
@@ -241,6 +242,14 @@ func (r *companyRepository) countByCompany(model interface{}, ids []uint) (map[u
 		counts[row.CompanyID] = row.Total
 	}
 	return counts, nil
+}
+
+func (r *companyRepository) LockByID(id uint) error {
+	var company models.Company
+	return r.db.Session(&gorm.Session{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").
+		First(&company, id).Error
 }
 
 func (r *companyRepository) WithTx(tx *gorm.DB) CompanyRepository {

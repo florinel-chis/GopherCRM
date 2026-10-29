@@ -308,7 +308,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corrects the metadata of existing rows while keeping the statuses an administrator chose.
   `GET /configurations/ui` now also carries read-only `leads.conversion.require_notes` and
   `leads.conversion.auto_assign_owner` entries next to the allowed statuses, with the values the
-  server enforces.
+  server enforces. The conversion is now the only way to reach `converted`: lead create, lead
+  update and `POST /leads/bulk/status` refuse it with 400 `VALIDATION_ERROR` (`details.field`
+  `status`), where they used to mark a lead converted without a customer and outside the
+  settings; a converted lead keeps its status on edit, and the lead form no longer offers
+  "Converted". The conversion reads the lead with a row lock and a lead update re-reads it under
+  the same lock, so a concurrent status change either lands first (the conversion is refused) or
+  after the commit (and keeps the new `customer_id`) instead of being lost or bypassing the
+  allowed statuses. The conversion also locks the lead's company row, and a company delete now
+  locks it before unlinking, so a customer can no longer be left linked to a company deleted
+  concurrently. Refused conversions and duplicate emails are logged as warnings, not errors.
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value
