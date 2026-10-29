@@ -29,8 +29,8 @@ that the test was executed as part of writing this catalog.
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
-| [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 33 | 18 | 14 | 1 | 33 | 0 | 0 |
-| **Total** | | **606** | **192** | **267** | **147** | **195** | **327** | **84** |
+| [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
+| **Total** | | **609** | **194** | **268** | **147** | **198** | **327** | **84** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -89,7 +89,8 @@ on a disposable `TEST_MYSQL_DSN` schema, including the paused-step races that on
 connection can produce). The six screen cases, added with the UI on 2026-10-29, are automated by
 Vitest and by `gocrm-ui/e2e/tests/automation-rules.spec.ts`; TC-AUT-033 is *automated (partial)*
 because that spec drives the admin only, the sales and support behaviour being pinned in Vitest.
-Nothing is blocked.
+TC-AUT-034 to 036 (rule names on runs, field-level rule errors, the dry run of unsaved edits) were
+added on 2026-10-29: two at the Go level, one by the same Playwright spec. Nothing is blocked.
 
 ## Case format
 

@@ -4,9 +4,10 @@ import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { MemoryRouter, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { automationApi, configurationsApi } from '@/api/endpoints';
+import { automationApi, configurationsApi, dealsApi } from '@/api/endpoints';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
-import { createMockAutomationRule, createMockUser } from '@/test/factories';
+import { createMockAutomationRule, createMockDeal, createMockDryRunReport, createMockUser } from '@/test/factories';
+import { pickAutocompleteOption } from '@/test/autocomplete';
 import { createProductionQueryClient } from '@/test/productionQueryClient';
 import { withClient } from '@/test/dealQueryCache';
 import { formatDate } from '@/utils/date';
@@ -27,6 +28,7 @@ vi.mock('@/api/endpoints', () => ({
     disableRule: vi.fn(),
     deleteRule: vi.fn(),
     dryRun: vi.fn(),
+    dryRunDraft: vi.fn(),
   },
   leadsApi: { getLeads: vi.fn(), getLead: vi.fn() },
   dealsApi: { getDeals: vi.fn(), getDeal: vi.fn() },
@@ -247,6 +249,26 @@ describe('AutomationRuleList', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Dry run: Chase proposals' });
     expect(within(dialog).getByLabelText('Record type')).toHaveValue('Deal');
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("the list's dry run simulates the saved version", async () => {
+    const deal = createMockDeal({ id: 21, title: 'Closed big one', stage: 'won' });
+    vi.mocked(dealsApi.getDeals).mockResolvedValue({ deals: [deal], total: 1 });
+    vi.mocked(automationApi.dryRun).mockResolvedValue(
+      createMockDryRunReport({ rule_id: 7, entity_type: 'deal', entity_id: 21, steps: [] }),
+    );
+    render(<AutomationRuleList />);
+    const row = await rowOf('Chase proposals');
+    fireEvent.click(within(row).getByRole('button', { name: 'Dry run' }));
+    await screen.findByRole('dialog', { name: 'Dry run: Chase proposals' });
+
+    await pickAutocompleteOption('Deal', 'Closed big one (Won)');
+    fireEvent.click(screen.getByRole('button', { name: 'Run dry run' }));
+
+    await waitFor(() =>
+      expect(automationApi.dryRun).toHaveBeenCalledWith(5, { entity_type: 'deal', entity_id: 21 }),
+    );
+    expect(automationApi.dryRunDraft).not.toHaveBeenCalled();
   });
 
   it('opens the editor from a row click and from the table open button', async () => {

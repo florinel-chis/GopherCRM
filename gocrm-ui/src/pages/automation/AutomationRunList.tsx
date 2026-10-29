@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -27,7 +27,7 @@ import {
 } from '@/types';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
-import { AUTOMATION_DATETIME, entityLabel, entityPath, runStatusLabel } from './automationFormat';
+import { AUTOMATION_DATETIME, entityLabel, entityPath, runRuleLabel, runStatusLabel } from './automationFormat';
 import { automationKeys } from './automationQueries';
 import { RunStatusChip } from './AutomationChips';
 import { RuleFilterAutocomplete } from './RuleFilterAutocomplete';
@@ -101,7 +101,19 @@ export const Component: React.FC = () => {
   const filterKey = filterKeyOf(urlFilters);
   const [paging, setPaging] = useState<PagingState>({ filterKey, page: 1, limit: 10 });
   const [texts, setTexts] = useState({ filterKey, ruleId: idText(urlFilters.rule_id), recordId: idText(urlFilters.entity_id) });
+  // Rule names seen so far, from the runs (sales included) and from the
+  // admin's rule picker, kept per rule id so the picker can still name a
+  // filtered rule while the page is loading, empty or failed.
   const [ruleNames, setRuleNames] = useState<ReadonlyMap<number, string>>(new Map());
+  const mergeRuleNames = useCallback((entries: Array<[number, string]>) => {
+    setRuleNames((prev) => {
+      const fresh = entries.filter(([id, name]) => name.trim() !== '' && prev.get(id) !== name);
+      if (fresh.length === 0) return prev;
+      const next = new Map(prev);
+      fresh.forEach(([id, name]) => next.set(id, name));
+      return next;
+    });
+  }, []);
 
   // A URL change made elsewhere (a link, back/forward) resets the page and
   // the two id fields during render, before anything is requested.
@@ -172,9 +184,16 @@ export const Component: React.FC = () => {
     }
   };
 
-  const handleRulesLoaded = useCallback((rules: AutomationRule[]) => {
-    setRuleNames(new Map(rules.map((rule) => [rule.id, rule.name])));
-  }, []);
+  useEffect(() => {
+    if (data?.runs) {
+      mergeRuleNames(data.runs.map((run) => [run.rule_id, run.rule_name]));
+    }
+  }, [data, mergeRuleNames]);
+
+  const handleRulesLoaded = useCallback(
+    (rules: AutomationRule[]) => mergeRuleNames(rules.map((rule) => [rule.id, rule.name])),
+    [mergeRuleNames],
+  );
 
   const columns: Column<AutomationRun>[] = useMemo(
     () => [
@@ -205,10 +224,8 @@ export const Component: React.FC = () => {
         label: 'Rule',
         minWidth: 180,
         sortable: false,
-        // Runs never carry the rule; names come only from the rules an
-        // admin's picker has already loaded.
-        format: (_value: unknown, row: AutomationRun) =>
-          `${row.rule?.name ?? ruleNames.get(row.rule_id) ?? `Rule #${row.rule_id}`} · v${row.rule_version}`,
+        // Each run names its rule (never more of it than the name).
+        format: (_value: unknown, row: AutomationRun) => `${runRuleLabel(row)} · v${row.rule_version}`,
       },
       {
         id: 'entity_id',
@@ -244,7 +261,7 @@ export const Component: React.FC = () => {
         format: (value: string) => formatDate(value, AUTOMATION_DATETIME),
       },
     ],
-    [ruleNames]
+    []
   );
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
@@ -310,6 +327,7 @@ export const Component: React.FC = () => {
                 updateFilters({ rule_id: ruleId });
               }}
               onRulesLoaded={handleRulesLoaded}
+              selectedLabel={urlFilters.rule_id === undefined ? undefined : ruleNames.get(urlFilters.rule_id)}
             />
           )}
 

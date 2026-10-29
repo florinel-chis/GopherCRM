@@ -141,6 +141,24 @@ describe('AutomationRunDetail', () => {
     expect(within(rows[2]).getByText('Resumes:')).toBeInTheDocument();
   });
 
+  it('shows the rule name and links admins to the rule', async () => {
+    vi.mocked(automationApi.getRun).mockResolvedValue({ ...run, rule_name: 'Welcome call' });
+    render(<AutomationRunDetail />);
+
+    expect(await screen.findByRole('link', { name: 'Welcome call · version 2' })).toHaveAttribute(
+      'href',
+      '/automation/rules/3/edit'
+    );
+  });
+
+  it("shows a deleted rule's name without a link", async () => {
+    vi.mocked(automationApi.getRun).mockResolvedValue({ ...run, rule_name: 'Welcome call', rule_deleted: true });
+    render(<AutomationRunDetail />);
+
+    expect(await screen.findByText('Welcome call (deleted) · version 2')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Welcome call/ })).not.toBeInTheDocument();
+  });
+
   it('Cancel is visible for admin only on pending, waiting and running runs', async () => {
     const statuses: AutomationRunStatus[] = ['pending', 'running', 'waiting', 'completed', 'failed', 'cancelled'];
     for (const status of statuses) {

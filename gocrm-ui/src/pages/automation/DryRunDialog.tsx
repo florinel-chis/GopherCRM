@@ -17,20 +17,37 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { automationApi, dealsApi, leadsApi } from '@/api/endpoints';
+import { automationApi, dealsApi, leadsApi, type AutomationRuleInput } from '@/api/endpoints';
 import { RecordAutocomplete } from '@/components/RecordAutocomplete';
-import { dealStageLabel, type AutomationRule, type Deal, type Lead } from '@/types';
+import { dealStageLabel, type AutomationEntityType, type AutomationRule, type Deal, type Lead } from '@/types';
 import { formatDate } from '@/utils/date';
-import { getAPIError, getErrorMessage } from '@/utils/apiError';
+import { getAPIError, getErrorMessage, getHTTPStatus } from '@/utils/apiError';
 import { AUTOMATION_DATETIME, errorCodeLabel, stepTypeLabel } from './automationFormat';
 import { OutcomeChip } from './AutomationChips';
 import { AutomationStepDetails } from './AutomationStepDetails';
 
-export interface DryRunDialogProps {
-  rule: AutomationRule;
+/** Unsaved rule editor values, simulated through POST /automation/rules/dry-run. */
+export interface DryRunDraft {
+  name: string;
+  entity_type: AutomationEntityType;
+  payload: AutomationRuleInput;
+}
+
+interface DryRunDialogBaseProps {
   open: boolean;
   onClose: () => void;
+  /** Called with a draft refusal (400) so the editor can mark its fields. */
+  onValidationError?: (error: unknown) => void;
 }
+
+/**
+ * Either a saved rule (its stored version is simulated) or a draft (the
+ * editor's current values, saved nowhere).
+ */
+export type DryRunDialogProps = DryRunDialogBaseProps &
+  ({ rule: AutomationRule; draft?: undefined } | { draft: DryRunDraft; rule?: undefined });
+
+type DryRunSource = { kind: 'saved'; rule: AutomationRule } | { kind: 'draft'; draft: DryRunDraft };
 
 const SEARCH_LIMIT = 20;
 
@@ -55,7 +72,16 @@ const searchDeals = async (term: string): Promise<Deal[]> => {
 
 const dealOptionLabel = (deal: Deal): string => `${deal.title} (${dealStageLabel(deal.stage)})`;
 
-function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () => void }) {
+function DryRunContent({
+  source,
+  onClose,
+  onValidationError,
+}: {
+  source: DryRunSource;
+  onClose: () => void;
+  onValidationError?: (error: unknown) => void;
+}) {
+  const entityType = source.kind === 'saved' ? source.rule.entity_type : source.draft.entity_type;
   const [entityId, setEntityId] = useState<number | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   // Only the newest search may set or clear the error: an older one that
@@ -63,7 +89,13 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
   const latestSearch = useRef(0);
 
   const dryRun = useMutation({
-    mutationFn: (id: number) => automationApi.dryRun(rule.id, { entity_type: rule.entity_type, entity_id: id }),
+    mutationFn: (id: number) =>
+      source.kind === 'saved'
+        ? automationApi.dryRun(source.rule.id, { entity_type: entityType, entity_id: id })
+        : automationApi.dryRunDraft({ rule: source.draft.payload, entity_type: entityType, entity_id: id }),
+    onError: (error) => {
+      if (source.kind === 'draft' && getHTTPStatus(error) === 400) onValidationError?.(error);
+    },
   });
   const { reset: resetDryRun } = dryRun;
   // Only the run for the record picked now is shown: a new pick drops the
@@ -112,11 +144,11 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
           </Alert>
           <TextField
             label="Record type"
-            value={rule.entity_type === 'lead' ? 'Lead' : 'Deal'}
+            value={entityType === 'lead' ? 'Lead' : 'Deal'}
             InputProps={{ readOnly: true }}
             size="small"
           />
-          {rule.entity_type === 'lead' ? (
+          {entityType === 'lead' ? (
             <RecordAutocomplete<Lead>
               value={entityId}
               onChange={(id) => pick(id)}
@@ -169,7 +201,7 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
                 {`Simulated from ${formatDate(report.simulated_start, AUTOMATION_DATETIME)} to ${formatDate(
                   report.simulated_end,
                   AUTOMATION_DATETIME,
-                )} · rule version ${report.rule_version}`}
+                )} · ${report.draft ? 'unsaved form values' : `rule version ${report.rule_version}`}`}
               </Typography>
               {report.steps.length === 0 ? (
                 <Typography variant="body2">No step would run.</Typography>
@@ -220,16 +252,18 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
 }
 
 /**
- * Simulates the stored rule against one lead or deal. The content unmounts
- * when the dialog closes, so the picked record and the report start empty
- * every time it opens.
+ * Simulates a saved rule, or the rule editor's unsaved values, against one
+ * lead or deal. The content unmounts when the dialog closes, so the picked
+ * record and the report start empty every time it opens.
  */
-export const DryRunDialog: React.FC<DryRunDialogProps> = ({ rule, open, onClose }) => {
+export const DryRunDialog: React.FC<DryRunDialogProps> = ({ rule, draft, open, onClose, onValidationError }) => {
   const titleId = useId();
+  const source: DryRunSource = draft ? { kind: 'draft', draft } : { kind: 'saved', rule: rule as AutomationRule };
+  const name = draft ? draft.name.trim() || 'unsaved rule' : (rule as AutomationRule).name;
   return (
     <Dialog open={open} onClose={onClose} aria-labelledby={titleId} maxWidth="md" fullWidth>
-      <DialogTitle id={titleId}>{`Dry run: ${rule.name}`}</DialogTitle>
-      {open ? <DryRunContent rule={rule} onClose={onClose} /> : null}
+      <DialogTitle id={titleId}>{`Dry run: ${name}`}</DialogTitle>
+      {open ? <DryRunContent source={source} onClose={onClose} onValidationError={onValidationError} /> : null}
     </Dialog>
   );
 };

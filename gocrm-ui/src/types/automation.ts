@@ -241,7 +241,10 @@ export interface AutomationRun {
   created_at: string;
   updated_at: string;
   rule_id: number;
-  rule?: AutomationRule; // never populated by the API today (gap G1); always fall back to rule_id
+  // The rule's current name, also for a deleted rule (rule_deleted); empty
+  // when the rule row no longer exists. Runs never carry the rule itself.
+  rule_name: string;
+  rule_deleted: boolean;
   rule_version: number;
   entity_type: AutomationEntityType;
   entity_id: number;
@@ -267,9 +270,12 @@ export interface AutomationDryRunStep {
   simulated_at: string;
   details: Record<string, unknown>;
 }
+// A draft report (POST /automation/rules/dry-run) simulates unsaved form
+// values: draft is true and rule_id and rule_version are 0.
 export interface AutomationDryRunReport {
   rule_id: number;
   rule_version: number;
+  draft: boolean;
   entity_type: AutomationEntityType;
   entity_id: number;
   simulated_start: string;

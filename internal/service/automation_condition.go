@@ -122,53 +122,71 @@ func (r *automationRecord) numberValue(field string) float64 {
 	return 0
 }
 
+// conditionProblem is one refusal of validateCondition: the config field it
+// concerns, its code and the text the rule error carries.
+type conditionProblem struct {
+	field   string
+	code    string
+	message string
+}
+
 // validateCondition refuses an unknown field, an operator the field's kind
 // does not support, a value of the wrong JSON type, or a money comparison
-// without a currency. It is the rule-time half of evaluateCondition.
-func validateCondition(entityType string, cfg models.AutomationStepConfig) error {
+// without a currency. It is the rule-time half of evaluateCondition. Every
+// independent problem is reported, in the order the checks run: an unknown
+// field stops there (the operator and the value mean nothing without it), an
+// operator the field does not support skips the value check, and the value
+// and currency checks are independent of each other.
+func validateCondition(entityType string, cfg models.AutomationStepConfig) []conditionProblem {
 	kind, ok := automationConditionFields[entityType][cfg.Field]
 	if !ok {
-		return fmt.Errorf("unknown condition field %q for %s rules", cfg.Field, entityType)
+		return []conditionProblem{{"field", RuleErrorInvalidValue, fmt.Sprintf("unknown condition field %q for %s rules", cfg.Field, entityType)}}
+	}
+	var problems []conditionProblem
+	add := func(field, code, format string, args ...interface{}) {
+		problems = append(problems, conditionProblem{field, code, fmt.Sprintf(format, args...)})
 	}
 	raw := strings.TrimSpace(string(cfg.Value))
 	hasValue := raw != "" && raw != "null"
 	switch kind {
 	case automationFieldString:
 		if !automationStringOperators[cfg.Operator] {
-			return fmt.Errorf("operator %q is not allowed on field %q", cfg.Operator, cfg.Field)
+			add("operator", RuleErrorInvalidValue, "operator %q is not allowed on field %q", cfg.Operator, cfg.Field)
+			break
 		}
 		switch cfg.Operator {
 		case "is_empty", "is_not_empty":
 			if hasValue {
-				return fmt.Errorf("operator %q takes no value", cfg.Operator)
+				add("value", RuleErrorNotApplicable, "operator %q takes no value", cfg.Operator)
 			}
 		case "in", "not_in":
 			var values []string
 			if !hasValue || json.Unmarshal(cfg.Value, &values) != nil || len(values) == 0 {
-				return fmt.Errorf("operator %q needs a non-empty array of strings", cfg.Operator)
+				add("value", RuleErrorInvalidValue, "operator %q needs a non-empty array of strings", cfg.Operator)
 			}
 		default:
 			var value string
 			if !hasValue || json.Unmarshal(cfg.Value, &value) != nil {
-				return fmt.Errorf("operator %q needs a string value", cfg.Operator)
+				add("value", RuleErrorInvalidValue, "operator %q needs a string value", cfg.Operator)
 			}
 		}
 	case automationFieldNumber, automationFieldMoney:
 		if !automationNumberOperators[cfg.Operator] {
-			return fmt.Errorf("operator %q is not allowed on field %q", cfg.Operator, cfg.Field)
-		}
-		var value float64
-		if !hasValue || json.Unmarshal(cfg.Value, &value) != nil {
-			return fmt.Errorf("operator %q needs a numeric value", cfg.Operator)
+			add("operator", RuleErrorInvalidValue, "operator %q is not allowed on field %q", cfg.Operator, cfg.Field)
+		} else {
+			var value float64
+			if !hasValue || json.Unmarshal(cfg.Value, &value) != nil {
+				add("value", RuleErrorInvalidValue, "operator %q needs a numeric value", cfg.Operator)
+			}
 		}
 		if kind == automationFieldMoney && !dealCurrencyPattern.MatchString(cfg.Currency) {
-			return fmt.Errorf("a condition on %q needs a three-letter currency", cfg.Field)
+			add("currency", RuleErrorRequired, "a condition on %q needs a three-letter currency", cfg.Field)
 		}
 	}
 	if cfg.Currency != "" && kind != automationFieldMoney {
-		return fmt.Errorf("currency only applies to a condition on amount_cents")
+		add("currency", RuleErrorNotApplicable, "currency only applies to a condition on amount_cents")
 	}
-	return nil
+	return problems
 }
 
 // evaluateCondition evaluates a validated condition against the record. A
