@@ -38,6 +38,7 @@ import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLea
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi } from '@/api/endpoints';
+import { AutomationRunsSection } from '@/pages/automation/AutomationRunsSection';
 import type { Lead } from '@/types';
 import { formatDate } from '@/utils/date';
 
@@ -351,6 +352,9 @@ export const Component: React.FC = () => {
           </Box>
         </TabPanel>
       </Paper>
+
+      {/* Admin and sales only; the section renders nothing for the other roles. */}
+      <AutomationRunsSection entityType="lead" entityId={lead.id} />
 
       <ConfirmDialog
         open={deleteDialog}

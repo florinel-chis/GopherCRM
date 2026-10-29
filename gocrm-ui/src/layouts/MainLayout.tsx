@@ -46,7 +46,11 @@ import {
   Timeline,
   QuestionAnswer,
   Link as LinkIcon,
+  AutoMode,
+  Rule,
+  History,
 } from '@mui/icons-material';
+import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
 
 const drawerWidth = 280;
@@ -93,6 +97,26 @@ const navItems: NavItem[] = [
     path: '/quotes',
     icon: <RequestQuote />,
     roles: ['admin', 'sales'],
+  },
+  {
+    // Rules are admin-only; the run history is admin and sales (the API
+    // narrows sales to its own leads and deals).
+    title: 'Automation',
+    icon: <AutoMode />,
+    roles: ['admin', 'sales'],
+    children: [
+      {
+        title: 'Rules',
+        path: '/automation/rules',
+        icon: <Rule />,
+        roles: ['admin'],
+      },
+      {
+        title: 'Runs',
+        path: '/automation/runs',
+        icon: <History />,
+      },
+    ],
   },
   {
     title: 'Customers',
@@ -323,6 +347,8 @@ export const MainLayout: React.FC = () => {
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             {/* Dynamic page title can be added here */}
           </Typography>
+
+          <NotificationBell />
 
           <IconButton
             onClick={handleMenuOpen}

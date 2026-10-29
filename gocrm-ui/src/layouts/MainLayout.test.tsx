@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@/test/test-utils';
+import userEvent from '@testing-library/user-event';
 import { MainLayout } from './MainLayout';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 
 const mockUseAuth = vi.fn();
+vi.mock('@/components/layout/NotificationBell', () => ({
+  NotificationBell: () => <div data-testid="notification-bell" />,
+}));
+
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => mockUseAuth(),
 }));
@@ -28,6 +33,38 @@ const navigation = () => within(screen.getByTestId('app-navigation'));
 describe('MainLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('shows the Automation group for admin and sales and hides it for support and customer', async () => {
+    for (const role of ['admin', 'sales'] as const) {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+      const view = render(<MainLayout />);
+
+      await userEvent.click(navigation().getByText('Automation'));
+      expect(navigation().getByText('Runs')).toBeInTheDocument();
+      // Rules are admin-only on the API.
+      if (role === 'admin') {
+        expect(navigation().getByText('Rules')).toBeInTheDocument();
+      } else {
+        expect(navigation().queryByText('Rules')).not.toBeInTheDocument();
+      }
+      view.unmount();
+    }
+
+    for (const role of ['support', 'customer'] as const) {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+      const view = render(<MainLayout />);
+
+      expect(navigation().queryByText('Automation')).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it('renders the notification bell slot in the app bar', () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
+    render(<MainLayout />);
+
+    expect(screen.getByTestId('notification-bell')).toBeInTheDocument();
   });
 
   it('shows the Products and Quotes navigation entries for admin and sales and hides them for support and customer', () => {

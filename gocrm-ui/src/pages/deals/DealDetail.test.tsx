@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as DealDetail } from './DealDetail';
-import { dealsApi, quotesApi } from '@/api/endpoints';
+import { automationApi, dealsApi, quotesApi } from '@/api/endpoints';
 import {
   createMockCompany,
   createMockCustomer,
@@ -31,6 +31,9 @@ vi.mock('@/api/endpoints', () => ({
   },
   quotesApi: {
     getDealQuotes: vi.fn(),
+  },
+  automationApi: {
+    listRuns: vi.fn(),
   },
   // Reached by the Quotes section's create dialog, which stays closed here.
   customersApi: {
@@ -110,6 +113,7 @@ describe('DealDetail', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
     vi.mocked(dealsApi.getDeal).mockResolvedValue(deal);
     vi.mocked(dealsApi.getDealHistory).mockResolvedValue(history);
+    vi.mocked(automationApi.listRuns).mockResolvedValue({ runs: [], total: 0 });
     vi.mocked(quotesApi.getDealQuotes).mockResolvedValue({
       quotes: [
         createMockQuote({ id: 42, number: 'Q-000042', title: 'First offer', status: 'accepted', total_cents: 225000, currency: 'EUR' }),
