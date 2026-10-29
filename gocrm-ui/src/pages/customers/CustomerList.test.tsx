@@ -13,6 +13,23 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+// "Add Customer" is offered to admin and sales only.
+vi.mock('@/hooks/useAuth', async () => {
+  const { createMockUser } = await import('@/test/factories');
+  const user = createMockUser({ id: 1, role: 'admin' });
+  return {
+    useAuth: () => ({
+      user,
+      isLoading: false,
+      isAuthenticated: true,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+    }),
+  };
+});
+
 vi.mock('@/api/endpoints', () => ({
   customersApi: {
     getCustomers: vi.fn(),
@@ -23,9 +40,9 @@ vi.mock('@/api/endpoints', () => ({
 describe('CustomerList', () => {
   const mockNavigate = vi.fn();
   const mockCustomers = [
-    createMockCustomer({ id: 1, company_name: 'Customer A', is_active: true }),
-    createMockCustomer({ id: 2, company_name: 'Customer B', is_active: false }),
-    createMockCustomer({ id: 3, company_name: 'Customer C', is_active: true }),
+    createMockCustomer({ id: 1, company_name: 'Customer A' }),
+    createMockCustomer({ id: 2, company_name: 'Customer B' }),
+    createMockCustomer({ id: 3, company_name: 'Customer C' }),
   ];
 
   beforeEach(() => {
@@ -51,16 +68,15 @@ describe('CustomerList', () => {
     });
   });
 
-  it('displays active/inactive status correctly', async () => {
+  // Customers have no activation concept on the API; the column used to show
+  // an invented "Active" for every row.
+  it('has no status column', async () => {
     render(<CustomerList />);
 
-    await waitFor(() => {
-      const activeChips = screen.getAllByText('Active');
-      const inactiveChips = screen.getAllByText('Inactive');
-      
-      expect(activeChips).toHaveLength(2);
-      expect(inactiveChips).toHaveLength(1);
-    });
+    await screen.findByText('Customer A');
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    expect(screen.queryByText('Inactive')).not.toBeInTheDocument();
   });
 
   it('navigates to create new customer', async () => {

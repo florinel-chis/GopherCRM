@@ -158,6 +158,21 @@ gating); where the two disagree, that disagreement gets its own case.
   `internal/integration/ticket_visibility_integration_test.go`; UI half planned —
   `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
+### TC-TICK-049 — The ticket list has no overflow menu; row icons act on their own row
+- **Priority:** P2
+- **Type:** regression
+- **Preconditions:** Admin logged in; three tickets created by the test.
+- **Steps:**
+  1. Navigate to `/tickets` and look for a vertical-dots button in the table toolbar or the rows.
+  2. Sort by Subject; click the Edit (pencil) icon of the second ticket, go back, click its Delete
+     (bin) icon and cancel the dialog.
+- **Expected:** No overflow button anywhere, for any role. Edit opens `/tickets/<that id>/edit`;
+  the delete dialog names `#<that id>`. Before #114 a toolbar button offered View / Edit / Delete,
+  guarded by a selection nothing could set, so it never opened; the row icons already cover the
+  same actions under the same role rules (sales sees only View, delete is admin only), so the menu
+  was removed rather than repaired.
+- **Automation:** automated (Vitest) — `src/pages/tickets/TicketList.rowActions.test.tsx`
+
 ---
 
 ## 5.2 Create Ticket

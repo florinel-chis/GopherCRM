@@ -31,14 +31,17 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
     passes 38 of 38 files.
   - **Fix options:** longer timeouts for these interaction-heavy tests, fewer Vitest workers in
     `make verify`, or run the frontend gate before the race-enabled Go tests.
-- **Sortable columns the backend has no mapping for** — the customers **Total Revenue** and
-  **Status** (`is_active`) headers, and the tickets **Customer** / **Assigned To** and the tasks
-  **Assigned To** header, are deliberately non-sortable in the list pages: `utils.AllowedSortColumns`
-  has no `total_revenue` and no customers `is_active` entry, and tickets/tasks allow only the
+- **Sortable columns the backend has no mapping for** — the customers **Total Revenue** header
+  (the customer list has had no Status column since #118), and the tickets **Customer** /
+  **Assigned To** and the tasks **Assigned To** header, are deliberately non-sortable in the list
+  pages: `utils.AllowedSortColumns` has no `total_revenue` entry, and tickets/tasks allow only the
   `customer_id` / `assigned_to_id` foreign keys, which order by id rather than by the name the
   column renders. Restoring the affordance needs an allowlist design first — widen it with real
   orderable columns (or joined expressions) and map each UI column onto one, rather than letting
-  the frontend send a column the validator rejects.
+  the frontend send a column the validator rejects. The customers **Phone** header is the
+  opposite case: it is offered as sortable and sends `sort_by=phone`, but the customer handler's
+  own allowlist (`customerSortColumns`) lacks `phone`, so the request comes back unsorted
+  (TC-CUST-031).
 
 ## Backend and delivery
 
@@ -58,6 +61,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   a fresh file of the previous release, so the chain keeps being exercised.
   Backing up before upgrading (see
   [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
+- **Customer update cannot clear optional text fields (defect)** — `CustomerHandler.Update`
+  applies `address`, `city`, `state`, `country`, `postal_code`, `notes`, `position` and the
+  name/contact fields only when the value is non-empty, so an empty string means "unchanged". The
+  customer form sends the cleared fields as `""` and the save succeeds, but the old values come
+  back on reload. Only `website` (a pointer) and `company_id` (`0` clears) can be cleared. A fix
+  needs absent-versus-empty semantics in the request (pointers or a field mask), a decision for
+  the required fields, and handler and integration tests. See TC-CUST-012 and TC-CUST-018 in
+  `docs/testing/04-customers.md`.
 - **Retire the unused bulk-operation schema** — since the generic bulk subsystem was removed
   (#112), nothing writes `bulk_operation_items` or the `success_count`/`failure_count` columns
   of `bulk_operations`; the status endpoints write only the parent row's type, resource, totals
@@ -130,11 +141,6 @@ candidate follow-up, not an accident:
 The automation subsystem (#164) shipped its backend, API and screens with these decided out,
 each a candidate follow-up:
 
-- **Rule names on runs** — runs carry only `rule_id` and `rule_version` (sales cannot read
-  rules), so the run screens show "Rule #id"; admins see names where the rule list is loaded.
-- **Field-level validation errors** — a rejected rule returns one message; the editor shows it on
-  the step it names, not on the individual field.
-- **Dry run of unsaved edits** — the dry run simulates the saved rule version only.
 - **Email to leads and customers** — `send_email` reaches staff users only until a consent and
   opt-out model exists.
 - **Multi-replica leases** — the worker assumes one API replica: runs are recovered at boot, not

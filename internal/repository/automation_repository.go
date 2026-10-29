@@ -269,7 +269,53 @@ func (r *automationRepository) GetRunByID(id uint) (*models.AutomationRun, error
 	if err := r.withRunSteps(r.db).First(&run, id).Error; err != nil {
 		return nil, err
 	}
+	if err := r.attachRuleNames([]*models.AutomationRun{&run}); err != nil {
+		return nil, err
+	}
 	return &run, nil
+}
+
+// attachRuleNames fills RuleName and RuleDeleted of the runs with one query
+// over the distinct rule ids, soft-deleted rules included. Only the id, the
+// name and the deletion stamp are read: the rule's trigger and steps never
+// reach a run response. A rule row that no longer exists leaves the name
+// empty and RuleDeleted set.
+func (r *automationRepository) attachRuleNames(runs []*models.AutomationRun) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	seen := map[uint]bool{}
+	ids := make([]uint, 0, len(runs))
+	for _, run := range runs {
+		if !seen[run.RuleID] {
+			seen[run.RuleID] = true
+			ids = append(ids, run.RuleID)
+		}
+	}
+	var rows []struct {
+		ID        uint
+		Name      string
+		DeletedAt gorm.DeletedAt
+	}
+	if err := r.db.Unscoped().Model(&models.AutomationRule{}).
+		Select("id", "name", "deleted_at").Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	type ruleName struct {
+		name    string
+		deleted bool
+	}
+	names := make(map[uint]ruleName, len(rows))
+	for _, row := range rows {
+		names[row.ID] = ruleName{name: row.Name, deleted: row.DeletedAt.Valid}
+	}
+	for _, run := range runs {
+		found, ok := names[run.RuleID]
+		run.RuleName = found.name
+		run.RuleDeleted = !ok || found.deleted
+	}
+	return nil
 }
 
 func (r *automationRepository) GetRunByIDForUpdate(id uint) (*models.AutomationRun, error) {
@@ -321,6 +367,13 @@ func (r *automationRepository) ListRuns(offset, limit int, filter AutomationRunL
 		Offset(offset).Limit(limit).
 		Find(&runs).Error
 	if err != nil {
+		return nil, 0, err
+	}
+	page := make([]*models.AutomationRun, len(runs))
+	for i := range runs {
+		page[i] = &runs[i]
+	}
+	if err := r.attachRuleNames(page); err != nil {
 		return nil, 0, err
 	}
 	return runs, total, nil

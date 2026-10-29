@@ -32,7 +32,6 @@ export function generateCustomerData() {
     contactName: `${faker.person.firstName()} ${faker.person.lastName()}`,
     email: `cust_${Date.now()}_${faker.string.alphanumeric(4)}@example.com`,
     phone: faker.phone.number(),
-    industry: faker.commerce.department(),
     website: faker.internet.url(),
     address: faker.location.streetAddress(),
     city: faker.location.city(),

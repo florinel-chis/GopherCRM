@@ -5,7 +5,9 @@ import {
   emptyFormValues,
   emptyStep,
   fromRule,
+  mapServerFieldErrors,
   parseStepError,
+  serverFieldErrorsOf,
   ruleFormSchema,
   toRulePayload,
   type RuleFormValues,
@@ -302,5 +304,140 @@ describe('ruleFormSchema', () => {
     expect(parseStepError('name is required: validation failed')).toEqual({ text: 'name is required' });
     expect(parseStepError('user 7 is inactive: assignee not found')).toEqual({ text: 'user 7 is inactive' });
     expect(parseStepError('Something else')).toEqual({ text: 'Something else' });
+  });
+
+  it('mapServerFieldErrors maps every server path onto its form field', () => {
+    const values: RuleFormValues = {
+      ...emptyFormValues(),
+      name: 'R',
+      trigger_type: 'schedule',
+      steps: [
+        step('wait', { key: 'w', wait_amount: 2, wait_unit: 'hours' }),
+        step('condition', { key: 'c1', field: 'source', operator: 'in', value_list: ['a'], else: 'jump', else_target: 'n' }),
+        step('condition', { key: 'c2', field: 'status', operator: 'eq', value_text: 'new' }),
+        step('create_task', { key: 't', title: 'T' }),
+        step('send_email', { key: 'e', subject: 'S', body: 'B', recipient: 'user', user_id: 3 }),
+        step('notify', { key: 'n', title: 'N' }),
+      ],
+    };
+    const error = (field: string) => ({ field, code: 'x', message: field });
+    const mapped = mapServerFieldErrors(
+      [
+        'name', 'description', 'trigger_type', 'trigger.from', 'trigger.to', 'trigger.hour_utc', 'trigger.stale_days',
+        'trigger.filters.status', 'steps[0].config.duration_minutes', 'steps[1].config.value', 'steps[1].config.else_position',
+        'steps[1].config.field', 'steps[1].config.operator', 'steps[2].config.value', 'steps[2].config.currency',
+        'steps[2].config.else', 'steps[3].config.title', 'steps[3].config.description', 'steps[3].config.priority',
+        'steps[3].config.due_in_days', 'steps[3].config.recipient', 'steps[4].config.subject', 'steps[4].config.body',
+        'steps[4].config.user_id',
+      ].map(error),
+      values,
+      values,
+    );
+    expect(mapped.unmapped).toEqual([]);
+    expect(Object.fromEntries(mapped.fields.map((f) => [f.message, f.name]))).toEqual({
+      name: 'name',
+      description: 'description',
+      trigger_type: 'trigger_type',
+      'trigger.from': 'from',
+      'trigger.to': 'to',
+      'trigger.hour_utc': 'hour_utc',
+      'trigger.stale_days': 'stale_days',
+      'trigger.filters.status': 'filter_value',
+      'steps[0].config.duration_minutes': 'steps.0.wait_amount',
+      'steps[1].config.value': 'steps.1.value_list',
+      'steps[1].config.else_position': 'steps.1.else_target',
+      'steps[1].config.field': 'steps.1.field',
+      'steps[1].config.operator': 'steps.1.operator',
+      'steps[2].config.value': 'steps.2.value_text',
+      'steps[2].config.currency': 'steps.2.currency',
+      'steps[2].config.else': 'steps.2.else',
+      'steps[3].config.title': 'steps.3.title',
+      'steps[3].config.description': 'steps.3.description',
+      'steps[3].config.priority': 'steps.3.priority',
+      'steps[3].config.due_in_days': 'steps.3.due_in_days',
+      'steps[3].config.recipient': 'steps.3.recipient',
+      'steps[4].config.subject': 'steps.4.subject',
+      'steps[4].config.body': 'steps.4.body',
+      'steps[4].config.user_id': 'steps.4.user_id',
+    });
+  });
+
+  it('mapServerFieldErrors sends unknown or out-of-range paths to the form-level list', () => {
+    const values: RuleFormValues = { ...emptyFormValues(), steps: [step('notify', { key: 'a', title: 'A' })] };
+    const mapped = mapServerFieldErrors(
+      [
+        { field: 'entity_type', code: 'x', message: 'entity' },
+        { field: 'steps', code: 'x', message: 'too many' },
+        { field: 'steps[0].step_type', code: 'x', message: 'bad type' },
+        { field: 'steps[0].config.template_id', code: 'x', message: 'unknown config' },
+        { field: 'steps[5].config.title', code: 'x', message: 'missing step' },
+        { field: 'mystery', code: 'x', message: 'mystery' },
+      ],
+      values,
+      values,
+    );
+    expect(mapped.fields).toEqual([]);
+    expect(mapped.unmapped).toEqual([
+      { text: 'entity' },
+      { text: 'too many' },
+      { text: 'bad type', stepKey: 'a' },
+      { text: 'unknown config', stepKey: 'a' },
+      { text: 'Step 6: missing step' },
+      { text: 'mystery' },
+    ]);
+  });
+
+  it('follows moved steps by key and drops errors of removed, retyped or edited fields', () => {
+    const submitted: RuleFormValues = {
+      ...emptyFormValues(),
+      name: 'Old name',
+      steps: [
+        step('notify', { key: 'a', title: 'A' }),
+        step('notify', { key: 'b', title: 'B' }),
+        step('notify', { key: 'c', title: 'C' }),
+        step('notify', { key: 'd', title: 'D' }),
+      ],
+    };
+    const current: RuleFormValues = {
+      ...submitted,
+      name: 'New name',
+      steps: [
+        step('notify', { key: 'b', title: 'B' }),
+        step('notify', { key: 'a', title: 'A edited' }),
+        step('create_task', { key: 'd', title: 'D' }),
+      ],
+    };
+    const error = (field: string) => ({ field, code: 'x', message: field });
+    const mapped = mapServerFieldErrors(
+      ['name', 'steps[0].config.title', 'steps[1].config.title', 'steps[2].config.title', 'steps[3].config.title'].map(error),
+      submitted,
+      current,
+    );
+    expect(mapped.fields).toEqual([{ name: 'steps.0.title', message: 'steps[1].config.title' }]);
+    expect(mapped.unmapped).toEqual([]);
+  });
+
+  it('reads error.details.fields and ignores anything else', () => {
+    expect(serverFieldErrorsOf(undefined)).toBeNull();
+    expect(serverFieldErrorsOf({ ids: [1] })).toBeNull();
+    expect(
+      serverFieldErrorsOf({ fields: [{ field: 'name', code: 'required', message: 'm' }, { field: 1 }, 'x'] }),
+    ).toEqual([{ field: 'name', code: 'required', message: 'm' }]);
+  });
+
+  it('drops a user error whose step no longer sends to a specific user', () => {
+    const submitted: RuleFormValues = {
+      ...emptyFormValues(),
+      steps: [step('notify', { key: 'a', title: 'A', recipient: 'user', user_id: 7 })],
+    };
+    const current: RuleFormValues = {
+      ...submitted,
+      steps: [step('notify', { key: 'a', title: 'A', recipient: 'owner', user_id: 7 })],
+    };
+    const errors = [{ field: 'steps[0].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' }];
+    expect(mapServerFieldErrors(errors, submitted, current)).toEqual({ fields: [], unmapped: [] });
+    expect(mapServerFieldErrors(errors, submitted, submitted).fields).toEqual([
+      { name: 'steps.0.user_id', message: 'the user is deactivated' },
+    ]);
   });
 });

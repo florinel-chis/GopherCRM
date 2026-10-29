@@ -540,34 +540,38 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Observe the network request and the snackbar.
   3. Reload the page.
 - **Expected:** The button calls `usersApi.deactivateUser`, which issues `POST
-  /api/v1/users/<id>/deactivate`. **No such route exists** — `internal/handler/routes.go` registers
-  only `POST /users`, `GET /users`, `GET|PUT /users/me`, `GET|PUT /users/:id` and `DELETE
-  /users/:id` — so Gin answers 404 with its plain-text "404 page not found" body (there is no
-  `NoRoute` handler installing the API envelope). The mutation's `onError` fires and an error
-  snackbar reads "Failed to deactivate user". The status chip is unchanged after reload; the same
-  applies to the "Activate" button and `POST /users/<id>/activate`.
-- **Known issue:** The frontend endpoint functions `activateUser` / `deactivateUser`
-  (`gocrm-ui/src/api/endpoints/users.ts`) are intended contract with no backend behind them; per the
-  repository directive they must be implemented, not deleted. Suspension works today only through
-  the `is_active` switch on the edit form (TC-USER-027). FEATURES.md row 7.5, gap G20.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
+  /api/v1/users/<id>/deactivate`. The route is registered admin-only (`routes.go`:
+  `users.POST("/:id/deactivate", RequireRole(admin), handler.Deactivate)`, with its `activate`
+  twin) and answers **200** with the updated user; the snackbar reads "User deactivated
+  successfully" and after the reload the chip is the grey "Inactive". Pressing "Activate" on the
+  same page issues `POST /users/<id>/activate` and restores the green "Active" chip. On the
+  admin's own detail page the API refuses deactivation with **400** "You cannot deactivate your
+  own account".
+- **Known issue:** None in the routing. The two endpoints were added in the 2026-10 build-out
+  (#92); this case previously recorded them as missing. Browser coverage of the cycle is still
+  absent (gap G20).
+- **Automation:** handler level automated — `internal/handler/user_handler_test.go`
+  TestActivate_Success, TestActivate_NotFound, TestDeactivate_Success,
+  TestDeactivate_SelfDeactivationPrevented; the browser case is planned in
+  `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
-### TC-USER-032 — Record the unreachable overflow menu on the list toolbar
+### TC-USER-032 — Activate and deactivate from the list row menu
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** Admin logged in on `/users`.
+- **Preconditions:** Admin logged in on `/users`; an active and an inactive user created in-test.
 - **Steps:**
-  1. Click the vertical-dots (⋮) icon button in the table toolbar.
-  2. Look for a menu containing View Details / Edit / Deactivate / Delete.
-- **Expected:** Nothing happens. The button's handler is
-  `onClick={(e) => selectedUser && handleMenuOpen(e, selectedUser)}` and `selectedUser` starts as
-  `null` and is only ever set by `handleMenuOpen` itself, so the menu can never open. Every action it
-  offers — including the "Delete" item that is correctly disabled for your own account — is
-  unreachable. The per-row eye / pencil / trash icons in the Actions column are the only working
-  controls.
-- **Known issue:** Dead control in `UserList.tsx`; it also means the per-row delete path (TC-USER-036)
-  has no self-deletion guard at all.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
+  1. Sort by Name, open "More actions for <active user>" and choose "Deactivate".
+  2. Open "More actions for <inactive user>" and choose "Activate".
+  3. Open the menu on your own row.
+- **Expected:** Step 1 issues `POST /api/v1/users/<that id>/deactivate`, step 2
+  `POST /api/v1/users/<that id>/activate`; the list refreshes with the new chips and neither click
+  opens the user's detail page. Step 3: "Deactivate" is disabled, matching the API's refusal to
+  deactivate the caller's own account. The menu holds only the activation item: view, edit and
+  delete are the row's own icons. Before #114 the only menu button sat in the table toolbar,
+  guarded by a selection nothing could set, and never opened.
+- **Known issue:** The per-row delete icon still has no self-deletion guard (TC-USER-036).
+- **Automation:** automated (Vitest) — `src/pages/users/UserList.test.tsx`; browser case planned
+  in `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
 
@@ -634,8 +638,10 @@ Expected field still describes it and a **Known issue** line records the defect.
   1. Open `/users` and search for the admin's own email so its row is visible.
   2. Click the trash icon on that row.
   3. Confirm the dialog.
-- **Expected:** The dialog opens — the per-row delete icon is **not** guarded against self-deletion
-  (only the unreachable overflow menu item is disabled, see TC-USER-032). Confirming issues `DELETE
+- **Expected:** The dialog opens — the per-row delete (trash) icon is **not** guarded against
+  self-deletion. The row's "More actions" menu offers only Activate/Deactivate (Deactivate is
+  disabled on your own row, see TC-USER-032); it has no Delete item, so the trash icon is the only
+  delete control in the list. Confirming issues `DELETE
   /users/<own id>`, which the handler rejects with **400** and `error.message = "You cannot delete
   your own account"`. The frontend's generic `onError` shows "Failed to delete user" instead of the
   server message, and the dialog stays open. The account is untouched — reloading `/users` still

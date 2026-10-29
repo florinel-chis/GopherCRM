@@ -60,12 +60,8 @@ export const createMockCustomer = (overrides?: Partial<Customer>): Customer => (
   country: 'USA',
   postal_code: '10001',
   website: 'https://customer.com',
-  industry: 'Technology',
-  annual_revenue: 1000000,
-  employee_count: 50,
   total_revenue: 500000,
   notes: 'Important customer',
-  is_active: true,
   owner_id: 1,
   owner: createMockUser(),
   created_at: '2024-01-01T00:00:00Z',
@@ -274,12 +270,15 @@ export const createMockAutomationRule = (overrides?: Partial<AutomationRule>): A
   ...overrides,
 });
 
-// A pending run of rule #1 on lead #1; list rows carry no steps.
+// A pending run of rule #1 on lead #1; list rows carry no steps. The rule
+// name is empty (a rule row that is gone) unless a test names it.
 export const createMockAutomationRun = (overrides?: Partial<AutomationRun>): AutomationRun => ({
   id: 1,
   created_at: '2026-10-28T09:00:00Z',
   updated_at: '2026-10-28T09:00:00Z',
   rule_id: 1,
+  rule_name: '',
+  rule_deleted: false,
   rule_version: 1,
   entity_type: 'lead',
   entity_id: 1,
@@ -322,6 +321,7 @@ export const createMockDryRunReport = (
 ): AutomationDryRunReport => ({
   rule_id: 1,
   rule_version: 1,
+  draft: false,
   entity_type: 'lead',
   entity_id: 1,
   simulated_start: '2026-10-28T09:00:00Z',

@@ -221,15 +221,18 @@ func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 }
 
 // SetupAutomationRoutes mounts the follow-up automation endpoints. Rules and
-// the dry run are admin-only on every route; the run history is admin and
-// sales (the service narrows sales to its own leads and deals inside the
-// query), and cancelling a run is admin-only.
+// both dry runs (a saved rule, an unsaved draft) are admin-only on every
+// route; the run history is admin and sales (the service narrows sales to
+// its own leads and deals inside the query), and cancelling a run is
+// admin-only.
 func SetupAutomationRoutes(router *gin.RouterGroup, handler *AutomationHandler) {
 	admin := middleware.RequireRole(models.RoleAdmin)
 	rules := router.Group("/automation/rules")
 	rules.Use(admin)
 	{
 		rules.POST("", handler.CreateRule)
+		// Static segment before the :id routes, as the deals group does.
+		rules.POST("/dry-run", handler.DryRunDraft)
 		rules.GET("", handler.ListRules)
 		rules.GET("/:id", handler.GetRule)
 		rules.PUT("/:id", handler.UpdateRule)

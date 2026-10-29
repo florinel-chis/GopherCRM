@@ -97,7 +97,7 @@ the frontend gating.
 - **Automation:** blocked — needs a sales role-login helper; only
   `gocrm-ui/e2e/helpers/admin-auth.ts` exists
 
-### TC-LEAD-004 — Support user: Leads is hidden in the nav but the route is not gated
+### TC-LEAD-004 — Support user: Leads is hidden in the nav and the route redirects
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** A support user created via admin `POST /users`.
@@ -106,19 +106,15 @@ the frontend gating.
   2. Inspect the left navigation drawer.
   3. Navigate directly to `/leads` by URL.
 - **Expected:** The "Leads" nav entry is absent — `MainLayout.tsx` restricts it to
-  `roles: ['admin','sales']`. Direct navigation nevertheless renders the Leads page: the `leads`
-  route in `gocrm-ui/src/routes/index.tsx` has **no** `ProtectedRoute requiredRole`, so there is no
-  redirect to `/unauthorized`. `GET /api/v1/leads` returns **403**
-  `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}` from
-  `RequireRole(admin, sales)` (`routes.go:24`, `middleware/auth.go:64`). The page shows the
-  heading, the "Add Lead" button and an empty table body; no error banner is displayed.
-- **Known issue:** Frontend gating and backend gating disagree — the nav hides Leads but the router
-  does not, so an unauthorised role reaches a functional-looking page whose every call 403s.
-  Compare with the ticket forms (`/tickets/new`, `/tickets/:id/edit`) and `/users`, which *are*
-  wrapped in `ProtectedRoute requiredRole` — the `/tickets` list route itself is as open as
-  `/leads`.
-- **Automation:** blocked — needs a support role-login helper; only
-  `gocrm-ui/e2e/helpers/admin-auth.ts` exists
+  `roles: ['admin','sales']`. Direct navigation to `/leads`, `/leads/new`, `/leads/{id}` or
+  `/leads/{id}/edit` lands on `/unauthorized` ("Access Denied"): since #120 every lead route sits
+  under a pathless `ProtectedRoute requiredRole={['admin','sales']}` in
+  `gocrm-ui/src/routes/index.tsx`, matching `RequireRole(admin, sales)` on the API group
+  (`routes.go:24`). While the session check is still loading the guard shows a spinner, not the
+  page.
+- **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
+  routes"; the browser case is blocked on a support role-login helper (only
+  `gocrm-ui/e2e/helpers/admin-auth.ts` exists)
 
 ### TC-LEAD-005 — Customer user is refused the leads API
 - **Priority:** P0
@@ -129,11 +125,13 @@ the frontend gating.
   1. Log in as the customer.
   2. Confirm "Leads" is absent from the navigation.
   3. Navigate directly to `/leads`.
-- **Expected:** Same as TC-LEAD-004 — nav entry hidden, route reachable, `GET /api/v1/leads`
-  returns 403 "Insufficient permissions", table renders empty. The `!isAdminOrSales` branch at
-  `lead_handler.go:224` is unreachable through the router.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new customer-role block;
-  the account can be created through `registration.spec.ts`'s flow)
+- **Expected:** Same as TC-LEAD-004 — nav entry hidden, every lead route redirects to
+  `/unauthorized`; `GET /api/v1/leads` with the customer's token is 403 "Insufficient
+  permissions". The `!isAdminOrSales` branch at `lead_handler.go:224` is unreachable through the
+  router.
+- **Automation:** automated (Vitest) — `src/routes/index.test.tsx`; browser case planned in
+  `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new customer-role block; the account can be created
+  through `registration.spec.ts`'s flow)
 
 ---
 
@@ -338,7 +336,9 @@ the frontend gating.
 - **Expected:** **403** `{"error":{"message":"Only administrators can reassign leads"}}`
   (`lead_handler.go:394`). The same call as admin returns 200 and moves the lead.
 - **Known issue:** The edit form has no Owner control at all, so reassignment — which the backend
-  supports for admins — is unreachable from the UI.
+  supports for admins — is unreachable from the UI. The endpoint client used to drop `owner_id`
+  from updates as well; since #119 `leadsApi.updateLead` forwards it when given and omits it
+  otherwise (`src/api/endpoints/leads.test.ts` "updateLead owner_id").
 - **Automation:** blocked — needs a sales role-login helper
 
 ---
@@ -723,22 +723,23 @@ the frontend gating.
   `leads.conversion.allowed_statuses` defaults to `['qualified']` (`LeadDetail.tsx:158`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
-### TC-LEAD-044 — The list page's row-action menu, including Convert, never opens
+### TC-LEAD-044 — Convert a lead from its row menu on the list
 - **Priority:** P1
-- **Type:** negative
-- **Preconditions:** Admin logged in; at least one qualified lead.
+- **Type:** regression
+- **Preconditions:** Admin logged in; a `new` and a `qualified` lead created by the test.
 - **Steps:**
-  1. Navigate to `/leads`.
-  2. Click the vertical-dots (MoreVert) button in the table toolbar.
-- **Expected:** Nothing happens — no menu appears, so "View Details", "Edit", "Convert to Customer"
-  and "Delete" are unreachable from the list. The button's handler is
-  `(e) => selectedLead && handleMenuOpen(e, selectedLead)` (`LeadList.tsx:350`) and `selectedLead`
-  is only ever set *by* `handleMenuOpen`, so the guard can never be satisfied. Conversion from the
-  list is impossible; the per-row Visibility / Edit / Delete icons rendered by `DataTable` are the
-  only working row actions.
-- **Known issue:** Dead UI in `LeadList.tsx` — the toolbar menu and its Convert entry are
-  unreachable.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
+  1. Navigate to `/leads` and sort by Company.
+  2. Look for "More actions for <company>" on the `new` lead's row, then on the `qualified` one.
+  3. Open the `qualified` lead's menu (by mouse, or focus it and press Enter) and choose "Convert
+     to Customer"; confirm in the dialog.
+- **Expected:** The `new` lead's row has no menu button; the `qualified` lead's has one, named
+  for its row. The menu holds only "Convert to Customer" (view, edit and delete are the row's own
+  icons). The dialog shows that lead's contact, the conversion posts to
+  `/leads/{thatId}/convert` and the app opens the new customer. Clicking inside the menu never
+  opens the lead's detail page. Before #114 the only menu button sat in the table toolbar, was
+  guarded by a selection nothing could set, and never opened.
+- **Automation:** automated (Vitest) — `src/pages/leads/LeadList.rowActions.test.tsx`; browser
+  case planned in `gocrm-ui/e2e/tests/admin-leads.spec.ts`
 
 ### TC-LEAD-045 — Converting an already-converted lead is rejected
 - **Priority:** P1

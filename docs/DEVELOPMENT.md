@@ -807,7 +807,28 @@ The pieces, and why each is shaped the way it is:
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
   simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
   conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,
-  calls `Mailer.Send` zero times and creates no run, notification, task or event.
+  calls `Mailer.Send` zero times and creates no run, notification, task or event. The draft dry
+  run (`AutomationService.DryRunDraft`, `POST /automation/rules/dry-run`) hands an unsaved rule
+  body through `validateRule` — the normalisation and every check of a create, the staff-user
+  lookups included — and then to the same `DryRun`; it starts no transaction, takes no lock and
+  saves nothing (no temporary rule row), and the report carries `draft: true`.
+- **Rule validation.** `validateRule` (`internal/service/automation_validation.go`) collects every
+  refusal in one pass into a `*RuleValidationError`: each `{field, code, message}` goes to
+  `error.details.fields`, while `Error()` and `Unwrap()` are those of the first refusal exactly as
+  the single-error validator produced it (`step N: ...: validation failed`, or
+  `user N is inactive: assignee not found` for a reference), so the message and the
+  `INVALID_INPUT`/`INVALID_REFERENCE` code are unchanged for clients that read only the message.
+  Order is fixed: an unknown `entity_type` stops, an unknown `trigger_type` skips the trigger
+  checks, `from` is checked before `to`, no steps or more than 20 skip the step checks, a field
+  keeps only its first refusal, and the staff-user lookups run last, once per distinct user, in
+  the order the steps first name them (they used to iterate a map, so the first message of a body
+  naming two bad users was not stable before).
+- **Rule names on runs.** Runs are readable by sales users and rules only by admins, so
+  `AutomationRun.Rule` is `json:"-"` and the run reads (`ListRuns`, `GetRunByID`) fill
+  `rule_name`/`rule_deleted` with one extra query over the page's distinct rule ids,
+  soft-deleted rules included. Only the name crosses: sales users see the names of the rules that
+  ran on their records, also after a rule is deleted, so rule names must not carry personal or
+  confidential text.
 - **Logs.** The engine logs operation names, `run_id`, `rule_id`, `event_id`, `entity_type`,
   `entity_id`, `position`, `step_type`, `outcome` and `error_code` only; a transport error, which
   may quote the address, is not logged.
@@ -824,8 +845,13 @@ and blanked by the task renderer), `TestAutomationWaitResume{SQLite,MySQL}`
 (a fresh engine on the same database after the clock passes `resume_at`),
 `TestAutomationScheduleTrigger{SQLite,MySQL}` (1,201 records over three ticks, a racing worker),
 `TestAutomationDryRunNoSideEffects{SQLite,MySQL}` (a before/after snapshot of every table),
+`TestAutomationDraftDryRunNoSideEffects{SQLite,MySQL}` (the snapshot plus an instrumented pool and
+GORM callbacks that refuse any transaction start, write or locking read during the draft),
+`TestAutomationDraftDryRunValidatesLikeCreate`, `TestAutomationRuleValidationCollectsAllFields`,
+`TestAutomationRuleValidationLegacyMessage`, `TestAutomationRuleValidationReferencePaths`,
 `TestAutomationReconcile{SQLite,MySQL}`, `TestAutomationRuntimeDrain`,
 `TestAutomationLogsOmitPersonalData` (`internal/service`); `TestAutomationRunListScope{SQLite,MySQL}`,
+`TestAutomationRunRuleNames{SQLite,MySQL}`,
 `TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
 repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 `TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);
