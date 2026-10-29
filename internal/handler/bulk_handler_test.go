@@ -19,13 +19,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
-// stubBulkStatusService implements service.BulkOperationService by embedding the
-// interface: only the three status-update methods are exercised here, so any
-// other call is a test bug and panics on the nil embedded value rather than
-// quietly returning a zero value.
+// stubBulkStatusService implements service.BulkStatusService and records what
+// the handler passed through.
 type stubBulkStatusService struct {
-	service.BulkOperationService
-
 	called     bool
 	gotActorID uint
 	gotRole    models.UserRole
@@ -57,6 +53,8 @@ func (s *stubBulkStatusService) BulkSetTaskStatus(actorID uint, role models.User
 	s.record(actorID, role, ids, string(status))
 	return s.result, s.err
 }
+
+var _ service.BulkStatusService = (*stubBulkStatusService)(nil)
 
 type BulkStatusHandlerTestSuite struct {
 	suite.Suite

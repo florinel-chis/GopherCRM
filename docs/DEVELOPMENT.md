@@ -393,6 +393,20 @@ users and customers. The helper is only safe on tables whose sole unique index i
 true of `users` and `customers`; adding a second unique index to either means the helper can no
 longer attribute a hit to the email column.
 
+**Bulk endpoints** — only `POST /leads|tickets|tasks/bulk/status` exist, registered by
+`SetupBulkStatusRoutes` outside the entity groups. `BulkHandler` depends on `BulkStatusService`
+(`internal/service/bulk_status_service.go`), which holds nothing but the three status operations.
+Each one normalises the ids (1–100, duplicates count once), checks the role, writes a pending
+`bulk_operations` history row, then inside ONE transaction reads every listed record through
+`BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
+or in a forbidden transition (the offending ids go into `error.details`), and only then writes
+the status — plus, for leads, the automation events on the same transaction. The history row is
+set to `completed` or `failed` afterwards; a failure to do so is logged and never changes the
+response. There is no generic bulk create/update/delete/action machinery any more (#112); a new
+bulk operation gets its own narrow service method and repository halves the same way, and a bulk
+erasure would need per-item isolation designed afresh (`runInTransaction` joins the caller's
+transaction, which is wrong for an item of a batch that reports per-item failures).
+
 **Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
 
 | Tier | Limit | Where it is applied |
@@ -636,8 +650,7 @@ What happens on `DELETE`:
 - Only then is the row soft-deleted. The row is deliberately **kept** so that foreign keys from
   tickets, tasks and leads still resolve — business records survive, the person does not.
 - Scrub and soft-delete happen in one transaction, so a failure part-way cannot leave a half-erased
-  but still-live record. In a bulk delete each item is isolated by its own savepoint, so one failing
-  item neither corrupts itself nor rolls back the rest of the batch.
+  but still-live record.
 - A lead that was converted into a customer is cascaded in both directions via `leads.customer_id`,
   because conversion copies the person's details into the customer row.
 - The lead's automation state ends in the same transaction, *before* the scrub
@@ -715,11 +728,11 @@ automation_engine.go` executes rules, `automation_runtime.go` owns the worker go
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
-  ConvertToCustomer`, the form submission path, the bulk status/assign/convert paths and
+  ConvertToCustomer`, the form submission path, the bulk lead status path and
   `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
   option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
-  transaction-bound repository, so a write that rolls back records nothing and a bulk item that
-  fails records nothing for that item. A create records `*_created`; an update `*_updated` plus
+  transaction-bound repository, so a write that rolls back records nothing and a refused bulk
+  status batch records nothing for any of its leads. A create records `*_created`; an update `*_updated` plus
   `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
   the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
   types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a

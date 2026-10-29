@@ -809,7 +809,7 @@ gating); where the two disagree, that disagreement gets its own case.
 ## POST /tickets/bulk/status
 
 `SetupBulkStatusRoutes` registers this route with no `RequireRole` guard; all authorization lives in
-`BulkHandler.BulkUpdateTicketStatus` and `bulkOperationService.BulkSetTicketStatus`. No UI calls it —
+`BulkHandler.BulkUpdateTicketStatus` and `bulkStatusService.BulkSetTicketStatus`. No UI calls it —
 `ticketsApi.bulkUpdateStatus` exists in `endpoints/tickets.ts` but no page imports it, and
 `DataTable.tsx:292` still carries a `// TODO: Implement bulk delete functionality`. These cases are
 therefore API-level, driven from a Playwright `request` context with a UI verification pass afterwards.
@@ -863,7 +863,7 @@ therefore API-level, driven from a Playwright `request` context with a UI verifi
   3. POST `{"ticket_ids":[A,B],"status":"closed"}`.
 - **Expected:** Step 1 returns **400** with `error.details.closed_ids` containing B, and A is
   untouched — the bulk route must not be a way around the single-record reopen ban
-  (`bulk_status_service.go:238-252`). Step 3 succeeds (200): moving a closed ticket *to* closed is
+  (`bulk_status_service.go:239-253`). Step 3 succeeds (200): moving a closed ticket *to* closed is
   not a reopen.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-bulk-status.spec.ts` (new)
 

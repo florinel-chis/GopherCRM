@@ -25,7 +25,6 @@ package repository
 import (
 	"errors"
 	"fmt"
-	"maps"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
@@ -135,24 +134,13 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 //
 // It remembers what it has already erased. Without that, erasing a lead would
 // erase its customer, which would look for the leads converted into that
-// customer, which would erase the original lead again, forever. The record of
-// what is done is kept per cascade (not per call) so that a bulk delete can
-// share one cascade across a whole batch and recognise a row that an earlier
-// item of the same batch already erased.
+// customer, which would erase the original lead again, forever. A row is marked
+// BEFORE it is erased, so a cycle terminates.
 //
-// A row is marked BEFORE it is erased, so a cycle terminates. That makes a mark
-// a claim about the database — "this row no longer describes the person" — and
-// the claim has to be true, because the bulk paths SKIP a marked row and count
-// it as a success. A row that is marked but was never actually erased is
-// reported to the operator as erased while every one of the person's fields is
-// still sitting there in a live row: the invariant to hold is that a row is
-// marked if and only if its erasure took effect.
-//
-// The marks are therefore rolled back where the DATABASE work is rolled back,
-// and nowhere else — see asBatchItem. Undoing only the mark of the row that
-// happened to fail is not enough: one cascade attempt walks a whole conversion
-// graph and can mark several rows before it fails, and rolling the attempt back
-// undoes the erasure of ALL of them.
+// A cascade lives for exactly one erasure, which runs inside one transaction
+// (see eraseLeadWithConversionLink and eraseCustomerWithConversionLink). If
+// that transaction rolls back, the cascade and its marks are discarded with it,
+// so a mark can never outlive the database work it describes.
 type erasureCascade struct {
 	leads     map[uint]struct{}
 	customers map[uint]struct{}
@@ -244,48 +232,6 @@ func (c *erasureCascade) eraseCustomerRow(tx *gorm.DB, id uint) error {
 		if err := c.eraseLead(tx, leadID); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// --- One item of a batch ------------------------------------------------------
-
-// eraseLeadAsBatchItem and eraseCustomerAsBatchItem erase one ID of a bulk
-// request. A batch reports per-item failures and keeps going, so an item has to
-// be a unit of work in its own right: it either happens completely or it never
-// happened at all, and either way the rest of the batch is unaffected.
-//
-// The cascade must be shared across the whole batch (that is how a row erased as
-// a side effect of an earlier ID is recognised instead of being reported as
-// missing), so these are methods on the cascade rather than free functions.
-func (c *erasureCascade) eraseLeadAsBatchItem(db *gorm.DB, id uint) error {
-	return c.asBatchItem(db, func(tx *gorm.DB) error { return c.eraseLead(tx, id) })
-}
-
-func (c *erasureCascade) eraseCustomerAsBatchItem(db *gorm.DB, id uint) error {
-	return c.asBatchItem(db, func(tx *gorm.DB) error { return c.eraseCustomer(tx, id) })
-}
-
-// asBatchItem runs one attempt with its database effects and its cascade
-// bookkeeping tied together, which is the only way the two can agree.
-//
-// The marks are what the batch reports on: a marked row is skipped and counted
-// as erased. If an attempt is rolled back, every mark it added describes work
-// that no longer exists, so all of them go — not merely the one belonging to the
-// row whose statement happened to fail. Keeping the others is how a fully intact
-// person gets reported as erased: a later item of the same batch reaches the
-// remembered row, believes it is done, and never touches it.
-//
-// The snapshot is taken before the attempt and restored wholesale afterwards,
-// rather than tracking what each level added, because the cascade recurses
-// through an arbitrary conversion graph and any per-level bookkeeping would be
-// one more thing that can disagree with the transaction.
-func (c *erasureCascade) asBatchItem(db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	leads, customers := maps.Clone(c.leads), maps.Clone(c.customers)
-
-	if err := runIsolated(db, fn); err != nil {
-		c.leads, c.customers = leads, customers
-		return err
 	}
 	return nil
 }
