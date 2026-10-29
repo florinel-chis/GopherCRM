@@ -23,14 +23,23 @@ import (
 // the message before it contacts any relay.
 var ErrInvalidHeader = errors.New("mail header contains a line break")
 
-// validateHeaders refuses header values that contain CR or LF.
+// ErrInvalidAddress is returned, through errors.Is, when the recipient or the
+// configured sender is not a single RFC 5322 address. The offending value is
+// not part of the error.
+var ErrInvalidAddress = errors.New("mail address is invalid")
+
+// validateHeaders refuses a recipient or subject that contains CR or LF, and
+// a recipient that is not exactly one RFC 5322 address (a display name is
+// fine). The sender comes from configuration and is checked when the message
+// is composed.
 func validateHeaders(to, subject string) error {
-	for name, value := range map[string]string{"recipient": to, "subject": subject} {
-		if strings.ContainsAny(value, "\r\n") {
-			return fmt.Errorf("%s: %w", name, ErrInvalidHeader)
+	for _, h := range []struct{ name, value string }{{"recipient", to}, {"subject", subject}} {
+		if strings.ContainsAny(h.value, "\r\n") {
+			return fmt.Errorf("%s: %w", h.name, ErrInvalidHeader)
 		}
 	}
-	return nil
+	_, err := parseAddress("recipient", to)
+	return err
 }
 
 // Mailer delivers transactional mail.

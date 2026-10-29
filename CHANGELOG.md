@@ -457,6 +457,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **SMTP delivery is bounded and validates its headers (#113).** The SMTP mailer no longer calls
+  `smtp.SendMail`, which had no timeout: a relay that stalled at the greeting or any later command
+  held the calling request or worker indefinitely. Each delivery now dials within 10 s and runs
+  the whole conversation (greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT) under one 30 s
+  deadline, closing the connection on every path. STARTTLS is still used whenever the relay
+  advertises it and a failed handshake aborts the delivery; PLAIN credentials are never sent over
+  an unencrypted connection to a host other than localhost, and configured credentials against a
+  relay that offers no AUTH fail instead of submitting unauthenticated. The recipient and the
+  configured `SMTP_FROM` must each be one RFC 5322 address (display names allowed;
+  `mailer.ErrInvalidAddress` otherwise, checked before any relay is contacted), CR or LF in the
+  sender is refused like the recipient and subject (`mailer.ErrInvalidHeader`), the envelope
+  carries the bare address, and a non-ASCII subject is RFC 2047 encoded. Previously a recipient
+  with a display name produced a malformed `RCPT TO`. Bodies keep their lines: every line ending,
+  including a bare CR, becomes CRLF, and dot-stuffing is left to the SMTP data writer. The
+  password-reset failure log now passes the transport error through `utils.LogError` (SMTP code,
+  no reply text) and no longer carries the recipient.
 - **Service and HTTP logging privacy.** The sample `LOG_LEVEL` is now `info`. Service logs omit
   emails, names, titles, search terms and raw sort values, while shared helpers omit argument,
   result and handler response payloads (including issued credentials). Access logs omit query

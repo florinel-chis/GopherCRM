@@ -313,11 +313,31 @@ repeated inside the private `send`, so no future caller can bypass it. The gener
 log carries the subject and the transport error passed through `utils.LogError`, and not the
 recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
 recipient normally echoes the address in that text (`550 5.1.1 <who@example.com>: Recipient address
-rejected`). The raw error is still returned for `errors.As`. The password-reset failure line and
-the development `LogMailer` still record the recipient as before. Roots:
+rejected`). The raw error is still returned for `errors.As`. The password-reset failure line logs
+the same sanitised error and the redacted link, without the recipient; the development
+`LogMailer` still records the recipient as before. Roots:
 `TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`) and
 `TestSMTPMailerSendLogOmitsTheRelayReply` (`internal/mailer/smtp_relay_reply_test.go`), whose stub
 relay answers `RCPT TO` with a 550 that quotes the address.
+
+**SMTP delivery is one bounded exchange (#113)** — `SMTPMailer` does not use `smtp.SendMail`,
+which has no timeout. It dials within `mailer.DefaultDialTimeout` (10 s), sets one deadline of
+`mailer.DefaultSendTimeout` (30 s, counted from the start of the dial) on the connection for the
+whole conversation — greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT — and closes the
+connection on every path; a stalled relay returns an error matching `os.ErrDeadlineExceeded`.
+The timeouts are package defaults, not configuration. STARTTLS is used whenever the relay
+advertises it, verifying the certificate against `SMTP_HOST`, and a failed handshake aborts the
+delivery; implicit TLS (port 465) is not supported. With `SMTP_USER` set the relay must offer
+AUTH, and net/smtp's `PlainAuth` refuses to send the credentials over an unencrypted connection
+unless the host is `localhost`/`127.0.0.1`/`::1`. A failed QUIT after the relay accepted DATA is
+not a failure. The recipient and `SMTP_FROM` are parsed with `net/mail.ParseAddress` — exactly
+one address, display name allowed, `mailer.ErrInvalidAddress` otherwise, without echoing the
+value — and the envelope uses the bare address while the headers carry the formatted one; CR/LF
+in the sender is `ErrInvalidHeader` like the recipient and subject; a non-ASCII subject is
+Q-encoded. Body line endings (CRLF, bare LF, bare CR) are normalised to CRLF and dot-stuffing is
+left to the SMTP data writer. Roots, against in-process relays on `127.0.0.1` with injected
+sub-second timeouts (`internal/mailer/smtp_transport_test.go`): `TestSMTPDeadlines`,
+`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`.
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
