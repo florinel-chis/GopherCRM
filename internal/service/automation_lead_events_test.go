@@ -18,8 +18,8 @@ import (
 // AC-3: every committed lead write records its events in automation_events
 // inside the write's own transaction, with no personal data in any column:
 // LeadService.Create and Update, a form submission's create or update, bulk
-// status, assign and convert, and ConvertToCustomer. A rolled-back write and
-// a failed bulk item record nothing.
+// status, and ConvertToCustomer. A rolled-back write and a refused bulk batch
+// record nothing.
 
 func TestAutomationLeadEventsSQLite(t *testing.T) {
 	runAutomationLeadEvents(t, openAutomationSQLite(t))
@@ -132,10 +132,9 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 		assertEventsHoldNoPersonalData(t, db, "ada@example.com", "Lovelace", "Please call me back")
 	})
 
-	t.Run("bulk status, assign and convert", func(t *testing.T) {
-		bulk := NewBulkOperationService(repository.NewBulkOperationRepository(db), repository.NewBulkRepository(db), env.users,
-			env.leads, env.customers, env.tasks, repository.NewTicketRepository(db), env.txManager, logrus.New(),
-			WithBulkAutomationEvents(env.repo))
+	t.Run("bulk status", func(t *testing.T) {
+		bulk := NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
+			env.txManager, logrus.New(), WithBulkAutomationEvents(env.repo))
 		first := env.createLead(env.sales, models.LeadStatusNew)
 		second := env.createLead(env.sales, models.LeadStatusQualified)
 
@@ -158,29 +157,29 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, []string{models.AutomationEventLeadUpdated}, eventTypes(env.eventsOf(models.AutomationEntityLead, second.ID)),
 			"a lead already in the status records lead_updated only")
 
-		// Per-item bulk assign: the missing item fails on its own and records
-		// nothing; the others record lead_updated.
-		response, err := bulk.BulkActionLeads(&models.BulkActionRequest{
-			IDs: []uint{first.ID, 999999}, Action: models.LeadBulkActionTypes.Assign,
-			Parameters: map[string]interface{}{"owner_id": float64(env.other.ID)},
-		}, env.admin.ID)
+		// The same batch again: every lead is already qualified, so each
+		// records lead_updated and no status change.
+		_, err = bulk.BulkSetLeadStatus(env.admin.ID, models.RoleAdmin, []uint{first.ID, second.ID}, models.LeadStatusQualified)
 		require.NoError(t, err)
-		assert.Equal(t, 1, response.SuccessItems)
-		assert.Equal(t, 1, response.FailedItems)
-		assert.Equal(t, env.other.ID, env.lead(first.ID).OwnerID)
 		firstEvents = env.eventsOf(models.AutomationEntityLead, first.ID)
-		assert.Equal(t, models.AutomationEventLeadUpdated, firstEvents[len(firstEvents)-1].EventType)
-		assert.Len(t, firstEvents, 3)
-		assert.Empty(t, env.eventsOf(models.AutomationEntityLead, 999999), "a failed bulk item records nothing")
+		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged, models.AutomationEventLeadUpdated}, eventTypes(firstEvents))
 
-		// Bulk convert moves the status to converted.
-		_, err = bulk.BulkActionLeads(&models.BulkActionRequest{IDs: []uint{second.ID}, Action: models.LeadBulkActionTypes.Convert}, env.admin.ID)
+		// A sales caller that owns neither lead is refused for the whole batch
+		// and nothing is recorded.
+		_, err = bulk.BulkSetLeadStatus(env.other.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusContacted)
+		require.Error(t, err)
+		assert.Len(t, env.eventsOf(models.AutomationEntityLead, first.ID), 3)
+		assert.Len(t, env.eventsOf(models.AutomationEntityLead, second.ID), 2)
+		assert.Equal(t, models.LeadStatusQualified, env.lead(first.ID).Status)
+
+		// Moving to converted records the status change with origin bulk.
+		_, err = bulk.BulkSetLeadStatus(env.admin.ID, models.RoleAdmin, []uint{second.ID}, models.LeadStatusConverted)
 		require.NoError(t, err)
 		secondEvents := env.eventsOf(models.AutomationEntityLead, second.ID)
-		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged}, eventTypes(secondEvents))
-		assert.Equal(t, string(models.LeadStatusQualified), secondEvents[2].FromValue)
-		assert.Equal(t, string(models.LeadStatusConverted), secondEvents[2].ToValue)
-		assert.Equal(t, models.AutomationOriginBulk, secondEvents[2].Origin)
+		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged}, eventTypes(secondEvents))
+		assert.Equal(t, string(models.LeadStatusQualified), secondEvents[3].FromValue)
+		assert.Equal(t, string(models.LeadStatusConverted), secondEvents[3].ToValue)
+		assert.Equal(t, models.AutomationOriginBulk, secondEvents[3].Origin)
 		assertEventsHoldNoPersonalData(t, db, automationCanaryFirstName, automationCanaryLastName, automationCanaryPhone, automationCanaryNotes)
 	})
 

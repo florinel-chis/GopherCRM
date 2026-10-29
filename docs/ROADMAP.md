@@ -58,6 +58,11 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   a fresh file of the previous release, so the chain keeps being exercised.
   Backing up before upgrading (see
   [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
+- **Retire the unused bulk-operation schema** — since the generic bulk subsystem was removed
+  (#112), nothing writes `bulk_operation_items` or the `success_count`/`failure_count` columns
+  of `bulk_operations`; the status endpoints write only the parent row's type, resource, totals
+  and status. Dropping them needs its own decision (existing rows are history), a
+  `migrations/` down/up pair, the matching AutoMigrate change and an SQLite upgrade fixture.
 - **Revisit the SQLite driver pin** — `github.com/glebarez/sqlite` pulls
   `github.com/glebarez/go-sqlite` v1.21.2, whose own `go.mod` pins
   `modernc.org/sqlite` v1.23.1; module resolution here settles on v1.59.0

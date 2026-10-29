@@ -43,17 +43,12 @@ func setupBulkStatusDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func newBulkStatusService(db *gorm.DB) service.BulkOperationService {
+func newBulkStatusService(db *gorm.DB) service.BulkStatusService {
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
-	return service.NewBulkOperationService(
+	return service.NewBulkStatusService(
 		repository.NewBulkOperationRepository(db),
-		repository.NewBulkRepository(db),
-		repository.NewUserRepository(db),
-		repository.NewLeadRepository(db),
-		repository.NewCustomerRepository(db),
-		repository.NewTaskRepository(db),
-		repository.NewTicketRepository(db),
+		repository.NewBulkStatusRepository(db),
 		utils.NewTransactionManager(db),
 		logger,
 	)
@@ -497,31 +492,94 @@ func TestBulkSetTaskStatus_DuplicateIDsCountOnce(t *testing.T) {
 	assert.Equal(t, models.TaskStatusInProgress, taskStatus(t, db, task.ID))
 }
 
-// Every bulk status update is recorded like the other bulk operations, so a
-// rejected batch is visible afterwards as a failed operation.
-func TestBulkSetTaskStatus_RecordsTheOperation(t *testing.T) {
+// bulkOperationsOf reads back the history rows a user's bulk status updates
+// left behind, oldest first.
+func bulkOperationsOf(t *testing.T, db *gorm.DB, userID uint) []models.BulkOperation {
+	t.Helper()
+	var operations []models.BulkOperation
+	require.NoError(t, db.Where("user_id = ?", userID).Order("id ASC").Find(&operations).Error)
+	return operations
+}
+
+// Every bulk status update leaves one bulk_operations row, so a rejected batch
+// is visible afterwards as a failed operation and an accepted one as completed.
+// The row is written outside the batch transaction on purpose: a refusal rolls
+// the records back but keeps its history row.
+func TestBulkSetStatus_RecordsTheOperation(t *testing.T) {
 	db := setupBulkStatusDB(t)
 	svc := newBulkStatusService(db)
 
 	admin := seedStatusUser(t, db, "admin-audit@example.com", models.RoleAdmin)
+	lead := seedStatusLead(t, db, admin.ID, "audit-lead@example.com", models.LeadStatusNew)
+	ticket := seedStatusTicket(t, db, &admin.ID, models.TicketStatusOpen)
+	closedTicket := seedStatusTicket(t, db, &admin.ID, models.TicketStatusClosed)
 	task := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 	completed := seedStatusTask(t, db, admin.ID, models.TaskStatusCompleted)
 
-	_, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, []uint{task.ID}, models.TaskStatusInProgress)
+	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID, lead.ID}, models.LeadStatusContacted)
 	require.NoError(t, err)
-
+	_, err = svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID, 999999}, models.LeadStatusQualified)
+	require.Error(t, err)
+	_, err = svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin, []uint{ticket.ID}, models.TicketStatusResolved)
+	require.NoError(t, err)
+	_, err = svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin, []uint{ticket.ID, closedTicket.ID}, models.TicketStatusOpen)
+	require.Error(t, err)
+	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, []uint{task.ID}, models.TaskStatusInProgress)
+	require.NoError(t, err)
 	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, []uint{completed.ID}, models.TaskStatusPending)
 	require.Error(t, err)
 
-	operations, total, err := svc.GetUserBulkOperations(admin.ID, 0, 10)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), total)
-
-	statuses := map[models.BulkOperationStatus]int{}
-	for _, op := range operations {
-		assert.Equal(t, "tasks", op.ResourceType)
-		statuses[op.Status]++
+	type row struct {
+		resource string
+		status   models.BulkOperationStatus
+		total    int
 	}
-	assert.Equal(t, 1, statuses[models.StatusCompleted])
-	assert.Equal(t, 1, statuses[models.StatusFailed])
+	var got []row
+	for _, op := range bulkOperationsOf(t, db, admin.ID) {
+		assert.Equal(t, models.BulkAction, op.Type)
+		got = append(got, row{op.ResourceType, op.Status, op.TotalItems})
+	}
+	assert.Equal(t, []row{
+		{"leads", models.StatusCompleted, 1}, // duplicates count once
+		{"leads", models.StatusFailed, 2},
+		{"tickets", models.StatusCompleted, 1},
+		{"tickets", models.StatusFailed, 2},
+		{"tasks", models.StatusCompleted, 1},
+		{"tasks", models.StatusFailed, 1},
+	}, got)
+
+	// The refusals rolled the records back.
+	assert.Equal(t, models.LeadStatusContacted, leadStatus(t, db, lead.ID))
+	assert.Equal(t, models.TicketStatusResolved, ticketStatus(t, db, ticket.ID))
+	assert.Equal(t, models.TaskStatusCompleted, taskStatus(t, db, completed.ID))
+}
+
+// A batch refused before it reaches the database — an invalid status, an empty
+// or oversized list, a role that may not update the entity — writes no history
+// row at all, exactly as before the generic bulk subsystem was removed.
+func TestBulkSetStatus_InputRefusalsRecordNothing(t *testing.T) {
+	db := setupBulkStatusDB(t)
+	svc := newBulkStatusService(db)
+
+	admin := seedStatusUser(t, db, "admin-refusal@example.com", models.RoleAdmin)
+	support := seedStatusUser(t, db, "support-refusal@example.com", models.RoleSupport)
+	lead := seedStatusLead(t, db, admin.ID, "refusal-lead@example.com", models.LeadStatusNew)
+
+	tooMany := make([]uint, models.MaxBulkStatusItems+1)
+	for i := range tooMany {
+		tooMany[i] = uint(i + 1)
+	}
+
+	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatus("bogus"))
+	require.Error(t, err)
+	_, err = svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, nil, models.LeadStatusContacted)
+	require.Error(t, err)
+	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, tooMany, models.TaskStatusPending)
+	require.Error(t, err)
+	_, err = svc.BulkSetLeadStatus(support.ID, models.RoleSupport, []uint{lead.ID}, models.LeadStatusContacted)
+	require.Error(t, err)
+
+	assert.Empty(t, bulkOperationsOf(t, db, admin.ID))
+	assert.Empty(t, bulkOperationsOf(t, db, support.ID))
+	assert.Equal(t, models.LeadStatusNew, leadStatus(t, db, lead.ID))
 }
