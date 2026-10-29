@@ -34,6 +34,17 @@ const signedInAs = (role: User['role']) =>
     refreshUser: vi.fn(),
   });
 
+// The button a user presses: the one inside the row that shows this text. It
+// must also be named for that row, so a menu bound to another row's record
+// (for instance through a stale index) fails here.
+const menuButtonOnRow = async (text: string) => {
+  const row = (await screen.findByText(text)).closest('tr');
+  if (!row) throw new Error(`no row for ${text}`);
+  const button = within(row).getByRole('button', { name: /^More actions for / });
+  expect(button).toHaveAccessibleName(`More actions for ${text}`);
+  return button;
+};
+
 // The per-row overflow menu carries the one customer action the row icons do
 // not: opening a ticket for that customer. POST /tickets is admin and support
 // only, and POST /customers admin and sales only, so both affordances follow
@@ -49,8 +60,12 @@ describe('CustomerList row actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    // A sort reverses the rows and a search narrows them, so the tests act on
+    // rows whose position changes.
     vi.mocked(customersApi.getCustomers).mockImplementation(async (filters?: CustomerFilters) => {
-      const data = filters?.sort_by ? [...customers].reverse() : customers;
+      const term = filters?.search?.toLowerCase() ?? '';
+      const matching = customers.filter((c) => c.company_name.toLowerCase().includes(term));
+      const data = filters?.sort_by ? [...matching].reverse() : matching;
       return { data, total: data.length, page: 1, limit: 10, total_pages: 1 };
     });
   });
@@ -65,14 +80,34 @@ describe('CustomerList row actions', () => {
       expect(screen.getAllByRole('row')[1]).toHaveTextContent('Charlie Customers'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions for Bravo Customers' }));
-    const menu = await screen.findByRole('menu', { name: 'More actions for Bravo Customers' });
+    // Alpha moved from the first row to the last.
+    fireEvent.click(await menuButtonOnRow('Alpha Customers'));
+    const menu = await screen.findByRole('menu', { name: 'More actions for Alpha Customers' });
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Create Ticket' }));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/tickets/new?customer_id=2');
+    expect(mockNavigate).toHaveBeenCalledWith('/tickets/new?customer_id=1');
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
     // The menu item must not fall through to the row's own click.
-    expect(mockNavigate).not.toHaveBeenCalledWith('/customers/2');
+    expect(mockNavigate).not.toHaveBeenCalledWith('/customers/1');
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
+  it('opens a ticket for the chosen customer after a search narrowed the table', async () => {
+    signedInAs('support');
+    render(<CustomerList />);
+    await screen.findByText('Alpha Customers');
+
+    fireEvent.change(screen.getByPlaceholderText('Search customers...'), {
+      target: { value: 'Charlie' },
+    });
+    await screen.findByText('Charlie Customers');
+    expect(screen.queryByText('Alpha Customers')).not.toBeInTheDocument();
+
+    fireEvent.click(await menuButtonOnRow('Charlie Customers'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Create Ticket' }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/tickets/new?customer_id=3');
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
   });
 
   it.each(['admin', 'support'] as const)(

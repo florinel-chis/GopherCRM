@@ -799,12 +799,11 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   anti-enumeration). Step 3 restores access, proving the action is reversible.
 - **Known issue:** Since #114 the `UserList` row menu ("More actions for <name>") offers Activate /
   Deactivate per row (see TC-USER-032); before, its single toolbar trigger could never open. The
-  `UserDetail`
-  **Deactivate**/**Activate** button calls `POST /users/:id/deactivate` and `/activate`
-  (`api/endpoints/users.ts:72-80`), which are not registered in `routes.go` at all, so it 404s into
-  the "Failed to deactivate user" snackbar. Per the repository's standing directive those endpoint
-  functions are intended contract awaiting a backend, not dead code. The Edit form's switch is the
-  only working path. FEATURES 7.5 / 12.10 and gap G20 cover the missing coverage.
+  `UserDetail` **Deactivate**/**Activate** button and the row menu call `POST /users/:id/deactivate`
+  and `/activate`, both registered admin-only in `routes.go` (#92) and covered by handler tests
+  (`user_handler_test.go`: TestActivate_*, TestDeactivate_*). So three paths work: the row menu,
+  the detail-page button and the Edit form's switch. What is missing is browser coverage of the
+  cycle (FEATURES 7.5 / 12.10, gap G20).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended) — closes the rest of G20.
 
 ---

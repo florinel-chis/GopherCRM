@@ -58,6 +58,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   a fresh file of the previous release, so the chain keeps being exercised.
   Backing up before upgrading (see
   [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
+- **Customer update cannot clear optional text fields (defect)** — `CustomerHandler.Update`
+  applies `address`, `city`, `state`, `country`, `postal_code`, `notes`, `position` and the
+  name/contact fields only when the value is non-empty, so an empty string means "unchanged". The
+  customer form sends the cleared fields as `""` and the save succeeds, but the old values come
+  back on reload. Only `website` (a pointer) and `company_id` (`0` clears) can be cleared. A fix
+  needs absent-versus-empty semantics in the request (pointers or a field mask), a decision for
+  the required fields, and handler and integration tests. See TC-CUST-012 and TC-CUST-018 in
+  `docs/testing/04-customers.md`.
 - **Retire the unused bulk-operation schema** — since the generic bulk subsystem was removed
   (#112), nothing writes `bulk_operation_items` or the `success_count`/`failure_count` columns
   of `bulk_operations`; the status endpoints write only the parent row's type, resource, totals

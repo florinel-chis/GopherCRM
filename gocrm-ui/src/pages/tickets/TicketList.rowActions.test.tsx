@@ -54,8 +54,12 @@ describe('TicketList row actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    // A sort reverses the rows and a search narrows them, so the tests act on
+    // rows whose position changes.
     vi.mocked(ticketsApi.getTickets).mockImplementation(async (filters?: TicketFilters) => {
-      const data = filters?.sort_by ? [...tickets].reverse() : tickets;
+      const term = filters?.search?.toLowerCase() ?? '';
+      const matching = tickets.filter((t) => t.subject.toLowerCase().includes(term));
+      const data = filters?.sort_by ? [...matching].reverse() : matching;
       return { data, total: data.length, page: 1, limit: 10, total_pages: 1 };
     });
     vi.mocked(ticketsApi.deleteTicket).mockResolvedValue(undefined);
@@ -80,16 +84,33 @@ describe('TicketList row actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Subject' }));
     await waitFor(() => expect(screen.getAllByRole('row')[1]).toHaveTextContent('Charlie ticket'));
 
-    fireEvent.click(within(rowFor('Bravo ticket')).getByTestId('EditIcon'));
-    expect(mockNavigate).toHaveBeenCalledWith('/tickets/12/edit');
-    expect(mockNavigate).not.toHaveBeenCalledWith('/tickets/12');
+    // Alpha moved from the first row to the last.
+    fireEvent.click(within(rowFor('Alpha ticket')).getByTestId('EditIcon'));
+    expect(mockNavigate).toHaveBeenCalledWith('/tickets/11/edit');
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(within(rowFor('Bravo ticket')).getByTestId('DeleteIcon'));
+    fireEvent.click(within(rowFor('Alpha ticket')).getByTestId('DeleteIcon'));
     const dialog = await screen.findByRole('dialog', { name: 'Delete Ticket' });
-    expect(dialog).toHaveTextContent('#12');
+    expect(dialog).toHaveTextContent('#11');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(ticketsApi.deleteTicket).toHaveBeenCalled());
-    expect(vi.mocked(ticketsApi.deleteTicket).mock.calls[0][0]).toBe(12);
+    expect(vi.mocked(ticketsApi.deleteTicket).mock.calls[0][0]).toBe(11);
+  });
+
+  it('edits the chosen ticket after a search narrowed the table', async () => {
+    signedInAs('admin');
+    render(<TicketList />);
+    await screen.findByText('Alpha ticket');
+
+    fireEvent.change(screen.getByPlaceholderText('Search tickets...'), {
+      target: { value: 'Charlie' },
+    });
+    await screen.findByText('Charlie ticket');
+    expect(screen.queryByText('Alpha ticket')).not.toBeInTheDocument();
+
+    fireEvent.click(within(rowFor('Charlie ticket')).getByTestId('EditIcon'));
+    expect(mockNavigate).toHaveBeenCalledWith('/tickets/13/edit');
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
   });
 
   it('keeps sales read-only: view only, no edit or delete icons', async () => {

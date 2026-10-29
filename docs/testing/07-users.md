@@ -540,17 +540,20 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Observe the network request and the snackbar.
   3. Reload the page.
 - **Expected:** The button calls `usersApi.deactivateUser`, which issues `POST
-  /api/v1/users/<id>/deactivate`. **No such route exists** — `internal/handler/routes.go` registers
-  only `POST /users`, `GET /users`, `GET|PUT /users/me`, `GET|PUT /users/:id` and `DELETE
-  /users/:id` — so Gin answers 404 with its plain-text "404 page not found" body (there is no
-  `NoRoute` handler installing the API envelope). The mutation's `onError` fires and an error
-  snackbar reads "Failed to deactivate user". The status chip is unchanged after reload; the same
-  applies to the "Activate" button and `POST /users/<id>/activate`.
-- **Known issue:** The frontend endpoint functions `activateUser` / `deactivateUser`
-  (`gocrm-ui/src/api/endpoints/users.ts`) are intended contract with no backend behind them; per the
-  repository directive they must be implemented, not deleted. Suspension works today only through
-  the `is_active` switch on the edit form (TC-USER-027). FEATURES.md row 7.5, gap G20.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
+  /api/v1/users/<id>/deactivate`. The route is registered admin-only (`routes.go`:
+  `users.POST("/:id/deactivate", RequireRole(admin), handler.Deactivate)`, with its `activate`
+  twin) and answers **200** with the updated user; the snackbar reads "User deactivated
+  successfully" and after the reload the chip is the grey "Inactive". Pressing "Activate" on the
+  same page issues `POST /users/<id>/activate` and restores the green "Active" chip. On the
+  admin's own detail page the API refuses deactivation with **400** "You cannot deactivate your
+  own account".
+- **Known issue:** None in the routing. The two endpoints were added in the 2026-10 build-out
+  (#92); this case previously recorded them as missing. Browser coverage of the cycle is still
+  absent (gap G20).
+- **Automation:** handler level automated — `internal/handler/user_handler_test.go`
+  TestActivate_Success, TestActivate_NotFound, TestDeactivate_Success,
+  TestDeactivate_SelfDeactivationPrevented; the browser case is planned in
+  `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-032 — Activate and deactivate from the list row menu
 - **Priority:** P1

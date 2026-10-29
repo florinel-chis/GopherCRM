@@ -226,17 +226,25 @@ depend on that are flagged.
   2. Look for Industry, Number of Employees, Annual Revenue and an "Active Customer" switch.
   3. Fill every field shown and click "Create Customer"; inspect the `POST /api/v1/customers`
      request body.
-  4. Open the new customer's edit page, clear Website, Street Address, City, State/Province,
-     Country, Postal Code and Notes, save, and reload the edit page.
+  4. Open the new customer's edit page: every saved field is loaded. Clear Website, Street
+     Address, City, State/Province, Country, Postal Code and Notes, save while inspecting the
+     `PUT /api/v1/customers/{id}` request body, and reload the edit page.
 - **Expected:** None of the four controls exists (removed in #118; industry and employee range are
-  on the linked Company, and customers have no activation concept). The request body contains
+  on the linked Company, and customers have no activation concept). The create body contains
   `first_name, last_name, email, phone, company, website, address, city, state, country,
-  postal_code, notes` (and `company_id` when one is linked). After step 4 every cleared field
-  reloads empty.
-- **Known issue:** The backend also owns a `Position` field that the form never exposes. Before
-  #118 the four controls accepted input that every save discarded.
-- **Automation:** automated (Vitest) — `CustomerForm.test.tsx` "CustomerForm retained fields";
-  the browser half is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
+  postal_code, notes` (and `company_id` when one is linked). Step 4 *submission*: the PUT body
+  carries each cleared field as an empty string and the API answers 200. Step 4 *persistence*:
+  after the reload only Website is empty; Street Address, City, State/Province, Country, Postal
+  Code and Notes come back with their previous values, because `CustomerHandler.Update` treats an
+  empty string as "unchanged" for every field except `website` (TC-CUST-018).
+- **Known issue:** Clearing an optional customer field other than Website does not persist — a
+  backend limitation recorded in `docs/ROADMAP.md` ("Customer update cannot clear optional text
+  fields"). The backend also owns a `Position` field that the form never exposes. Before #118 the
+  four controls accepted input that every save discarded.
+- **Automation:** submission half automated (Vitest) — `CustomerForm.test.tsx` "CustomerForm
+  retained fields" asserts the create and update payloads and the edit-form reload from a stored
+  record, with a mocked API; nothing automated asserts persistence. The browser half (including
+  the persistence check) is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-012a — Website persists through both creation paths and can be cleared
 - **Priority:** P1
