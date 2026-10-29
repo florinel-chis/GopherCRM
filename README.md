@@ -759,11 +759,10 @@ expired, or if its owner has been deactivated or erased.
 - `POST /api/v1/notifications/read-all` - Mark every unread notification of the caller read;
   returns `{marked}`
 
-### Not currently exposed
+### Bulk operations
 
-The generic `/bulk/:resource` create/update/delete/action handlers in
-`internal/handler/bulk_handler.go` remain unrouted; only the entity-specific `bulk/status`
-endpoints listed above are reachable over HTTP.
+The only bulk endpoints are the entity-specific `bulk/status` routes listed above. There is no
+generic bulk create, update, delete or action API.
 
 A generated Swagger 2.0 spec is checked in at `api/swagger.json` / `api/swagger.yaml`. It is built
 from swag annotations on the handlers — regenerate it with `make swagger` after changing a handler
@@ -885,7 +884,8 @@ gophercrm/
   reclaimed (after five idle minutes, and only once the bucket has refilled). Limits are not shared
   between replicas, and behind a proxy they depend on `TRUSTED_PROXIES`. See
   [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
-- **Bulk endpoints are unrouted** (see *Not currently exposed* above).
+- **Bulk operations are status-only.** Only `POST /leads|tickets|tasks/bulk/status` exist (see
+  *Bulk operations* above); there is no bulk create, update or delete.
 - **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and
   search fields; shared helpers omit argument/result/response payloads, and HTTP logs omit query
   strings. Quoted values in logged errors are redacted, and SMTP errors retain only the protocol
