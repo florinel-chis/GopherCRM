@@ -187,13 +187,15 @@ run-dependent captures. To regenerate only these images, on free ports against t
 ![Automation rules list](screenshots/automation/01-rules-list.png)
 The admin-only rule list at `/automation/rules`: name, entity, a readable trigger summary, the
 Enabled switch (switching a rule off asks for confirmation, because it cancels the rule's active
-runs), version, last update, and the Dry run and Delete rule tools. A row click opens the editor.
+runs), version, last update, and the Edit, Dry run and Delete rule tools. A row click opens the
+editor too.
 
 ![Rule form](screenshots/automation/02-rule-form.png)
 The editor of the deal rule at `/automation/rules/{id}/edit`: name, description, entity type,
 trigger with its from/to stage, and three step cards (wait, condition, send email) with move up,
-move down and remove controls and the placeholders each text field accepts. The Dry run button
-simulates the saved version; saving creates a new version after a confirmation.
+move down and remove controls and the placeholders each text field accepts. The condition's value
+is free text that suggests the known stages and is stored verbatim (here `proposal`). The Dry run
+button simulates the saved version; saving creates a new version after a confirmation.
 
 ![Dry-run dialog](screenshots/automation/03-dry-run-dialog.png)
 The dry run of "New lead follow-up" on a seeded lead, opened from the rule list: the notice that
@@ -203,7 +205,7 @@ and lead).
 
 ![Automation runs list](screenshots/automation/04-runs-list.png)
 The run list at `/automation/runs` with the status, rule, rule ID, entity and record ID filters,
-over the two runs waiting on their two-day wait. Admins see every run, sales only runs on records
+over the two runs waiting on their two-day wait; each run number links to its detail. Admins see every run, sales only runs on records
 it owns.
 
 ![Run detail](screenshots/automation/05-run-detail.png)

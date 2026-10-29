@@ -112,9 +112,10 @@ test.describe('Admin - Automation rules', () => {
     await page.getByRole('option', { name: 'Status' }).click();
     await step1.getByRole('combobox', { name: 'Operator' }).click();
     await page.getByRole('option', { name: 'equals', exact: true }).click();
+    // The value is free text with the known statuses offered as suggestions.
     await step1.getByRole('combobox', { name: 'Value' }).click();
-    await page.getByRole('option', { name: 'New', exact: true }).click();
-    await expect(step1.getByRole('combobox', { name: 'Value' })).toHaveText('New');
+    await page.getByRole('option', { name: 'new', exact: true }).click();
+    await expect(step1.getByRole('combobox', { name: 'Value' })).toHaveValue('new');
     await expect(step1.getByRole('combobox', { name: 'If false' })).toHaveText('Stop the run');
 
     // 4. Step 2: notify the record owner.

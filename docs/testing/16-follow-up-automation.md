@@ -510,7 +510,7 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Steps:** Open `/automation/rules`; sort and page; flip a switch on and off; open the route as
   sales.
 - **Expected:** Rows from the server (name, entity type, trigger summary, switch, version,
-  updated time) with Dry run and Delete rule tools; sorting is server-side on the allowlisted
+  updated time) with Edit, Dry run and Delete rule tools; sorting is server-side on the allowlisted
   columns; switching on calls `POST /automation/rules/{id}/enable` straight away, switching off
   asks for confirmation (it cancels the rule's active runs) and then calls `disable`, and the list
   refreshes; delete asks first; sales is redirected to `/unauthorized`.

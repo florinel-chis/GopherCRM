@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Follow-up automation and notifications (UI).** The screens for the automation API:
   `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
-  cancels the rule's active runs), a Dry run tool and delete; `/automation/rules/new` and
+  cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and
   `/automation/rules/{id}/edit` build the trigger and up to 20 steps with a sub-form per step
-  type, forward-only jumps, placeholder help and the API's limits checked client-side, and an edit
+  type, forward-only jumps, placeholder help, status and stage condition values as free text with
+  the known values suggested (kept verbatim, as the API compares plain strings), the API's limits
+  checked client-side, and an edit
   asks for confirmation before it creates a new version; the dry-run dialog simulates the saved
   rule on a chosen lead or deal and shows each step's outcome, simulated time and details.
   `/automation/runs` (admin and sales; sales sees runs on records it owns) filters by status,
@@ -21,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cancel run. Lead and deal detail pages gain an Automation section with the record's runs. Staff
   users get a notification bell in the app bar (unread count polled every 60 s and on window
   focus, the latest ten in its menu, mark read, mark all read) and a `/notifications` page with an
-  unread filter; customers see neither. The e2e spec `automation-rules.spec.ts` builds a rule in
+  unread filter; customers see neither. Failed loads show the server message with a retry. The e2e
+  spec `automation-rules.spec.ts` builds a rule in
   the form and dry-runs it; eight captures are in `docs/screenshots/automation/`.
 
 - **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
