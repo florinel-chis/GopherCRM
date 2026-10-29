@@ -305,6 +305,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes on the queue's temporary branch, on top of the current `main`, before a pull request
   merges. Production deploys still follow only CI runs of pushes to `main`.
 
+- **Bulk status service narrowed (internal, no API change).** `POST /leads|tickets|tasks/bulk/status`
+  now run on a `BulkStatusService` holding only the three status operations, over a
+  `BulkStatusRepository` (the read and write halves of a status change) and a
+  `BulkOperationRepository` reduced to the history-row create and outcome update. Responses,
+  authorization, all-or-nothing transactions, `error.details`, the `bulk_operations` history
+  rows and the lead automation events are unchanged; new SQLite/MySQL regression roots pin the
+  rollback, history and event behaviour (#112).
+
+### Removed
+
+- **The unused generic bulk subsystem (#112).** Nothing routed it since the generic
+  `/bulk/:resource` handlers were dropped: the `ProcessBulk*` dispatchers, the
+  `BulkCreate*`/`BulkUpdate*`/`BulkDelete*`/`BulkAction*` service methods for users, leads,
+  customers, tasks and tickets, the matching repository mutations (including the batch-erasure
+  wrapper and its per-item savepoint helpers, which only that path used), the bulk-operation read
+  methods, their mocks and tests, and the request/response DTOs. Single-record erasure is
+  untouched. No table or column is dropped: `bulk_operations` keeps receiving one row per status
+  update, and `bulk_operation_items` stays in the schema although nothing writes it any more
+  (retirement is a separate roadmap item).
+
 ### Fixed
 
 - **An automation rule update no longer undoes a concurrent disable.** `PUT

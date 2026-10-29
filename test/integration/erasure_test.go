@@ -829,3 +829,63 @@ func TestSuccessiveCustomerErasuresProduceDistinctPlaceholders(t *testing.T) {
 	}
 	assert.Len(t, placeholders, 5)
 }
+
+// Tasks and tickets describe work, not people: a title, a description and
+// foreign keys to the user, lead or customer involved, each of which is erased
+// through its own row. Anonymising a task would destroy business history for no
+// privacy gain, so deleting one stays a plain soft delete — and deleting a
+// ticket never reaches into the customer it points at.
+func TestTaskAndTicketDeletesRemainPlainSoftDeletes(t *testing.T) {
+	db := setupLeadErasureDB(t)
+
+	owner := seedLeadOwner(t, db)
+	customer := seedCustomer(t, db, "ticket-customer@example.com")
+
+	task := &models.Task{
+		Title:        "Prepare the quarterly report",
+		Description:  "Numbers for the board pack",
+		Status:       models.TaskStatusPending,
+		Priority:     models.TaskPriorityHigh,
+		AssignedToID: owner.ID,
+		CustomerID:   &customer.ID,
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	ticket := &models.Ticket{
+		Title:       "Invoice PDF will not download",
+		Description: "Reported over the phone",
+		Status:      models.TicketStatusOpen,
+		Priority:    models.TicketPriorityMedium,
+		CustomerID:  customer.ID,
+	}
+	require.NoError(t, db.Create(ticket).Error)
+
+	require.NoError(t, repository.NewTaskRepository(db).Delete(task.ID))
+	require.NoError(t, repository.NewTicketRepository(db).Delete(ticket.ID))
+
+	var deletedTask models.Task
+	require.NoError(t, db.Unscoped().First(&deletedTask, task.ID).Error)
+	assert.True(t, deletedTask.DeletedAt.Valid)
+	assert.Equal(t, "Prepare the quarterly report", deletedTask.Title,
+		"a task holds no personal data and must not be anonymised")
+	assert.Equal(t, "Numbers for the board pack", deletedTask.Description)
+	assert.Equal(t, owner.ID, deletedTask.AssignedToID)
+	require.NotNil(t, deletedTask.CustomerID)
+	assert.Equal(t, customer.ID, *deletedTask.CustomerID)
+
+	var deletedTicket models.Ticket
+	require.NoError(t, db.Unscoped().First(&deletedTicket, ticket.ID).Error)
+	assert.True(t, deletedTicket.DeletedAt.Valid)
+	assert.Equal(t, "Invoice PDF will not download", deletedTicket.Title)
+	assert.Equal(t, "Reported over the phone", deletedTicket.Description)
+	assert.Equal(t, customer.ID, deletedTicket.CustomerID)
+
+	// The customer both point at is untouched — people are erased through
+	// their own rows, never through the work that mentions them.
+	var survivor models.Customer
+	require.NoError(t, db.First(&survivor, customer.ID).Error)
+	assert.False(t, survivor.DeletedAt.Valid)
+	assert.Equal(t, "ticket-customer@example.com", survivor.Email)
+	assert.Equal(t, "Erasure", survivor.FirstName)
+	assert.Equal(t, "Prefers to be called on the mobile number above.", survivor.Notes)
+}
