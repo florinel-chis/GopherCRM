@@ -67,9 +67,8 @@ func assertConvertedRefusal(t *testing.T, err error) {
 func runConvertedStatusScenarios(t *testing.T, db *gorm.DB) {
 	root := newLeadConversionEnv(t, db)
 	require.NoError(t, db.AutoMigrate(&models.BulkOperation{}, &models.BulkOperationItem{}, &models.Task{}, &models.Ticket{}))
-	bulk := NewBulkOperationService(repository.NewBulkOperationRepository(db), repository.NewBulkRepository(db),
-		repository.NewUserRepository(db), root.leads, repository.NewCustomerRepository(db), repository.NewTaskRepository(db),
-		repository.NewTicketRepository(db), utils.NewTransactionManager(db), logrus.New())
+	bulk := NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
+		utils.NewTransactionManager(db), logrus.New())
 
 	t.Run("an update cannot set converted", func(t *testing.T) {
 		env := root.bind(t)
