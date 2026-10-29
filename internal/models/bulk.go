@@ -1,6 +1,10 @@
 package models
 
-// BulkOperationStatus represents the status of a bulk operation
+// BulkOperationStatus represents the status of a bulk operation.
+//
+// The bulk status endpoints write only pending, completed and failed.
+// processing and partial are kept because rows written by the removed generic
+// bulk subsystem may still hold them.
 type BulkOperationStatus string
 
 const (
@@ -11,7 +15,7 @@ const (
 	BulkOperationStatusPartial    BulkOperationStatus = "partial"
 )
 
-// Short aliases for BulkOperationStatus used by services
+// Short aliases for BulkOperationStatus
 var (
 	StatusPending    = BulkOperationStatusPending
 	StatusProcessing = BulkOperationStatusProcessing
@@ -20,7 +24,11 @@ var (
 	StatusPartial    = BulkOperationStatusPartial
 )
 
-// BulkOperationType represents the type of bulk operation
+// BulkOperationType represents the type of bulk operation.
+//
+// Only BulkOperationTypeAction is written now (every bulk status update is an
+// action). create, update and delete name the values that rows written by the
+// removed generic bulk subsystem may still hold.
 type BulkOperationType string
 
 const (
@@ -30,13 +38,8 @@ const (
 	BulkOperationTypeAction BulkOperationType = "action"
 )
 
-// Short aliases for BulkOperationType used by services
-var (
-	BulkCreate = BulkOperationTypeCreate
-	BulkUpdate = BulkOperationTypeUpdate
-	BulkDelete = BulkOperationTypeDelete
-	BulkAction = BulkOperationTypeAction
-)
+// BulkAction is the short name of the one operation type still written.
+var BulkAction = BulkOperationTypeAction
 
 // MaxBulkStatusItems is the maximum number of records a single bulk status
 // update may touch. A status update is all-or-nothing, so every listed row is

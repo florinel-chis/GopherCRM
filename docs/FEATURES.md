@@ -264,7 +264,7 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 | 5.1 | **View Tickets List** | Table with subject, status, priority, customer, assignee. Admin and sales see every ticket; support sees only tickets assigned to it, with rows and totals scoped in the query before pagination | `admin-tickets.spec.ts`: admin can view tickets list page | `ticket_handler_test.go`: TestList_Success, TestList_CustomerRole_Forbidden, TestList_Support_ScopedToAssignee | `TicketList.test.tsx`: 19 tests | `ticket_test.go`: TestTicketLifecycle; `internal/integration/ticket_visibility_integration_test.go`: TestTicketListVisibility{SQLite,MySQL}, TestTicketPolicyConsistency{SQLite,MySQL} | **covered** | -- |
 | 5.2 | **Create Ticket** | Form with subject, description, priority, customer, assignee | `admin-tickets.spec.ts`: create ticket, validation errors, long description | `ticket_handler_test.go`: TestCreate_Success, TestCreate_ValidationError, TestCreate_CustomerRole_Forbidden; `ticket_service_test.go`: 4 create tests | `TicketForm.test.tsx`: 18 tests | `ticket_test.go`: TestTicketLifecycle, TestTicketValidation | **covered** | Only **admin and support** may create tickets (`ticket_handler.go:52`); sales cannot |
 | 5.3 | **Edit Ticket** | Update ticket fields including status transitions | `admin-tickets.spec.ts`: edit ticket, update status, update priority | `ticket_handler_test.go`: TestUpdate_Success_Admin, TestUpdate_Support_NotAssigned_Forbidden, TestUpdate_Support_Assigned_Success | `TicketForm.test.tsx`: edit mode, change agent, unassign | `ticket_test.go`: TestTicketStatusTransitions | **covered** | -- |
-| 5.4 | **Delete Ticket** | Admin-only deletion. Ordinary soft delete — tickets hold no personal data of their own | `admin-tickets.spec.ts`: delete a ticket | `ticket_handler_test.go`: TestDelete_Success_Admin, TestDelete_NonAdmin_Forbidden, TestDelete_ServiceError | `TicketList.test.tsx`: handles deletion, cancel deletion | -- | **covered** | -- |
+| 5.4 | **Delete Ticket** | Admin-only deletion. Ordinary soft delete — tickets hold no personal data of their own | `admin-tickets.spec.ts`: delete a ticket | `ticket_handler_test.go`: TestDelete_Success_Admin, TestDelete_NonAdmin_Forbidden, TestDelete_ServiceError | `TicketList.test.tsx`: handles deletion, cancel deletion | `erasure_test.go`: TestTaskAndTicketDeletesRemainPlainSoftDeletes | **covered** | -- |
 | 5.5 | **Filter by Status/Priority** | Dropdown filters for status and priority | `admin-tickets.spec.ts`: filter by status, filter by priority | -- | `TicketList.test.tsx`: filters by status, by priority, clears filters, combines filters | -- | **partial** | Confirmed: `ticket_handler.go` reads only `page`, `limit`, `search`, `sort_by`, `sort_order`. Filtering is client-side over the current page |
 | 5.6 | **Search Tickets** | Search across title, description, resolution | `admin-tickets.spec.ts`: search tickets | `ticket_handler_test.go`: TestList_SearchByTitle, TestList_SearchWithSort | `TicketList.test.tsx`: filters by search term | -- | **covered** | -- |
 | 5.7 | **Sort Tickets** | Click column headers to sort | -- | `ticket_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
@@ -280,7 +280,7 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 | 6.1 | **View Tasks List** | Table with title, status, priority, assignee, due date | `admin-tasks.spec.ts`: admin can view tasks list page | `task_handler_test.go`: TestListTasks_Success, TestListTasks_NonAdminGetsOwnTasks | -- | `internal/integration/task_integration_test.go`: TestTaskLifecycle | **partial** | No frontend unit test for `TaskList` |
 | 6.2 | **Create Task** | Form with title, description, priority, due date, assignee, related lead/customer | `admin-tasks.spec.ts`: create task, minimal data, different priorities | `task_handler_test.go`: TestCreateTask_Success, _NonAdminAssignToOther_Forbidden, _ValidationError, _ServiceError; `task_service_test.go`: 8 create tests | -- | `internal/integration/task_integration_test.go`: TestTaskCreationPermissions, TestTaskValidation | **partial** | No frontend unit test for `TaskForm` |
 | 6.3 | **Edit Task** | Update task fields; mark as complete. Only admins may reassign | `admin-tasks.spec.ts`: edit task, track task progress through status changes | `task_handler_test.go`: TestUpdateTask_Success, _NonAdminReassign_Forbidden, _NonAdminSameAssignee_Success, _NonAdminDifferentAssignee_Forbidden, _AdminReassign_Success, _NonAdminAccessOthersTask_Forbidden | -- | `internal/integration/task_integration_test.go`: TestTaskLifecycle, TestTaskBusinessRules | **covered** | Editing used to 403 for non-admins when the request merely echoed the current assignee; `TestUpdateTask_NonAdminSameAssignee_Success` is the regression test |
-| 6.4 | **Delete Task** | Admin-only deletion. Ordinary soft delete | `admin-tasks.spec.ts`: delete a task | `task_handler_test.go`: TestDeleteTask_Success, TestDeleteTask_NonAdminForbidden | -- | -- | **covered** | -- |
+| 6.4 | **Delete Task** | Admin-only deletion. Ordinary soft delete | `admin-tasks.spec.ts`: delete a task | `task_handler_test.go`: TestDeleteTask_Success, TestDeleteTask_NonAdminForbidden | -- | `erasure_test.go`: TestTaskAndTicketDeletesRemainPlainSoftDeletes | **covered** | -- |
 | 6.5 | **Filter by Status/Priority** | Dropdown filters | `admin-tasks.spec.ts`: filter by status, filter by priority | -- | -- | -- | **partial** | Confirmed: `task_handler.go` reads only `search`, `sort_by`, `sort_order` (plus pagination). Filtering is client-side |
 | 6.6 | **Search Tasks** | Search across title, description | `admin-tasks.spec.ts`: search tasks | `task_handler_test.go`: TestListTasks_SearchByTitle, TestListTasks_SearchWithSort | -- | -- | **covered** | -- |
 | 6.7 | **Sort Tasks** | Click column headers to sort | -- | `task_handler_test.go`: TestListTasks_SortByCreatedAtDesc, TestListTasks_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
@@ -345,7 +345,9 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 The only bulk operations are the status updates `POST /leads|tickets|tasks/bulk/status` (max 100
 ids, all-or-nothing, per-item authorization, offending ids in `error.details`, one
-`bulk_operations` history row per call, lead automation events in the same transaction). The
+`bulk_operations` history row per call that passes the initial checks, lead automation events in
+the same transaction). An invalid status, an empty or oversized list or a role refused outright
+records no history row. The
 generic create/update/delete/action subsystem, which no route ever reached, was removed in #112.
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
@@ -555,7 +557,7 @@ test --list` reports 100.
 
 | File | Tests | Scope |
 |------|-------|-------|
-| `test/integration/erasure_test.go` | 27 | Erasure (users, customers) |
+| `test/integration/erasure_test.go` | 28 | Erasure (users, customers); task and ticket deletes stay plain soft deletes |
 | `test/integration/lead_erasure_test.go` | 14 | Erasure (leads, conversion cascade) |
 | `test/integration/erasure_atomicity_test.go` | 6 | Erasure atomicity and rollback |
 | `test/integration/erasure_pii_sweep_test.go` | 9 | Cross-table PII sweep (quote tables included) |

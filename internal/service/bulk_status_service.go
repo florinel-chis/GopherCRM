@@ -28,9 +28,10 @@ import (
 // admin only tasks assigned to them, a completed task's status is fixed and a
 // closed ticket cannot be reopened.
 
-// bulkStatusError codes the failure kinds these operations can report. The
-// sentinel is the cause, so callers classify with errors.Is; the code fixes the
-// HTTP status and the details carry the offending IDs.
+// bulkStatusForbidden, bulkStatusNotFound and bulkStatusInvalidInput build the
+// errors these operations report. The sentinel is the cause, so callers
+// classify with errors.Is; the code fixes the HTTP status and the details carry
+// the offending IDs.
 func bulkStatusForbidden(message string, ids []uint) error {
 	err := apperrors.Wrap(apperrors.ErrForbidden, apperrors.CodeInsufficientPermissions, message)
 	if len(ids) > 0 {

@@ -385,7 +385,7 @@ func TestUserErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		Priority: models.TaskPriorityMedium, AssignedToID: user.ID,
 	}).Error)
 	require.NoError(t, db.Create(&models.BulkOperation{
-		UserID: user.ID, ResourceType: "customers", Type: models.BulkDelete,
+		UserID: user.ID, ResourceType: "customers", Type: models.BulkOperationTypeDelete,
 		Status: models.StatusCompleted, TotalItems: 1,
 	}).Error)
 	thirdParty := newErasureSubject("thirdparty")

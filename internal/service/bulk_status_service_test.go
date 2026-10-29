@@ -86,6 +86,33 @@ func (r faultyOperationRepo) UpdateStatus(id uint, status models.BulkOperationSt
 	return r.BulkOperationRepository.UpdateStatus(id, status)
 }
 
+// eventFaultRepo lets the first `allow` automation events through the
+// transaction-bound repository and fails every one after that, so a batch
+// fails only once some of its events are already written inside the
+// transaction.
+type eventFaultRepo struct {
+	repository.AutomationRepository
+	allow    int
+	recorded *int
+}
+
+var errEventWriteFault = errors.New("injected event write fault")
+
+func (r eventFaultRepo) WithTx(tx *gorm.DB) repository.AutomationRepository {
+	return eventFaultRepo{AutomationRepository: r.AutomationRepository.WithTx(tx), allow: r.allow, recorded: r.recorded}
+}
+
+func (r eventFaultRepo) RecordEvent(event *models.AutomationEvent) error {
+	if *r.recorded >= r.allow {
+		return errEventWriteFault
+	}
+	if err := r.AutomationRepository.RecordEvent(event); err != nil {
+		return err
+	}
+	*r.recorded++
+	return nil
+}
+
 func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 	quiet := logrus.New()
 	quiet.SetLevel(logrus.PanicLevel)
@@ -140,7 +167,9 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		assert.Equal(t, models.LeadStatusNew, lead.Status)
 		assert.Equal(t, models.TicketStatusOpen, ticket.Status)
 		assert.Equal(t, models.TaskStatusPending, task.Status)
-		assert.Empty(t, f.env.eventsOf(models.AutomationEntityLead, f.lead.ID), "a rolled-back batch records no event")
+		// The lead write fails before any event is recorded; event rollback
+		// after a written event is pinned by the next subtest.
+		assert.Empty(t, f.env.eventsOf(models.AutomationEntityLead, f.lead.ID))
 
 		rows := operations(t, db)
 		require.Len(t, rows, 3, "the history row survives the rollback")
@@ -151,6 +180,36 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 			assert.Equal(t, f.env.admin.ID, rows[i].UserID)
 			assert.Equal(t, 1, rows[i].TotalItems)
 		}
+	})
+
+	t.Run("an event write that fails after earlier events rolls back statuses and events", func(t *testing.T) {
+		f := setup(t)
+		db := f.env.db
+		second := f.env.createLead(f.env.sales, models.LeadStatusContacted)
+		recorded := 0
+		// The first lead records lead_updated and lead_status_changed; the
+		// second lead's first event fails.
+		events := eventFaultRepo{AutomationRepository: f.env.repo, allow: 2, recorded: &recorded}
+		svc := NewBulkStatusService(repository.NewBulkOperationRepository(db),
+			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(events))
+
+		_, err := svc.BulkSetLeadStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID, second.ID}, models.LeadStatusQualified)
+		require.ErrorIs(t, err, errEventWriteFault)
+		require.Equal(t, 2, recorded, "the fault must come after events were written inside the transaction")
+
+		var first, other models.Lead
+		reload(t, db, &first, f.lead.ID)
+		reload(t, db, &other, second.ID)
+		assert.Equal(t, models.LeadStatusNew, first.Status, "the status write rolled back")
+		assert.Equal(t, models.LeadStatusContacted, other.Status)
+		assert.Empty(t, f.env.eventsOf(models.AutomationEntityLead, f.lead.ID), "the events written before the fault rolled back")
+		assert.Empty(t, f.env.eventsOf(models.AutomationEntityLead, second.ID))
+		assert.Empty(t, f.env.events())
+
+		rows := operations(t, db)
+		require.Len(t, rows, 1)
+		assert.Equal(t, models.StatusFailed, rows[0].Status)
+		assert.Equal(t, 2, rows[0].TotalItems)
 	})
 
 	t.Run("a successful batch commits records, events and a completed history row", func(t *testing.T) {

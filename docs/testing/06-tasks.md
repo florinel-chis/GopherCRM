@@ -364,7 +364,7 @@ regression anchors, not endorsements.
 - **Preconditions:** Admin logged in; a task created and then deleted by this test (TC-TASK-025), with its id captured from the create response.
 - **Steps:**
   1. Navigate directly to `/tasks/{deleted id}`.
-- **Expected:** `GET /api/v1/tasks/{id}` returns **404** ("Task not found"). The page renders the `Loading` spinner indefinitely, because `TaskDetail` returns `<Loading/>` whenever `task` is falsy and never handles the error branch (`TaskDetail.tsx:118-120`). No error message and no redirect. Unlike users, customers and leads, no personal data is overwritten — the row keeps its title and description behind `deleted_at` (FEATURES.md row 6.4; `bulk_erasure_test.go` `TestBulkDeleteTasksAndTicketsRemainPlainSoftDeletes`).
+- **Expected:** `GET /api/v1/tasks/{id}` returns **404** ("Task not found"). The page renders the `Loading` spinner indefinitely, because `TaskDetail` returns `<Loading/>` whenever `task` is falsy and never handles the error branch (`TaskDetail.tsx:118-120`). No error message and no redirect. Unlike users, customers and leads, no personal data is overwritten — the row keeps its title and description behind `deleted_at` (FEATURES.md row 6.4; `test/integration/erasure_test.go` `TestTaskAndTicketDeletesRemainPlainSoftDeletes`).
 - **Known issue:** A 404 on the detail route is indistinguishable from a slow load.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
