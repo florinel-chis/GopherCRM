@@ -294,7 +294,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of `LOWER(domain)`, which no index could serve on SQLite or MySQL. MySQL/MariaDB
   upgrades run `migrations/20261029140000_add_lead_company_lookup_indexes` (idempotent after an
   AutoMigrate start, lower-cases any domain written outside the application; rollback drops the
-  four indexes); SQLite gets the same indexes from AutoMigrate. Query plans before and after are
+  four indexes); SQLite gets the same indexes from AutoMigrate, and application startup
+  (`models.MigrateDatabase`) lower-cases such domains on every driver, so SQLite installs, which
+  never run the SQL migration, keep catching a mixed-case duplicate. Query plans before and after are
   recorded in `docs/datamodel.md`.
 
 - **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite

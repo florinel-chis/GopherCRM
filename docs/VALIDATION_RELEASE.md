@@ -241,20 +241,24 @@ merge group and main push, and supports a manual trigger for diagnosis. The exis
 Backend job depends on both database jobs succeeding, so migration failures block that check
 without requiring new branch-protection names. The reusable call checks out the same revision
 as the rest of CI, including releases. Its two jobs use disposable MySQL 8
-and MariaDB 10.11 services. They run only the migration and SQLite upgrade regressions:
+and MariaDB 10.11 services. They run only the migration, SQLite upgrade and repository SQL regressions:
 fresh SQL up/down, a populated prior schema, AutoMigrate-first upgrades, website-column
 rollback/reapply, the lead/company lookup-index migration (fresh, populated, AutoMigrate-first,
 rollback/reapply and index parity with AutoMigrate), the SQLite query-plan check for those
-indexes, and the existing populated/half-applied SQLite fixtures. This adds no
+indexes, the startup company-domain normalisation on SQLite and the service engine, the
+pagination total-order roots on SQLite and the service engine, and the existing
+populated/half-applied SQLite fixtures. This adds no
 feature-browser run. Tests create uniquely named schemas in the service and temporary
 SQLite files; never run these commands against an application database.
 
 The shared `scripts/release/check-sql-tests.py --migrations-only` checker requires all
-nine named roots and successful package completion. Missing, duplicate, failed or
+thirteen named roots and successful package completion. Missing, duplicate, failed or
 skipped evidence fails, including skipped descendants under a passing parent. Thus a
 test suite that skips because no SQL server is reachable cannot turn the migration job
 green. The default release mode continues to require real SQL integration coverage and
-also explicitly requires the populated website and lookup-index migration roots.
+also explicitly requires the populated website and lookup-index migration roots. The release
+workflow needs no repository roots of its own: it calls the CI workflow, whose Database
+migrations jobs run and check the thirteen roots on both engines for the release commit.
 
 Changes confined to this workflow and the SQL evidence checker/tests select the bounded
 `migration` profile. Local validation runs hygiene (including checker failure-path tests),

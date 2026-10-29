@@ -126,8 +126,10 @@ the ones GORM AutoMigrate derives from the model tags, and the MySQL/MariaDB mig
 None is unique: the same email may legitimately belong to several leads, and a soft-deleted
 company keeps its domain while a live company may reuse it. The domain check compares the
 column with plain equality against the lower-cased argument; the stored domain is always lower
-case (the service normalises it, and the migration lower-cases any row written outside the
-application). The previous `LOWER(domain) = LOWER(?)` predicate cannot use a plain index on
+case (the service normalises it, and both the SQL migration and `models.MigrateDatabase`, on
+every start and every driver, lower-case any row written outside the application). Lower-casing
+cannot create a live duplicate the application did not already treat as one, because its check
+was case-insensitive before the change as well. The previous `LOWER(domain) = LOWER(?)` predicate cannot use a plain index on
 SQLite or on MySQL/MariaDB, and the functional indexes that could serve it are not portable
 (MariaDB 10.11 has none).
 
@@ -146,9 +148,19 @@ external ids) and 5,000 companies, the tables analysed, on SQLite (glebarez driv
 With the index in place, `LOWER(domain) = LOWER(?)` still produced `SCAN companies` on SQLite and
 a primary-key range over ~2,550 rows on MySQL, which is why the predicate changed. The email
 lookup keeps a sort step because `created_at` lives in the shared base model and cannot join a
-composite tag; the index narrows the sort to the few rows that share one address. Migration cost:
-one table scan per index; MySQL 8 and MariaDB 10.11 build secondary indexes in place without
-blocking reads or writes, and SQLite builds them during the startup AutoMigrate.
+composite tag; the index narrows the sort to the few rows that share one address.
+
+Migration cost. Each index costs one scan of its table. MySQL 8 and MariaDB 10.11 build a
+secondary index as in-place online DDL: reads and writes continue during the build, but the
+statement takes a brief exclusive metadata lock at its start and end. A long-running transaction
+that touched the table delays that lock, and statements arriving behind the waiting DDL queue
+until it is granted, so run the upgrade when no long transaction or report is open on `leads` or
+`companies`. The domain normalisation `UPDATE` before the index builds is a separate, ordinary
+write: it scans `companies` once and row-locks only the rows whose domain is not already lower
+case (none when every row came through the application). `models.MigrateDatabase` repeats the
+same normalisation on every start on every driver, which is how SQLite installs get it; on a
+normalised table it is a scan with no writes. SQLite builds the indexes during the startup
+AutoMigrate, holding the database write lock while it does.
 
 ## Deal Model
 

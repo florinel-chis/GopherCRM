@@ -20,8 +20,13 @@ def check(output, root, *, migrations_only=False):
             'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
             'TestCustomerWebsiteUpgradeFromSQLiteFixture',
         ))
-        required.add(('github.com/florinel-chis/gophercrm/internal/repository',
-                      'TestLookupIndexesServeLookupsSQLite'))
+        required.update(('github.com/florinel-chis/gophercrm/internal/repository', name) for name in (
+            'TestLookupIndexesServeLookupsSQLite',
+            'TestPaginationDeterminismSQLite',
+            'TestPaginationDeterminismMySQL',
+            'TestCompanyDomainNormalizationSQLite',
+            'TestCompanyDomainNormalizationMySQL',
+        ))
     else:
         for path in (root / 'internal/integration').glob('*_test.go'):
             required.update(('github.com/florinel-chis/gophercrm/internal/integration', name)

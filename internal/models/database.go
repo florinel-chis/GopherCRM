@@ -49,44 +49,81 @@ func CloseDatabase() error {
 // with enforcement off; on MySQL and MariaDB it is a plain AutoMigrate.
 func MigrateDatabase() error {
 	return database.Migrate(DB, func(tx *gorm.DB) error {
-		return tx.AutoMigrate(
-			&User{},
-			&Company{},
-			&Lead{},
-			&Customer{},
-			&Deal{},
-			&DealStageChange{},
-			// Product and Quote before QuoteLine: the line references both.
-			&Product{},
-			&Quote{},
-			&QuoteLine{},
-			&QuoteStatusChange{},
-			&Ticket{},
-			&TicketComment{},
-			&Label{},
-			&Task{},
-			&APIKey{},
-			&Configuration{},
-			&RefreshToken{},
-			&PasswordResetToken{},
-			&BulkOperation{},
-			&BulkOperationItem{},
-			&AEOProfile{},
-			&AEOPrompt{},
-			&AEORun{},
-			&AEOAnswer{},
-			&AEOCitation{},
-			&Form{},
-			&FormSubmission{},
-			&FormConfirmationToken{},
-			// Follow-up automation: rules before steps and runs (both reference
-			// the rule), runs before run steps, notifications last.
-			&AutomationRule{},
-			&AutomationStep{},
-			&AutomationEvent{},
-			&AutomationRun{},
-			&AutomationRunStep{},
-			&Notification{},
-		)
+		if err := autoMigrateModels(tx); err != nil {
+			return err
+		}
+		return normalizeCompanyDomains(tx)
 	})
+}
+
+// normalizeCompanyDomains lower-cases every stored company domain, soft-deleted
+// rows included. The duplicate-domain check (companyRepository.ExistsByDomain)
+// compares the column with plain equality so that idx_companies_domain can
+// serve it, which is only correct while every stored domain is lower case.
+// The application has always written it lower-cased (NormalizeCompanyDomain);
+// this step covers rows written another way, on every driver, because SQLite
+// installs never run the SQL migration that does the same on MySQL/MariaDB.
+//
+// It runs on every start and is idempotent: only rows whose bytes differ from
+// their lower-case form are written, so a normalised table costs one scan and
+// no writes. The comparison is binary on MySQL/MariaDB, whose case-insensitive
+// collation would otherwise call 'Acme.Example' equal to 'acme.example'.
+//
+// Lower-casing cannot create a live duplicate the application did not already
+// treat as one: the old check was case-insensitive (LOWER() on both sides), so
+// two live rows differing only by case could never be created through the
+// application. A database edited by hand into that state keeps both rows, now
+// equal, exactly as before; the index is not unique, so nothing fails.
+func normalizeCompanyDomains(tx *gorm.DB) error {
+	predicate := "domain <> LOWER(domain)"
+	if tx.Dialector.Name() != "sqlite" {
+		predicate = "CAST(domain AS BINARY) <> CAST(LOWER(domain) AS BINARY)"
+	}
+	if err := tx.Exec("UPDATE companies SET domain = LOWER(domain) WHERE domain IS NOT NULL AND " + predicate).Error; err != nil {
+		return fmt.Errorf("failed to normalise company domains: %w", err)
+	}
+	return nil
+}
+
+// autoMigrateModels is the AutoMigrate half of MigrateDatabase.
+func autoMigrateModels(tx *gorm.DB) error {
+	return tx.AutoMigrate(
+		&User{},
+		&Company{},
+		&Lead{},
+		&Customer{},
+		&Deal{},
+		&DealStageChange{},
+		// Product and Quote before QuoteLine: the line references both.
+		&Product{},
+		&Quote{},
+		&QuoteLine{},
+		&QuoteStatusChange{},
+		&Ticket{},
+		&TicketComment{},
+		&Label{},
+		&Task{},
+		&APIKey{},
+		&Configuration{},
+		&RefreshToken{},
+		&PasswordResetToken{},
+		&BulkOperation{},
+		&BulkOperationItem{},
+		&AEOProfile{},
+		&AEOPrompt{},
+		&AEORun{},
+		&AEOAnswer{},
+		&AEOCitation{},
+		&Form{},
+		&FormSubmission{},
+		&FormConfirmationToken{},
+		// Follow-up automation: rules before steps and runs (both reference
+		// the rule), runs before run steps, notifications last.
+		&AutomationRule{},
+		&AutomationStep{},
+		&AutomationEvent{},
+		&AutomationRun{},
+		&AutomationRunStep{},
+		&Notification{},
+	)
 }

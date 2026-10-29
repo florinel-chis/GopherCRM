@@ -61,8 +61,16 @@ var paginationModels = []interface{}{
 // the variable and fails when the variable names an unreachable server.
 func openPaginationDB(t *testing.T, useMySQL bool) *gorm.DB {
 	t.Helper()
+	return openDisposableDB(t, "pagination_determinism", useMySQL, paginationModels...)
+}
+
+// openDisposableDB opens a private named in-memory SQLite database, or a
+// uniquely named disposable schema on the TEST_MYSQL_DSN server, and
+// AutoMigrates the given models into it.
+func openDisposableDB(t *testing.T, name string, useMySQL bool, migrate ...interface{}) *gorm.DB {
+	t.Helper()
 	if !useMySQL {
-		db, err := gorm.Open(sqlite.Open("file:pagination_determinism?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
+		db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
 			Logger: logger.Discard,
 		})
 		require.NoError(t, err)
@@ -70,7 +78,7 @@ func openPaginationDB(t *testing.T, useMySQL bool) *gorm.DB {
 		require.NoError(t, err)
 		sqlDB.SetMaxOpenConns(1)
 		t.Cleanup(func() { _ = sqlDB.Close() })
-		require.NoError(t, db.AutoMigrate(paginationModels...))
+		require.NoError(t, db.AutoMigrate(migrate...))
 		return db
 	}
 
@@ -85,14 +93,14 @@ func openPaginationDB(t *testing.T, useMySQL bool) *gorm.DB {
 	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
 	server, err := sql.Open("mysql", cfg.FormatDSN())
 	require.NoError(t, err)
-	name := fmt.Sprintf("gocrm_pagination_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("gocrm_%s_%d", name, time.Now().UnixNano())
 	t.Cleanup(func() {
-		_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
+		_, _ = server.Exec("DROP DATABASE IF EXISTS `" + schema + "`")
 		_ = server.Close()
 	})
-	_, err = server.Exec("CREATE DATABASE `" + name + "`")
+	_, err = server.Exec("CREATE DATABASE `" + schema + "`")
 	require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-	cfg.DBName = name
+	cfg.DBName = schema
 	db, err := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -100,7 +108,7 @@ func openPaginationDB(t *testing.T, useMySQL bool) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	require.NoError(t, db.AutoMigrate(paginationModels...))
+	require.NoError(t, db.AutoMigrate(migrate...))
 	return db
 }
 

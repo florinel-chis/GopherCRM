@@ -10,14 +10,20 @@
 -- live company may reuse it. The names match what GORM AutoMigrate creates
 -- from the model tags, and each index is created only when missing, so this
 -- migration is safe on a database whose application startup already added
--- them. Both MySQL 8 and MariaDB 10.11 build a secondary index in place
--- without blocking reads or writes; the cost is one scan of the table.
+-- them. Both MySQL 8 and MariaDB 10.11 build a secondary index as in-place
+-- online DDL at the cost of one scan of the table; reads and writes continue
+-- during the build, but each CREATE INDEX takes a brief exclusive metadata lock
+-- at its start and end, so a long-running transaction on the table delays it
+-- and statements arriving meanwhile queue behind it. Run it when no long
+-- transaction is open on leads or companies.
 --
 -- The domain lookup compares the plain column (no LOWER()), which is what lets
 -- it use the index. The application has always stored domains lower-cased; the
 -- UPDATE below normalises any row written another way so the lookup cannot
 -- miss it. The comparison is binary so only rows that actually change are
--- written.
+-- written and row-locked (none when every row came through the application).
+-- models.MigrateDatabase runs the same normalisation on every start, on every
+-- driver.
 UPDATE companies
 SET domain = LOWER(domain)
 WHERE domain IS NOT NULL AND CAST(domain AS BINARY) <> CAST(LOWER(domain) AS BINARY);

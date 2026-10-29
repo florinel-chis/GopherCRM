@@ -348,7 +348,8 @@ the table name, so a joined query cannot resolve them against the other table. N
 reads should use the same helpers. Regression roots: `TestPaginationDeterminism{SQLite,MySQL}`
 (`internal/repository/pagination_determinism_test.go`), where every row shares `created_at` and
 every sort column is tied, both directions, with filters, checking every page against the
-expected sequence and the count.
+expected sequence and the count. The Database migrations workflow runs both roots, the MySQL one
+on MySQL 8 and MariaDB 10.11, and its checker rejects a skip.
 
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
@@ -359,6 +360,11 @@ store the value normalised and compare it plainly instead. `TestLookupIndexesSer
 captures the statements the repository really runs and asserts their SQLite plans use the
 indexes; `TestLookupIndexesMigration` (fresh up/down, populated upgrade, AutoMigrate first,
 rollback and reapply, index parity) is one of the roots the Database migrations workflow requires.
+Plain equality relies on every stored domain being lower case: the service normalises on write,
+and `models.MigrateDatabase` lower-cases any other row on every start on every driver (binary
+comparison on MySQL/MariaDB, idempotent, no writes on a normalised table), which is how SQLite
+installs, which never run the SQL migration, get it. Roots:
+`TestCompanyDomainNormalization{SQLite,MySQL}` (`internal/repository/company_domain_normalization_test.go`).
 
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
 RateLimit.

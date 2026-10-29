@@ -31,6 +31,10 @@ class MigrationCoverageTests(unittest.TestCase):
                 ],
                 'internal/repository': [
                     'TestLookupIndexesServeLookupsSQLite',
+                    'TestPaginationDeterminismSQLite',
+                    'TestPaginationDeterminismMySQL',
+                    'TestCompanyDomainNormalizationSQLite',
+                    'TestCompanyDomainNormalizationMySQL',
                 ],
             }.items() for name in names
         ]
@@ -42,7 +46,7 @@ class MigrationCoverageTests(unittest.TestCase):
                          migrations_only=True)
 
     def test_accepts_complete_sql_and_sqlite_evidence(self):
-        self.assertEqual(len(self.check()), 9)
+        self.assertEqual(len(self.check()), 13)
 
     def test_unavailable_database_cannot_pass_as_skips(self):
         for event in self.events:
@@ -71,6 +75,23 @@ class MigrationCoverageTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, name):
                     self.check()
                 self.events = kept
+
+    def test_missing_repository_sql_roots_fail(self):
+        for name in ('TestPaginationDeterminismMySQL', 'TestPaginationDeterminismSQLite',
+                     'TestCompanyDomainNormalizationMySQL', 'TestCompanyDomainNormalizationSQLite'):
+            with self.subTest(name=name):
+                kept = self.events
+                self.events = [event for event in kept if event.get('Test') != name]
+                with self.assertRaisesRegex(ValueError, name):
+                    self.check()
+                self.events = kept
+
+    def test_skipped_mysql_pagination_root_fails(self):
+        for event in self.events:
+            if event.get('Test') == 'TestPaginationDeterminismMySQL':
+                event['Action'] = 'skip'
+        with self.assertRaisesRegex(ValueError, 'skipped'):
+            self.check()
 
     def test_skipped_lookup_index_migration_fails(self):
         for event in self.events:

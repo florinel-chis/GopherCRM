@@ -109,12 +109,15 @@ func (r *companyRepository) List(offset, limit int, search, sortBy, sortOrder st
 //
 // The comparison is a plain equality against the lower-cased argument so the
 // planner can use idx_companies_domain (#109); LOWER(domain) hid the column
-// from every index on SQLite and on MySQL/MariaDB alike. That is safe because
-// the stored value is always lower case: the service normalises it on every
-// create and update (NormalizeCompanyDomain), and the migration that added the
-// index lower-cases any MySQL row written another way. MySQL and MariaDB also
-// compare under a case-insensitive collation, so there the result is the same
-// either way.
+// from every index on SQLite and on MySQL/MariaDB alike. Plain equality is
+// correct only while every stored domain is lower case, and two things
+// guarantee that: the service lower-cases the domain on every create and
+// update (service.NormalizeCompanyDomain), and models.MigrateDatabase
+// lower-cases any row written another way on every start, on every driver
+// (the MySQL/MariaDB SQL migration that added the index does the same once).
+// MySQL and MariaDB also compare under a case-insensitive collation, so there
+// the result would be the same either way. Regression roots:
+// TestCompanyDomainNormalization{SQLite,MySQL}.
 func (r *companyRepository) ExistsByDomain(domain string, excludeID uint) (bool, error) {
 	query := r.db.Model(&models.Company{}).Where("domain = ?", strings.ToLower(domain))
 	if excludeID != 0 {
