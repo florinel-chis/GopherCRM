@@ -43,6 +43,14 @@ type automationAPIHarness struct {
 
 func newAutomationAPIHarness(t *testing.T) *automationAPIHarness {
 	t.Helper()
+	return newAutomationAPIHarnessWithService(t, func(s service.AutomationService) service.AutomationService { return s })
+}
+
+// newAutomationAPIHarnessWithService builds the harness with the automation
+// service the handler sees replaced by wrap(real service), so a test can
+// interpose on the handler's service calls. h.service stays the real one.
+func newAutomationAPIHarnessWithService(t *testing.T, wrap func(service.AutomationService) service.AutomationService) *automationAPIHarness {
+	t.Helper()
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:automation_api_%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
@@ -74,7 +82,7 @@ func newAutomationAPIHarness(t *testing.T) *automationAPIHarness {
 	router.Use(gin.Recovery())
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Auth(authService))
-	handler.SetupAutomationRoutes(protected, handler.NewAutomationHandler(automationService))
+	handler.SetupAutomationRoutes(protected, handler.NewAutomationHandler(wrap(automationService)))
 	handler.SetupNotificationRoutes(protected, handler.NewNotificationHandler(notificationService))
 
 	h := &automationAPIHarness{t: t, db: db, router: router, tokens: map[string]string{}, users: map[string]*models.User{},
@@ -501,4 +509,110 @@ func TestAutomationRunAPISQLite(t *testing.T) {
 		require.NoError(t, h.db.Model(&models.Notification{}).Count(&notifications).Error)
 		assert.Zero(t, notifications, "the dry run notified nobody")
 	})
+}
+
+// concurrentDisableService embeds the real automation service and, once
+// armed, commits a disable of the rule at the first GetRule or UpdateRule the
+// handler makes: after a GetRule has read the rule (so the caller holds the
+// stale enabled=true), or before an UpdateRule starts its transaction. It
+// stands in for an admin disabling the rule while the PUT is in flight.
+type concurrentDisableService struct {
+	service.AutomationService
+	t      *testing.T
+	armed  bool
+	fired  bool
+	ruleID uint
+}
+
+func (s *concurrentDisableService) disableOnce() {
+	if !s.armed || s.fired {
+		return
+	}
+	s.fired = true
+	_, err := s.AutomationService.SetEnabled(s.ruleID, false)
+	require.NoError(s.t, err)
+}
+
+func (s *concurrentDisableService) GetRule(id uint) (*models.AutomationRule, error) {
+	rule, err := s.AutomationService.GetRule(id)
+	s.disableOnce()
+	return rule, err
+}
+
+func (s *concurrentDisableService) UpdateRule(id uint, rule *models.AutomationRule, enabled *bool) (*models.AutomationRule, error) {
+	s.disableOnce()
+	return s.AutomationService.UpdateRule(id, rule, enabled)
+}
+
+// A PUT without enabled must not undo a disable committed while the request
+// was in flight: the switch is read under the rule's row lock inside the
+// update transaction, not before it.
+func TestAutomationRuleUpdateKeepsConcurrentDisableSQLite(t *testing.T) {
+	var wrapper *concurrentDisableService
+	h := newAutomationAPIHarnessWithService(t, func(s service.AutomationService) service.AutomationService {
+		wrapper = &concurrentDisableService{AutomationService: s, t: t}
+		return wrapper
+	})
+	lead := h.createLead(h.users["sales"])
+
+	rec := h.request(http.MethodPost, "/api/v1/automation/rules", "admin", h.validRuleBody())
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var rule models.AutomationRule
+	h.data(rec, &rule)
+	require.True(t, rule.Enabled)
+
+	require.NoError(t, h.repo.RecordEvent(&models.AutomationEvent{EntityType: "lead", EntityID: lead.ID, EventType: "lead_status_changed", FromValue: "new", ToValue: "qualified", Origin: "user"}))
+	started, err := h.engine.Dispatch(contextBackground())
+	require.NoError(t, err)
+	require.Equal(t, 1, started)
+	var run models.AutomationRun
+	require.NoError(t, h.db.Where("rule_id = ?", rule.ID).First(&run).Error)
+	require.Equal(t, models.AutomationRunPending, run.Status)
+
+	body := h.validRuleBody()
+	delete(body, "enabled")
+	body["name"] = "Qualified follow-up, edited"
+	wrapper.ruleID = rule.ID
+	wrapper.armed = true
+	rec = h.request(http.MethodPut, fmt.Sprintf("/api/v1/automation/rules/%d", rule.ID), "admin", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.True(t, wrapper.fired, "the concurrent disable ran during the request")
+
+	stored, err := h.service.GetRule(rule.ID)
+	require.NoError(t, err)
+	assert.False(t, stored.Enabled, "the disable committed during the PUT survives it")
+	assert.Equal(t, 2, stored.Version)
+	assert.Equal(t, "Qualified follow-up, edited", stored.Name)
+	require.NoError(t, h.db.First(&run, run.ID).Error)
+	assert.Equal(t, models.AutomationRunCancelled, run.Status)
+}
+
+// A PUT that carries enabled sets the switch either way.
+func TestAutomationRuleUpdateWithEnabledSetsTheSwitchSQLite(t *testing.T) {
+	h := newAutomationAPIHarness(t)
+	rec := h.request(http.MethodPost, "/api/v1/automation/rules", "admin", h.validRuleBody())
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var rule models.AutomationRule
+	h.data(rec, &rule)
+	_, err := h.service.SetEnabled(rule.ID, false)
+	require.NoError(t, err)
+
+	body := h.validRuleBody()
+	body["enabled"] = true
+	rec = h.request(http.MethodPut, fmt.Sprintf("/api/v1/automation/rules/%d", rule.ID), "admin", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var updated models.AutomationRule
+	h.data(rec, &updated)
+	assert.True(t, updated.Enabled, "enabled:true switches a disabled rule on")
+	assert.Equal(t, 2, updated.Version)
+
+	body["enabled"] = false
+	rec = h.request(http.MethodPut, fmt.Sprintf("/api/v1/automation/rules/%d", rule.ID), "admin", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	h.data(rec, &updated)
+	assert.False(t, updated.Enabled, "enabled:false switches it off")
+	assert.Equal(t, 3, updated.Version)
+	stored, err := h.service.GetRule(rule.ID)
+	require.NoError(t, err)
+	assert.False(t, stored.Enabled)
 }

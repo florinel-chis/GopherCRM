@@ -87,7 +87,7 @@ func runAutomationRuleLifecycle(t *testing.T, db *gorm.DB) {
 
 		replacement := &models.AutomationRule{Name: "Renamed", EntityType: models.AutomationEntityLead, TriggerType: models.AutomationEventLeadCreated,
 			Enabled: true, Steps: []models.AutomationStep{taskStep(models.AutomationRecipientOwner, 0, 1)}}
-		updated, err := env.svc.UpdateRule(rule.ID, replacement)
+		updated, err := env.svc.UpdateRule(rule.ID, replacement, &replacement.Enabled)
 		require.NoError(t, err)
 		assert.Equal(t, 2, updated.Version)
 		assert.Equal(t, "Renamed", updated.Name)
@@ -156,7 +156,7 @@ func runAutomationRuleLifecycle(t *testing.T, db *gorm.DB) {
 		svc := NewAutomationService(faulty, env.users, env.engine, env.txManager)
 		replacement := &models.AutomationRule{Name: "Broken", EntityType: models.AutomationEntityLead, TriggerType: models.AutomationEventLeadCreated,
 			Enabled: true, Steps: []models.AutomationStep{taskStep(models.AutomationRecipientOwner, 0, 1)}}
-		_, err := svc.UpdateRule(rule.ID, replacement)
+		_, err := svc.UpdateRule(rule.ID, replacement, &replacement.Enabled)
 		require.Error(t, err)
 
 		stored, err := env.svc.GetRule(rule.ID)
@@ -166,5 +166,56 @@ func runAutomationRuleLifecycle(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, []string{models.AutomationStepWait, models.AutomationStepNotify}, stepTypes(stored.Steps))
 		assert.Equal(t, models.AutomationRunPending, env.run(run.ID).Status)
 		assert.Empty(t, env.run(run.ID).CancelReason)
+	})
+
+	t.Run("an update without enabled keeps a disable committed after the caller read the rule", func(t *testing.T) {
+		rule := env.leadRule(models.AutomationEventLeadCreated, waitStep(30))
+		run := env.startRun(rule, lead)
+		read, err := env.svc.GetRule(rule.ID)
+		require.NoError(t, err)
+		require.True(t, read.Enabled, "the caller read the rule while it was enabled")
+		_, err = env.svc.SetEnabled(rule.ID, false)
+		require.NoError(t, err)
+
+		// The caller's copy still says enabled; without an explicit switch the
+		// update must take the stored one under the row lock.
+		replacement := &models.AutomationRule{Name: "Edited after read", EntityType: read.EntityType, TriggerType: read.TriggerType,
+			Enabled: true, Steps: []models.AutomationStep{waitStep(15)}}
+		updated, err := env.svc.UpdateRule(rule.ID, replacement, nil)
+		require.NoError(t, err)
+		assert.False(t, updated.Enabled)
+		assert.Equal(t, 2, updated.Version)
+		assert.Equal(t, "Edited after read", updated.Name)
+		stored, err := env.svc.GetRule(rule.ID)
+		require.NoError(t, err)
+		assert.False(t, stored.Enabled, "the committed disable survives the update")
+		assert.Equal(t, models.AutomationRunCancelled, env.run(run.ID).Status)
+		assert.Equal(t, models.AutomationCancelRuleDisabled, env.run(run.ID).CancelReason)
+	})
+
+	t.Run("an update with enabled sets the switch inside the transaction", func(t *testing.T) {
+		rule := env.leadRule(models.AutomationEventLeadCreated, waitStep(30))
+		_, err := env.svc.SetEnabled(rule.ID, false)
+		require.NoError(t, err)
+
+		on := true
+		updated, err := env.svc.UpdateRule(rule.ID, &models.AutomationRule{Name: "Switched on", EntityType: rule.EntityType, TriggerType: rule.TriggerType,
+			Enabled: false, Steps: []models.AutomationStep{waitStep(15)}}, &on)
+		require.NoError(t, err)
+		assert.True(t, updated.Enabled, "the explicit switch wins over the model field")
+		assert.Equal(t, 2, updated.Version)
+
+		run := env.startRun(rule, lead)
+		off := false
+		updated, err = env.svc.UpdateRule(rule.ID, &models.AutomationRule{Name: "Switched off", EntityType: rule.EntityType, TriggerType: rule.TriggerType,
+			Enabled: true, Steps: []models.AutomationStep{waitStep(15)}}, &off)
+		require.NoError(t, err)
+		assert.False(t, updated.Enabled)
+		assert.Equal(t, 3, updated.Version)
+		stored, err := env.svc.GetRule(rule.ID)
+		require.NoError(t, err)
+		assert.False(t, stored.Enabled)
+		assert.Equal(t, models.AutomationRunCancelled, env.run(run.ID).Status)
+		assert.Equal(t, models.AutomationCancelRuleChanged, env.run(run.ID).CancelReason)
 	})
 }

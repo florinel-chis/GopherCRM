@@ -189,7 +189,7 @@ func (h *AutomationHandler) GetRule(c *gin.Context) {
 
 // UpdateRule godoc
 // @Summary Update an automation rule
-// @Description Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch. The same 400 answers as the create apply and leave the rule untouched.
+// @Description Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply and leave the rule untouched.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -216,15 +216,7 @@ func (h *AutomationHandler) UpdateRule(c *gin.Context) {
 		return
 	}
 	rule := req.toModel()
-	if req.Enabled == nil {
-		stored, err := h.automationService.GetRule(id)
-		if err != nil {
-			h.respondError(c, logger, err)
-			return
-		}
-		rule.Enabled = stored.Enabled
-	}
-	updated, err := h.automationService.UpdateRule(id, rule)
+	updated, err := h.automationService.UpdateRule(id, rule, req.Enabled)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return

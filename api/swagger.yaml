@@ -5383,8 +5383,9 @@ paths:
       description: 'Replace the rule wholesale (admin only): the same body as the
         create. In one transaction the version is incremented, the steps are replaced
         and the rule''s pending, waiting and running runs are cancelled with cancel_reason
-        rule_changed. enabled absent keeps the stored switch. The same 400 answers
-        as the create apply and leave the rule untouched.'
+        rule_changed. enabled absent keeps the stored switch as read under the rule''s
+        row lock inside the same transaction, so a disable committed meanwhile is
+        not undone. The same 400 answers as the create apply and leave the rule untouched.'
       parameters:
       - description: Rule ID
         in: path
@@ -11572,6 +11573,80 @@ paths:
       summary: List my notifications
       tags:
       - notifications
+  /notifications/{id}/read:
+    post:
+      description: Mark the caller's own notification read and return it; one that
+        belongs to another user, or does not exist, is 404. Marking an already read
+        notification again is a no-op.
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notification marked read
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Notification'
+              type: object
+        "400":
+          description: Invalid notification ID
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: Forbidden - staff role required
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: Notification not found
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: Internal server error
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Mark a notification read
+      tags:
+      - notifications
   /notifications/read-all:
     post:
       description: Mark every unread notification of the caller read and return how
@@ -11668,80 +11743,6 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: Count my unread notifications
-      tags:
-      - notifications
-  /notifications/{id}/read:
-    post:
-      description: Mark the caller's own notification read and return it; one that
-        belongs to another user, or does not exist, is 404. Marking an already read
-        notification again is a no-op.
-      parameters:
-      - description: Notification ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Notification marked read
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Notification'
-              type: object
-        "400":
-          description: Invalid notification ID
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                error:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
-              type: object
-        "401":
-          description: Unauthorized
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                error:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
-              type: object
-        "403":
-          description: Forbidden - staff role required
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                error:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
-              type: object
-        "404":
-          description: Notification not found
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                error:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
-              type: object
-        "500":
-          description: Internal server error
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
-            - properties:
-                error:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
-              type: object
-      security:
-      - BearerAuth: []
-      - ApiKeyAuth: []
-      summary: Mark a notification read
       tags:
       - notifications
   /products:

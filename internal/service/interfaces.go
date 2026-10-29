@@ -485,7 +485,9 @@ type AutomationService interface {
 	ListRules(offset, limit int, filter repository.AutomationRuleListFilter) ([]models.AutomationRule, int64, error)
 	// UpdateRule replaces the rule in one transaction: version + 1, steps
 	// replaced, pending/waiting/running runs cancelled with rule_changed.
-	UpdateRule(id uint, rule *models.AutomationRule) (*models.AutomationRule, error)
+	// enabled nil keeps the stored switch, read under the rule's row lock
+	// inside the update transaction; otherwise *enabled is written.
+	UpdateRule(id uint, rule *models.AutomationRule, enabled *bool) (*models.AutomationRule, error)
 	// SetEnabled flips the switch; disabling cancels the active runs with
 	// rule_disabled in the same transaction.
 	SetEnabled(id uint, enabled bool) (*models.AutomationRule, error)

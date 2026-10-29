@@ -110,8 +110,9 @@ func runAutomationWaitResume(t *testing.T, db *gorm.DB) {
 		run := env.startRun(changing, lead)
 		env.executeDue()
 		require.Equal(t, models.AutomationRunWaiting, env.run(run.ID).Status)
+		enabled := true
 		_, err := env.svc.UpdateRule(changing.ID, &models.AutomationRule{Name: "Changed", EntityType: changing.EntityType, TriggerType: changing.TriggerType,
-			Enabled: true, Steps: []models.AutomationStep{waitStep(10), taskStep(models.AutomationRecipientOwner, 0, 1)}})
+			Enabled: enabled, Steps: []models.AutomationStep{waitStep(10), taskStep(models.AutomationRecipientOwner, 0, 1)}}, &enabled)
 		require.NoError(t, err)
 		env.clock.Advance(11 * time.Minute)
 		tasksBefore := env.count(&models.Task{})
