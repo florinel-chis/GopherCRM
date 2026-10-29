@@ -76,9 +76,11 @@ export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ en
           View all
         </Link>
       </Box>
-      {isError ? (
+      {/* A failed refetch keeps the runs already loaded below the alert. */}
+      {isError && (
         <Alert
           severity="error"
+          sx={{ mb: 2 }}
           action={
             <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
               Retry
@@ -87,7 +89,8 @@ export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ en
         >
           {getAPIError(error)?.message ?? 'The automation runs could not be loaded.'}
         </Alert>
-      ) : data && data.runs.length > 0 ? (
+      )}
+      {isError && !data ? null : data && data.runs.length > 0 ? (
         <>
           <Table size="small" aria-label="Automation runs">
             <TableHead>

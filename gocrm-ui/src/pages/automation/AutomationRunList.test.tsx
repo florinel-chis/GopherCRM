@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { act, render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as AutomationRunList } from './AutomationRunList';
 import { automationApi } from '@/api/endpoints';
 import { createMockAutomationRule, createMockAutomationRun, createMockUser } from '@/test/factories';
@@ -11,7 +11,7 @@ import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 
 import { formatDate } from '@/utils/date';
 import type { User } from '@/types';
 import { AUTOMATION_DATETIME } from './automationFormat';
-import { afterRuleChanged } from './automationQueries';
+import { afterRuleChanged, automationKeys } from './automationQueries';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -312,6 +312,49 @@ describe('AutomationRunList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await rowOf('#9');
     expect(automationApi.listRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the loaded rows and shows the alert when a refetch fails', async () => {
+    const client = createProductionQueryClient();
+    render(withClient(client, <AutomationRunList />));
+    await rowOf('#9');
+
+    vi.mocked(automationApi.listRuns).mockRejectedValueOnce(serverError('database unavailable'));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: automationKeys.runs });
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('database unavailable');
+    expect(screen.getByRole('link', { name: 'Run #9' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /next page/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByRole('link', { name: 'Run #9' })).toBeInTheDocument();
+  });
+
+  it('retries a rule list that failed before the picker was remounted', async () => {
+    const client = createProductionQueryClient();
+    vi.mocked(automationApi.listRules).mockRejectedValueOnce(serverError('rules unavailable'));
+    const first = render(withClient(client, <AutomationRunList />));
+    await rowOf('#9');
+    const input = screen.getByLabelText('Rule');
+    input.focus();
+    fireEvent.mouseDown(input);
+    expect((await screen.findAllByText(/rules unavailable/)).length).toBeGreaterThan(0);
+    first.unmount();
+
+    // Back on the page: the cached error is shown, the picker has not been opened.
+    render(withClient(client, <AutomationRunList />));
+    await rowOf('#9');
+    expect(automationApi.listRules).toHaveBeenCalledTimes(1);
+    vi.mocked(automationApi.listRules).mockResolvedValue({
+      rules: [createMockAutomationRule({ id: 205, name: 'Quarterly check' })],
+      total: 1,
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry loading rules' }));
+    await waitFor(() => expect(automationApi.listRules).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryAllByText(/rules unavailable/)).toHaveLength(0));
   });
 
   it('shows why the rule picker is empty and retries it', async () => {

@@ -11,6 +11,9 @@ import {
 } from '@/test/factories';
 import { pickAutocompleteOption } from '@/test/autocomplete';
 import type { AutomationRule, AutomationStep, AutomationStepConfig, AutomationStepType } from '@/types';
+import { createProductionQueryClient } from '@/test/productionQueryClient';
+import { withClient } from '@/test/dealQueryCache';
+import { automationKeys } from './automationQueries';
 import { Component as AutomationRuleForm } from './AutomationRuleForm';
 
 vi.mock('react-router-dom', async () => {
@@ -555,5 +558,42 @@ describe('AutomationRuleForm', () => {
     render(<AutomationRuleForm />);
     expect(await screen.findByText('Rule not found')).toBeInTheDocument();
     expect(screen.queryByTestId('rule-load-error')).not.toBeInTheDocument();
+  });
+
+  it('a cached rule that another admin deleted gives Rule not found once the refetch answers 404', async () => {
+    const rule = storedRule({});
+    const client = createProductionQueryClient();
+    client.setQueryData(automationKeys.rule(3), rule);
+    await client.invalidateQueries({ queryKey: automationKeys.rule(3) });
+    vi.mocked(useParams).mockReturnValue({ id: '3' });
+    vi.mocked(automationApi.getRule).mockRejectedValue(apiError(404, 'NOT_FOUND', 'rule 3 not found'));
+    render(withClient(client, <AutomationRuleForm />));
+
+    expect(await screen.findByText('Rule not found')).toBeInTheDocument();
+    expect(automationApi.getRule).toHaveBeenCalledWith(3);
+    expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
+  });
+
+  it('a failed refetch of a cached rule keeps the editor and shows the error with Retry', async () => {
+    const rule = storedRule({});
+    const client = createProductionQueryClient();
+    client.setQueryData(automationKeys.rule(3), rule);
+    await client.invalidateQueries({ queryKey: automationKeys.rule(3) });
+    vi.mocked(useParams).mockReturnValue({ id: '3' });
+    vi.mocked(automationApi.getRule)
+      .mockRejectedValueOnce(apiError(500, 'INTERNAL_ERROR', 'Database unavailable'))
+      .mockResolvedValueOnce(rule);
+    render(withClient(client, <AutomationRuleForm />));
+
+    const alert = await screen.findByTestId('rule-load-error');
+    expect(alert).toHaveTextContent('Database unavailable');
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Stored rule');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByTestId('rule-load-error')).not.toBeInTheDocument());
+    expect(automationApi.getRule).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Stored rule');
   });
 });

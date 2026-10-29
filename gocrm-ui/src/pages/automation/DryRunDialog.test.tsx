@@ -203,4 +203,30 @@ describe('DryRunDialog', () => {
     fireEvent.mouseDown(input);
     expect(await within(dialog()).findByText('Records could not be loaded: Database unavailable')).toBeInTheDocument();
   });
+
+  it('a late failure of an older record search does not flag the newer successful one', async () => {
+    let failOld: (reason: unknown) => void = () => undefined;
+    vi.mocked(leadsApi.getLeads).mockImplementation((filters) =>
+      filters?.search === 'ion'
+        ? Promise.resolve({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 })
+        : new Promise((_resolve, reject) => {
+            failOld = reject;
+          }),
+    );
+    render(<DryRunDialog rule={leadRule} open onClose={vi.fn()} />);
+
+    const input = within(dialog()).getByLabelText('Lead');
+    input.focus();
+    fireEvent.mouseDown(input);
+    await waitFor(() => expect(leadsApi.getLeads).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { value: 'ion' } });
+    expect(
+      await screen.findByRole('option', { name: 'Ion Ionescu (Bolt Robotics)' }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+
+    failOld(new Error('Network Error'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(dialog()).queryByText(/could not be loaded/)).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid', 'true');
+  });
 });

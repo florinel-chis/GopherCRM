@@ -288,6 +288,29 @@ describe('NotificationBell', () => {
     expect(notificationsApi.list).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the loaded notifications visible with the error and Retry when a refetch fails', async () => {
+    renderBell();
+    let menu = await openMenu();
+    expect(await within(menu).findByText('Call Jane back')).toBeInTheDocument();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('menu', { name: 'Notifications' })).not.toBeInTheDocument(),
+    );
+
+    // Reopening refetches, and that refetch fails.
+    vi.mocked(notificationsApi.list).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Database unavailable' } },
+      }),
+    );
+    menu = await openMenu();
+    expect(await within(menu).findByText('Database unavailable')).toBeInTheDocument();
+    expect(notificationsApi.list).toHaveBeenCalledTimes(2);
+    expect(within(menu).getAllByTestId('bell-notification')).toHaveLength(2);
+    expect(within(menu).getByRole('menuitem', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(menu).queryByText('No notifications')).not.toBeInTheDocument();
+  });
+
   it('shows no badge while the unread count has never loaded and keeps the last known count when a refetch fails', async () => {
     // Refetches are driven by window focus here: real timers keep React
     // Query's error-then-success notification path intact.

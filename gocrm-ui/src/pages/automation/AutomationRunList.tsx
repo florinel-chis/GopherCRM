@@ -375,9 +375,12 @@ export const Component: React.FC = () => {
         </Box>
       </Paper>
 
-      {isError ? (
+      {/* A failed refetch keeps the rows already loaded; the alert sits above
+          them. Only a list that never loaded is replaced by it. */}
+      {isError && (
         <Alert
           severity="error"
+          sx={{ mb: 2 }}
           action={
             <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
               Retry
@@ -386,7 +389,8 @@ export const Component: React.FC = () => {
         >
           {getAPIError(error)?.message ?? 'The automation runs could not be loaded.'}
         </Alert>
-      ) : (
+      )}
+      {isError && !data ? null : (
         <>
           <DataTable
             columns={columns}

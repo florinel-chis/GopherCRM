@@ -183,11 +183,18 @@ export const Component: React.FC = () => {
   if (isEdit && isLoading) {
     return <Loading />;
   }
-  if (isEdit && isError && getHTTPStatus(loadError) !== 404) {
-    return (
+  // A confirmed 404 wins over cached data: the rule is gone (another admin
+  // deleted it), so the editor goes too.
+  const notFound = isEdit && isError && getHTTPStatus(loadError) === 404;
+  if (notFound || (isEdit && !rule && !isError)) {
+    return <Alert severity="error">Rule not found</Alert>;
+  }
+  const loadErrorAlert =
+    isEdit && isError ? (
       <Alert
         severity="error"
         data-testid="rule-load-error"
+        sx={{ mb: 2 }}
         action={
           <Button color="inherit" size="small" disabled={isFetching} onClick={() => void refetch()}>
             Retry
@@ -196,10 +203,11 @@ export const Component: React.FC = () => {
       >
         {getAPIError(loadError)?.message ?? 'The rule could not be loaded'}
       </Alert>
-    );
-  }
+    ) : null;
+  // Any other failure without a cached rule leaves nothing to edit; with one,
+  // the form stays (the user keeps their view) under the error.
   if (isEdit && !rule) {
-    return <Alert severity="error">Rule not found</Alert>;
+    return loadErrorAlert;
   }
 
   const statusWord = entity === 'lead' ? 'status' : 'stage';
@@ -300,6 +308,8 @@ export const Component: React.FC = () => {
           </Box>
         ) : null}
       </Box>
+
+      {loadErrorAlert}
 
       <FormProvider {...methods}>
         <form onSubmit={onSubmit} noValidate>

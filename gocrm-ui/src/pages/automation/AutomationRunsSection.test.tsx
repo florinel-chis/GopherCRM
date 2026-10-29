@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { act, render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { createProductionQueryClient } from '@/test/productionQueryClient';
+import { withClient } from '@/test/dealQueryCache';
+import { automationKeys } from './automationQueries';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { AutomationRunsSection } from './AutomationRunsSection';
 import { Component as LeadDetail } from '@/pages/leads/LeadDetail';
@@ -143,6 +146,30 @@ describe('AutomationRunsSection', () => {
     fireEvent.click(within(region).getByRole('button', { name: 'Retry' }));
     expect(await within(region).findAllByTestId('record-run-row')).toHaveLength(2);
     expect(automationApi.listRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the loaded runs and shows the alert when a refetch fails', async () => {
+    const client = createProductionQueryClient();
+    render(withClient(client, <AutomationRunsSection entityType="lead" entityId={5} />));
+    const region = await screen.findByRole('region', { name: /^Automation/ });
+    await within(region).findAllByTestId('record-run-row');
+
+    vi.mocked(automationApi.listRuns).mockRejectedValueOnce(
+      new AxiosError('Request failed with status code 500', 'ERR_BAD_RESPONSE', undefined, undefined, {
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: {},
+        config: {} as InternalAxiosRequestConfig,
+        data: { code: 'INTERNAL_ERROR', message: 'database unavailable', details: null },
+      } as AxiosResponse)
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: automationKeys.runs });
+    });
+
+    expect(await within(region).findByRole('alert')).toHaveTextContent('database unavailable');
+    expect(within(region).getAllByTestId('record-run-row')).toHaveLength(2);
+    expect(within(region).getByRole('button', { name: /next page/i })).toBeInTheDocument();
   });
 
   it('renders nothing for support and customer users', async () => {

@@ -164,6 +164,30 @@ describe('NotificationList', () => {
     expect(notificationsApi.list).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the loaded rows visible with the error and Retry when a refetch fails', async () => {
+    render(<NotificationList />);
+    const row = await rowOf('Call Jane back');
+
+    // The mark-read invalidation refetches the page, and that refetch fails.
+    vi.mocked(notificationsApi.list).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: { code: 'INTERNAL_ERROR', message: 'Database unavailable' } },
+      }),
+    );
+    fireEvent.click(within(row).getByRole('button', { name: 'Mark read' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Database unavailable')).toBeInTheDocument();
+    expect(screen.getAllByTestId('notification-row')).toHaveLength(2);
+    expect(screen.getByText('Deal moved')).toBeInTheDocument();
+
+    vi.mocked(notificationsApi.list).mockResolvedValue({ notifications: [read], total: 1 });
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getAllByTestId('notification-row')).toHaveLength(1);
+  });
+
   it('shows the empty state when the list loads with no notifications', async () => {
     vi.mocked(notificationsApi.list).mockResolvedValue({ notifications: [], total: 0 });
     render(<NotificationList />);

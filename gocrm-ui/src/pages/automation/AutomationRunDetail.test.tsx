@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { act, render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { automationKeys } from './automationQueries';
 import { Component as AutomationRunDetail } from './AutomationRunDetail';
 import { Component as AutomationRunList } from './AutomationRunList';
 import { createProductionQueryClient } from '@/test/productionQueryClient';
@@ -258,6 +259,28 @@ describe('AutomationRunDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('heading', { name: 'Run #9' })).toBeInTheDocument();
     expect(automationApi.getRun).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a loaded run visible when a refetch fails, but says not found on a 404', async () => {
+    const client = createProductionQueryClient();
+    render(withClient(client, <AutomationRunDetail />));
+    await screen.findByRole('heading', { name: 'Run #9' });
+
+    vi.mocked(automationApi.getRun).mockRejectedValueOnce(apiError(500, 'INTERNAL_ERROR', 'database unavailable'));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: automationKeys.run(9) });
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('database unavailable');
+    expect(screen.getByRole('heading', { name: 'Run #9' })).toBeInTheDocument();
+    expect(screen.getAllByTestId('run-step-row')).toHaveLength(3);
+
+    // The run went out of scope or was removed: the cached copy is not shown.
+    vi.mocked(automationApi.getRun).mockRejectedValueOnce(apiError(404, 'NOT_FOUND', 'automation run 9 not found'));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: automationKeys.run(9) });
+    });
+    expect(await screen.findByText('Run not found')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Run #9' })).not.toBeInTheDocument();
   });
 
   it('shows Run not found on a 404', async () => {

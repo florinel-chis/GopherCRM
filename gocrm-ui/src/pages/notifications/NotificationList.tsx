@@ -119,11 +119,12 @@ export const Component: React.FC = () => {
         </Box>
       </Box>
 
-      {isLoading ? (
-        <Loading />
-      ) : isError ? (
+      {isError && (
+        // Shown alone when nothing has loaded yet, and above the retained
+        // rows when a refetch fails after a successful load.
         <Alert
           severity="error"
+          sx={{ mb: 2 }}
           action={
             <Button color="inherit" size="small" disabled={isFetching} onClick={() => void refetch()}>
               Retry
@@ -132,7 +133,10 @@ export const Component: React.FC = () => {
         >
           {getAPIError(error)?.message || 'Failed to load notifications'}
         </Alert>
-      ) : (
+      )}
+      {isLoading ? (
+        <Loading />
+      ) : !data ? null : (
         <Paper>
           <TableContainer>
             <Table size="small" aria-label="Notifications">

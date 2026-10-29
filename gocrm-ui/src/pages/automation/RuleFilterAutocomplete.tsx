@@ -90,9 +90,15 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
   const errorText = loadError
     ? `Rules could not be loaded: ${getAPIError(loadError)?.message ?? 'please try again'}`
     : undefined;
-  // Refetches every rule page this picker holds, failed ones included.
+  // Refetches the failed rule pages. They may be disabled (the error was
+  // cached before this mount and the list has not been opened), so this
+  // enables them and refetches by key rather than only active queries.
   const retry = () => {
-    void queryClient.refetchQueries({ queryKey: automationKeys.rules, type: 'active' });
+    setOpened(true);
+    void queryClient.refetchQueries({
+      queryKey: automationKeys.rules,
+      predicate: (query) => query.state.status === 'error',
+    });
   };
 
   return (

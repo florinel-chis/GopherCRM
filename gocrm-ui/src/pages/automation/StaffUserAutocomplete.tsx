@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usersApi, type UserFilters } from '@/api/endpoints';
 import { RecordAutocomplete } from '@/components/RecordAutocomplete';
@@ -56,14 +56,23 @@ export const StaffUserAutocomplete: React.FC<StaffUserAutocompleteProps> = ({
   const [picked, setPicked] = useState<User | null>(null);
   // The shared picker shows a failed search as an empty list; say so instead.
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Only the newest search may set or clear the error: an older one that
+  // fails late must not flag the results of a newer one.
+  const latestSearch = useRef(0);
 
   const search = useCallback(async (term: string): Promise<User[]> => {
+    latestSearch.current += 1;
+    const ticket = latestSearch.current;
     try {
-      const users = await searchStaff(term, setStoppedEarly);
-      setSearchError(null);
+      const users = await searchStaff(term, (value) => {
+        if (ticket === latestSearch.current) setStoppedEarly(value);
+      });
+      if (ticket === latestSearch.current) setSearchError(null);
       return users;
     } catch (error) {
-      setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+      if (ticket === latestSearch.current) {
+        setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+      }
       throw error;
     }
   }, []);

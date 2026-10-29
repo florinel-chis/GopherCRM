@@ -82,26 +82,30 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  if (!run) {
-    const notFound = !error || getHTTPStatus(error) === 404;
+  // A 404 wins over a cached copy (the run left the caller's scope or is
+  // gone); any other failed refetch keeps the run on screen under an alert.
+  const notFound = getHTTPStatus(error) === 404 || (!run && !error);
+  const retryAlert = (
+    <Alert
+      severity="error"
+      sx={{ mb: 2 }}
+      action={
+        <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
+          Retry
+        </Button>
+      }
+    >
+      {getAPIError(error)?.message ?? 'The run could not be loaded.'}
+    </Alert>
+  );
+
+  if (!run || notFound) {
     return (
       <Box>
         <Typography variant="h5" gutterBottom>
           {notFound ? 'Run not found' : 'Failed to load run'}
         </Typography>
-        {!notFound && (
-          <Alert
-            severity="error"
-            sx={{ mb: 2 }}
-            action={
-              <Button color="inherit" size="small" onClick={() => void refetch()} disabled={isFetching}>
-                Retry
-              </Button>
-            }
-          >
-            {getAPIError(error)?.message ?? 'The run could not be loaded.'}
-          </Alert>
-        )}
+        {!notFound && retryAlert}
         <Link component={RouterLink} to="/automation/runs">
           Back to runs
         </Link>
@@ -115,6 +119,7 @@ export const Component: React.FC = () => {
 
   return (
     <Box>
+      {error && retryAlert}
       <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2} mb={3}>
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="h4">Run #{run.id}</Typography>

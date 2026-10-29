@@ -105,4 +105,28 @@ describe('StaffUserAutocomplete', () => {
     render(<StaffUserAutocomplete label="User" value={8} onChange={vi.fn()} />);
     expect(await screen.findByText('User #8 could not be loaded: Database unavailable')).toBeInTheDocument();
   });
+
+  it('a late failure of an older search does not flag the newer successful one', async () => {
+    let failOld: (reason: unknown) => void = () => undefined;
+    vi.mocked(usersApi.getUsers).mockImplementation((filters) =>
+      filters?.search === 'sam'
+        ? Promise.resolve(page([sam], 1))
+        : new Promise((_resolve, reject) => {
+            failOld = reject;
+          }),
+    );
+    render(<StaffUserAutocomplete label="User" value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByLabelText('User');
+    input.focus();
+    fireEvent.mouseDown(input);
+    await waitFor(() => expect(usersApi.getUsers).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { value: 'sam' } });
+    expect(await screen.findByRole('option', { name: 'Sam Seller (sales)' }, { timeout: 3000 })).toBeInTheDocument();
+
+    failOld(new Error('Network Error'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/could not be loaded/)).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid', 'true');
+  });
 });

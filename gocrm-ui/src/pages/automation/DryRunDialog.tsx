@@ -1,4 +1,4 @@
-import React, { useCallback, useId, useState } from 'react';
+import React, { useCallback, useRef, useId, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   Alert,
@@ -58,6 +58,9 @@ const dealOptionLabel = (deal: Deal): string => `${deal.title} (${dealStageLabel
 function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () => void }) {
   const [entityId, setEntityId] = useState<number | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Only the newest search may set or clear the error: an older one that
+  // fails late must not flag the results of a newer one.
+  const latestSearch = useRef(0);
 
   const dryRun = useMutation({
     mutationFn: (id: number) => automationApi.dryRun(rule.id, { entity_type: rule.entity_type, entity_id: id }),
@@ -82,12 +85,16 @@ function DryRunContent({ rule, onClose }: { rule: AutomationRule; onClose: () =>
   const reportingSearch = useCallback(
     <T,>(search: (term: string) => Promise<T[]>) =>
       async (term: string): Promise<T[]> => {
+        latestSearch.current += 1;
+        const ticket = latestSearch.current;
         try {
           const records = await search(term);
-          setSearchError(null);
+          if (ticket === latestSearch.current) setSearchError(null);
           return records;
         } catch (error) {
-          setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+          if (ticket === latestSearch.current) {
+            setSearchError(getAPIError(error)?.message ?? getErrorMessage(error, 'request failed'));
+          }
           throw error;
         }
       },
