@@ -300,10 +300,19 @@ GopherCRM includes a powerful configuration management system that allows admini
 - **Real-Time Updates**: Changes take effect immediately
 
 #### Lead Conversion Settings
-The configuration system includes specific settings for lead conversion:
+The configuration system includes specific settings for lead conversion, enforced by the server on
+every `POST /leads/:id/convert` before anything is written (a refusal is 400 `VALIDATION_ERROR`):
 - `leads.conversion.allowed_statuses`: Which lead statuses allow conversion to customer
-- `leads.conversion.require_notes`: Whether notes are required during conversion
-- `leads.conversion.auto_assign_owner`: Auto-assign lead owner as customer owner
+  (any of `new`, `contacted`, `qualified`, `unqualified`; seeded as `qualified` and `contacted`)
+- `leads.conversion.require_notes`: Whether non-blank conversion notes are required
+- `leads.conversion.auto_assign_owner`: Make the lead's owner the customer's assigned user
+
+If the `leads.conversion.allowed_statuses` row is missing (seeding never ran), conversion falls back
+to `qualified` only, the entry's default value, rather than the seeded `qualified, contacted`; the
+next start re-seeds the row. A lead reaches `converted` only through the convert endpoint: lead
+create/update and the bulk status endpoint refuse it. The lead's company link is carried over to
+the customer as well. `GET /configurations/ui` exposes
+the three settings read-only, so the conversion dialog can follow them.
 
 ### Answer Engine Optimization (AEO)
 

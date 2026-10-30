@@ -218,6 +218,16 @@ describe('LeadForm', () => {
       expect(screen.getByLabelText(/^Company \(as entered\)/i)).toHaveValue('Acme (Cluj branch)');
     });
 
+    // A lead becomes converted only through "Convert to Customer"; the API
+    // refuses the status on create and update.
+    it('does not offer Converted as a status', async () => {
+      render(<LeadForm />);
+
+      fireEvent.mouseDown(screen.getByLabelText(/Status/i));
+      expect(await screen.findByRole('option', { name: 'Qualified' })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: 'Converted' })).not.toBeInTheDocument();
+    });
+
     it('navigates back on cancel', () => {
       render(<LeadForm />);
 
@@ -243,6 +253,27 @@ describe('LeadForm', () => {
     beforeEach(() => {
       vi.mocked(useParams).mockReturnValue({ id: '1' });
       vi.mocked(leadsApi.getLead).mockResolvedValue(mockLead);
+    });
+
+    it('offers Converted only for a lead that is already converted', async () => {
+      render(<LeadForm />);
+      await waitFor(() => expect(screen.getByDisplayValue('Existing Company')).toBeInTheDocument());
+      fireEvent.mouseDown(screen.getByLabelText(/Status/i));
+      expect(await screen.findByRole('option', { name: 'Contacted' })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: 'Converted' })).not.toBeInTheDocument();
+    });
+
+    it('keeps Converted as the current status of a converted lead', async () => {
+      vi.mocked(leadsApi.getLead).mockResolvedValue({ ...mockLead, status: 'converted' });
+      vi.mocked(leadsApi.updateLead).mockResolvedValue({ ...mockLead, status: 'converted' });
+      render(<LeadForm />);
+      await waitFor(() => expect(screen.getByDisplayValue('Existing Company')).toBeInTheDocument());
+      expect(screen.getByLabelText(/Status/i)).toHaveTextContent('Converted');
+
+      fireEvent.click(screen.getByText('Update Lead'));
+      await waitFor(() =>
+        expect(leadsApi.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'converted' })),
+      );
     });
 
     it('renders edit form with existing data', async () => {

@@ -449,6 +449,8 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_SensitiveVal
 		Return([]models.Configuration{}, nil)
 	suite.mockService.On("GetByKey", "deals.default_currency").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockService.On("GetLeadConversionStatuses").Return([]string{"qualified"}, nil)
+	suite.mockService.On("IsLeadConversionRequireNotes").Return(false, nil)
+	suite.mockService.On("IsLeadConversionAutoAssignOwner").Return(true, nil)
 
 	w := suite.get("/configurations/ui")
 
@@ -470,6 +472,8 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_CarriesTheDe
 		Key: "deals.default_currency", Value: "RON", Type: models.ConfigTypeString, Category: models.CategoryDeals,
 	}, nil).Once()
 	suite.mockService.On("GetLeadConversionStatuses").Return([]string{"qualified"}, nil)
+	suite.mockService.On("IsLeadConversionRequireNotes").Return(false, nil)
+	suite.mockService.On("IsLeadConversionAutoAssignOwner").Return(true, nil)
 
 	w := suite.get("/configurations/ui")
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
@@ -487,6 +491,51 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_CarriesTheDe
 	w = suite.get("/configurations/ui")
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 	assert.NotContains(suite.T(), w.Body.String(), "deals.default_currency")
+}
+
+// Issue #104: the convert dialog reads the lead-conversion contract from the
+// UI endpoint — the allowed statuses, whether notes are required and whether
+// the owner is assigned — as read-only entries with the enforced values. An
+// entry whose setting cannot be read is left out without failing the call.
+func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_CarriesTheLeadConversionContract() {
+	suite.mockService.On("GetByCategory", models.CategoryUI).Return([]models.Configuration{}, nil)
+	suite.mockService.On("GetByCategory", models.CategoryGeneral).Return([]models.Configuration{}, nil)
+	suite.mockService.On("GetByKey", "deals.default_currency").Return(nil, gorm.ErrRecordNotFound)
+	suite.mockService.On("GetLeadConversionStatuses").Return([]string{"contacted", "unqualified"}, nil).Once()
+	suite.mockService.On("IsLeadConversionRequireNotes").Return(true, nil).Once()
+	suite.mockService.On("IsLeadConversionAutoAssignOwner").Return(false, nil).Once()
+
+	w := suite.get("/configurations/ui")
+	suite.Require().Equal(http.StatusOK, w.Code)
+	byKey := map[string]map[string]interface{}{}
+	for _, entry := range suite.decodeConfigurations(w) {
+		byKey[entry["key"].(string)] = entry
+	}
+	expected := map[string][2]string{
+		"leads.conversion.allowed_statuses":  {`["contacted","unqualified"]`, "array"},
+		"leads.conversion.require_notes":     {"true", "boolean"},
+		"leads.conversion.auto_assign_owner": {"false", "boolean"},
+	}
+	for key, want := range expected {
+		entry, ok := byKey[key]
+		if !suite.Truef(ok, "%s must be in the UI configurations", key) {
+			continue
+		}
+		suite.Equal(want[0], entry["value"], key)
+		suite.Equal(want[1], entry["type"], key)
+		suite.Equal(string(models.CategoryLeads), entry["category"], key)
+		suite.Equal(true, entry["is_read_only"], key)
+	}
+
+	suite.mockService.On("GetLeadConversionStatuses").Return(nil, errors.New("connection refused")).Once()
+	suite.mockService.On("IsLeadConversionRequireNotes").Return(false, errors.New("connection refused")).Once()
+	suite.mockService.On("IsLeadConversionAutoAssignOwner").Return(true, nil).Once()
+	w = suite.get("/configurations/ui")
+	suite.Require().Equal(http.StatusOK, w.Code)
+	body := w.Body.String()
+	suite.NotContains(body, "leads.conversion.allowed_statuses")
+	suite.NotContains(body, "leads.conversion.require_notes")
+	suite.Contains(body, "leads.conversion.auto_assign_owner")
 }
 
 // A write answers with the same masked shape, so a saved key is never echoed.

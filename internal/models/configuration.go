@@ -272,7 +272,12 @@ func DefaultConfigurations() []Configuration {
 			DefaultValue: `["qualified"]`,
 			IsSystem:     true,
 			IsReadOnly:   false,
-			ValidValues:  `["new", "contacted", "qualified", "converted", "lost"]`,
+			// The lead statuses a conversion can start from: every LeadStatus
+			// except converted (a converted lead is refused regardless). The
+			// list once carried "lost", which is not a lead status, in place
+			// of "unqualified"; the seeder refreshes this metadata on boot
+			// and keeps the value an administrator chose.
+			ValidValues: `["new", "contacted", "qualified", "unqualified"]`,
 		},
 		{
 			Key:          "leads.conversion.require_notes",

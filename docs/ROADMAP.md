@@ -96,6 +96,8 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   (free-mail domains excluded). Today the forms module writes only the text column, so a lead
   from `jane@acme.example` is not linked to the Acme company even when it exists; linking by hand
   on the lead form is the only path.
+- **Lead conversion vs company deletion race** — a company deleted while a lead converts can leave
+  the new customer linked to a soft-deleted company; tracked in #182.
 
 ## Follow-ups from the backend build-out
 

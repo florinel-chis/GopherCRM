@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 type ConfigurationHandler struct {
@@ -342,10 +344,53 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, response)
 }
 
+// leadConversionUIConfigurations returns the synthetic lead-conversion
+// entries of GET /configurations/ui.
+func (h *ConfigurationHandler) leadConversionUIConfigurations(logger *logrus.Entry) []models.Configuration {
+	var entries []models.Configuration
+	if statuses, err := h.configService.GetLeadConversionStatuses(); err != nil {
+		logger.WithError(utils.LogError(err)).Warn("Failed to get the allowed lead conversion statuses")
+	} else {
+		entries = append(entries, models.Configuration{
+			Key:         service.ConfigLeadConversionAllowedStatuses,
+			Value:       utils.JSONMarshal(statuses),
+			Type:        models.ConfigTypeArray,
+			Category:    models.CategoryLeads,
+			Description: "Lead statuses that allow conversion to customer",
+			IsReadOnly:  true,
+		})
+	}
+	if required, err := h.configService.IsLeadConversionRequireNotes(); err != nil {
+		logger.WithError(utils.LogError(err)).Warn("Failed to get the lead conversion notes setting")
+	} else {
+		entries = append(entries, models.Configuration{
+			Key:         service.ConfigLeadConversionRequireNotes,
+			Value:       strconv.FormatBool(required),
+			Type:        models.ConfigTypeBoolean,
+			Category:    models.CategoryLeads,
+			Description: "Whether conversion notes are required when converting leads",
+			IsReadOnly:  true,
+		})
+	}
+	if assign, err := h.configService.IsLeadConversionAutoAssignOwner(); err != nil {
+		logger.WithError(utils.LogError(err)).Warn("Failed to get the lead conversion owner setting")
+	} else {
+		entries = append(entries, models.Configuration{
+			Key:         service.ConfigLeadConversionAutoAssignOwner,
+			Value:       strconv.FormatBool(assign),
+			Type:        models.ConfigTypeBoolean,
+			Category:    models.CategoryLeads,
+			Description: "Whether to automatically assign the lead owner as customer owner",
+			IsReadOnly:  true,
+		})
+	}
+	return entries
+}
+
 // GetUIConfigurations returns configurations that are safe for UI consumption
 // GetUIConfigurations godoc
 // @Summary List UI-safe configurations
-// @Description Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and a synthetic leads.conversion.allowed_statuses entry. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Description Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and three synthetic read-only lead-conversion entries carrying the values the convert endpoint enforces: leads.conversion.allowed_statuses (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner (boolean). An entry whose setting cannot be read is omitted. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -388,18 +433,12 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 		configs = append(configs, *currency)
 	}
 
-	// Get lead conversion statuses for frontend
-	conversionStatuses, err := h.configService.GetLeadConversionStatuses()
-	if err == nil {
-		// Create a synthetic configuration for the frontend
-		configs = append(configs, models.Configuration{
-			Key:         "leads.conversion.allowed_statuses",
-			Value:       utils.JSONMarshal(conversionStatuses),
-			Type:        models.ConfigTypeArray,
-			Category:    models.CategoryLeads,
-			Description: "Lead statuses that allow conversion to customer",
-		})
-	}
+	// The lead-conversion settings the convert dialog follows (issue #104).
+	// They are synthetic read-only entries carrying the effective values —
+	// the same values ConvertToCustomer enforces — rather than the stored
+	// rows, whose metadata is admin business. A failed read drops the entry
+	// instead of failing the endpoint; the server enforces the rule anyway.
+	configs = append(configs, h.leadConversionUIConfigurations(logger)...)
 
 	payload := gin.H{"configurations": newConfigurationResponses(configs)}
 	utils.LogHandlerResponse(logger, http.StatusOK, payload)
