@@ -362,14 +362,56 @@ an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipien
 contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
 let the remainder inject further headers (an extra recipient, a forged subject). The check is
 repeated inside the private `send`, so no future caller can bypass it. The generic `Send` failure
-log carries the subject and the transport error passed through `utils.LogError`, and not the
-recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
+log carries only the transport error passed through `utils.LogError` — neither the subject nor
+the recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
 recipient normally echoes the address in that text (`550 5.1.1 <who@example.com>: Recipient address
-rejected`). The raw error is still returned for `errors.As`. The password-reset failure line and
-the development `LogMailer` still record the recipient as before. Roots:
+rejected`). The raw error is still returned for `errors.As`. The password-reset failure line logs
+the same sanitised error and the redacted link, without the recipient; the development
+`LogMailer` still records the recipient and the subject as before. Roots:
 `TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`) and
 `TestSMTPMailerSendLogOmitsTheRelayReply` (`internal/mailer/smtp_relay_reply_test.go`), whose stub
 relay answers `RCPT TO` with a 550 that quotes the address.
+
+**SMTP delivery is one bounded exchange (#113)** — `SMTPMailer` does not use `smtp.SendMail`,
+which has no timeout. It dials within `mailer.DefaultDialTimeout` (10 s), sets one deadline of
+`mailer.DefaultSendTimeout` (30 s, counted from the start of the dial) on the connection for the
+whole conversation — greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT — and closes the raw
+TCP connection on every path; a watchdog (`context.AfterFunc`) closes it at the deadline at the
+latest, so cleanup such as the TLS close_notify (which sets its own five-second write deadline)
+cannot extend the bound. A failure caused by the deadline matches `os.ErrDeadlineExceeded`.
+The timeouts are package defaults, not configuration. **STARTTLS is opportunistic**: it is used
+whenever the relay advertises it, verifying the certificate against `SMTP_HOST`, and a failed
+handshake aborts the delivery, but with no `SMTP_USER` a relay that does not offer STARTTLS —
+or an attacker on the path who strips the offer — receives the message unencrypted. There is no
+require-TLS setting (see the roadmap); implicit TLS (port 465) is not supported. With
+`SMTP_USER` set the relay must offer AUTH, and net/smtp's `PlainAuth` refuses to send the
+credentials over an unencrypted connection unless the host is `localhost`/`127.0.0.1`/`::1`. A
+failed QUIT after the relay accepted DATA is not a failure. The recipient and `SMTP_FROM` are
+parsed with `net/mail.ParseAddress` — exactly one address, display name allowed — and the
+addr-spec is then serialised for the envelope (`envelopeAddress`): a dot-atom local part as is,
+any other local part as an RFC 5321 quoted string with `"` and `\` escaped
+(`RCPT TO:<"a b"@example.com>`), because `net/mail` returns quoted local parts unquoted and
+`"x> NOTIFY=NEVER"@example.com` would otherwise end `RCPT TO:<…>` early and inject ESMTP
+parameters. Control characters, `<` and `>` anywhere in the address — refused even inside
+quotes, where RFC 5321 would allow the brackets, because they are what lets text escape the
+command's angle brackets — and domain literals are `mailer.ErrInvalidAddress`, without echoing
+the value. Non-ASCII addresses (RFC 6531) are delivered only when the relay advertises SMTPUTF8
+after EHLO (net/smtp's `Client.Mail` then adds the `SMTPUTF8` parameter itself) and are refused
+with `ErrInvalidAddress` before `MAIL FROM` otherwise. The headers carry
+`mail.Address.String()`; CR/LF in the sender is `ErrInvalidHeader` like the recipient and
+subject. A non-ASCII subject is Q-encoded into encoded words that never split a character and
+folded so that every line holding encoded words, `Subject: ` included, is at most 76 characters
+(RFC 2047 section 2). Only I/O failures caused by the deadline (a timeout, or the watchdog's
+close) are reported as `os.ErrDeadlineExceeded`; a relay reply such as a 535 that decided the
+outcome is returned as it is even when net/smtp's abort and QUIT afterwards stall. The body is sent as
+`Content-Transfer-Encoding: quoted-printable` (7-bit on the wire, long lines soft-wrapped) after
+its line endings (CRLF, bare LF, bare CR) are normalised to CRLF; dot-stuffing is left to the SMTP
+data writer. The `Send` failure log carries neither the recipient nor the subject (automation
+subjects are rendered from `{{lead.email}}` and similar placeholders), only the error through
+`utils.LogError`, which also reduces a malformed relay reply (`textproto.ProtocolError`, which
+carries the whole line) to `smtp_protocol_error`. Roots, against in-process relays on `127.0.0.1` with injected
+sub-second timeouts (`internal/mailer/smtp_transport_test.go`): `TestSMTPDeadlines`,
+`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`.
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
@@ -387,6 +429,39 @@ writes a byte. Regression roots: `TestCustomerExportTraversal{SQLite,MySQL}`
 to be chunked again, continue on a composite `(sort column, id)` keyset that handles NULL
 explicitly, never on the primary key alone.
 
+**Paginated reads walk a total order (#110).** OFFSET/LIMIT pages are separate statements, so
+an `ORDER BY` that leaves rows tied lets the engine return the tied rows in a different order on
+each page; MySQL's filesort with a LIMIT does exactly that, and consecutive pages repeated some
+rows and never showed others. Every list and search over leads, customers, tasks (including the
+label join), tickets, users and companies, and the company customer/lead sub-lists, therefore
+ends with the table's id: `orderPage` (`internal/repository/page_order.go`) validates the column
+through `utils.ValidateSort`, orders by it and then by id in the same direction, or by id
+ascending when no sort is requested; the company list keeps its newest-first default with id
+descending after `created_at`. Columns are emitted through `clause.OrderByColumn` qualified with
+the table name, so a joined query cannot resolve them against the other table. New paginated
+reads should use the same helpers. Regression roots: `TestPaginationDeterminism{SQLite,MySQL}`
+(`internal/repository/pagination_determinism_test.go`), where every row shares `created_at` and
+every sort column is tied, both directions, with filters, checking every page against the
+expected sequence and the count. The Database migrations workflow runs both roots, the MySQL one
+on MySQL 8 and MariaDB 10.11, and its checker rejects a skip.
+
+**Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
+`leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
+in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in
+[datamodel.md](datamodel.md#lookup-indexes-and-query-plans). A predicate that wraps an indexed
+column in a function (`LOWER(domain)`) hides it from the index on SQLite and on MySQL/MariaDB;
+store the value normalised and compare it plainly instead. `TestLookupIndexesServeLookupsSQLite`
+captures the statements the repository really runs and asserts their SQLite plans use the
+indexes; `TestLookupIndexesMigration` (fresh up/down, populated upgrade, AutoMigrate first,
+rollback and reapply, index parity) is one of the roots the Database migrations workflow requires.
+Plain equality relies on every stored domain being lower case: the service normalises on write,
+and `models.MigrateDatabase` lower-cases any other row on every start on every driver, which is how
+SQLite installs, which never run the SQL migration, get it. It discovers the rows with a plain
+non-locking `SELECT id` (binary comparison on MySQL/MariaDB) and updates only those ids, by primary
+key in chunks of 500, so a normalised database takes no write and no row lock on startup; a single
+predicate `UPDATE` would lock every scanned record under InnoDB REPEATABLE READ on every boot. Roots:
+`TestCompanyDomainNormalization{SQLite,MySQL}` (`internal/repository/company_domain_normalization_test.go`).
+
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
 RateLimit.
 
@@ -402,6 +477,20 @@ sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
 users and customers. The helper is only safe on tables whose sole unique index is `email`, which is
 true of `users` and `customers`; adding a second unique index to either means the helper can no
 longer attribute a hit to the email column.
+
+**Bulk endpoints** — only `POST /leads|tickets|tasks/bulk/status` exist, registered by
+`SetupBulkStatusRoutes` outside the entity groups. `BulkHandler` depends on `BulkStatusService`
+(`internal/service/bulk_status_service.go`), which holds nothing but the three status operations.
+Each one normalises the ids (1–100, duplicates count once), checks the role, writes a pending
+`bulk_operations` history row, then inside ONE transaction reads every listed record through
+`BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
+or in a forbidden transition (the offending ids go into `error.details`), and only then writes
+the status — plus, for leads, the automation events on the same transaction. The history row is
+set to `completed` or `failed` afterwards; a failure to do so is logged and never changes the
+response. There is no generic bulk create/update/delete/action machinery any more (#112); a new
+bulk operation gets its own narrow service method and repository halves the same way, and a bulk
+erasure would need per-item isolation designed afresh (`runInTransaction` joins the caller's
+transaction, which is wrong for an item of a batch that reports per-item failures).
 
 **Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
 
@@ -646,8 +735,7 @@ What happens on `DELETE`:
 - Only then is the row soft-deleted. The row is deliberately **kept** so that foreign keys from
   tickets, tasks and leads still resolve — business records survive, the person does not.
 - Scrub and soft-delete happen in one transaction, so a failure part-way cannot leave a half-erased
-  but still-live record. In a bulk delete each item is isolated by its own savepoint, so one failing
-  item neither corrupts itself nor rolls back the rest of the batch.
+  but still-live record.
 - A lead that was converted into a customer is cascaded in both directions via `leads.customer_id`,
   because conversion copies the person's details into the customer row.
 - The lead's automation state ends in the same transaction, *before* the scrub
@@ -725,11 +813,11 @@ automation_engine.go` executes rules, `automation_runtime.go` owns the worker go
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
-  ConvertToCustomer`, the form submission path, the bulk status/assign/convert paths and
+  ConvertToCustomer`, the form submission path, the bulk lead status path and
   `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
   option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
-  transaction-bound repository, so a write that rolls back records nothing and a bulk item that
-  fails records nothing for that item. A create records `*_created`; an update `*_updated` plus
+  transaction-bound repository, so a write that rolls back records nothing and a refused bulk
+  status batch records nothing for any of its leads. A create records `*_created`; an update `*_updated` plus
   `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
   the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
   types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a
@@ -813,7 +901,28 @@ The pieces, and why each is shaped the way it is:
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
   simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
   conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,
-  calls `Mailer.Send` zero times and creates no run, notification, task or event.
+  calls `Mailer.Send` zero times and creates no run, notification, task or event. The draft dry
+  run (`AutomationService.DryRunDraft`, `POST /automation/rules/dry-run`) hands an unsaved rule
+  body through `validateRule` — the normalisation and every check of a create, the staff-user
+  lookups included — and then to the same `DryRun`; it starts no transaction, takes no lock and
+  saves nothing (no temporary rule row), and the report carries `draft: true`.
+- **Rule validation.** `validateRule` (`internal/service/automation_validation.go`) collects every
+  refusal in one pass into a `*RuleValidationError`: each `{field, code, message}` goes to
+  `error.details.fields`, while `Error()` and `Unwrap()` are those of the first refusal exactly as
+  the single-error validator produced it (`step N: ...: validation failed`, or
+  `user N is inactive: assignee not found` for a reference), so the message and the
+  `INVALID_INPUT`/`INVALID_REFERENCE` code are unchanged for clients that read only the message.
+  Order is fixed: an unknown `entity_type` stops, an unknown `trigger_type` skips the trigger
+  checks, `from` is checked before `to`, no steps or more than 20 skip the step checks, a field
+  keeps only its first refusal, and the staff-user lookups run last, once per distinct user, in
+  the order the steps first name them (they used to iterate a map, so the first message of a body
+  naming two bad users was not stable before).
+- **Rule names on runs.** Runs are readable by sales users and rules only by admins, so
+  `AutomationRun.Rule` is `json:"-"` and the run reads (`ListRuns`, `GetRunByID`) fill
+  `rule_name`/`rule_deleted` with one extra query over the page's distinct rule ids,
+  soft-deleted rules included. Only the name crosses: sales users see the names of the rules that
+  ran on their records, also after a rule is deleted, so rule names must not carry personal or
+  confidential text.
 - **Logs.** The engine logs operation names, `run_id`, `rule_id`, `event_id`, `entity_type`,
   `entity_id`, `position`, `step_type`, `outcome` and `error_code` only; a transport error, which
   may quote the address, is not logged.
@@ -830,8 +939,13 @@ and blanked by the task renderer), `TestAutomationWaitResume{SQLite,MySQL}`
 (a fresh engine on the same database after the clock passes `resume_at`),
 `TestAutomationScheduleTrigger{SQLite,MySQL}` (1,201 records over three ticks, a racing worker),
 `TestAutomationDryRunNoSideEffects{SQLite,MySQL}` (a before/after snapshot of every table),
+`TestAutomationDraftDryRunNoSideEffects{SQLite,MySQL}` (the snapshot plus an instrumented pool and
+GORM callbacks that refuse any transaction start, write or locking read during the draft),
+`TestAutomationDraftDryRunValidatesLikeCreate`, `TestAutomationRuleValidationCollectsAllFields`,
+`TestAutomationRuleValidationLegacyMessage`, `TestAutomationRuleValidationReferencePaths`,
 `TestAutomationReconcile{SQLite,MySQL}`, `TestAutomationRuntimeDrain`,
 `TestAutomationLogsOmitPersonalData` (`internal/service`); `TestAutomationRunListScope{SQLite,MySQL}`,
+`TestAutomationRunRuleNames{SQLite,MySQL}`,
 `TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
 repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 `TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);

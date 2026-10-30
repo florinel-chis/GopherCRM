@@ -126,3 +126,30 @@ describe('CustomerDetail deals section', () => {
     expect(dealsApi.getCustomerDeals).not.toHaveBeenCalled();
   });
 });
+
+describe('CustomerDetail fields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(vi.fn());
+    vi.mocked(useParams).mockReturnValue({ id: '5' });
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, total_pages: 0 });
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({ deals: [], total: 0 });
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(
+      createMockCustomer({ id: 5, company_name: 'Bolt Robotics' }),
+    );
+  });
+
+  // The API has no such fields; showing them would present invented values.
+  it('shows no industry, annual revenue, employee count or active status', async () => {
+    render(<CustomerDetail />);
+
+    await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+    expect(screen.queryByText('Industry')).not.toBeInTheDocument();
+    expect(screen.queryByText('Annual Revenue')).not.toBeInTheDocument();
+    expect(screen.queryByText('Employees')).not.toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    expect(screen.queryByText('Inactive')).not.toBeInTheDocument();
+  });
+});
+

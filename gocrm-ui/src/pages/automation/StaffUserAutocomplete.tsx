@@ -108,7 +108,11 @@ export const StaffUserAutocomplete: React.FC<StaffUserAutocompleteProps> = ({
       emptySearchText="Type to search users"
       error={error || unassignable || loadMessage !== null}
       helperText={
-        unassignable
+        // A field error (the form's or the server's) names the actual problem
+        // and wins over the generic "no longer assignable" hint.
+        error && helperText
+          ? helperText
+          : unassignable
           ? 'This user can no longer be assigned'
           : loadMessage ?? helperText ?? (stoppedEarly ? 'Type to narrow the list' : undefined)
       }

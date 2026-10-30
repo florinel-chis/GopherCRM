@@ -14,13 +14,18 @@ package models
 //
 // Deleting a company is a plain soft delete. Because the soft-deleted row keeps
 // its domain, uniqueness of the domain is checked in the service among live
-// rows with LOWER(domain) rather than by a unique index — the same reasoning
+// rows rather than by a unique index — the same reasoning
 // as the label name, minus the hard delete, which labels can afford because
 // nothing references them by foreign key.
+//
+// Domain is stored normalised to lower case (service.NormalizeCompanyDomain)
+// and carries a NON-unique index (idx_companies_domain) for that live-row
+// lookup, which compares the column with plain equality so the index applies
+// (#109).
 type Company struct {
 	BaseModel
 	Name          string `gorm:"not null;type:varchar(200)" json:"name"`
-	Domain        string `gorm:"type:varchar(255)" json:"domain"`
+	Domain        string `gorm:"type:varchar(255);index" json:"domain"`
 	Website       string `gorm:"type:varchar(255)" json:"website"`
 	Industry      string `gorm:"type:varchar(100)" json:"industry"`
 	EmployeeRange string `gorm:"type:varchar(20)" json:"employee_range"`

@@ -158,6 +158,21 @@ gating); where the two disagree, that disagreement gets its own case.
   `internal/integration/ticket_visibility_integration_test.go`; UI half planned —
   `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
+### TC-TICK-049 — The ticket list has no overflow menu; row icons act on their own row
+- **Priority:** P2
+- **Type:** regression
+- **Preconditions:** Admin logged in; three tickets created by the test.
+- **Steps:**
+  1. Navigate to `/tickets` and look for a vertical-dots button in the table toolbar or the rows.
+  2. Sort by Subject; click the Edit (pencil) icon of the second ticket, go back, click its Delete
+     (bin) icon and cancel the dialog.
+- **Expected:** No overflow button anywhere, for any role. Edit opens `/tickets/<that id>/edit`;
+  the delete dialog names `#<that id>`. Before #114 a toolbar button offered View / Edit / Delete,
+  guarded by a selection nothing could set, so it never opened; the row icons already cover the
+  same actions under the same role rules (sales sees only View, delete is admin only), so the menu
+  was removed rather than repaired.
+- **Automation:** automated (Vitest) — `src/pages/tickets/TicketList.rowActions.test.tsx`
+
 ---
 
 ## 5.2 Create Ticket
@@ -809,7 +824,7 @@ gating); where the two disagree, that disagreement gets its own case.
 ## POST /tickets/bulk/status
 
 `SetupBulkStatusRoutes` registers this route with no `RequireRole` guard; all authorization lives in
-`BulkHandler.BulkUpdateTicketStatus` and `bulkOperationService.BulkSetTicketStatus`. No UI calls it —
+`BulkHandler.BulkUpdateTicketStatus` and `bulkStatusService.BulkSetTicketStatus`. No UI calls it —
 `ticketsApi.bulkUpdateStatus` exists in `endpoints/tickets.ts` but no page imports it, and
 `DataTable.tsx:292` still carries a `// TODO: Implement bulk delete functionality`. These cases are
 therefore API-level, driven from a Playwright `request` context with a UI verification pass afterwards.
@@ -863,7 +878,7 @@ therefore API-level, driven from a Playwright `request` context with a UI verifi
   3. POST `{"ticket_ids":[A,B],"status":"closed"}`.
 - **Expected:** Step 1 returns **400** with `error.details.closed_ids` containing B, and A is
   untouched — the bulk route must not be a way around the single-record reopen ban
-  (`bulk_status_service.go:238-252`). Step 3 succeeds (200): moving a closed ticket *to* closed is
+  (`bulk_status_service.go:239-253`). Step 3 succeeds (200): moving a closed ticket *to* closed is
   not a reopen.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-bulk-status.spec.ts` (new)
 

@@ -50,12 +50,14 @@ Represents potential customers in the sales pipeline.
 |-------|------|----------|---------|-------------|-------------|
 | first_name | string | Yes | - | max 100 | Lead's first name |
 | last_name | string | Yes | - | max 100 | Lead's last name |
-| email | string | Yes | - | max 255 | Lead's email address |
+| email | string | Yes | - | max 255, indexed, not unique | Lead's email address |
 | phone | string | No | - | max 50 | Phone number |
 | company | string | No | - | max 200 | Company name |
 | position | string | No | - | max 100 | Job position/title |
 | source | string | No | - | max 100 | Lead source (e.g., website, referral) |
 | status | enum | Yes | 'new' | max 20 | Lead status (see below) |
+| classification | string | No | 'unclassified' | max 20, indexed | `unclassified`, `test`, `spam`, `lead`, `hot_lead` |
+| external_id | string | No | - | max 255, indexed, not unique | Identifier from an external source |
 | notes | text | No | - | - | Additional notes |
 | owner_id | uint | Yes | - | FK to users | Assigned sales user |
 | customer_id | uint | No | - | FK to customers | ID when converted to customer |
@@ -82,14 +84,15 @@ Represents potential customers in the sales pipeline.
 
 An organisation that leads and customers link to through `company_id`. Holds no personal data;
 deleting one soft-deletes the row and clears the links. `domain` is unique among live rows,
-checked in the service rather than by an index.
+checked in the service rather than by a unique index; a plain (non-unique) index serves that
+check.
 
 ### Fields
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | name | string | Yes | - | max 200 | Company name (trimmed; not unique) |
-| domain | string | No | - | max 255, unique among live rows | Normalised host, e.g. `acme.example` |
+| domain | string | No | - | max 255, indexed, unique among live rows | Normalised lower-case host, e.g. `acme.example` |
 | website | string | No | - | max 255, http(s) URL | Website |
 | industry | string | No | - | max 100 | Free text |
 | employee_range | string | No | - | one of `1-10`, `11-50`, `51-200`, `201-500`, `501-1000`, `1000+` | Head-count band |
@@ -104,6 +107,63 @@ checked in the service rather than by an index.
 
 `customer_count`, `lead_count` and `deal_count` are computed on read (live rows only) and are not
 columns.
+
+## Lookup Indexes and Query Plans
+
+Four non-unique single-column indexes back the lead and company lookups (#109). The names are
+the ones GORM AutoMigrate derives from the model tags, and the MySQL/MariaDB migration
+`20261029140000_add_lead_company_lookup_indexes` creates the same ones; `cmd/migrate`
+`TestLookupIndexesMigration` compares the two, and `internal/repository`
+`TestLookupIndexesServeLookupsSQLite` fails if a lookup stops using its index on SQLite.
+
+| Index | Serves |
+|-------|--------|
+| `idx_leads_email` | `GetLatestByEmail` (the form double opt-in match): `email = ?`, newest first |
+| `idx_leads_classification` | `GET /leads?classification=` and its count |
+| `idx_leads_external_id` | `GetByExternalID` |
+| `idx_companies_domain` | the live-row duplicate-domain check (`ExistsByDomain`) |
+
+None is unique: the same email may legitimately belong to several leads, and a soft-deleted
+company keeps its domain while a live company may reuse it. The domain check compares the
+column with plain equality against the lower-cased argument; the stored domain is always lower
+case (the service normalises it, and both the SQL migration and `models.MigrateDatabase`, on
+every start and every driver, lower-case any row written outside the application). Lower-casing
+cannot create a live duplicate the application did not already treat as one, because its check
+was case-insensitive before the change as well. The previous `LOWER(domain) = LOWER(?)` predicate cannot use a plain index on
+SQLite or on MySQL/MariaDB, and the functional indexes that could serve it are not portable
+(MariaDB 10.11 has none).
+
+Measured on 2026-10-29 with 20,000 leads (15,000 distinct emails, five classifications, unique
+external ids) and 5,000 companies, the tables analysed, on SQLite (glebarez driver) and MySQL 8
+(the runner container). This is a lab measurement, not a production incident.
+
+| Lookup | SQLite before | SQLite after | MySQL before | MySQL after |
+|--------|---------------|--------------|--------------|-------------|
+| lead by email, newest first | `SCAN leads` + temp B-tree for ORDER BY | `SEARCH leads USING INDEX idx_leads_email (email=?)` + temp B-tree over the matching rows | `ref` on `idx_leads_deleted_at`, ~9,756 rows examined, filesort | `ref` on `idx_leads_email`, 2 rows, filesort of those rows |
+| leads by classification, one page | `SCAN leads` | `SEARCH leads USING INDEX idx_leads_classification (classification=?)` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | `range` on `idx_leads_classification`, ~4,000 rows (one fifth of the table) |
+| count by classification | `SCAN leads` | `SEARCH ... USING INDEX idx_leads_classification` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | index intersection of `idx_leads_classification` and `idx_leads_deleted_at`, index only |
+| lead by external id | `SCAN leads` | `SEARCH leads USING INDEX idx_leads_external_id (external_id=?)` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | `ref` on `idx_leads_external_id`, 1 row |
+| company domain check | `SCAN companies` | `SEARCH companies USING INDEX idx_companies_domain (domain=?)` | `range` on `PRIMARY`, ~2,476 rows | `range` on `idx_companies_domain`, 2 rows |
+
+With the index in place, `LOWER(domain) = LOWER(?)` still produced `SCAN companies` on SQLite and
+a primary-key range over ~2,550 rows on MySQL, which is why the predicate changed. The email
+lookup keeps a sort step because `created_at` lives in the shared base model and cannot join a
+composite tag; the index narrows the sort to the few rows that share one address.
+
+Migration cost. Each index costs one scan of its table. MySQL 8 and MariaDB 10.11 build a
+secondary index as in-place online DDL: reads and writes continue during the build, but the
+statement takes a brief exclusive metadata lock at its start and end. A long-running transaction
+that touched the table delays that lock, and statements arriving behind the waiting DDL queue
+until it is granted, so run the upgrade when no long transaction or report is open on `leads` or
+`companies`. The domain normalisation `UPDATE` in the SQL migration is a separate, one-time
+write: it scans `companies` once, and under InnoDB REPEATABLE READ it locks every record it scans,
+not only the ones it changes, until the migration statement finishes; on a large table run it in
+the same quiet window. `models.MigrateDatabase` repeats the normalisation on every start on every
+driver (which is how SQLite installs get it) without that cost: it finds the rows with a plain,
+non-locking `SELECT id`, a full read of `companies` on each boot, and only when that returns ids
+lower-cases those rows by primary key in chunks of 500. Writes and row locks are therefore limited
+to the rows that need normalising, and a normalised database takes none. SQLite builds the indexes during the startup
+AutoMigrate, holding the database write lock while it does.
 
 ## Deal Model
 

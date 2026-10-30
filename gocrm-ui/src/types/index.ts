@@ -41,12 +41,8 @@ export interface Customer {
   country?: string;
   postal_code?: string;
   website?: string;
-  industry?: string;
-  annual_revenue?: number;
-  employee_count?: number;
   total_revenue: number;
   notes?: string;
-  is_active: boolean;
   owner_id?: number;
   owner?: User;
   assigned_to_id?: number;

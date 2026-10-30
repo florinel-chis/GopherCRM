@@ -5,27 +5,29 @@ rules with ordered steps, the outbox events every lead and deal write records, t
 the step executor, waits and schedules that survive a restart, the dry run, the run history, the
 in-app notifications, the boot reconciliation, the erasure hooks and the migration, and the
 screens added 2026-10-29: rule list and form, dry-run dialog, run list and detail, the lead and
-deal "Automation" sections, the notification bell and page.
+deal "Automation" sections, the notification bell and page; and, also on 2026-10-29, rule names
+on runs, field-level rule errors and the dry run of unsaved rule edits (TC-AUT-034 to 036).
 
 Every **Expected** states what the build does **today**, traced to the handlers, services and
-repositories; every automated case names the exact test that pins it. Cases 001 to 027 are automated at the Go
-level; the frontend cases 028 to 033 by Vitest and by the Playwright spec
+repositories; every automated case names the exact test that pins it. Cases 001 to 027, 034 and
+035 are automated at the Go level; the frontend cases 028 to 033 and 036 by Vitest and by the
+Playwright spec
 `gocrm-ui/e2e/tests/automation-rules.spec.ts`, which covers the admin flow only (as in
 [15-products-quotes.md](15-products-quotes.md), the sales and support behaviour is pinned in
 Vitest because no role-login e2e helper exists).
 
-33 cases: 33 automated (27 Go, 6 Vitest/Playwright), 0 planned, 0 blocked.
-Priorities: 18 P0, 14 P1, 1 P2.
+36 cases: 36 automated (29 Go, 7 Vitest/Playwright), 0 planned, 0 blocked.
+Priorities: 20 P0, 15 P1, 1 P2.
 
 **Sources**
 
 - `internal/models/automation.go`, `internal/models/notification.go`, `internal/models/database.go`
 - `internal/handler/automation_handler.go`, `internal/handler/notification_handler.go`,
   `internal/handler/routes.go` (`SetupAutomationRoutes`, `SetupNotificationRoutes`)
-- `internal/service/automation_service.go`, `automation_engine.go`, `automation_condition.go`,
+- `internal/service/automation_service.go`, `automation_validation.go`, `automation_engine.go`, `automation_condition.go`,
   `automation_dry_run.go`, `automation_runtime.go`, `automation_events.go`,
   `notification_service.go`; the event hooks in `lead_service.go`, `deal_service.go`,
-  `form_service.go`, `bulk_operation_service.go` and `bulk_status_service.go`
+  `form_service.go` and `bulk_status_service.go`
 - `internal/repository/automation_repository.go`, `notification_repository.go`, `erasure.go`,
   `erasure_cascade.go`, `internal/utils/sort.go`
 - `cmd/main.go`, `cmd/automation_runtime.go`, `internal/config/config.go`
@@ -40,7 +42,7 @@ Priorities: 18 P0, 14 P1, 1 P2.
   deals it currently owns; support and customer get 403 there too. Notifications are the
   recipient's own; customers are never addressed and get 403.
 - **Events are recorded in the write transaction.** A write that rolls back records nothing; a
-  bulk item that fails records nothing for that item. No event or run-log column holds personal
+  refused bulk status batch records nothing for any of its leads. No event or run-log column holds personal
   data.
 - **Every claim is a conditional update.** The event claim (`processed_at IS NULL`), the run claim
   (`status = pending|waiting`), the per-step advance (`status = 'running' AND next_position = ?`)
@@ -103,8 +105,15 @@ Priorities: 18 P0, 14 P1, 1 P2.
   carries `{{lead.phone}}` (a task survives the erasure of its lead, so only `lead.id`,
   `lead.status`, `lead.source` and the `deal.*` placeholders are allowed in it), no steps.
 - **Expected:** **400** `INVALID_INPUT` each time; the rule and step row counts are unchanged.
+  `error.message` is the first refusal as before (`step N: ...: validation failed`) and
+  `error.details.fields` lists every refused field of the body as `{field, code, message}` in a
+  fixed order (an unknown entity type stops, an unknown trigger type skips the trigger checks,
+  `from` before `to`, no steps or more than 20 skip the step checks, one entry per field; one
+  condition reports its value, currency and jump refusals together).
 - **Automation:** automated — `TestAutomationRuleAPISQLite` ("invalid rules are 400 INVALID_INPUT
-  and write nothing"); the condition refusals in `internal/service/automation_condition_test.go`:
+  and write nothing", "a rejected rule names every failing field in error.details");
+  `internal/service/automation_validation_test.go`: `TestAutomationRuleValidationCollectsAllFields`,
+  `TestAutomationRuleValidationLegacyMessage`, `TestAutomationRuleValidationStopsOnEntityType`; the condition refusals in `internal/service/automation_condition_test.go`:
   `TestAutomationConditionBranching` ("validation refuses unknown fields, operators and value
   types"); the task placeholder refusals and the task renderer that blanks a personal placeholder
   in `TestAutomationTaskPlaceholdersExcludePersonalData` (same file).
@@ -115,9 +124,16 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Preconditions:** A deactivated sales user, a customer-role user.
 - **Steps:** `POST /automation/rules` with an `assign_owner` step naming an unknown id, the
   deactivated user, the customer.
-- **Expected:** **400** `INVALID_REFERENCE` each time.
+- **Expected:** **400** `INVALID_REFERENCE` each time, with the message unchanged
+  (`unknown user_id N: assignee not found`, `user N is inactive: assignee not found`,
+  `user N is not a staff user: assignee not found`) and `error.details.fields` naming
+  `steps[i].config.user_id` with code `unknown_reference` on every step that names the user. Each
+  distinct user is looked up once; a `user_id` the step type ignores (on a wait) is still accepted
+  and not looked up; a body with a shape refusal and a bad user is `INVALID_INPUT` with the shape
+  refusal's message first.
 - **Automation:** automated — `TestAutomationRuleAPISQLite` ("an unknown or inactive user is 400
-  INVALID_REFERENCE").
+  INVALID_REFERENCE"); `TestAutomationRuleValidationLegacyMessage`,
+  `TestAutomationRuleValidationReferencePaths` (`internal/service`).
 
 ### TC-AUT-005 — Update, enable, disable and delete
 - **Priority:** P1
@@ -172,13 +188,15 @@ Priorities: 18 P0, 14 P1, 1 P2.
   1. Create and update a lead through `LeadService`; update it again without a status change; make
      an update that rolls back.
   2. Submit a public form twice with the same address.
-  3. Bulk status with a missing id, then without; bulk assign with a missing id; bulk convert.
+  3. Bulk status with a missing id, then without; the same batch again; a sales caller owning
+     neither lead; bulk status to `converted`.
   4. Convert a lead to a customer.
 - **Expected:** `lead_created` (origin `user`); `lead_updated` plus `lead_status_changed` with
   `from_value`/`to_value` when the status differs, `lead_updated` alone otherwise; nothing for the
   rolled-back update; `lead_created` then `lead_updated` with origin `form`; the refused batch
   records nothing, the accepted one `lead_updated` per lead plus `lead_status_changed` where the
-  status changed (origin `bulk`, `actor_id` the admin); the failed bulk item records nothing; the
+  status changed (origin `bulk`, `actor_id` the admin); the repeated batch `lead_updated` only;
+  the sales refusal nothing; the move to `converted` a `lead_status_changed` with origin `bulk`; the
   conversion records `lead_updated` and `lead_status_changed … converted` with origin
   `conversion`; no event column holds a name, address, phone or note.
 - **Automation:** automated — `internal/service/automation_lead_events_test.go`:
@@ -528,34 +546,60 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Preconditions:** The admin.
 - **Steps:** On `/automation/rules/new`, build a `lead_status_changed` rule with wait, condition,
   task and notify steps and save; try a 21st step; try a backward jump; edit an existing rule;
-  submit a rule the server refuses.
+  submit a rule the server refuses; reorder, edit and remove steps while a refused save is in
+  flight.
 - **Expected:** The POST payload matches the API; Add step is disabled at 20 steps and a jump can
-  target only a later step; the server's 400 message is shown on the step it names (`step N: ...`)
-  or above the buttons (the API returns a message, not a field map); saving an edit asks for
-  confirmation, warns that the rule's pending, waiting and running runs will be cancelled, and
-  sends no `enabled`.
+  target only a later step; each entry of the server's `error.details.fields` is shown under its
+  field (editing the field clears it), entries without a field (`steps`, `entity_type`, a step
+  type) go to the step's card or above the buttons, and a server without details falls back to the
+  message on the step it names; an answer arriving after the form changed follows each step by its
+  key and drops errors of steps removed or fields edited meanwhile (a user error also when the step
+  no longer sends to a specific user); a server error clears when its field is edited, also after
+  its step was moved or a step before it removed; a field error under the user
+  picker replaces the "no longer assignable" hint; saving an edit asks for confirmation, warns that
+  the rule's pending, waiting and running runs will be cancelled, and sends no `enabled`; the name
+  field says that sales users see the name on runs.
 - **Automation:** automated — `gocrm-ui/src/pages/automation/AutomationRuleForm.test.tsx`: "builds
   a lead_status_changed rule with wait, condition, task and notify steps and asserts the POST
   payload", "refuses a 21st step client-side", "refuses a backward else_position client-side",
   "editing shows the cancellation warning before the PUT and omits enabled", "shows a server 400
-  message on the step it names and other messages above the buttons".
+  message on the step it names and other messages above the buttons", "shows each server field
+  error under its field", "puts unmapped server errors in the form-level alert", "places a delayed
+  save error on the moved step and drops errors of edited or removed steps", "clears a draft user
+  error when the field is edited after its step was moved up", "clears a draft user error when the
+  field is edited after its step was shifted by removing the step before it";
+  `ruleFormSchema.test.ts`: "mapServerFieldErrors maps every server path onto its form field",
+  "mapServerFieldErrors sends unknown or out-of-range paths to the form-level list", "follows moved
+  steps by key and drops errors of removed, retyped or edited fields", "drops a user error whose
+  step no longer sends to a specific user", "reads error.details.fields and ignores anything
+  else"; `StaffUserAutocomplete.test.tsx`: "shows a field error message
+  instead of the inactive hint".
 
 ### TC-AUT-030 — Dry-run dialog
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** A rule and a lead the admin can see.
-- **Steps:** Open "Dry run" from the list and from the edit page; pick the record; submit; repeat
-  with a record that answers 404.
+- **Steps:** Open "Dry run" from the list, from the edit page with unsaved changes and from the
+  new-rule page; pick the record; submit; repeat with a record that answers 404 and with a draft
+  the server refuses; close the dialog before a draft refusal arrives.
 - **Expected:** One row per step with its outcome chip, simulated time and details, a persistent
   notice that nothing is written, sent or notified; the record type is fixed to the rule's entity
-  type; from the edit page the saved version is simulated (a caption says so); the 404 shows
-  inline.
+  type; the list simulates the saved version (`POST /automation/rules/{id}/dry-run`); the editor
+  first runs the form's own checks (an invalid form opens nothing) and simulates the form as it is,
+  new rule included (`POST /automation/rules/dry-run`, the report says "unsaved form values", a
+  caption under the button says so); a refused draft shows the message in the dialog and marks the
+  form's fields; a refusal arriving after the dialog closed marks nothing; the 404 shows inline.
 - **Automation:** automated — `gocrm-ui/src/pages/automation/DryRunDialog.test.tsx`: "a mocked
   report renders every step row and the no-side-effects notice", "fixes the record type to the
   rule entity type and offers deals of every stage", "a 404 shows the error inline";
   `AutomationRuleList.test.tsx`: "opens the dry-run dialog from the Tools column without opening
-  the editor"; `AutomationRuleForm.test.tsx`: "opens the dry run from the edit page for the saved
-  rule even with unsaved changes".
+  the editor", "the list's dry run simulates the saved version"; `DryRunDialog.test.tsx`: "a
+  saved-rule dry run posts to the rule's dry-run route", "a draft dry run posts the form payload to
+  /automation/rules/dry-run and labels the report as unsaved", "a rejected draft shows the server
+  message and reports the field errors"; `AutomationRuleForm.test.tsx`: "dry-runs the current
+  unsaved values of an edited rule", "dry-runs a new rule before it is saved", "does not open the
+  dry run while the form is invalid", "marks the fields of a refused draft dry run", "ignores a
+  draft dry-run refusal that arrives after the dialog closed".
 
 ### TC-AUT-031 — Run list, run detail and the lead and deal "Automation" sections
 - **Priority:** P1
@@ -564,7 +608,11 @@ Priorities: 18 P0, 14 P1, 1 P2.
 - **Steps:** Open `/automation/runs`, filter by status, rule and entity; open a run; open a lead
   and a deal detail.
 - **Expected:** The filters build the query string (sales filters by rule ID and never requests
-  the rule list); runs show `Rule #<id> · v<n>` because the API does not return the rule name;
+  the rule list); runs show the rule's name from `rule_name` (sales included, no rule request),
+  "(deleted)" after it for a deleted rule and `Rule #<id>` when the rule row is gone; the rule
+  filter names a selected rule the picker never loaded from the runs, keeps that name while a later
+  page is empty, loading or failed, and shows `Rule #<id>` without a known name; the detail links
+  the rule for the admin unless it is deleted;
   the detail shows the step log and, for the admin only, a Cancel run button on pending, waiting
   and running runs; the detail pages list the record's runs through
   `GET /automation/runs?entity_type=&entity_id=`; support and customers see no section.
@@ -572,7 +620,13 @@ Priorities: 18 P0, 14 P1, 1 P2.
   filters build the query: status, rule, entity type and record id", "lets a sales user filter by
   rule id without requesting the rule list"; `AutomationRunDetail.test.tsx`: "the detail shows
   step rows with outcome, time and details", "Cancel is visible for admin only on pending,
-  waiting and running runs"; `AutomationRunsSection.test.tsx`: "lists the record runs through
+  waiting and running runs", "shows the rule name and links admins to the rule", "shows a deleted
+  rule's name without a link"; `AutomationRunList.test.tsx`: "shows the rule name from the run for
+  sales without loading rules", "marks a deleted rule's runs and falls back to Rule #id without a
+  name", "keeps naming a filtered rule the picker never loaded while later pages are empty, loading
+  or failed", "shows Rule #id in the picker for a filtered rule without a known name";
+  `automationFormat.test.ts`: "runRuleLabel falls back to Rule #id and flags deleted rules";
+  `AutomationRunsSection.test.tsx`: "names the rule of each run", "lists the record runs through
   entity_type and entity_id", "renders nothing for support and customer users", "LeadDetail
   renders the section", "DealDetail renders the section".
 
@@ -609,3 +663,62 @@ Priorities: 18 P0, 14 P1, 1 P2.
   Vitest files of TC-AUT-028 to 032) — `gocrm-ui/e2e/tests/automation-rules.spec.ts`: "admin
   creates a disabled lead_created rule with a condition and a notify step, dry-runs it on a lead
   and the unread count stays the same".
+
+## 16.7 Rule names, field errors and the draft dry run (2026-10-29)
+
+### TC-AUT-034 — A draft dry run validates like a create and touches nothing
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A saved lead rule at version 2 with a run parked at its wait; a lead and a deal
+  owned by a sales user; active staff users.
+- **Steps:** `POST /automation/rules/dry-run` (service `DryRunDraft`) with the saved rule edited
+  (a 30-minute wait, an assign to another user, a task to the owner, an email and a notification
+  to named users), with a brand-new deal rule, with each body a create refuses, with a record of
+  the other entity type and a missing record; as sales, support and customer. Instrument the pool
+  and GORM callbacks for the duration.
+- **Expected:** **200** with `draft: true`, `rule_id` and `rule_version` 0 and the draft's steps,
+  every effect step `succeeded`; the refusals are the create's (same message, same
+  `error.details.fields`), **400** for the other entity type, **404** for a missing record,
+  **403** for the three roles; no transaction is started, no insert, update, delete, raw statement
+  or locking read is issued, the row counts of rules, steps, runs, run steps, events, tasks and
+  notifications and a snapshot of every table are unchanged, `Mailer.Send` is never called, the
+  saved rule keeps version 2, its steps and its waiting run. The instrumentation itself flags a
+  saved rule's update.
+- **Automation:** automated — `internal/service/automation_dry_run_test.go`:
+  `TestAutomationDraftDryRunNoSideEffectsSQLite`, `TestAutomationDraftDryRunNoSideEffectsMySQL`,
+  `TestAutomationDraftDryRunInstrumentationCatchesWrites`, `TestAutomationDraftDryRunValidatesLikeCreate`;
+  `tests/automation_api_test.go`: `TestAutomationRunAPISQLite` ("draft dry run");
+  `internal/handler/routes_test.go`: `TestAutomationDraftDryRunRouteIsStatic`.
+
+### TC-AUT-035 — Run responses name the rule and disclose nothing else of it
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Runs of a renamed, a deleted and a live rule; a sales owner of the records.
+- **Steps:** List runs (admin and sales scopes, a `rule_id` filter, every allowlisted sort, an
+  offset page), get runs, cancel a run; marshal a run whose `Rule` association is populated.
+- **Expected:** Every run carries `rule_name` (the current name) and `rule_deleted`; a deleted
+  rule's runs keep its last name with `rule_deleted: true`, a rule row that is gone leaves the
+  name empty; a page costs one count, one page query and one name query; no response — and no
+  marshalled run, even with the association loaded — contains a `rule` key, a trigger, a step
+  `config` or any step text, while the run's own step log stays.
+- **Automation:** automated — `internal/repository/automation_repository_test.go`:
+  `TestAutomationRunRuleNamesSQLite`, `TestAutomationRunRuleNamesMySQL`;
+  `internal/models/automation_run_json_test.go`: `TestAutomationRunJSONNeverSerialisesTheRule`;
+  `tests/automation_api_test.go`: `TestAutomationRunAPISQLite` ("run responses carry the rule name
+  and never the rule configuration", "a deleted rule's runs keep its name, flagged deleted").
+
+### TC-AUT-036 — End to end: an unsaved dry run and a server field error in the browser
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** The seeded admin and the spec's lead; a sales user created by the spec, named
+  by a disabled rule's `assign_owner` step and then deactivated (both removed afterwards).
+- **Steps:** On `/automation/rules/new` add a notify step and dry-run the unsaved form on the lead;
+  open the edit page of the rule naming the deactivated user and save it.
+- **Expected:** The dry run posts to `/automation/rules/dry-run`, answers `draft: true`, shows one
+  step and "unsaved form values", leaves the page on the new-rule form and the rule total
+  unchanged; the save answers **400** `INVALID_REFERENCE` with the unchanged message and
+  `steps[0].config.user_id` in `error.details.fields`, and the message "the user is deactivated"
+  shows under the user picker of step 1 through the real API client.
+- **Automation:** automated — `gocrm-ui/e2e/tests/automation-rules.spec.ts`: "admin dry-runs an
+  unsaved new rule from the form and nothing is created", "saving a rule whose user was deactivated
+  meanwhile shows the server error under the user picker".

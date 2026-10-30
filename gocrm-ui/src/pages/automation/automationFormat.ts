@@ -6,10 +6,20 @@ import type {
   AutomationOperator,
   AutomationOutcome,
   AutomationRule,
+  AutomationRun,
   AutomationRunStatus,
   AutomationStepType,
   AutomationTriggerType,
 } from '@/types';
+
+/**
+ * The rule a run belongs to: its name as the run reports it, "Rule #id"
+ * when the rule row is gone, and "(deleted)" for a deleted rule.
+ */
+export const runRuleLabel = (run: Pick<AutomationRun, 'rule_id' | 'rule_name' | 'rule_deleted'>): string => {
+  const name = run.rule_name?.trim() ? run.rule_name : `Rule #${run.rule_id}`;
+  return run.rule_deleted ? `${name} (deleted)` : name;
+};
 
 // Date-time pattern for run, step and notification timestamps (local time).
 export const AUTOMATION_DATETIME = 'MMM d, yyyy HH:mm';

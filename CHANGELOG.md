@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Follow-up automation: rule names on runs, field-level rule errors, dry run of unsaved edits.**
+  Run responses (`GET /automation/runs`, `GET /automation/runs/{id}`, the cancel answer) carry
+  `rule_name` — the rule's current name, also for a deleted rule, flagged `rule_deleted` — and
+  never the rule's trigger or steps (the `rule` association is no longer serialised at all); the
+  run list, run detail, the lead and deal Automation sections and the run list's rule filter show
+  the name. Sales users therefore see the names of the rules that ran on their records, also after
+  a rule is deleted; the rule form says so under the name. A refused rule body lists every refused
+  field in `error.details.fields` as `{field, code, message}` (`steps[2].config.title`, steps
+  counted from zero) while `error.message` and `error.code` stay those of the first refusal; the
+  editor puts each message under its field, following steps moved while the save was in flight and
+  dropping errors of fields edited or steps removed meanwhile. `POST /automation/rules/dry-run`
+  (admin) simulates an unsaved rule body after the same validation as a create, saving nothing and
+  starting no transaction; the editor's Dry run button now simulates the form as it is, on a new
+  rule too, while the rule list's dry run keeps simulating the saved version.
 - **Follow-up automation and notifications (UI).** The screens for the automation API:
   `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
   cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and
@@ -287,12 +301,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unrelated entity browsers and frontend unit suites are excluded from this
   bounded profile; explicit full/release validation remains complete.
 
+- **Lookup indexes for leads and companies (#109).** `leads.email`, `leads.classification`,
+  `leads.external_id` and `companies.domain` are now indexed, non-uniquely (a person may be
+  captured as a lead twice; a soft-deleted company keeps its domain while a live one reuses it).
+  The duplicate-domain check compares the stored, already lower-cased domain with plain equality
+  instead of `LOWER(domain)`, which no index could serve on SQLite or MySQL. MySQL/MariaDB
+  upgrades run `migrations/20261029140000_add_lead_company_lookup_indexes` (idempotent after an
+  AutoMigrate start, lower-cases any domain written outside the application; rollback drops the
+  four indexes); SQLite gets the same indexes from AutoMigrate, and application startup
+  (`models.MigrateDatabase`) lower-cases such domains on every driver, so SQLite installs, which
+  never run the SQL migration, keep catching a mixed-case duplicate. Query plans before and after are
+  recorded in `docs/datamodel.md`.
+
 - **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite
   passes on the queue's temporary branch, on top of the current `main`, before a pull request
   merges. Production deploys still follow only CI runs of pushes to `main`.
 
+- **Bulk status service narrowed (internal, no API change).** `POST /leads|tickets|tasks/bulk/status`
+  now run on a `BulkStatusService` holding only the three status operations, over a
+  `BulkStatusRepository` (the read and write halves of a status change) and a
+  `BulkOperationRepository` reduced to the history-row create and outcome update. Responses,
+  authorization, all-or-nothing transactions, `error.details`, the `bulk_operations` history
+  rows and the lead automation events are unchanged; new SQLite/MySQL regression roots pin the
+  rollback, history and event behaviour (#112).
+
+### Removed
+
+- **The unused generic bulk subsystem (#112).** Nothing routed it since the generic
+  `/bulk/:resource` handlers were dropped: the `ProcessBulk*` dispatchers, the
+  `BulkCreate*`/`BulkUpdate*`/`BulkDelete*`/`BulkAction*` service methods for users, leads,
+  customers, tasks and tickets, the matching repository mutations (including the batch-erasure
+  wrapper and its per-item savepoint helpers, which only that path used), the bulk-operation read
+  methods, their mocks and tests, and the request/response DTOs. Single-record erasure is
+  untouched. No table or column is dropped: `bulk_operations` keeps receiving one row per status
+  update, and `bulk_operation_items` stays in the schema although nothing writes it any more
+  (retirement is a separate roadmap item).
+- **Customer fields the API never stored (#118).** The customer form no longer offers Industry,
+  Number of Employees, Annual Revenue or the "Active Customer" switch, the customer list drops
+  its Status column and the customer detail page drops the Industry, Annual Revenue and Employees
+  fields and the Active/Inactive chip. None of them exists on the customer API: saves discarded
+  what was typed and reads showed invented defaults (blank, zero, always active). The Company
+  record already owns industry and employee range, and customers link to it; there is no
+  customer activation concept. The frontend `Customer` type and the read adapter no longer carry
+  the four fields. No backend change.
+
 ### Fixed
 
+- **Overflow menus on the lead, customer, user, ticket and task lists (#114).** The "more"
+  button sat in the table toolbar and acted on a selected record that nothing ever set, so it
+  never opened. Each row now has its own menu, named for the row ("More actions for <name>"),
+  that carries only what the row's view/edit/delete icons do not: Convert to Customer on leads
+  whose status allows conversion, Create Ticket on customers for admin and support, Activate or
+  Deactivate on users (deactivating your own account is disabled, as the API refuses it), and
+  Mark as Complete on tasks that are not completed. The ticket list's menu only repeated view,
+  edit and delete under the same role rules as the row icons, so it is gone. Every menu acts on
+  its own row whatever the sort, filter or page, and a click inside it no longer falls through to
+  the row. `DataTable` gains a `rowActions` slot and the new `RowActionsMenu` component.
+- **Lead owner changes reach the API (#119).** `leadsApi.updateLead` now sends `owner_id` when the
+  caller provides it and still omits it otherwise; the API keeps reassignment admin-only.
+- **Role guards on the lead routes and customer creation (#120).** `/leads`, `/leads/new`,
+  `/leads/{id}` and `/leads/{id}/edit` and `/customers/new` now sit under an admin-and-sales
+  route guard matching the API, so a support or customer deep link lands on Access Denied
+  instead of a page whose requests all fail. The customer list hides "Add Customer" from the same
+  roles. Customer list, detail and edit routes are unchanged.
+- **Paginated lists no longer repeat or skip rows that share a sort value (#110).** The lead,
+  customer, task (including the label filter), ticket, user and company lists and searches, and
+  the company customer and lead sub-lists, now always end their `ORDER BY` with the table's id:
+  ascending id without a sort, otherwise the requested column then id in the same direction, the
+  id qualified with the table so the label join stays unambiguous. Before, tied values (every row
+  of one import shares `created_at`) came back in whatever order the engine chose per statement,
+  and on MySQL consecutive pages repeated some rows and never showed others. The support-scoped
+  ticket list used to break ties by ascending id even for a descending sort; it now follows the
+  sort direction like the rest.
 - **The session that changes the password stays signed in (#116).** `POST /auth/change-password`
   is now one transaction: the owner row is locked, the hash it was verified against is re-checked,
   the caller's current refresh token (new optional `refresh_token` body field) is claimed, the new
@@ -494,6 +574,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **SMTP delivery is bounded and validates its headers (#113).** The SMTP mailer no longer calls
+  `smtp.SendMail`, which had no timeout: a relay that stalled at the greeting or any later command
+  held the calling request or worker indefinitely. Each delivery now dials within 10 s and runs
+  the whole conversation (greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT) under one 30 s
+  deadline that is a hard bound: the raw connection is closed on every path and, at the latest,
+  when the deadline passes, so TLS cleanup cannot add its own grace period. STARTTLS stays
+  opportunistic — used whenever the relay advertises it, and a failed handshake aborts the
+  delivery; PLAIN credentials are never sent over an unencrypted connection to a host other than
+  localhost, and configured credentials against a relay that offers no AUTH fail instead of
+  submitting unauthenticated. The recipient and the configured `SMTP_FROM` must each be one RFC
+  5322 address (display names allowed). The envelope address is serialised safely: a dot-atom
+  local part as is, any other local part re-quoted (`RCPT TO:<"a b"@example.com>`) — `net/mail`
+  returns quoted local parts unquoted, so `"x> NOTIFY=NEVER"@example.com` would otherwise have
+  reached `RCPT TO` as extra ESMTP parameters. Control characters, `<` or `>` anywhere in the
+  address (even quoted) and domain literals are refused with `mailer.ErrInvalidAddress` before any
+  relay is contacted; an internationalised address is delivered only when the relay advertises
+  SMTPUTF8 and otherwise refused before `MAIL FROM`. CR or LF in the sender is refused like the recipient and subject
+  (`mailer.ErrInvalidHeader`), the envelope carries the bare address (previously a recipient with
+  a display name produced a malformed `RCPT TO`), and a non-ASCII subject is RFC 2047 encoded and
+  folded into lines of at most 76 characters. A relay reply such as a 535 is returned as it is even
+  when the abort that follows runs into the deadline; only I/O failures caused by the deadline are
+  reported as `os.ErrDeadlineExceeded`. The body, declared UTF-8, is now sent quoted-printable instead of raw 8-bit, with every
+  line ending (including a bare CR) normalised to CRLF and long lines soft-wrapped. Failure logs
+  no longer carry the subject (automation subjects can expand `{{lead.email}}`) or, for the
+  password reset, the recipient; transport errors go through `utils.LogError`, which now also
+  reduces a malformed relay reply (`textproto.ProtocolError`) to `smtp_protocol_error`.
 - **Service and HTTP logging privacy.** The sample `LOG_LEVEL` is now `info`. Service logs omit
   emails, names, titles, search terms and raw sort values, while shared helpers omit argument,
   result and handler response payloads (including issued credentials). Access logs omit query

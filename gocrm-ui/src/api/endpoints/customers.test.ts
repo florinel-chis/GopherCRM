@@ -65,3 +65,18 @@ describe('customer websites', () => {
     expect((await customersApi.getCustomer(7)).website).toBe('');
   });
 });
+
+// The customer API has no industry, revenue, employee count or activation
+// field (the Company record owns industry and size). Reads must not invent
+// them, or the UI shows defaults the server never stored.
+describe('customer read model', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('does not fabricate industry, annual revenue, employee count or active status', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ data: backendCustomer });
+    const customer = await customersApi.getCustomer(7);
+    for (const field of ['industry', 'annual_revenue', 'employee_count', 'is_active']) {
+      expect(customer).not.toHaveProperty(field);
+    }
+  });
+});

@@ -27,6 +27,7 @@ vi.mock('@/api/endpoints', () => ({
     createRule: vi.fn(),
     updateRule: vi.fn(),
     dryRun: vi.fn(),
+    dryRunDraft: vi.fn(),
   },
   usersApi: { getUsers: vi.fn(), getUser: vi.fn() },
   leadsApi: { getLeads: vi.fn(), getLead: vi.fn() },
@@ -47,6 +48,21 @@ const apiError = (status: number, code: string, message: string) =>
     headers: {},
     config: {} as InternalAxiosRequestConfig,
     data: { code, message, details: null },
+  } as AxiosResponse);
+
+// A rule refusal as the API sends it: the first refusal's message and every
+// refused field in error.details.fields.
+const fieldsError = (
+  message: string,
+  fields: Array<{ field: string; code: string; message: string }>,
+  code = 'INVALID_INPUT',
+) =>
+  new AxiosError('Request failed with status code 400', 'ERR_BAD_REQUEST', undefined, undefined, {
+    status: 400,
+    statusText: 'Bad Request',
+    headers: {},
+    config: {} as InternalAxiosRequestConfig,
+    data: { code, message, details: { fields } },
   } as AxiosResponse);
 
 const steps = (...items: Array<[AutomationStepType, AutomationStepConfig]>): AutomationStep[] =>
@@ -454,20 +470,24 @@ describe('AutomationRuleForm', () => {
     expect(payload.steps).toEqual(rule.steps.map(({ step_type, config }) => ({ step_type, config })));
   });
 
-  it('opens the dry run from the edit page for the saved rule even with unsaved changes', async () => {
+  it('dry-runs the current unsaved values of an edited rule', async () => {
     const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
     vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
-    vi.mocked(automationApi.dryRun).mockResolvedValue(createMockDryRunReport({ rule_id: 3, rule_version: 3 }));
-    await renderEdit(storedRule({ name: 'Stored name', version: 3 }));
+    vi.mocked(automationApi.dryRunDraft).mockResolvedValue(
+      createMockDryRunReport({ rule_id: 0, rule_version: 0, draft: true, entity_id: 5 }),
+    );
+    await renderEdit(
+      storedRule({ name: 'Stored name', version: 3, steps: steps(['notify', { title: 'Saved title', recipient: 'owner' }]) }),
+    );
 
     type(screen.getByRole('textbox', { name: 'Name' }), 'Typed name');
-    expect(screen.getByTestId('dry-run-saved-version')).toHaveTextContent(
-      'Simulates the saved version 3; save first to include unsaved changes.',
+    type(field(group(1), 'Title'), 'Unsaved title');
+    expect(screen.getByTestId('dry-run-draft-notice')).toHaveTextContent(
+      'Simulates the form as it is now, unsaved changes included; nothing is saved.',
     );
     fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Dry run: Stored name' });
-    expect(screen.queryByRole('dialog', { name: 'Dry run: Typed name' })).not.toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Dry run: Typed name' });
     // The page's Entity type select also reads "Lead", so pick inside the dialog.
     const leadInput = within(dialog).getByLabelText('Lead');
     leadInput.focus();
@@ -476,8 +496,232 @@ describe('AutomationRuleForm', () => {
     await waitFor(() => expect(leadInput).toHaveValue('Ion Ionescu (Bolt Robotics)'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Run dry run' }));
 
-    await waitFor(() => expect(automationApi.dryRun).toHaveBeenCalledWith(3, { entity_type: 'lead', entity_id: 5 }));
+    await waitFor(() => expect(automationApi.dryRunDraft).toHaveBeenCalledTimes(1));
+    const [request] = vi.mocked(automationApi.dryRunDraft).mock.calls[0];
+    expect(request.entity_type).toBe('lead');
+    expect(request.entity_id).toBe(5);
+    expect(request.rule.name).toBe('Typed name');
+    expect(request.rule.steps).toEqual([{ step_type: 'notify', config: { title: 'Unsaved title', recipient: 'owner' } }]);
+    expect(request.rule).not.toHaveProperty('enabled');
+    expect(await within(dialog).findByText(/unsaved form values/)).toBeInTheDocument();
+    expect(automationApi.dryRun).not.toHaveBeenCalled();
     expect(automationApi.updateRule).not.toHaveBeenCalled();
+  });
+
+  it('dry-runs a new rule before it is saved', async () => {
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'Brand new');
+    await addStep('Notify');
+    type(field(group(1), 'Title'), 'Hello');
+    fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Dry run: Brand new' })).toBeInTheDocument();
+    expect(automationApi.createRule).not.toHaveBeenCalled();
+  });
+
+  it('does not open the dry run while the form is invalid', async () => {
+    render(<AutomationRuleForm />);
+    await addStep('Notify');
+    fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+    expect(await within(group(1)).findByText('Title is required')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /^Dry run/ })).not.toBeInTheDocument();
+    expect(automationApi.dryRunDraft).not.toHaveBeenCalled();
+  });
+
+  it('shows each server field error under its field', async () => {
+    vi.mocked(automationApi.createRule).mockRejectedValueOnce(
+      fieldsError('name is required: validation failed', [
+        { field: 'name', code: 'required', message: 'name is required' },
+        { field: 'steps[1].config.title', code: 'unknown_placeholder', message: 'title uses an unknown placeholder "lead.nick"' },
+        { field: 'steps[0].config.body', code: 'too_long', message: 'body is longer than 65535 bytes' },
+      ]),
+    );
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'Server says no');
+    await addStep('Notify');
+    type(field(group(1), 'Title'), 'First');
+    await addStep('Notify');
+    type(field(group(2), 'Title'), 'Second');
+    submitCreate();
+
+    expect(await within(group(2)).findByText('title uses an unknown placeholder "lead.nick"')).toBeInTheDocument();
+    expect(within(group(1)).getByText('body is longer than 65535 bytes')).toBeInTheDocument();
+    expect(screen.getByText('name is required')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-server-error')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-server-error')).not.toBeInTheDocument();
+
+    // Editing a field clears its server error.
+    type(field(group(2), 'Title'), 'Second, fixed');
+    await waitFor(() =>
+      expect(within(group(2)).queryByText('title uses an unknown placeholder "lead.nick"')).not.toBeInTheDocument(),
+    );
+    expect(within(group(1)).getByText('body is longer than 65535 bytes')).toBeInTheDocument();
+  });
+
+  it('puts unmapped server errors in the form-level alert', async () => {
+    vi.mocked(automationApi.createRule).mockRejectedValueOnce(
+      fieldsError('the waits of a rule add up to more than 90 days: validation failed', [
+        { field: 'steps', code: 'out_of_range', message: 'the waits of a rule add up to more than 90 days' },
+        { field: 'entity_type', code: 'invalid_value', message: 'entity_type must be lead or deal' },
+        { field: 'steps[0].step_type', code: 'invalid_value', message: 'unknown step type "x"' },
+      ]),
+    );
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'Long waits');
+    await addStep('Notify');
+    type(field(group(1), 'Title'), 'First');
+    submitCreate();
+
+    const alert = await screen.findByTestId('rule-server-error');
+    expect(alert).toHaveTextContent('the waits of a rule add up to more than 90 days; entity_type must be lead or deal');
+    expect(within(group(1)).getByTestId('step-server-error')).toHaveTextContent('unknown step type "x"');
+  });
+
+  it('places a delayed save error on the moved step and drops errors of edited or removed steps', async () => {
+    let reject: (error: unknown) => void = () => {};
+    vi.mocked(automationApi.createRule).mockImplementationOnce(
+      () => new Promise((_resolve, rejectRequest) => (reject = rejectRequest)),
+    );
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'In flight');
+    for (const title of ['Alpha', 'Beta', 'Gamma']) {
+      await addStep('Notify');
+      type(field(group(screen.getAllByRole('group').length), 'Title'), title);
+    }
+    submitCreate();
+    await waitFor(() => expect(automationApi.createRule).toHaveBeenCalledTimes(1));
+
+    // While the request is in flight: Beta moves to the top, Alpha's title
+    // is edited, Gamma is removed.
+    fireEvent.click(screen.getByRole('button', { name: 'Move step 2 up' }));
+    type(field(group(2), 'Title'), 'Alpha edited');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove step 3' }));
+    expect(field(group(1), 'Title')).toHaveValue('Beta');
+
+    reject(
+      fieldsError('step 1: title is longer than 255 characters: validation failed', [
+        { field: 'steps[0].config.title', code: 'too_long', message: 'alpha title refused' },
+        { field: 'steps[1].config.title', code: 'too_long', message: 'beta title refused' },
+        { field: 'steps[2].config.title', code: 'too_long', message: 'gamma title refused' },
+        { field: 'steps[2].step_type', code: 'invalid_value', message: 'gamma step refused' },
+      ]),
+    );
+
+    expect(await within(group(1)).findByText('beta title refused')).toBeInTheDocument();
+    expect(screen.queryByText('alpha title refused')).not.toBeInTheDocument();
+    expect(screen.queryByText('gamma title refused')).not.toBeInTheDocument();
+    expect(screen.queryByText('gamma step refused')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-server-error')).not.toBeInTheDocument();
+  });
+
+  it('marks the fields of a refused draft dry run', async () => {
+    const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
+    vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
+    vi.mocked(automationApi.dryRunDraft).mockRejectedValueOnce(
+      fieldsError('user 7 is inactive: assignee not found', [
+        { field: 'steps[1].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' },
+      ], 'INVALID_REFERENCE'),
+    );
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'Draft');
+    await addStep('Notify');
+    type(field(group(1), 'Title'), 'First');
+    await addStep('Assign owner');
+    await pickAutocompleteOption('New owner', 'Sam Seller (sales)');
+    fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Dry run: Draft' });
+    const leadInput = within(dialog).getByLabelText('Lead');
+    leadInput.focus();
+    fireEvent.mouseDown(leadInput);
+    fireEvent.click(await screen.findByRole('option', { name: 'Ion Ionescu (Bolt Robotics)' }));
+    await waitFor(() => expect(leadInput).toHaveValue('Ion Ionescu (Bolt Robotics)'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run dry run' }));
+
+    expect(await within(dialog).findByTestId('dry-run-error')).toHaveTextContent('user 7 is inactive: assignee not found');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(await within(group(2)).findByText('the user is deactivated')).toBeInTheDocument();
+  });
+
+  // A draft refusal is shown without a submit, so nothing re-validates the
+  // field on change: the form itself must clear the error it set, wherever
+  // the step has moved since.
+  for (const change of ['moved up', 'shifted by removing the step before it'] as const) {
+    it(`clears a draft user error when the field is edited after its step was ${change}`, async () => {
+      const ada = createMockUser({ id: 8, first_name: 'Ada', last_name: 'Admin', role: 'admin' });
+      vi.mocked(usersApi.getUsers).mockResolvedValue({ data: [sam, ada], total: 2, page: 1, limit: 100, total_pages: 1 });
+      vi.mocked(usersApi.getUser).mockImplementation(async (id) => (id === 8 ? ada : sam));
+      const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
+      vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
+      vi.mocked(automationApi.dryRunDraft).mockRejectedValueOnce(
+        fieldsError('user 7 is inactive: assignee not found', [
+          { field: 'steps[1].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' },
+        ], 'INVALID_REFERENCE'),
+      );
+      render(<AutomationRuleForm />);
+      type(screen.getByRole('textbox', { name: 'Name' }), 'Draft');
+      await addStep('Notify');
+      type(field(group(1), 'Title'), 'First');
+      await addStep('Assign owner');
+      await pickAutocompleteOption('New owner', 'Sam Seller (sales)');
+      fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+      const dialog = await screen.findByRole('dialog', { name: 'Dry run: Draft' });
+      const leadInput = within(dialog).getByLabelText('Lead');
+      leadInput.focus();
+      fireEvent.mouseDown(leadInput);
+      fireEvent.click(await screen.findByRole('option', { name: 'Ion Ionescu (Bolt Robotics)' }));
+      await waitFor(() => expect(leadInput).toHaveValue('Ion Ionescu (Bolt Robotics)'));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Run dry run' }));
+      await within(dialog).findByTestId('dry-run-error');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      expect(await within(group(2)).findByText('the user is deactivated')).toBeInTheDocument();
+
+      if (change === 'moved up') {
+        fireEvent.click(screen.getByRole('button', { name: 'Move step 2 up' }));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Remove step 1' }));
+      }
+      expect(within(group(1)).getByText('the user is deactivated')).toBeInTheDocument();
+
+      await pickAutocompleteOption('New owner', 'Ada Admin (admin)');
+      await waitFor(() => expect(screen.queryByText('the user is deactivated')).not.toBeInTheDocument());
+    });
+  }
+
+  it('ignores a draft dry-run refusal that arrives after the dialog closed', async () => {
+    const lead = createMockLead({ id: 5, contact_name: 'Ion Ionescu', company_name: 'Bolt Robotics' });
+    vi.mocked(leadsApi.getLeads).mockResolvedValue({ data: [lead], total: 1, page: 1, limit: 20, total_pages: 1 });
+    let reject: (error: unknown) => void = () => {};
+    vi.mocked(automationApi.dryRunDraft).mockImplementationOnce(
+      () => new Promise((_resolve, rejectRequest) => (reject = rejectRequest)),
+    );
+    render(<AutomationRuleForm />);
+    type(screen.getByRole('textbox', { name: 'Name' }), 'Draft');
+    await addStep('Notify');
+    type(field(group(1), 'Title'), 'First');
+    fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Dry run: Draft' });
+    const leadInput = within(dialog).getByLabelText('Lead');
+    leadInput.focus();
+    fireEvent.mouseDown(leadInput);
+    fireEvent.click(await screen.findByRole('option', { name: 'Ion Ionescu (Bolt Robotics)' }));
+    await waitFor(() => expect(leadInput).toHaveValue('Ion Ionescu (Bolt Robotics)'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run dry run' }));
+    await waitFor(() => expect(automationApi.dryRunDraft).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Dry run: Draft' })).not.toBeInTheDocument());
+
+    reject(
+      fieldsError('step 1: title is required: validation failed', [
+        { field: 'steps[0].config.title', code: 'required', message: 'late title refusal' },
+      ]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText('late title refusal')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-server-error')).not.toBeInTheDocument();
   });
 
   it('shows a server 400 message on the step it names and other messages above the buttons', async () => {

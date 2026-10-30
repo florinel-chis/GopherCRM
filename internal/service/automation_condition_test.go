@@ -50,7 +50,7 @@ func TestAutomationConditionBranching(t *testing.T) {
 			{"amount lt", dealRec, moneyCondition("lt", 1000, "USD"), false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				require.NoError(t, validateCondition(tc.rec.entityType, tc.step.Config), "the matrix only uses valid conditions")
+				require.Empty(t, validateCondition(tc.rec.entityType, tc.step.Config), "the matrix only uses valid conditions")
 				got, err := evaluateCondition(tc.step.Config, tc.rec)
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, got)

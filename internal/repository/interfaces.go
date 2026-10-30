@@ -438,53 +438,20 @@ type PasswordResetTokenRepository interface {
 	WithTx(tx *gorm.DB) PasswordResetTokenRepository
 }
 
+// BulkOperationRepository records the history row of each bulk status update:
+// one bulk_operations row created before the batch runs, its status set to the
+// outcome afterwards.
 type BulkOperationRepository interface {
 	Create(operation *models.BulkOperation) error
-	GetByID(id uint) (*models.BulkOperation, error)
-	GetByIDWithItems(id uint) (*models.BulkOperation, error)
-	GetByUserID(userID uint, offset, limit int) ([]models.BulkOperation, error)
-	Update(operation *models.BulkOperation) error
 	UpdateStatus(id uint, status models.BulkOperationStatus) error
-	Delete(id uint) error
-	Count() (int64, error)
-	CountByUserID(userID uint) (int64, error)
-	List(offset, limit int) ([]models.BulkOperation, error)
-	CreateItem(item *models.BulkOperationItem) error
-	UpdateItem(item *models.BulkOperationItem) error
-	GetItemsByOperationID(operationID uint) ([]models.BulkOperationItem, error)
-	WithTx(tx *gorm.DB) BulkOperationRepository
 }
 
-type BulkRepository interface {
-	// User bulk operations
-	BulkCreateUsers(users []models.User) ([]models.User, []error)
-	BulkUpdateUsers(updates []models.BulkUpdateItem) ([]models.User, []error)
-	BulkDeleteUsers(ids []uint) []error
-
-	// Lead bulk operations
-	BulkCreateLeads(leads []models.Lead) ([]models.Lead, []error)
-	BulkUpdateLeads(updates []models.BulkUpdateItem) ([]models.Lead, []error)
-	BulkDeleteLeads(ids []uint) []error
-
-	// Customer bulk operations
-	BulkCreateCustomers(customers []models.Customer) ([]models.Customer, []error)
-	BulkUpdateCustomers(updates []models.BulkUpdateItem) ([]models.Customer, []error)
-	BulkDeleteCustomers(ids []uint) []error
-
-	// Task bulk operations
-	BulkCreateTasks(tasks []models.Task) ([]models.Task, []error)
-	BulkUpdateTasks(updates []models.BulkUpdateItem) ([]models.Task, []error)
-	BulkDeleteTasks(ids []uint) []error
-
-	// Ticket bulk operations
-	BulkCreateTickets(tickets []models.Ticket) ([]models.Ticket, []error)
-	BulkUpdateTickets(updates []models.BulkUpdateItem) ([]models.Ticket, []error)
-	BulkDeleteTickets(ids []uint) []error
-
-	// Bulk status updates. Reading the records and writing the new status are
-	// separate operations on purpose: the caller has to see every row — does it
-	// exist, who owns it, what status is it in now — before any row is written,
-	// because a bulk status update is all-or-nothing.
+// BulkStatusRepository holds the read and write halves of a bulk status change.
+// Reading the records and writing the new status are separate operations on
+// purpose: the caller has to see every row — does it exist, who owns it, what
+// status is it in now — before any row is written, because a bulk status update
+// is all-or-nothing.
+type BulkStatusRepository interface {
 	GetLeadsByIDs(ids []uint) ([]models.Lead, error)
 	GetTicketsByIDs(ids []uint) ([]models.Ticket, error)
 	GetTasksByIDs(ids []uint) ([]models.Task, error)
@@ -492,7 +459,7 @@ type BulkRepository interface {
 	SetTicketStatus(ids []uint, status models.TicketStatus) error
 	SetTaskStatus(ids []uint, status models.TaskStatus) error
 
-	WithTx(tx *gorm.DB) BulkRepository
+	WithTx(tx *gorm.DB) BulkStatusRepository
 }
 
 // AEORepository backs the answer-engine-optimization module: the brand profile,

@@ -69,6 +69,14 @@ export interface AutomationDryRunInput {
   entity_id: number;
 }
 
+// Body of POST /automation/rules/dry-run: an unsaved rule body (the create
+// body; `enabled` is ignored) and the record to simulate it against.
+export interface AutomationDraftDryRunInput {
+  rule: AutomationRuleInput;
+  entity_type: AutomationEntityType;
+  entity_id: number;
+}
+
 export interface AutomationRuleListResult {
   rules: AutomationRule[];
   total: number;
@@ -129,8 +137,10 @@ export const automationApi = {
     return transformRuleFromBackend(response.data);
   },
 
-  // 400 INVALID_INPUT (validation, a plain message) or INVALID_REFERENCE
-  // (unknown, inactive or customer user); callers surface the message.
+  // 400 INVALID_INPUT (validation) or INVALID_REFERENCE (unknown, inactive or
+  // customer user): `message` is the first refusal and `details.fields`
+  // lists every refused field as { field, code, message }, with step paths
+  // such as steps[2].config.title (zero-based).
   createRule: async (data: AutomationRuleInput): Promise<AutomationRule> => {
     const response = await api.post<unknown>('/automation/rules', data);
     return transformRuleFromBackend(response.data);
@@ -167,7 +177,14 @@ export const automationApi = {
     return response.data;
   },
 
-  // Rows carry neither steps nor the rule.
+  // Simulates unsaved form values (a new rule or unsaved edits) and saves
+  // nothing; the same 400 answers as createRule. The report has draft: true.
+  dryRunDraft: async (data: AutomationDraftDryRunInput): Promise<AutomationDryRunReport> => {
+    const response = await api.post<AutomationDryRunReport>('/automation/rules/dry-run', data);
+    return response.data;
+  },
+
+  // Rows carry no steps; each names its rule (rule_name, rule_deleted).
   listRuns: async (filters?: AutomationRunFilters): Promise<AutomationRunListResult> => {
     const response = (await api.get<unknown[]>('/automation/runs', {
       params: filters,

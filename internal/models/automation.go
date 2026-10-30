@@ -277,13 +277,21 @@ type AutomationRun struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
-	RuleID      uint            `gorm:"not null;index" json:"rule_id"`
-	Rule        *AutomationRule `gorm:"foreignKey:RuleID" json:"rule,omitempty"`
-	RuleVersion int             `gorm:"not null" json:"rule_version"`
-	EntityType  string          `gorm:"not null;type:varchar(20);index:idx_automation_runs_entity" json:"entity_type"`
-	EntityID    uint            `gorm:"not null;index:idx_automation_runs_entity" json:"entity_id"`
-	EventID     *uint           `json:"event_id,omitempty"`
-	DedupeKey   string          `gorm:"not null;type:varchar(100);uniqueIndex" json:"dedupe_key"`
+	RuleID uint `gorm:"not null;index" json:"rule_id"`
+	// Rule is never serialised: runs are readable by sales users, rules only
+	// by admins, and a rule carries its trigger and step texts. The run API
+	// exposes the rule's name alone, through RuleName and RuleDeleted.
+	Rule *AutomationRule `gorm:"foreignKey:RuleID" json:"-"`
+	// RuleName is the rule's current name, a soft-deleted rule's included;
+	// RuleDeleted flags a rule that is deleted (or gone, with an empty name).
+	// Both are filled by the repository's run reads and have no column.
+	RuleName    string `gorm:"-" json:"rule_name"`
+	RuleDeleted bool   `gorm:"-" json:"rule_deleted"`
+	RuleVersion int    `gorm:"not null" json:"rule_version"`
+	EntityType  string `gorm:"not null;type:varchar(20);index:idx_automation_runs_entity" json:"entity_type"`
+	EntityID    uint   `gorm:"not null;index:idx_automation_runs_entity" json:"entity_id"`
+	EventID     *uint  `json:"event_id,omitempty"`
+	DedupeKey   string `gorm:"not null;type:varchar(100);uniqueIndex" json:"dedupe_key"`
 
 	Status       string     `gorm:"not null;type:varchar(20);default:'pending';index" json:"status"`
 	NextPosition int        `gorm:"not null;default:1" json:"next_position"`
@@ -359,10 +367,14 @@ type AutomationDryRunStep struct {
 	Details     map[string]interface{} `json:"details"`
 }
 
-// AutomationDryRunReport is the answer of POST /automation/rules/:id/dry-run.
+// AutomationDryRunReport is the answer of POST /automation/rules/:id/dry-run
+// and of POST /automation/rules/dry-run. A draft report (the second route)
+// simulates an unsaved rule body: Draft is true and RuleID and RuleVersion
+// are 0.
 type AutomationDryRunReport struct {
 	RuleID         uint                   `json:"rule_id"`
 	RuleVersion    int                    `json:"rule_version"`
+	Draft          bool                   `json:"draft"`
 	EntityType     string                 `json:"entity_type"`
 	EntityID       uint                   `json:"entity_id"`
 	SimulatedStart time.Time              `json:"simulated_start"`

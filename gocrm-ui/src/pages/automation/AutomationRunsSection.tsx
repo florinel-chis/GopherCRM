@@ -20,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth';
 import type { AutomationEntityType } from '@/types';
 import { getAPIError } from '@/utils/apiError';
 import { formatDate } from '@/utils/date';
-import { AUTOMATION_DATETIME } from './automationFormat';
+import { AUTOMATION_DATETIME, runRuleLabel } from './automationFormat';
 import { automationKeys } from './automationQueries';
 import { RunStatusChip } from './AutomationChips';
 
@@ -110,7 +110,7 @@ export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ en
                       #{run.id}
                     </Link>
                   </TableCell>
-                  <TableCell>{`Rule #${run.rule_id} · v${run.rule_version}`}</TableCell>
+                  <TableCell>{`${runRuleLabel(run)} · v${run.rule_version}`}</TableCell>
                   <TableCell>
                     <RunStatusChip status={run.status} />
                   </TableCell>

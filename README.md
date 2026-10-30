@@ -740,10 +740,14 @@ expired, or if its owner has been deactivated or erased.
   `INVALID_INPUT` and writes nothing; a `create_task` title or description accepts only the
   non-personal placeholders — `lead.id`, `lead.status`, `lead.source` or the `deal.*` fields —
   because a task survives the erasure of its lead; an unknown, inactive or non-staff user is 400
-  `INVALID_REFERENCE`)*
+  `INVALID_REFERENCE`; every refused field is listed in `error.details.fields` as
+  `{field, code, message}` — `field` a path into the body such as `name`, `trigger.hour_utc` or
+  `steps[2].config.title` (steps counted from zero) — while `error.message` and `error.code` are
+  those of the first refusal)*
 - `GET /api/v1/automation/rules/:id` - Get a rule with its steps
 - `PUT /api/v1/automation/rules/:id` - Replace a rule *(one transaction: version + 1, steps replaced,
-  the rule's pending, waiting and running runs cancelled with `rule_changed`)*
+  the rule's pending, waiting and running runs cancelled with `rule_changed`; the same 400 answers
+  and `error.details.fields` as the create)*
 - `POST /api/v1/automation/rules/:id/enable` / `disable` - Switch a rule *(disabling cancels its
   active runs with `rule_disabled`)*
 - `DELETE /api/v1/automation/rules/:id` - Soft-delete a rule *(its active runs are cancelled with
@@ -752,11 +756,18 @@ expired, or if its owner has been deactivated or erased.
   per-step report *(outcome, simulated time, resolved user ids, task due date and link, owner
   from/to, branch taken; waits advance a simulated clock; nothing is written, sent or notified; the
   wrong entity type is 400 `INVALID_INPUT`, a missing rule or record 404)*
+- `POST /api/v1/automation/rules/dry-run` - Simulate an unsaved rule body
+  `{rule: {...the create body...}, entity_type, entity_id}` *(the rule editor's current values, for a
+  new rule or unsaved edits; the same validation and 400 answers as the create, then the same
+  report with `draft: true` and `rule_id`/`rule_version` 0; nothing is saved, no transaction is
+  started and nothing is written, sent or notified)*
 - `GET /api/v1/automation/runs` - List runs (`status`, `rule_id`, `entity_type`, `entity_id`,
   `sort_by` in `id, created_at, updated_at, status, resume_at`; the role scope is applied inside
-  the query, so `meta.total` counts only what the caller may see)
-- `GET /api/v1/automation/runs/:id` - A run with its step log *(a sales user asking for a run on
-  somebody else's record gets 404)*
+  the query, so `meta.total` counts only what the caller may see; every run carries `rule_name`,
+  the rule's current name — also for a deleted rule, then with `rule_deleted: true` — and never the
+  rule's trigger or steps, so sales users see the names of the rules that ran on their records)
+- `GET /api/v1/automation/runs/:id` - A run with its step log, `rule_name` and `rule_deleted` *(a
+  sales user asking for a run on somebody else's record gets 404)*
 - `POST /api/v1/automation/runs/:id/cancel` - Cancel a pending, waiting or running run with
   `cancel_reason` `manual` *(admin; a finished run is 409 `INVALID_STATUS_TRANSITION`)*
 
@@ -769,11 +780,10 @@ expired, or if its owner has been deactivated or erased.
 - `POST /api/v1/notifications/read-all` - Mark every unread notification of the caller read;
   returns `{marked}`
 
-### Not currently exposed
+### Bulk operations
 
-The generic `/bulk/:resource` create/update/delete/action handlers in
-`internal/handler/bulk_handler.go` remain unrouted; only the entity-specific `bulk/status`
-endpoints listed above are reachable over HTTP.
+The only bulk endpoints are the entity-specific `bulk/status` routes listed above. There is no
+generic bulk create, update, delete or action API.
 
 A generated Swagger 2.0 spec is checked in at `api/swagger.json` / `api/swagger.yaml`. It is built
 from swag annotations on the handlers — regenerate it with `make swagger` after changing a handler
@@ -900,7 +910,8 @@ gophercrm/
   reclaimed (after five idle minutes, and only once the bucket has refilled). Limits are not shared
   between replicas, and behind a proxy they depend on `TRUSTED_PROXIES`. See
   [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
-- **Bulk endpoints are unrouted** (see *Not currently exposed* above).
+- **Bulk operations are status-only.** Only `POST /leads|tickets|tasks/bulk/status` exist (see
+  *Bulk operations* above); there is no bulk create, update or delete.
 - **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and
   search fields; shared helpers omit argument/result/response payloads, and HTTP logs omit query
   strings. Quoted values in logged errors are redacted, and SMTP errors retain only the protocol

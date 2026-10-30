@@ -7,8 +7,6 @@ import {
   Typography,
   Button,
   Chip,
-  IconButton,
-  Menu,
   MenuItem,
   FormControl,
   InputLabel,
@@ -19,7 +17,6 @@ import {
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  MoreVert as MoreVertIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -103,9 +100,6 @@ export const Component: React.FC = () => {
     ticket?: Ticket;
   }>({ open: false });
   
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-
   // Sorted column as the DataTable column id (filters carry the mapped backend
   // field). Owned here because a sort click switches the query key and unmounts
   // the table through the loading branch below.
@@ -205,23 +199,6 @@ export const Component: React.FC = () => {
       format: (value: string) => formatDate(value, 'MMM dd, yyyy'),
     },
   ], []);
-
-  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, ticket: Ticket) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedTicket(ticket);
-  }, []);
-
-  const handleMenuClose = useCallback(() => {
-    setAnchorEl(null);
-    setSelectedTicket(null);
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    if (selectedTicket) {
-      setDeleteDialog({ open: true, ticket: selectedTicket });
-      handleMenuClose();
-    }
-  }, [selectedTicket, handleMenuClose]);
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
@@ -340,31 +317,6 @@ export const Component: React.FC = () => {
         onRowClick={(ticket) => navigate(`/tickets/${ticket.id}`)}
         onEdit={canEdit ? (ticket) => navigate(`/tickets/${ticket.id}/edit`) : undefined}
         onDelete={canDelete ? (ticket) => setDeleteDialog({ open: true, ticket }) : undefined}
-        actions={
-          <>
-            <IconButton
-              size="small"
-              onClick={(e) => selectedTicket && handleMenuOpen(e, selectedTicket)}
-            >
-              <MoreVertIcon />
-            </IconButton>
-            <Menu
-              anchorEl={anchorEl}
-              open={Boolean(anchorEl)}
-              onClose={handleMenuClose}
-            >
-              <MenuItem onClick={() => selectedTicket && navigate(`/tickets/${selectedTicket.id}`)}>
-                View Details
-              </MenuItem>
-              {canEdit && (
-                <MenuItem onClick={() => selectedTicket && navigate(`/tickets/${selectedTicket.id}/edit`)}>
-                  Edit
-                </MenuItem>
-              )}
-              {canDelete && <MenuItem onClick={handleDelete}>Delete</MenuItem>}
-            </Menu>
-          </>
-        }
       />
 
       <ConfirmDialog

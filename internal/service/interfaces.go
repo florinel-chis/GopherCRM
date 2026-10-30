@@ -364,56 +364,14 @@ type APIKeyService interface {
 	List(userID uint) ([]models.APIKey, error)
 }
 
-type BulkOperationService interface {
-	// Bulk operation management
-	CreateBulkOperation(userID uint, resourceType string, operationType models.BulkOperationType, totalItems int) (*models.BulkOperation, error)
-	GetBulkOperation(id uint) (*models.BulkOperation, error)
-	GetBulkOperationWithItems(id uint) (*models.BulkOperation, error)
-	GetUserBulkOperations(userID uint, offset, limit int) ([]models.BulkOperation, int64, error)
-	ListAllBulkOperations(offset, limit int) ([]models.BulkOperation, int64, error)
-	UpdateBulkOperationStatus(id uint, status models.BulkOperationStatus) error
-
-	// Generic bulk operations
-	ProcessBulkCreate(userID uint, resourceType string, request *models.BulkCreateRequest) (*models.BulkResponse, error)
-	ProcessBulkUpdate(userID uint, resourceType string, request *models.BulkUpdateRequest) (*models.BulkResponse, error)
-	ProcessBulkDelete(userID uint, resourceType string, request *models.BulkDeleteRequest) (*models.BulkResponse, error)
-	ProcessBulkAction(userID uint, resourceType string, request *models.BulkActionRequest) (*models.BulkResponse, error)
-
-	// User bulk operations
-	BulkCreateUsers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkUpdateUsers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkDeleteUsers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkActionUsers(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-
-	// Lead bulk operations
-	BulkCreateLeads(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkUpdateLeads(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkDeleteLeads(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkActionLeads(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-
-	// Customer bulk operations
-	BulkCreateCustomers(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkUpdateCustomers(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkDeleteCustomers(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkActionCustomers(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-
-	// Task bulk operations
-	BulkCreateTasks(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkUpdateTasks(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkDeleteTasks(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkActionTasks(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
-
-	// Bulk status updates. All-or-nothing, authorized per record against the
-	// same rules the single-record update applies.
+// BulkStatusService backs the three routed bulk status endpoints. Each call is
+// all-or-nothing, authorized per record against the same rules the
+// single-record update applies, and, once it passes the initial checks
+// (status, list size, role), recorded as a bulk_operations row.
+type BulkStatusService interface {
 	BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
 	BulkSetTicketStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
 	BulkSetTaskStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
-
-	// Ticket bulk operations
-	BulkCreateTickets(request *models.BulkCreateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkUpdateTickets(request *models.BulkUpdateRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkDeleteTickets(request *models.BulkDeleteRequest, currentUserID uint) (*models.BulkResponse, error)
-	BulkActionTickets(request *models.BulkActionRequest, currentUserID uint) (*models.BulkResponse, error)
 }
 
 // AEOService drives the Answer Engine Optimization module: the brand profile,
@@ -506,6 +464,12 @@ type AutomationService interface {
 	// and writes, sends and notifies nothing. A record of another entity
 	// type is apperrors.ErrValidation; a missing record apperrors.ErrNotFound.
 	DryRun(ruleID uint, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
+	// DryRunDraft simulates an unsaved rule body after the same normalisation
+	// and validation as CreateRule and UpdateRule (a refusal is a
+	// *RuleValidationError). It saves nothing, starts no transaction, takes no
+	// lock and writes, sends and notifies nothing; the report has Draft set
+	// and no rule id or version.
+	DryRunDraft(rule *models.AutomationRule, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
 
 	// ListRuns and GetRun apply the viewer's role scope inside the query: an
 	// admin sees every run, a sales user only runs whose lead or deal it owns

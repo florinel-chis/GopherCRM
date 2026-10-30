@@ -73,11 +73,16 @@ elif sys.argv[1] == 'test':
             selected = run.call_args.args[0]
             self.assertIn('TestCustomerWebsiteMigration', selected['cmd/migrate'])
             self.assertIn('TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade', selected['internal/models'])
+            self.assertIn('TestLookupIndexesMigration', selected['cmd/migrate'])
+            for name in ('TestLookupIndexesServeLookupsSQLite', 'TestPaginationDeterminismSQLite',
+                         'TestPaginationDeterminismMySQL', 'TestCompanyDomainNormalizationSQLite',
+                         'TestCompanyDomainNormalizationMySQL'):
+                self.assertIn(name, selected['internal/repository'])
             self.assertEqual(run.call_args.kwargs['known_skips'], {})
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):
             profiles.run('migration')
         with patch.dict(os.environ, TEST_MYSQL_DSN='disposable'), \
-             patch.object(go_checks, 'discover', return_value={'cmd/migrate': [], 'internal/models': []}), \
+             patch.object(go_checks, 'discover', return_value={'cmd/migrate': [], 'internal/models': [], 'internal/repository': []}), \
              self.assertRaises(go_checks.GateError):
             profiles.run('migration')
         with self.assertRaises(go_checks.GateError):

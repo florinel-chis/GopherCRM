@@ -19,7 +19,8 @@ const pageFilters = (page: number): AutomationRuleFilters => ({
   sort_order: 'asc',
 });
 
-const ruleLabel = (rule: AutomationRule): string => `${rule.name} (#${rule.id})`;
+const ruleLabel = (rule: AutomationRule): string =>
+  rule.name?.trim() ? `${rule.name} (#${rule.id})` : `Rule #${rule.id}`;
 
 export interface RuleFilterAutocompleteProps {
   /** The selected rule id, shared with the numeric Rule ID filter. */
@@ -27,6 +28,13 @@ export interface RuleFilterAutocompleteProps {
   onChange: (ruleId: number | undefined) => void;
   /** Reports every rule loaded so far, so the run list can show names. */
   onRulesLoaded?: (rules: AutomationRule[]) => void;
+  /**
+   * The name of the selected rule when the run list knows it (from a run or
+   * a rule loaded earlier). A selected rule the picker has not loaded — the
+   * list was never opened, or the rule is deleted — shows this name, or
+   * "Rule #id" without one.
+   */
+  selectedLabel?: string;
 }
 
 /**
@@ -38,6 +46,7 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
   value,
   onChange,
   onRulesLoaded,
+  selectedLabel,
 }) => {
   const queryClient = useQueryClient();
   const [opened, setOpened] = useState(false);
@@ -84,7 +93,15 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
     }
   }, [rules, onRulesLoaded]);
 
-  const selected = value === undefined ? null : (rules.find((rule) => rule.id === value) ?? null);
+  const loaded = value === undefined ? undefined : rules.find((rule) => rule.id === value);
+  // Kept among the options so the Autocomplete always finds its value.
+  const placeholder = useMemo(
+    () =>
+      value === undefined || loaded ? undefined : ({ id: value, name: selectedLabel ?? '' } as AutomationRule),
+    [value, loaded, selectedLabel],
+  );
+  const selected = loaded ?? placeholder ?? null;
+  const options = useMemo(() => (placeholder ? [placeholder, ...rules] : rules), [placeholder, rules]);
   const loading = opened && (firstPage.isLoading || laterPages.loading);
   const loadError = firstPage.error ?? laterPages.error;
   const errorText = loadError
@@ -105,7 +122,7 @@ export const RuleFilterAutocomplete: React.FC<RuleFilterAutocompleteProps> = ({
     <Autocomplete
       size="small"
       sx={{ minWidth: 240 }}
-      options={rules}
+      options={options}
       value={selected}
       loading={loading}
       onOpen={() => setOpened(true)}
