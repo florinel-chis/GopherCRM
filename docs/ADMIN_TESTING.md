@@ -119,7 +119,7 @@ starts the Vite dev server on 5173, or reuses an existing server that must use t
 ```bash
 # Terminal 1 — backend
 cd /path/to/gophercrm
-DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run ./cmd
 
 # Terminal 2 — browser tests
 cd /path/to/gophercrm/gocrm-ui

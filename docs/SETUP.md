@@ -43,7 +43,7 @@ go mod download
 ```bash
 make run
 # or
-go run cmd/main.go
+go run ./cmd
 ```
 
 The backend API will be available at `http://localhost:8080`
