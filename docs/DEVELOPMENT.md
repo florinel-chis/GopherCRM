@@ -310,14 +310,56 @@ an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipien
 contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
 let the remainder inject further headers (an extra recipient, a forged subject). The check is
 repeated inside the private `send`, so no future caller can bypass it. The generic `Send` failure
-log carries the subject and the transport error passed through `utils.LogError`, and not the
-recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
+log carries only the transport error passed through `utils.LogError` — neither the subject nor
+the recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
 recipient normally echoes the address in that text (`550 5.1.1 <who@example.com>: Recipient address
-rejected`). The raw error is still returned for `errors.As`. The password-reset failure line and
-the development `LogMailer` still record the recipient as before. Roots:
+rejected`). The raw error is still returned for `errors.As`. The password-reset failure line logs
+the same sanitised error and the redacted link, without the recipient; the development
+`LogMailer` still records the recipient and the subject as before. Roots:
 `TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`) and
 `TestSMTPMailerSendLogOmitsTheRelayReply` (`internal/mailer/smtp_relay_reply_test.go`), whose stub
 relay answers `RCPT TO` with a 550 that quotes the address.
+
+**SMTP delivery is one bounded exchange (#113)** — `SMTPMailer` does not use `smtp.SendMail`,
+which has no timeout. It dials within `mailer.DefaultDialTimeout` (10 s), sets one deadline of
+`mailer.DefaultSendTimeout` (30 s, counted from the start of the dial) on the connection for the
+whole conversation — greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT — and closes the raw
+TCP connection on every path; a watchdog (`context.AfterFunc`) closes it at the deadline at the
+latest, so cleanup such as the TLS close_notify (which sets its own five-second write deadline)
+cannot extend the bound. A failure caused by the deadline matches `os.ErrDeadlineExceeded`.
+The timeouts are package defaults, not configuration. **STARTTLS is opportunistic**: it is used
+whenever the relay advertises it, verifying the certificate against `SMTP_HOST`, and a failed
+handshake aborts the delivery, but with no `SMTP_USER` a relay that does not offer STARTTLS —
+or an attacker on the path who strips the offer — receives the message unencrypted. There is no
+require-TLS setting (see the roadmap); implicit TLS (port 465) is not supported. With
+`SMTP_USER` set the relay must offer AUTH, and net/smtp's `PlainAuth` refuses to send the
+credentials over an unencrypted connection unless the host is `localhost`/`127.0.0.1`/`::1`. A
+failed QUIT after the relay accepted DATA is not a failure. The recipient and `SMTP_FROM` are
+parsed with `net/mail.ParseAddress` — exactly one address, display name allowed — and the
+addr-spec is then serialised for the envelope (`envelopeAddress`): a dot-atom local part as is,
+any other local part as an RFC 5321 quoted string with `"` and `\` escaped
+(`RCPT TO:<"a b"@example.com>`), because `net/mail` returns quoted local parts unquoted and
+`"x> NOTIFY=NEVER"@example.com` would otherwise end `RCPT TO:<…>` early and inject ESMTP
+parameters. Control characters, `<` and `>` anywhere in the address — refused even inside
+quotes, where RFC 5321 would allow the brackets, because they are what lets text escape the
+command's angle brackets — and domain literals are `mailer.ErrInvalidAddress`, without echoing
+the value. Non-ASCII addresses (RFC 6531) are delivered only when the relay advertises SMTPUTF8
+after EHLO (net/smtp's `Client.Mail` then adds the `SMTPUTF8` parameter itself) and are refused
+with `ErrInvalidAddress` before `MAIL FROM` otherwise. The headers carry
+`mail.Address.String()`; CR/LF in the sender is `ErrInvalidHeader` like the recipient and
+subject. A non-ASCII subject is Q-encoded into encoded words that never split a character and
+folded so that every line holding encoded words, `Subject: ` included, is at most 76 characters
+(RFC 2047 section 2). Only I/O failures caused by the deadline (a timeout, or the watchdog's
+close) are reported as `os.ErrDeadlineExceeded`; a relay reply such as a 535 that decided the
+outcome is returned as it is even when net/smtp's abort and QUIT afterwards stall. The body is sent as
+`Content-Transfer-Encoding: quoted-printable` (7-bit on the wire, long lines soft-wrapped) after
+its line endings (CRLF, bare LF, bare CR) are normalised to CRLF; dot-stuffing is left to the SMTP
+data writer. The `Send` failure log carries neither the recipient nor the subject (automation
+subjects are rendered from `{{lead.email}}` and similar placeholders), only the error through
+`utils.LogError`, which also reduces a malformed relay reply (`textproto.ProtocolError`, which
+carries the whole line) to `smtp_protocol_error`. Roots, against in-process relays on `127.0.0.1` with injected
+sub-second timeouts (`internal/mailer/smtp_transport_test.go`): `TestSMTPDeadlines`,
+`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`.
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
@@ -875,7 +917,28 @@ The pieces, and why each is shaped the way it is:
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
   simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
   conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,
-  calls `Mailer.Send` zero times and creates no run, notification, task or event.
+  calls `Mailer.Send` zero times and creates no run, notification, task or event. The draft dry
+  run (`AutomationService.DryRunDraft`, `POST /automation/rules/dry-run`) hands an unsaved rule
+  body through `validateRule` — the normalisation and every check of a create, the staff-user
+  lookups included — and then to the same `DryRun`; it starts no transaction, takes no lock and
+  saves nothing (no temporary rule row), and the report carries `draft: true`.
+- **Rule validation.** `validateRule` (`internal/service/automation_validation.go`) collects every
+  refusal in one pass into a `*RuleValidationError`: each `{field, code, message}` goes to
+  `error.details.fields`, while `Error()` and `Unwrap()` are those of the first refusal exactly as
+  the single-error validator produced it (`step N: ...: validation failed`, or
+  `user N is inactive: assignee not found` for a reference), so the message and the
+  `INVALID_INPUT`/`INVALID_REFERENCE` code are unchanged for clients that read only the message.
+  Order is fixed: an unknown `entity_type` stops, an unknown `trigger_type` skips the trigger
+  checks, `from` is checked before `to`, no steps or more than 20 skip the step checks, a field
+  keeps only its first refusal, and the staff-user lookups run last, once per distinct user, in
+  the order the steps first name them (they used to iterate a map, so the first message of a body
+  naming two bad users was not stable before).
+- **Rule names on runs.** Runs are readable by sales users and rules only by admins, so
+  `AutomationRun.Rule` is `json:"-"` and the run reads (`ListRuns`, `GetRunByID`) fill
+  `rule_name`/`rule_deleted` with one extra query over the page's distinct rule ids,
+  soft-deleted rules included. Only the name crosses: sales users see the names of the rules that
+  ran on their records, also after a rule is deleted, so rule names must not carry personal or
+  confidential text.
 - **Logs.** The engine logs operation names, `run_id`, `rule_id`, `event_id`, `entity_type`,
   `entity_id`, `position`, `step_type`, `outcome` and `error_code` only; a transport error, which
   may quote the address, is not logged.
@@ -892,8 +955,13 @@ and blanked by the task renderer), `TestAutomationWaitResume{SQLite,MySQL}`
 (a fresh engine on the same database after the clock passes `resume_at`),
 `TestAutomationScheduleTrigger{SQLite,MySQL}` (1,201 records over three ticks, a racing worker),
 `TestAutomationDryRunNoSideEffects{SQLite,MySQL}` (a before/after snapshot of every table),
+`TestAutomationDraftDryRunNoSideEffects{SQLite,MySQL}` (the snapshot plus an instrumented pool and
+GORM callbacks that refuse any transaction start, write or locking read during the draft),
+`TestAutomationDraftDryRunValidatesLikeCreate`, `TestAutomationRuleValidationCollectsAllFields`,
+`TestAutomationRuleValidationLegacyMessage`, `TestAutomationRuleValidationReferencePaths`,
 `TestAutomationReconcile{SQLite,MySQL}`, `TestAutomationRuntimeDrain`,
 `TestAutomationLogsOmitPersonalData` (`internal/service`); `TestAutomationRunListScope{SQLite,MySQL}`,
+`TestAutomationRunRuleNames{SQLite,MySQL}`,
 `TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
 repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 `TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);

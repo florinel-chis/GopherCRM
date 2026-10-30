@@ -182,4 +182,107 @@ test.describe('Admin - Automation rules', () => {
     expect(apiCount.status()).toBe(200);
     expect((await apiCount.json()).data.unread).toBe(before);
   });
+
+  test('admin dry-runs an unsaved new rule from the form and nothing is created', async ({ page }) => {
+    const rulesBefore = await api.get(`${API_BASE_URL}/automation/rules?limit=1`, { headers });
+    expect(rulesBefore.status()).toBe(200);
+    const totalBefore = (await rulesBefore.json()).meta?.total ?? 0;
+
+    await page.goto('/automation/rules/new');
+    await expect(page.getByRole('heading', { name: 'New automation rule' })).toBeVisible();
+    await page.locator('input[name="name"]').fill(`Unsaved ${stamp}`);
+    await page.getByRole('button', { name: 'Add step' }).click();
+    await page.getByRole('menuitem', { name: 'Notify' }).click();
+    await page.getByRole('group', { name: 'Step 1' }).getByLabel('Title').fill('Draft lead {{lead.id}}');
+    await expect(page.getByTestId('dry-run-draft-notice')).toBeVisible();
+    await page.getByRole('button', { name: 'Dry run' }).click();
+
+    const dialog = page.getByRole('dialog', { name: `Dry run: Unsaved ${stamp}` });
+    await expect(dialog).toBeVisible();
+    const leadInput = dialog.getByRole('combobox', { name: 'Lead' });
+    await leadInput.click();
+    await leadInput.fill(stamp);
+    await page.getByRole('option', { name: leadLabel }).click();
+    await expect(leadInput).toHaveValue(leadLabel);
+
+    const dry = apiResponse(page, /\/automation\/rules\/dry-run$/, 'POST');
+    await dialog.getByRole('button', { name: 'Run dry run' }).click();
+    const dryResponse = await dry;
+    expect(dryResponse.status()).toBe(200);
+    expect(dryResponse.request().postDataJSON()).toMatchObject({
+      entity_type: 'lead',
+      entity_id: leadId,
+      rule: { name: `Unsaved ${stamp}`, steps: [{ step_type: 'notify' }] },
+    });
+    expect((await dryResponse.json()).data).toMatchObject({ draft: true, rule_id: 0 });
+    await expect(dialog.getByTestId('dry-run-step')).toHaveCount(1);
+    await expect(dialog).toContainText('unsaved form values');
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toBeHidden();
+
+    // Still the new-rule form, and no rule was saved.
+    await expect(page).toHaveURL(/\/automation\/rules\/new$/);
+    const rulesAfter = await api.get(`${API_BASE_URL}/automation/rules?limit=1`, { headers });
+    expect((await rulesAfter.json()).meta?.total ?? 0).toBe(totalBefore);
+  });
+
+  test('saving a rule whose user was deactivated meanwhile shows the server error under the user picker', async ({
+    page,
+  }) => {
+    // A staff user, a disabled rule handing leads to that user, then the
+    // user is deactivated: the form still holds the id, the server refuses it.
+    const user = await api.post(`${API_BASE_URL}/users`, {
+      headers,
+      data: {
+        email: `automation.owner.${stamp}@example.com`,
+        password: 'Owner-Pass-2026!',
+        first_name: 'Departing',
+        last_name: `Owner ${stamp}`,
+        role: 'sales',
+      },
+    });
+    expect(user.status()).toBe(201);
+    const userId = (await user.json()).data.id as number;
+    const rule = await api.post(`${API_BASE_URL}/automation/rules`, {
+      headers,
+      data: {
+        name: `Hand over ${stamp}`,
+        entity_type: 'lead',
+        trigger_type: 'lead_created',
+        trigger: {},
+        enabled: false,
+        steps: [{ step_type: 'assign_owner', config: { user_id: userId } }],
+      },
+    });
+    expect(rule.status()).toBe(201);
+    const handOverId = (await rule.json()).data.id as number;
+
+    try {
+      expect((await api.post(`${API_BASE_URL}/users/${userId}/deactivate`, { headers })).status()).toBe(200);
+
+      await page.goto(`/automation/rules/${handOverId}/edit`);
+      await expect(page.getByRole('heading', { name: 'Edit automation rule' })).toBeVisible();
+      await expect(page.locator('input[name="name"]')).toHaveValue(`Hand over ${stamp}`);
+
+      const saved = apiResponse(page, new RegExp(`/automation/rules/${handOverId}$`), 'PUT');
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.getByRole('dialog', { name: 'Save rule changes?' }).getByRole('button', { name: 'Save' }).click();
+      const response = await saved;
+      expect(response.status()).toBe(400);
+      const body = await response.json();
+      expect(body.error.code).toBe('INVALID_REFERENCE');
+      expect(body.error.message).toBe(`user ${userId} is inactive: assignee not found`);
+      expect(body.error.details.fields).toEqual([
+        { field: 'steps[0].config.user_id', code: 'unknown_reference', message: 'the user is deactivated' },
+      ]);
+
+      // Through the real client and its error unwrapping, onto the field.
+      const step1 = page.getByRole('group', { name: 'Step 1' });
+      await expect(step1.getByText('the user is deactivated')).toBeVisible();
+      await expect(page.getByTestId('rule-server-error')).toHaveCount(0);
+    } finally {
+      expect((await api.delete(`${API_BASE_URL}/automation/rules/${handOverId}`, { headers })).status()).toBeLessThan(300);
+      expect((await api.delete(`${API_BASE_URL}/users/${userId}`, { headers })).status()).toBeLessThan(300);
+    }
+  });
 });

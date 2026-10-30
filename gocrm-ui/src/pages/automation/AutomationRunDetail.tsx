@@ -30,6 +30,7 @@ import {
   entityLabel,
   entityPath,
   errorCodeLabel,
+  runRuleLabel,
   stepTypeLabel,
 } from './automationFormat';
 import { afterRunCancelled, afterRunSettled, automationKeys } from './automationQueries';
@@ -113,7 +114,7 @@ export const Component: React.FC = () => {
     );
   }
 
-  const ruleText = `Rule #${run.rule_id} · version ${run.rule_version}`;
+  const ruleText = `${runRuleLabel(run)} · version ${run.rule_version}`;
   const canCancel = isAdmin && isActiveRunStatus(run.status);
   const steps = run.steps ?? [];
 
@@ -141,7 +142,8 @@ export const Component: React.FC = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2}>
           <Fact label="Rule">
-            {isAdmin ? (
+            {/* A deleted rule has no editor page to link to. */}
+            {isAdmin && !run.rule_deleted ? (
               <Link component={RouterLink} to={`/automation/rules/${run.rule_id}/edit`}>
                 {ruleText}
               </Link>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { RouteObject } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -31,20 +31,45 @@ class TestRequest extends NativeRequest {
 vi.stubGlobal('Request', TestRequest);
 
 let authUser: User | null = null;
+let authLoading = false;
+
+// The auth mock is an external store so a test can move a mounted tree from
+// "loading" to "authenticated" the way the real provider does after the
+// session check resolves.
+let authVersion = 0;
+const authListeners = new Set<() => void>();
+const subscribeAuth = (listener: () => void) => {
+  authListeners.add(listener);
+  return () => {
+    authListeners.delete(listener);
+  };
+};
+const setAuth = (user: User | null, loading: boolean) => {
+  authUser = user;
+  authLoading = loading;
+  authVersion += 1;
+  authListeners.forEach((listener) => listener());
+};
 
 const authValue = () => ({
   user: authUser,
-  isLoading: false,
-  isAuthenticated: authUser !== null,
+  isLoading: authLoading,
+  isAuthenticated: !authLoading && authUser !== null,
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
   refreshUser: vi.fn(),
 });
 
-vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => authValue(),
-}));
+vi.mock('@/hooks/useAuth', async () => {
+  const { useSyncExternalStore } = await import('react');
+  return {
+    useAuth: () => {
+      useSyncExternalStore(subscribeAuth, () => authVersion);
+      return authValue();
+    },
+  };
+});
 
 vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({
@@ -88,6 +113,29 @@ vi.mock('@/api/endpoints/customers', async (importOriginal) => {
     customersApi: {
       ...actual.customersApi,
       getCustomers: vi.fn().mockResolvedValue({
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        total_pages: 0,
+      }),
+    },
+  };
+});
+
+// The lead list reads the conversion statuses from the configuration
+// provider, which the real app mounts above the router.
+vi.mock('@/hooks/useConfiguration', () => ({
+  useConfiguration: () => ({ getLeadConversionStatuses: () => ['qualified'] }),
+}));
+
+vi.mock('@/api/endpoints/leads', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/endpoints/leads')>();
+  return {
+    ...actual,
+    leadsApi: {
+      ...actual.leadsApi,
+      getLeads: vi.fn().mockResolvedValue({
         data: [],
         total: 0,
         page: 1,
@@ -589,4 +637,95 @@ describe('automation and notification routes', () => {
       view.unmount();
     }
   }, 90000);
+});
+
+// Leads are admin and sales only on the API (the whole /leads group is
+// RequireRole(admin, sales)), and so is POST /customers. Customer list, detail
+// and edit stay open to every authenticated role: the API scopes those reads
+// and updates itself.
+describe('lead and customer creation routes', () => {
+  beforeEach(() => {
+    setAuth(null, false);
+  });
+
+  const leadPaths = ['/leads', '/leads/new', '/leads/1', '/leads/1/edit'];
+
+  it('redirect support and customer users away from every lead route and /customers/new', async () => {
+    for (const role of ['support', 'customer'] as const) {
+      for (const path of [...leadPaths, '/customers/new']) {
+        setAuth(createMockUser({ role }), false);
+
+        const view = renderAt(path);
+
+        // The data router resolves the lazy page module before the guard renders.
+        expect(await view.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+        expect(view.queryByRole('heading', { name: /lead|customer/i })).not.toBeInTheDocument();
+        view.unmount();
+      }
+    }
+  }, 90000);
+
+  it('render the lead list, the lead form and the customer create form for admin and sales users', async () => {
+    const expectedHeadings: Array<[string, string]> = [
+      ['/leads', 'Leads'],
+      ['/leads/new', 'Create New Lead'],
+      ['/customers/new', 'Create New Customer'],
+    ];
+
+    for (const role of ['admin', 'sales'] as const) {
+      for (const [path, heading] of expectedHeadings) {
+        setAuth(createMockUser({ role }), false);
+
+        const view = renderAt(path);
+
+        // The generous timeout covers the dynamic import of each page module.
+        expect(await view.findByRole('heading', { name: heading }, { timeout: 15000 })).toBeInTheDocument();
+        expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+        view.unmount();
+      }
+    }
+  }, 90000);
+
+  it('keep the customer list reachable for support and customer users', async () => {
+    for (const role of ['support', 'customer'] as const) {
+      setAuth(createMockUser({ role }), false);
+
+      const view = renderAt('/customers');
+
+      expect(await view.findByRole('heading', { name: 'Customers' }, { timeout: 15000 })).toBeInTheDocument();
+      expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+      view.unmount();
+    }
+  }, 60000);
+
+  it('hold a deep link on the spinner while the session loads, then render the lead list for sales', async () => {
+    setAuth(null, true);
+
+    const view = renderAt('/leads');
+
+    expect(await view.findByRole('progressbar', {}, { timeout: 15000 })).toBeInTheDocument();
+    expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+    expect(view.queryByRole('heading', { name: 'Leads' })).not.toBeInTheDocument();
+
+    act(() => setAuth(createMockUser({ role: 'sales' }), false));
+
+    expect(await view.findByRole('heading', { name: 'Leads' }, { timeout: 15000 })).toBeInTheDocument();
+    expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+    view.unmount();
+  }, 30000);
+
+  it('hold a deep link on the spinner while the session loads, then redirect a support user away from /customers/new', async () => {
+    setAuth(null, true);
+
+    const view = renderAt('/customers/new');
+
+    expect(await view.findByRole('progressbar', {}, { timeout: 15000 })).toBeInTheDocument();
+    expect(view.queryByRole('heading', { name: 'Create New Customer' })).not.toBeInTheDocument();
+
+    act(() => setAuth(createMockUser({ role: 'support' }), false));
+
+    expect(await view.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+    expect(view.queryByRole('heading', { name: 'Create New Customer' })).not.toBeInTheDocument();
+    view.unmount();
+  }, 30000);
 });

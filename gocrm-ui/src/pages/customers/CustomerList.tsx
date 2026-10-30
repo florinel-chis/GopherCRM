@@ -6,19 +6,17 @@ import {
   Paper,
   Typography,
   Button,
-  Chip,
-  IconButton,
-  Menu,
-  MenuItem,
   TextField,
   InputAdornment,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  MoreVert as MoreVertIcon,
+  ConfirmationNumber as TicketIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
+import { useAuth } from '@/hooks/useAuth';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
@@ -30,6 +28,12 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
+  const { user } = useAuth();
+
+  // POST /customers is admin and sales only; POST /tickets admin and support
+  // only. The routes refuse the forms to everyone else, so do not offer them.
+  const canCreateCustomer = user?.role === 'admin' || user?.role === 'sales';
+  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
   
   const [filters, setFilters] = useState<CustomerFilters>({
     page: 1,
@@ -42,9 +46,6 @@ export const Component: React.FC = () => {
     customer?: Customer;
   }>({ open: false });
   
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-
   // Sorted column as the DataTable column id (filters carry the mapped backend
   // field). Owned here because a sort click switches the query key and unmounts
   // the table through the loading branch below.
@@ -101,21 +102,6 @@ export const Component: React.FC = () => {
       format: (value: number) => `$${value.toLocaleString()}`,
     },
     {
-      id: 'is_active',
-      label: 'Status',
-      minWidth: 100,
-      // `is_active` is allowlisted for users but NOT for customers
-      // (internal/utils/sort.go), so the API rejects it here.
-      sortable: false,
-      format: (value: boolean) => (
-        <Chip
-          label={value ? 'Active' : 'Inactive'}
-          color={value ? 'success' : 'default'}
-          size="small"
-        />
-      ),
-    },
-    {
       id: 'created_at',
       label: 'Customer Since',
       minWidth: 120,
@@ -123,22 +109,25 @@ export const Component: React.FC = () => {
     },
   ], []);
 
-  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, customer: Customer) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedCustomer(customer);
-  }, []);
-
-  const handleMenuClose = useCallback(() => {
-    setAnchorEl(null);
-    setSelectedCustomer(null);
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    if (selectedCustomer) {
-      setDeleteDialog({ open: true, customer: selectedCustomer });
-      handleMenuClose();
-    }
-  }, [selectedCustomer, handleMenuClose]);
+  // View, edit and delete are the row's own icon buttons; the overflow menu
+  // carries only what they do not, opening a ticket for the customer. Each
+  // menu closes over its own row.
+  const renderRowActions = (customer: Customer) => (
+    <RowActionsMenu
+      label={`More actions for ${customer.company_name || customer.contact_name}`}
+      actions={
+        canCreateTicket
+          ? [
+              {
+                label: 'Create Ticket',
+                icon: <TicketIcon fontSize="small" />,
+                onClick: () => navigate(`/tickets/new?customer_id=${customer.id}`),
+              },
+            ]
+          : []
+      }
+    />
+  );
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
@@ -173,13 +162,15 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Customers</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => navigate('/customers/new')}
-        >
-          Add Customer
-        </Button>
+        {canCreateCustomer && (
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate('/customers/new')}
+          >
+            Add Customer
+          </Button>
+        )}
       </Box>
 
       <Paper sx={{ mb: 2, p: 2 }}>
@@ -216,32 +207,7 @@ export const Component: React.FC = () => {
         onRowClick={(customer) => navigate(`/customers/${customer.id}`)}
         onEdit={(customer) => navigate(`/customers/${customer.id}/edit`)}
         onDelete={(customer) => setDeleteDialog({ open: true, customer })}
-        actions={
-          <>
-            <IconButton
-              size="small"
-              onClick={(e) => selectedCustomer && handleMenuOpen(e, selectedCustomer)}
-            >
-              <MoreVertIcon />
-            </IconButton>
-            <Menu
-              anchorEl={anchorEl}
-              open={Boolean(anchorEl)}
-              onClose={handleMenuClose}
-            >
-              <MenuItem onClick={() => selectedCustomer && navigate(`/customers/${selectedCustomer.id}`)}>
-                View Details
-              </MenuItem>
-              <MenuItem onClick={() => selectedCustomer && navigate(`/customers/${selectedCustomer.id}/edit`)}>
-                Edit
-              </MenuItem>
-              <MenuItem onClick={() => selectedCustomer && navigate(`/tickets/new?customer_id=${selectedCustomer.id}`)}>
-                Create Ticket
-              </MenuItem>
-              <MenuItem onClick={handleDelete}>Delete</MenuItem>
-            </Menu>
-          </>
-        }
+        rowActions={renderRowActions}
       />
 
       <ConfirmDialog

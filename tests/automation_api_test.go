@@ -291,7 +291,59 @@ func TestAutomationRuleAPISQLite(t *testing.T) {
 			rec := h.request(http.MethodPost, "/api/v1/automation/rules", "admin", body)
 			assert.Equalf(t, http.StatusBadRequest, rec.Code, "%s: %s", name, rec.Body.String())
 			assert.Equalf(t, apperrors.CodeInvalidReference, h.errorCode(rec), "%s", name)
+			// The message is the one clients read before field errors existed.
+			want := map[string]string{
+				"unknown":  "unknown user_id 999999: assignee not found",
+				"inactive": fmt.Sprintf("user %d is inactive: assignee not found", inactive.ID),
+				"customer": fmt.Sprintf("user %d is not a staff user: assignee not found", h.users["customer"].ID),
+			}[name]
+			assert.Equalf(t, want, h.decode(rec).Error.Message, "%s", name)
+			assert.Equalf(t, []map[string]interface{}{{"field": "steps[0].config.user_id", "code": "unknown_reference"}},
+				fieldErrors(t, rec), "%s", name)
 		}
+	})
+
+	t.Run("a rejected rule names every failing field in error.details", func(t *testing.T) {
+		inactive := &models.User{Email: "inactive-fields@automation-api.test", Password: "x", FirstName: "In", LastName: "Active", Role: models.RoleSales, IsActive: true}
+		require.NoError(t, h.db.Create(inactive).Error)
+		require.NoError(t, h.db.Model(inactive).Update("is_active", false).Error)
+		body := h.validRuleBody()
+		body["name"] = ""
+		body["trigger"] = map[string]interface{}{"to": "qualified", "hour_utc": 4}
+		body["steps"] = []map[string]interface{}{
+			{"step_type": "wait", "config": map[string]interface{}{"duration_minutes": 0}},
+			{"step_type": "notify", "config": map[string]interface{}{"title": "Hi {{lead.nickname}}", "recipient": "user", "user_id": inactive.ID}},
+			{"step_type": "create_task", "config": map[string]interface{}{"title": "", "priority": "urgent"}},
+		}
+		var rules int64
+		require.NoError(t, h.db.Model(&models.AutomationRule{}).Count(&rules).Error)
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			path := "/api/v1/automation/rules"
+			if method == http.MethodPut {
+				rec := h.request(http.MethodPost, path, "admin", h.validRuleBody())
+				require.Equal(t, http.StatusCreated, rec.Code)
+				var saved models.AutomationRule
+				h.data(rec, &saved)
+				path = fmt.Sprintf("%s/%d", path, saved.ID)
+				rules++
+			}
+			rec := h.request(method, path, "admin", body)
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			assert.Equal(t, apperrors.CodeInvalidInput, h.errorCode(rec))
+			assert.Equal(t, "name is required: validation failed", h.decode(rec).Error.Message)
+			assert.Equal(t, []map[string]interface{}{
+				{"field": "name", "code": "required"},
+				{"field": "trigger.hour_utc", "code": "not_applicable"},
+				{"field": "steps[0].config.duration_minutes", "code": "out_of_range"},
+				{"field": "steps[1].config.title", "code": "unknown_placeholder"},
+				{"field": "steps[2].config.title", "code": "required"},
+				{"field": "steps[2].config.priority", "code": "invalid_value"},
+				{"field": "steps[1].config.user_id", "code": "unknown_reference"},
+			}, fieldErrors(t, rec), method)
+		}
+		var after int64
+		require.NoError(t, h.db.Model(&models.AutomationRule{}).Count(&after).Error)
+		assert.Equal(t, rules, after, "a refused body writes no rule")
 	})
 
 	t.Run("update, enable, disable and delete", func(t *testing.T) {
@@ -468,6 +520,25 @@ func TestAutomationRunAPISQLite(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
+	t.Run("run responses carry the rule name and never the rule configuration", func(t *testing.T) {
+		check := func(role string, rec *httptest.ResponseRecorder) {
+			t.Helper()
+			require.Equalf(t, http.StatusOK, rec.Code, "%s: %s", role, rec.Body.String())
+			body := rec.Body.String()
+			for _, leak := range []string{`"rule":`, `"trigger"`, `"trigger_type"`, `"trigger_config"`, `"config"`, `"conditions"`, "{{lead.id}}", "Chase qualified leads"} {
+				assert.NotContainsf(t, body, leak, "%s: %s", role, body)
+			}
+			assert.Contains(t, body, `"rule_name":"Qualified follow-up"`, role)
+			assert.Contains(t, body, `"rule_deleted":false`, role)
+		}
+		for _, role := range []string{"sales", "admin"} {
+			check(role, h.request(http.MethodGet, "/api/v1/automation/runs", role, nil))
+			check(role, h.request(http.MethodGet, fmt.Sprintf("/api/v1/automation/runs/%d", myRun.ID), role, nil))
+		}
+		detail := h.request(http.MethodGet, fmt.Sprintf("/api/v1/automation/runs/%d", myRun.ID), "sales", nil)
+		assert.Contains(t, detail.Body.String(), `"details":`, "the run's own step log stays")
+	})
+
 	t.Run("cancel is admin-only and refuses a finished run", func(t *testing.T) {
 		rec := h.request(http.MethodPost, fmt.Sprintf("/api/v1/automation/runs/%d/cancel", myRun.ID), "sales", nil)
 		assert.Equal(t, http.StatusForbidden, rec.Code)
@@ -478,6 +549,8 @@ func TestAutomationRunAPISQLite(t *testing.T) {
 		h.data(rec, &run)
 		assert.Equal(t, models.AutomationRunCancelled, run.Status)
 		assert.Equal(t, models.AutomationCancelManual, run.CancelReason)
+		assert.Equal(t, "Qualified follow-up", run.RuleName, "the cancel answer names the rule too")
+		assert.NotContains(t, rec.Body.String(), `"trigger"`)
 
 		rec = h.request(http.MethodPost, fmt.Sprintf("/api/v1/automation/runs/%d/cancel", myRun.ID), "admin", nil)
 		assert.Equal(t, http.StatusConflict, rec.Code)
@@ -509,6 +582,88 @@ func TestAutomationRunAPISQLite(t *testing.T) {
 		require.NoError(t, h.db.Model(&models.Notification{}).Count(&notifications).Error)
 		assert.Zero(t, notifications, "the dry run notified nobody")
 	})
+
+	t.Run("draft dry run", func(t *testing.T) {
+		counts := func() []int64 {
+			out := []int64{}
+			for _, model := range []interface{}{&models.AutomationRule{}, &models.AutomationStep{}, &models.AutomationRun{},
+				&models.AutomationRunStep{}, &models.AutomationEvent{}, &models.Task{}, &models.Notification{}} {
+				var n int64
+				require.NoError(t, h.db.Model(model).Count(&n).Error)
+				out = append(out, n)
+			}
+			return out
+		}
+		before := counts()
+		draft := h.withSteps(h.validRuleBody(), []map[string]interface{}{
+			{"step_type": "assign_owner", "config": map[string]interface{}{"user_id": other.ID}},
+			{"step_type": "create_task", "config": map[string]interface{}{"title": "Call lead {{lead.id}}", "recipient": "owner"}},
+			{"step_type": "notify", "config": map[string]interface{}{"title": "Lead {{lead.id}}", "recipient": "owner"}},
+		})
+		draft["name"] = "Unsaved"
+		rec := h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", "admin", map[string]interface{}{"rule": draft, "entity_type": "lead", "entity_id": mine.ID})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var report models.AutomationDryRunReport
+		h.data(rec, &report)
+		assert.True(t, report.Draft)
+		assert.Zero(t, report.RuleID)
+		require.Len(t, report.Steps, 3)
+		assert.EqualValues(t, other.ID, report.Steps[2].Details["recipient_id"], "the simulated assign fed the owner recipient")
+
+		draft["steps"] = []map[string]interface{}{{"step_type": "notify", "config": map[string]interface{}{"title": ""}}}
+		rec = h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", "admin", map[string]interface{}{"rule": draft, "entity_type": "lead", "entity_id": mine.ID})
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Equal(t, apperrors.CodeInvalidInput, h.errorCode(rec))
+		assert.Equal(t, []map[string]interface{}{{"field": "steps[0].config.title", "code": "required"}}, fieldErrors(t, rec))
+
+		draft["steps"] = []map[string]interface{}{{"step_type": "notify", "config": map[string]interface{}{"title": "Hi", "recipient": "owner"}}}
+		rec = h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", "admin", map[string]interface{}{"rule": draft, "entity_type": "deal", "entity_id": deal.ID})
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Equal(t, apperrors.CodeInvalidInput, h.errorCode(rec))
+		rec = h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", "admin", map[string]interface{}{"rule": draft, "entity_type": "lead", "entity_id": 999999})
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		rec = h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", "admin", map[string]interface{}{"rule": draft, "entity_type": "contact", "entity_id": mine.ID})
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		for _, role := range []string{"sales", "support", "customer"} {
+			rec = h.request(http.MethodPost, "/api/v1/automation/rules/dry-run", role, map[string]interface{}{"rule": draft, "entity_type": "lead", "entity_id": mine.ID})
+			assert.Equalf(t, http.StatusForbidden, rec.Code, role)
+		}
+		assert.Equal(t, before, counts(), "rules, steps, runs, run steps, events, tasks, notifications")
+		stored, err := h.service.GetRule(rule.ID)
+		require.NoError(t, err)
+		assert.Equal(t, rule.Version, stored.Version, "the saved rule is untouched")
+	})
+
+	t.Run("a deleted rule's runs keep its name, flagged deleted", func(t *testing.T) {
+		rec := h.request(http.MethodDelete, fmt.Sprintf("/api/v1/automation/rules/%d", rule.ID), "admin", nil)
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		rec = h.request(http.MethodGet, fmt.Sprintf("/api/v1/automation/runs/%d", myRun.ID), "sales", nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var run models.AutomationRun
+		h.data(rec, &run)
+		assert.Equal(t, "Qualified follow-up", run.RuleName)
+		assert.True(t, run.RuleDeleted)
+	})
+}
+
+// fieldErrors returns error.details.fields of a refused rule body as
+// field/code pairs, checking every entry carries a message.
+func fieldErrors(t *testing.T, rec *httptest.ResponseRecorder) []map[string]interface{} {
+	t.Helper()
+	var envelope struct {
+		Error struct {
+			Details struct {
+				Fields []map[string]interface{} `json:"fields"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), rec.Body.String())
+	out := []map[string]interface{}{}
+	for _, field := range envelope.Error.Details.Fields {
+		assert.NotEmpty(t, field["message"], "every field error carries a message")
+		out = append(out, map[string]interface{}{"field": field["field"], "code": field["code"]})
+	}
+	return out
 }
 
 // concurrentDisableService embeds the real automation service and, once

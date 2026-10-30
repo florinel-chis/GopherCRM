@@ -7,8 +7,6 @@ import {
   Typography,
   Button,
   Chip,
-  IconButton,
-  Menu,
   MenuItem,
   FormControl,
   InputLabel,
@@ -25,12 +23,12 @@ import {
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  MoreVert as MoreVertIcon,
   ViewList as ListIcon,
   CalendarMonth as CalendarIcon,
   CheckCircle as CompleteIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LabelChip } from '@/components/LabelChip';
 import { Loading } from '@/components/Loading';
@@ -106,8 +104,6 @@ export const Component: React.FC = () => {
     task?: Task;
   }>({ open: false });
   
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
 
   // Sorted column as the DataTable column id (filters carry the mapped backend
@@ -265,29 +261,25 @@ export const Component: React.FC = () => {
     },
   ], [handleLabelFilterChange]);
 
-  const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, task: Task) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedTask(task);
-  }, []);
-
-  const handleMenuClose = useCallback(() => {
-    setAnchorEl(null);
-    setSelectedTask(null);
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    if (selectedTask) {
-      setDeleteDialog({ open: true, task: selectedTask });
-      handleMenuClose();
-    }
-  }, [selectedTask, handleMenuClose]);
-
-  const handleComplete = useCallback(() => {
-    if (selectedTask && selectedTask.status !== 'completed') {
-      completeMutation.mutate(selectedTask.id);
-      handleMenuClose();
-    }
-  }, [selectedTask, completeMutation, handleMenuClose]);
+  // View, edit and delete are the row's own icon buttons; the overflow menu
+  // carries only what they do not, completion, and only on tasks that are not
+  // completed yet. Each menu closes over its own row.
+  const renderRowActions = (task: Task) => (
+    <RowActionsMenu
+      label={`More actions for ${task.title}`}
+      actions={
+        task.status !== 'completed'
+          ? [
+              {
+                label: 'Mark as Complete',
+                icon: <CompleteIcon fontSize="small" />,
+                onClick: () => completeMutation.mutate(task.id),
+              },
+            ]
+          : []
+      }
+    />
+  );
 
   const handleSort = useCallback((field: string, order: 'asc' | 'desc') => {
     const fieldMap: Record<string, string> = {
@@ -528,37 +520,7 @@ export const Component: React.FC = () => {
           onRowClick={(task) => navigate(`/tasks/${task.id}`)}
           onEdit={(task) => navigate(`/tasks/${task.id}/edit`)}
           onDelete={(task) => setDeleteDialog({ open: true, task })}
-          actions={
-            <>
-              <IconButton
-                size="small"
-                onClick={(e) => selectedTask && handleMenuOpen(e, selectedTask)}
-              >
-                <MoreVertIcon />
-              </IconButton>
-              <Menu
-                anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
-                onClose={handleMenuClose}
-              >
-                <MenuItem onClick={() => selectedTask && navigate(`/tasks/${selectedTask.id}`)}>
-                  View Details
-                </MenuItem>
-                <MenuItem onClick={() => selectedTask && navigate(`/tasks/${selectedTask.id}/edit`)}>
-                  Edit
-                </MenuItem>
-                {selectedTask?.status !== 'completed' && (
-                  <MenuItem onClick={handleComplete}>
-                    <CompleteIcon fontSize="small" sx={{ mr: 1 }} />
-                    Mark as Complete
-                  </MenuItem>
-                )}
-                <MenuItem onClick={handleDelete}>
-                  Delete
-                </MenuItem>
-              </Menu>
-            </>
-          }
+          rowActions={renderRowActions}
         />
       ) : (
         renderCalendarView()

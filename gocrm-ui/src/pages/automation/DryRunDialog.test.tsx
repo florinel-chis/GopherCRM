@@ -14,7 +14,7 @@ import { AUTOMATION_DATETIME } from './automationFormat';
 import { DryRunDialog } from './DryRunDialog';
 
 vi.mock('@/api/endpoints', () => ({
-  automationApi: { dryRun: vi.fn() },
+  automationApi: { dryRun: vi.fn(), dryRunDraft: vi.fn() },
   leadsApi: { getLeads: vi.fn(), getLead: vi.fn() },
   dealsApi: { getDeals: vi.fn(), getDeal: vi.fn() },
 }));
@@ -111,6 +111,86 @@ describe('DryRunDialog', () => {
       )} · rule version 3`,
     )).toBeInTheDocument();
     expect(within(dialog()).getByTestId('dry-run-notice')).toBeInTheDocument();
+  });
+
+  it("a saved-rule dry run posts to the rule's dry-run route", async () => {
+    vi.mocked(automationApi.dryRun).mockResolvedValue(report);
+    render(<DryRunDialog rule={leadRule} open onClose={vi.fn()} />);
+
+    await pickAutocompleteOption('Lead', 'Ion Ionescu (Bolt Robotics)');
+    fireEvent.click(runButton());
+
+    await waitFor(() => expect(automationApi.dryRun).toHaveBeenCalledWith(4, { entity_type: 'lead', entity_id: 5 }));
+    expect(automationApi.dryRunDraft).not.toHaveBeenCalled();
+  });
+
+  it('a draft dry run posts the form payload to /automation/rules/dry-run and labels the report as unsaved', async () => {
+    const payload = {
+      name: 'Unsaved rule',
+      description: '',
+      entity_type: 'lead' as const,
+      trigger_type: 'lead_created' as const,
+      trigger: {},
+      steps: [{ step_type: 'notify' as const, config: { title: 'Hi', recipient: 'owner' as const } }],
+    };
+    vi.mocked(automationApi.dryRunDraft).mockResolvedValue({ ...report, rule_id: 0, rule_version: 0, draft: true });
+    render(
+      <DryRunDialog draft={{ name: 'Unsaved rule', entity_type: 'lead', payload }} open onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Dry run: Unsaved rule' })).toBeInTheDocument();
+    await pickAutocompleteOption('Lead', 'Ion Ionescu (Bolt Robotics)');
+    fireEvent.click(runButton());
+
+    await waitFor(() =>
+      expect(automationApi.dryRunDraft).toHaveBeenCalledWith({ rule: payload, entity_type: 'lead', entity_id: 5 }),
+    );
+    expect(automationApi.dryRun).not.toHaveBeenCalled();
+    expect(
+      await within(dialog()).findByText(
+        `Simulated from ${formatDate('2026-10-28T09:00:00Z', AUTOMATION_DATETIME)} to ${formatDate(
+          '2026-10-30T09:00:00Z',
+          AUTOMATION_DATETIME,
+        )} · unsaved form values`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('a rejected draft shows the server message and reports the field errors', async () => {
+    const refusal = new AxiosError('Request failed with status code 400', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      config: {} as InternalAxiosRequestConfig,
+      data: {
+        code: 'INVALID_INPUT',
+        message: 'step 1: title is required: validation failed',
+        details: { fields: [{ field: 'steps[0].config.title', code: 'required', message: 'title is required' }] },
+      },
+    } as AxiosResponse);
+    vi.mocked(automationApi.dryRunDraft).mockRejectedValue(refusal);
+    const onValidationError = vi.fn();
+    render(
+      <DryRunDialog
+        draft={{
+          name: '',
+          entity_type: 'lead',
+          payload: { name: '', description: '', entity_type: 'lead', trigger_type: 'lead_created', trigger: {}, steps: [] },
+        }}
+        open
+        onClose={vi.fn()}
+        onValidationError={onValidationError}
+      />,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Dry run: unsaved rule' })).toBeInTheDocument();
+    await pickAutocompleteOption('Lead', 'Ion Ionescu (Bolt Robotics)');
+    fireEvent.click(runButton());
+
+    expect(await within(dialog()).findByTestId('dry-run-error')).toHaveTextContent(
+      'step 1: title is required: validation failed',
+    );
+    expect(onValidationError).toHaveBeenCalledWith(refusal);
   });
 
   it('fixes the record type to the rule entity type and offers deals of every stage', async () => {

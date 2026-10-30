@@ -16,8 +16,8 @@ import (
 )
 
 // A relay that rejects a recipient normally echoes the address in its reply
-// ("550 5.1.1 <victim@example.com>: Recipient address rejected"), and
-// smtp.SendMail hands that text back as a *textproto.Error. The quote email
+// ("550 5.1.1 <victim@example.com>: Recipient address rejected"), and the
+// net/smtp client hands that text back as a *textproto.Error. The quote email
 // promises that no log line of the call carries the recipient, so Send must
 // log the reply's code and not its text, while still returning the raw error
 // to its caller. The stub below is the smallest relay that gets a client as
@@ -69,14 +69,16 @@ func TestSMTPMailerSendLogOmitsTheRelayReply(t *testing.T) {
 	assert.Contains(t, rendered, "smtp_code=550", "the SMTP code is what a diagnosis needs")
 	assert.NotContains(t, rendered, recipient, "the relay's reply text is not logged")
 	assert.NotContains(t, rendered, body)
-	assert.Equal(t, subject, entries[0].Data["subject"])
+	_, hasSubject := entries[0].Data["subject"]
+	assert.False(t, hasSubject, "subjects can be rendered from personal data and are not logged")
+	assert.NotContains(t, rendered, subject)
 	_, hasTo := entries[0].Data["to"]
 	assert.False(t, hasTo, "the generic failure line carries no recipient field")
 }
 
 // rejectRecipient serves one SMTP session: it greets, accepts EHLO/HELO and
 // MAIL FROM, answers RCPT TO with a 550 that echoes the address, and returns
-// nil once the client hangs up after the rejection (smtp.SendMail closes the
+// nil once the client hangs up after the rejection (the mailer closes the
 // connection without QUIT on an error). It returns an error if the client
 // leaves before RCPT TO, so the test cannot pass on a connection refusal.
 func rejectRecipient(listener net.Listener) error {

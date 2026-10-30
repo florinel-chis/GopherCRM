@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Box, Paper, Typography, Button, Stack, Divider } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
-import { FormTextField, FormSwitch } from '@/components/form';
+import { FormTextField } from '@/components/form';
 import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
@@ -25,11 +25,7 @@ const customerSchema = z.object({
   country: z.string().optional(),
   postal_code: z.string().optional(),
   website: customerWebsiteSchema,
-  industry: z.string().optional(),
-  annual_revenue: z.number().min(0).optional(),
-  employee_count: z.number().min(0).optional(),
   notes: z.string().optional(),
-  is_active: z.boolean(),
 });
 
 type CustomerFormData = z.infer<typeof customerSchema>;
@@ -80,11 +76,7 @@ export const Component: React.FC = () => {
       country: '',
       postal_code: '',
       website: '',
-      industry: '',
-      annual_revenue: 0,
-      employee_count: 0,
       notes: '',
-      is_active: true,
     },
   });
 
@@ -146,11 +138,7 @@ export const Component: React.FC = () => {
         country: customer.country || '',
         postal_code: customer.postal_code || '',
         website: customer.website || '',
-        industry: customer.industry || '',
-        annual_revenue: customer.annual_revenue || 0,
-        employee_count: customer.employee_count || 0,
         notes: customer.notes || '',
-        is_active: customer.is_active,
       });
       const currentCompanyId = customer.company_id ?? null;
       setLinkedCompanyId(currentCompanyId);
@@ -182,18 +170,22 @@ export const Component: React.FC = () => {
   };
 
   const onSubmit = (data: CustomerFormData) => {
-    const submitData = {
+    const submitData: CreateCustomerData = {
       ...data,
+      address: data.address ?? '',
+      city: data.city ?? '',
+      state: data.state ?? '',
+      country: data.country ?? '',
+      postal_code: data.postal_code ?? '',
       website: data.website ?? '',
-      annual_revenue: data.annual_revenue || undefined,
-      employee_count: data.employee_count || undefined,
+      notes: data.notes ?? '',
       ...companyIdPatch(),
     };
 
     if (isEditMode) {
       updateMutation.mutate({ id: Number(id), data: submitData });
     } else {
-      createMutation.mutate(submitData as CreateCustomerData);
+      createMutation.mutate(submitData);
     }
   };
 
@@ -224,14 +216,8 @@ export const Component: React.FC = () => {
                 />
               </Box>
 
-              <FormTextField name="industry" label="Industry" />
-
-              <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
-                <FormTextField name="website" label="Website" placeholder="https://example.com" />
-                <FormTextField name="employee_count" label="Number of Employees" type="number" />
-              </Box>
-
-              <FormTextField name="annual_revenue" label="Annual Revenue ($)" type="number" />
+              {/* Industry and size live on the linked Company record. */}
+              <FormTextField name="website" label="Website" placeholder="https://example.com" />
 
               <Divider />
 
@@ -265,8 +251,6 @@ export const Component: React.FC = () => {
               <Typography variant="h6">Additional Information</Typography>
 
               <FormTextField name="notes" label="Notes" multiline rows={4} />
-
-              <FormSwitch name="is_active" label="Active Customer" />
 
               <Box display="flex" gap={2} justifyContent="flex-end">
                 <Button

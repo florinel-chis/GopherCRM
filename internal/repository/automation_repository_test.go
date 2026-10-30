@@ -237,6 +237,155 @@ func runAutomationRunListScope(t *testing.T, db *gorm.DB) {
 	})
 }
 
+// G1: every run read by the run API carries its rule's current name — a
+// renamed rule its new name, a soft-deleted rule its last name flagged
+// rule_deleted — read with one extra query over the page's distinct rule
+// ids, whatever the scope, filter, sort and page.
+
+func TestAutomationRunRuleNamesSQLite(t *testing.T) {
+	runAutomationRunRuleNames(t, openAutomationRepoDB(t, false, 1))
+}
+
+func TestAutomationRunRuleNamesMySQL(t *testing.T) {
+	runAutomationRunRuleNames(t, openAutomationRepoDB(t, true, 2))
+}
+
+func runAutomationRunRuleNames(t *testing.T, db *gorm.DB) {
+	repo := NewAutomationRepository(db)
+	sales := seedAutomationUser(t, db, "sales", models.RoleSales)
+	renamed := seedAutomationRule(t, db, models.AutomationEntityLead)
+	deleted := seedAutomationRule(t, db, models.AutomationEntityLead)
+	kept := seedAutomationRule(t, db, models.AutomationEntityLead)
+	rename := func(rule *models.AutomationRule, name string) {
+		t.Helper()
+		require.NoError(t, db.Model(&models.AutomationRule{}).Where("id = ?", rule.ID).Update("name", name).Error)
+	}
+	rename(renamed, "Original name")
+	rename(deleted, "Deleted rule")
+	rename(kept, "Kept rule")
+
+	lead := &models.Lead{FirstName: "L", LastName: "N", Email: fmt.Sprintf("names-%d@repo.test", time.Now().UnixNano()), OwnerID: sales.ID}
+	require.NoError(t, db.Create(lead).Error)
+	want := map[uint]struct {
+		name    string
+		deleted bool
+	}{}
+	for i := 0; i < 20; i++ {
+		rule := []*models.AutomationRule{renamed, deleted, kept}[i%3]
+		run := seedAutomationRun(t, db, rule, lead.ID, models.AutomationRunCompleted)
+		switch rule.ID {
+		case renamed.ID:
+			want[run.ID] = struct {
+				name    string
+				deleted bool
+			}{"Renamed rule", false}
+		case deleted.ID:
+			want[run.ID] = struct {
+				name    string
+				deleted bool
+			}{"Deleted rule", true}
+		default:
+			want[run.ID] = struct {
+				name    string
+				deleted bool
+			}{"Kept rule", false}
+		}
+	}
+	// The runs exist and have been read under the old name before the rule
+	// is renamed and deleted: the name is looked up at read time, never
+	// captured with the run.
+	firstID := uint(0)
+	for id := range want {
+		if firstID == 0 || id < firstID {
+			firstID = id
+		}
+	}
+	before, _, err := repo.ListRuns(0, 100, AutomationRunListFilter{}, AutomationRunScope{})
+	require.NoError(t, err)
+	for _, run := range before {
+		if run.RuleID == renamed.ID {
+			require.Equal(t, "Original name", run.RuleName)
+		}
+		if run.RuleID == deleted.ID {
+			require.False(t, run.RuleDeleted)
+		}
+	}
+	detail, err := repo.GetRunByID(firstID)
+	require.NoError(t, err)
+	require.Equal(t, "Original name", detail.RuleName)
+	rename(renamed, "Renamed rule")
+	require.NoError(t, repo.DeleteRule(deleted.ID))
+
+	check := func(t *testing.T, runs []models.AutomationRun) {
+		t.Helper()
+		for _, run := range runs {
+			assert.Equalf(t, want[run.ID].name, run.RuleName, "run %d", run.ID)
+			assert.Equalf(t, want[run.ID].deleted, run.RuleDeleted, "run %d", run.ID)
+			assert.Nilf(t, run.Rule, "run %d loads no rule association", run.ID)
+		}
+	}
+
+	t.Run("every scope, filter, sort and page carries the names", func(t *testing.T) {
+		scopes := []AutomationRunScope{{}, {OwnerID: &sales.ID}}
+		for _, scope := range scopes {
+			runs, total, err := repo.ListRuns(0, 100, AutomationRunListFilter{}, scope)
+			require.NoError(t, err)
+			assert.EqualValues(t, 20, total)
+			require.Len(t, runs, 20)
+			check(t, runs)
+		}
+		ruleID := deleted.ID
+		runs, total, err := repo.ListRuns(0, 100, AutomationRunListFilter{RuleID: &ruleID}, AutomationRunScope{OwnerID: &sales.ID})
+		require.NoError(t, err)
+		assert.EqualValues(t, 7, total, "the deleted rule's runs are still listed by its id")
+		check(t, runs)
+		for _, column := range []string{"id", "created_at", "updated_at", "status", "resume_at"} {
+			for _, direction := range []string{"asc", "desc"} {
+				runs, total, err := repo.ListRuns(5, 5, AutomationRunListFilter{SortBy: column, SortOrder: direction}, AutomationRunScope{})
+				require.NoErrorf(t, err, "%s %s", column, direction)
+				assert.EqualValues(t, 20, total)
+				require.Len(t, runs, 5)
+				check(t, runs)
+			}
+		}
+	})
+
+	t.Run("the detail carries the name of a live and of a deleted rule", func(t *testing.T) {
+		for id := range want {
+			run, err := repo.GetRunByID(id)
+			require.NoError(t, err)
+			assert.Equal(t, want[id].name, run.RuleName)
+			assert.Equal(t, want[id].deleted, run.RuleDeleted)
+		}
+	})
+
+	t.Run("a rule row that is gone leaves the name empty and flags it deleted", func(t *testing.T) {
+		gone := seedAutomationRule(t, db, models.AutomationEntityLead)
+		run := seedAutomationRun(t, db, gone, lead.ID, models.AutomationRunCompleted)
+		require.NoError(t, db.Unscoped().Delete(&models.AutomationRule{}, gone.ID).Error)
+		got, err := repo.GetRunByID(run.ID)
+		require.NoError(t, err)
+		assert.Empty(t, got.RuleName)
+		assert.True(t, got.RuleDeleted)
+		require.NoError(t, db.Delete(&models.AutomationRun{}, run.ID).Error)
+	})
+
+	t.Run("a page costs one count, one page query and one name query", func(t *testing.T) {
+		var statements int
+		count := func(*gorm.DB) { statements++ }
+		require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:count_run_names_query", count))
+		require.NoError(t, db.Callback().Row().After("gorm:row").Register("test:count_run_names_row", count))
+		defer func() {
+			_ = db.Callback().Query().Remove("test:count_run_names_query")
+			_ = db.Callback().Row().Remove("test:count_run_names_row")
+		}()
+		runs, _, err := repo.ListRuns(0, 20, AutomationRunListFilter{}, AutomationRunScope{})
+		require.NoError(t, err)
+		require.Len(t, runs, 20)
+		assert.Equal(t, 3, statements, "no query per run")
+	})
+}
+
 func TestAutomationRepositoryConditionalUpdates(t *testing.T) {
 	db := openAutomationRepoDB(t, false, 1)
 	repo := NewAutomationRepository(db)
