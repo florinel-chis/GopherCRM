@@ -325,7 +325,11 @@ const atomSpecials = "!#$%&'*+-/=?^_`{|}~"
 // quoting would make them legal, because they are what lets text escape the
 // angle brackets of the command and inject ESMTP parameters
 // ("x> NOTIFY=NEVER"@example.com); and domain literals. Non-ASCII is allowed
-// (RFC 6531) but flagged, so the delivery can insist on SMTPUTF8.
+// (RFC 6531) but flagged, so the delivery can insist on SMTPUTF8: in the local
+// part as printable letters, digits and marks, in a domain label as any
+// character but a control, a format control other than ZWNJ/ZWJ, or
+// whitespace (see isDomain), so that every label IDNA2008 permits, such as
+// col·legi.cat (U+00B7, RFC 5892), reaches a relay that offers SMTPUTF8.
 func envelopeAddress(role, addr string) (envelope, error) {
 	invalid := envelope{}
 	at := strings.LastIndex(addr, "@")
@@ -335,20 +339,58 @@ func envelopeAddress(role, addr string) (envelope, error) {
 	local, domain := addr[:at], addr[at+1:]
 	needsUTF8 := false
 	for _, r := range addr {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && !unicode.IsPrint(r)) || r == '<' || r == '>' || r == utf8.RuneError {
+		if r < 0x20 || r == 0x7f || r == '<' || r == '>' || r == utf8.RuneError ||
+			(r >= 0x80 && (unicode.IsControl(r) || unicode.IsSpace(r))) {
 			return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
 		}
 		if r >= 0x80 {
 			needsUTF8 = true
 		}
 	}
-	if !isDotAtom(domain, "-") {
+	for _, r := range local {
+		if r >= 0x80 && !unicode.IsPrint(r) {
+			return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
+		}
+	}
+	if !isDomain(domain) {
 		return invalid, fmt.Errorf("%s: %w", role, ErrInvalidAddress)
 	}
 	if !isDotAtom(local, atomSpecials) {
 		local = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(local) + `"`
 	}
 	return envelope{wire: local + "@" + domain, needsUTF8: needsUTF8}, nil
+}
+
+// isDomain reports whether s is a domain the envelope can carry: non-empty
+// labels separated by single dots, made of ASCII letters, digits and '-', or
+// any non-ASCII character except whitespace, controls and format controls
+// (ZWNJ and ZWJ, which RFC 5892 permits in context, excepted). A domain
+// literal ("[127.0.0.1]") is refused: '[' is not a label character.
+// Whitespace and C0/C1 controls were already refused by the caller; they are
+// checked again so that the function stands on its own.
+func isDomain(s string) bool {
+	if s == "" || len(s) > 255 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" {
+			return false
+		}
+		for _, r := range label {
+			if r < 0x80 {
+				alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+				if !alnum && r != '-' {
+					return false
+				}
+				continue
+			}
+			if r == utf8.RuneError || unicode.IsControl(r) || unicode.IsSpace(r) ||
+				(unicode.Is(unicode.Cf, r) && r != 0x200C && r != 0x200D) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // isDotAtom reports whether s is a dot-atom: non-empty labels separated by
