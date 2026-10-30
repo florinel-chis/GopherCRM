@@ -436,11 +436,11 @@ the frontend gating.
   original email is not found there either — `leadRepository.Delete` runs the identity cascade
   (`erasure_cascade.go`, `eraseLead`), which follows `leads.customer_id` and erases both halves in
   one transaction, together with the customer's customer-role login if it has one (#108). Only an
-  admin may do this: see TC-LEAD-059 for the owning sales user.
+  admin may do this: see TC-LEAD-065 for the owning sales user.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; requires the customers
   page object for the verification step)
 
-### TC-LEAD-059 — The owning sales user cannot delete a converted lead
+### TC-LEAD-065 — The owning sales user cannot delete a converted lead
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** Sales user logged in; a lead owned by that sales user, converted to a customer
