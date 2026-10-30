@@ -21,7 +21,12 @@ type UserRepository interface {
 	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
 	// pre-checks, since the unique index on users.email is not scoped to deleted_at.
 	GetByEmailUnscoped(email string) (*models.User, error)
-	Update(user *models.User) error
+	// UpdateFields writes only the named columns of a live (not soft-deleted)
+	// user with a conditional UPDATE. It never inserts and reports
+	// gorm.ErrRecordNotFound when no live row matched. There is deliberately
+	// no full-struct update: GORM's Save upserts when its UPDATE matches
+	// nothing, which resurrected erased accounts.
+	UpdateFields(id uint, fields map[string]interface{}) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.User, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error)

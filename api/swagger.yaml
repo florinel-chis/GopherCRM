@@ -1747,9 +1747,22 @@ definitions:
       new_password:
         minLength: 10
         type: string
+      refresh_token:
+        type: string
     required:
     - current_password
     - new_password
+    type: object
+  internal_handler.ChangePasswordResponse:
+    properties:
+      message:
+        type: string
+      refresh_token:
+        type: string
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
     type: object
   internal_handler.ChartData:
     properties:
@@ -4541,12 +4554,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Re-authenticates with the current password, then replaces it. The
-        new password must be at least 10 characters with an uppercase letter, a lowercase
-        letter, a digit and a special character. On success every refresh token of
-        the user is revoked, ending all other sessions. A wrong current password is
-        a 400 validation failure of the request — the session presenting it is still
-        authenticated, so it is not a 401.
+      description: |-
+        Re-authenticates with the current password, then replaces it. The new password must be at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. The password write, the revocation of the user's refresh tokens and the renewal of the current session are one transaction: any failure leaves the password and every session unchanged.
+        With a bearer token and the client's current refresh_token in the body, that session is renewed: the token is spent, every other refresh token of the user is revoked, and the response carries a replacement token, refresh_token and user. A refresh_token that is not a live session of the caller (unknown, revoked, expired, foreign) is a 409 SESSION_STALE and nothing changes. Without a refresh_token, or for an API-key request (which never receives session credentials and whose refresh_token is ignored), every refresh token is revoked and only the message is returned.
+        Revocation ends renewal, not access: access tokens already issued elsewhere stay valid until they expire (there is no blocklist), unless the account is deactivated or erased. A wrong current password is a 400 validation failure of the request — the session presenting it is still authenticated, so it is not a 401.
       parameters:
       - description: Password change request
         in: body
@@ -4558,13 +4569,14 @@ paths:
       - application/json
       responses:
         "200":
-          description: Password changed; other sessions revoked
+          description: Password changed; other sessions revoked; renewed credentials
+            when a refresh_token was presented with a bearer token
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
             - properties:
                 data:
-                  $ref: '#/definitions/internal_handler.MessageResponse'
+                  $ref: '#/definitions/internal_handler.ChangePasswordResponse'
               type: object
         "400":
           description: Malformed body, wrong current password, or new password fails
@@ -4577,7 +4589,18 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "401":
-          description: Unauthorized
+          description: Unauthorized, or the account was deactivated or erased during
+            the request
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'SESSION_STALE: the presented refresh_token is not a live session
+            of the caller; nothing was changed'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -4595,7 +4618,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "500":
-          description: Internal server error
+          description: Internal server error; nothing was changed
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -4874,7 +4897,9 @@ paths:
         Any invalid token (unknown, expired, revoked, or belonging to a deactivated
         or erased account) yields the same generic 401; the reason is never disclosed.
         Replaying a consumed token always fails, so clients must persist the replacement
-        from every response.'
+        from every response. An operational failure (database, signing) is a 503 SESSION_REFRESH_UNAVAILABLE:
+        the rotation rolled back, the presented token is still usable and the client
+        should keep it and retry.'
       parameters:
       - description: Refresh request
         in: body
@@ -4921,8 +4946,9 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
-        "500":
-          description: Internal server error
+        "503":
+          description: Operational failure (SESSION_REFRESH_UNAVAILABLE); nothing
+            was rotated and the presented token is still usable — retry later
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

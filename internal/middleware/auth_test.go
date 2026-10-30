@@ -78,9 +78,12 @@ func (m *MockAuthService) Logout(userID uint, refreshToken string) error {
 	return args.Error(0)
 }
 
-func (m *MockAuthService) ChangePassword(userID uint, currentPassword, newPassword string) error {
-	args := m.Called(userID, currentPassword, newPassword)
-	return args.Error(0)
+func (m *MockAuthService) ChangePassword(userID uint, currentPassword, newPassword, refreshToken string) (*service.AuthTokens, error) {
+	args := m.Called(userID, currentPassword, newPassword, refreshToken)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.AuthTokens), args.Error(1)
 }
 
 func (m *MockAuthService) RequestPasswordReset(email string) error {
@@ -110,7 +113,7 @@ func setupAuthTestRouter(authSvc *MockAuthService) *gin.Engine {
 	r.GET("/protected", func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
 		role, _ := c.Get("user_role")
-		c.JSON(http.StatusOK, gin.H{"user_id": userID, "role": role})
+		c.JSON(http.StatusOK, gin.H{"user_id": userID, "role": role, "auth_method": c.GetString(service.AuthMethodContextKey)})
 	})
 	return r
 }
@@ -326,4 +329,27 @@ func TestRequireRole_NoRoleInContext(t *testing.T) {
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "Access denied")
+}
+
+// Handlers that issue session credentials (change-password renewal) must be
+// able to tell a bearer session from an API key; the middleware records it.
+func TestAuth_RecordsAuthenticationMethod(t *testing.T) {
+	user := &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleSales}
+	for header, method := range map[string]string{
+		"Bearer some-jwt":  service.AuthMethodBearer,
+		"ApiKey gcrm_abcd": service.AuthMethodAPIKey,
+	} {
+		mockAuth := new(MockAuthService)
+		mockAuth.On("ValidateToken", "some-jwt").Return(user, nil).Maybe()
+		mockAuth.On("ValidateAPIKey", "gcrm_abcd").Return(user, nil).Maybe()
+		router := setupAuthTestRouter(mockAuth)
+
+		req, _ := http.NewRequest("GET", "/protected", nil)
+		req.Header.Set("Authorization", header)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `"auth_method":"`+method+`"`, header)
+	}
 }

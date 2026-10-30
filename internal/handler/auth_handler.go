@@ -62,9 +62,23 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// ChangePasswordRequest carries the current browser session in the optional
+// refresh_token: when present (and the request authenticated with a bearer
+// token) that session is renewed and the response carries its replacement
+// credentials. It is ignored for API-key requests.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required,min=10"`
+	RefreshToken    string `json:"refresh_token,omitempty"`
+}
+
+// ChangePasswordResponse always carries the message. token, refresh_token and
+// user are present only when the current session was renewed.
+type ChangePasswordResponse struct {
+	Message      string       `json:"message"`
+	Token        string       `json:"token,omitempty"`
+	RefreshToken string       `json:"refresh_token,omitempty"`
+	User         *models.User `json:"user,omitempty"`
 }
 
 type PasswordResetRequest struct {
@@ -183,7 +197,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // Refresh godoc
 // @Summary Exchange a refresh token for a new JWT
-// @Description Rotates the session: the presented refresh token is revoked and a fresh JWT, refresh token and the user are returned — the same shape as login. Any invalid token (unknown, expired, revoked, or belonging to a deactivated or erased account) yields the same generic 401; the reason is never disclosed. Replaying a consumed token always fails, so clients must persist the replacement from every response.
+// @Description Rotates the session: the presented refresh token is revoked and a fresh JWT, refresh token and the user are returned — the same shape as login. Any invalid token (unknown, expired, revoked, or belonging to a deactivated or erased account) yields the same generic 401; the reason is never disclosed. Replaying a consumed token always fails, so clients must persist the replacement from every response. An operational failure (database, signing) is a 503 SESSION_REFRESH_UNAVAILABLE: the rotation rolled back, the presented token is still usable and the client should keep it and retry.
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -192,7 +206,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Malformed body or missing refresh_token"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Invalid or expired refresh token"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Rate limit exceeded (10 requests per minute per IP)"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Failure 503 {object} utils.APIResponse{error=utils.APIError} "Operational failure (SESSION_REFRESH_UNAVAILABLE); nothing was rotated and the presented token is still usable — retry later"
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.Refresh")
@@ -205,11 +219,21 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	tokens, err := h.authService.RefreshAccessToken(req.RefreshToken)
 	if err != nil {
-		// Deliberately generic: every rejection reads the same. Internal
-		// failures are logged server-side but still answered with 401 rather
-		// than 500, so the error channel cannot be used to probe token state.
-		logger.WithError(utils.LogError(err)).Warn("Refresh token rejected")
-		utils.RespondUnauthorized(c, "Invalid or expired refresh token")
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			// Deliberately generic: every rejection of the token reads the
+			// same (unknown, expired, replayed, dead owner).
+			logger.WithError(utils.LogError(err)).Warn("Refresh token rejected")
+			utils.RespondUnauthorized(c, "Invalid or expired refresh token")
+			return
+		}
+		// An operational failure (database, signing) rolled the rotation
+		// back, so the presented token is still usable. It is answered with
+		// a retryable 503 rather than the 401 a client treats as the end of
+		// the session; 503 rather than 500/502 keeps the JSON body intact
+		// behind Cloudflare.
+		logger.WithError(utils.LogError(err)).Error("Refresh failed")
+		utils.RespondError(c, http.StatusServiceUnavailable, "SESSION_REFRESH_UNAVAILABLE",
+			"Session renewal is temporarily unavailable. Please retry.", nil)
 		return
 	}
 
@@ -269,18 +293,21 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 // ChangePassword godoc
 // @Summary Change the authenticated user's password
-// @Description Re-authenticates with the current password, then replaces it. The new password must be at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. On success every refresh token of the user is revoked, ending all other sessions. A wrong current password is a 400 validation failure of the request — the session presenting it is still authenticated, so it is not a 401.
+// @Description Re-authenticates with the current password, then replaces it. The new password must be at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. The password write, the revocation of the user's refresh tokens and the renewal of the current session are one transaction: any failure leaves the password and every session unchanged.
+// @Description With a bearer token and the client's current refresh_token in the body, that session is renewed: the token is spent, every other refresh token of the user is revoked, and the response carries a replacement token, refresh_token and user. A refresh_token that is not a live session of the caller (unknown, revoked, expired, foreign) is a 409 SESSION_STALE and nothing changes. Without a refresh_token, or for an API-key request (which never receives session credentials and whose refresh_token is ignored), every refresh token is revoked and only the message is returned.
+// @Description Revocation ends renewal, not access: access tokens already issued elsewhere stay valid until they expire (there is no blocklist), unless the account is deactivated or erased. A wrong current password is a 400 validation failure of the request — the session presenting it is still authenticated, so it is not a 401.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param request body ChangePasswordRequest true "Password change request"
-// @Success 200 {object} utils.APIResponse{data=MessageResponse} "Password changed; other sessions revoked"
+// @Success 200 {object} utils.APIResponse{data=ChangePasswordResponse} "Password changed; other sessions revoked; renewed credentials when a refresh_token was presented with a bearer token"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Malformed body, wrong current password, or new password fails the complexity policy"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized, or the account was deactivated or erased during the request"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "SESSION_STALE: the presented refresh_token is not a live session of the caller; nothing was changed"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error; nothing was changed"
 // @Router /auth/change-password [post]
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.ChangePassword")
@@ -302,18 +329,38 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.ChangePassword(userID, req.CurrentPassword, req.NewPassword); err != nil {
-		if errors.Is(err, service.ErrInvalidCurrentPassword) {
+	// Only a bearer (browser) session can be renewed. An API-key caller never
+	// receives a refresh token or a JWT, whatever its body says.
+	refreshToken := req.RefreshToken
+	if c.GetString(service.AuthMethodContextKey) != service.AuthMethodBearer {
+		refreshToken = ""
+	}
+
+	tokens, err := h.authService.ChangePassword(userID, req.CurrentPassword, req.NewPassword, refreshToken)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidCurrentPassword):
 			utils.RespondBadRequest(c, "The current password is incorrect")
-			return
+		case errors.Is(err, service.ErrSessionStale):
+			utils.RespondError(c, http.StatusConflict, "SESSION_STALE",
+				"Your session is no longer current. Sign in again, then change your password.", nil)
+		case errors.Is(err, service.ErrAccountUnavailable):
+			utils.RespondUnauthorized(c, "Unauthorized")
+		default:
+			logger.WithError(utils.LogError(err)).Error("Password change failed")
+			utils.RespondInternalError(c)
 		}
-		logger.WithError(utils.LogError(err)).Error("Password change failed")
-		utils.RespondInternalError(c)
 		return
 	}
 
-	response := MessageResponse{Message: "Password changed successfully"}
-	utils.LogHandlerResponse(logger, http.StatusOK, response)
+	response := ChangePasswordResponse{Message: "Password changed successfully"}
+	if tokens != nil {
+		response.Token = tokens.AccessToken
+		response.RefreshToken = tokens.RefreshToken
+		response.User = tokens.User
+	}
+	// Log the outcome without the token material.
+	utils.LogHandlerResponse(logger, http.StatusOK, "password changed")
 	utils.RespondSuccess(c, http.StatusOK, response)
 }
 

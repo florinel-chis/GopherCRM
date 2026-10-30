@@ -38,6 +38,13 @@ var (
 	// change failed. It is a 400-class validation failure of the request body,
 	// not a 401 authentication failure of the session presenting it.
 	ErrInvalidCurrentPassword = errors.New("current password is incorrect")
+	// ErrSessionStale rejects a password change whose presented refresh token
+	// is not a live session of the caller (unknown, revoked, expired or
+	// foreign). Nothing is written.
+	ErrSessionStale = errors.New("the session to renew is no longer current")
+	// ErrAccountUnavailable rejects a password change for an account that was
+	// erased or deactivated after the request authenticated.
+	ErrAccountUnavailable = errors.New("account is not available")
 	// ErrInvalidResetToken covers every rejection of a password reset token:
 	// unknown, expired, already used, or owned by an inactive/erased user.
 	ErrInvalidResetToken = errors.New("invalid or expired reset token")
@@ -179,18 +186,21 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 		logger.WithField("user_id", user.ID).Warn("Login failed - invalid password")
 		// An expired lock starts a fresh failure window, including at its
 		// exact expiry. Active locks have already returned above.
+		attempts := user.FailedLoginAttempts
 		if user.LockedUntil != nil {
-			user.FailedLoginAttempts = 0
-			user.LockedUntil = nil
+			attempts = 0
 		}
-		// Increment failed login attempts
-		user.FailedLoginAttempts++
-		if user.FailedLoginAttempts >= MaxFailedLoginAttempts {
+		attempts++
+		bookkeeping := map[string]interface{}{"failed_login_attempts": attempts, "locked_until": nil}
+		if attempts >= MaxFailedLoginAttempts {
 			lockUntil := now.Add(AccountLockDuration)
-			user.LockedUntil = &lockUntil
+			bookkeeping["locked_until"] = &lockUntil
 			logger.WithField("user_id", user.ID).Warn("Account locked due to too many failed login attempts")
 		}
-		if updateErr := s.userRepo.Update(user); updateErr != nil {
+		// Only the bookkeeping columns are written, and only while the row is
+		// live: a full save of the struct read above would write a stale
+		// password hash back, or resurrect an account erased meanwhile.
+		if updateErr := s.userRepo.UpdateFields(user.ID, bookkeeping); updateErr != nil {
 			logger.WithError(utils.LogError(updateErr)).Warn("Failed to update failed login attempts")
 		}
 		return nil, errors.New("invalid credentials")
@@ -204,15 +214,27 @@ func (s *authService) authenticate(email, password string) (*models.User, error)
 
 	// Reset failed login attempts on successful login
 	if user.FailedLoginAttempts > 0 || user.LockedUntil != nil {
-		user.FailedLoginAttempts = 0
-		user.LockedUntil = nil
-		if updateErr := s.userRepo.Update(user); updateErr != nil {
+		if updateErr := s.userRepo.UpdateFields(user.ID, map[string]interface{}{
+			"failed_login_attempts": 0, "locked_until": nil,
+		}); updateErr != nil {
+			if apperrors.IsNotFound(updateErr) {
+				logger.WithField("user_id", user.ID).Warn("Login failed - account erased during authentication")
+				return nil, errors.New("invalid credentials")
+			}
 			logger.WithError(utils.LogError(updateErr)).Warn("Failed to reset failed login attempts")
 		}
+		user.FailedLoginAttempts = 0
+		user.LockedUntil = nil
 	}
 
-	// Update last login timestamp
+	// Update last login timestamp. The write is conditional on a live row, so
+	// a not-found here means the account was erased after it was read: the
+	// login is refused rather than answered for an account that is gone.
 	if err := s.userRepo.UpdateLastLogin(user.ID); err != nil {
+		if apperrors.IsNotFound(err) {
+			logger.WithField("user_id", user.ID).Warn("Login failed - account erased during authentication")
+			return nil, errors.New("invalid credentials")
+		}
 		logger.WithError(utils.LogError(err)).Warn("Failed to update last login time")
 	}
 
@@ -442,8 +464,9 @@ var errRefreshOwnerRejected = fmt.Errorf("refresh token owner rejected: %w", Err
 // strictly unexpired and must affect exactly one row, so two requests that
 // both read the token as live cannot both rotate it: the second claim finds
 // nothing to revoke and is rejected before any successor exists. The owner is
-// then read with a locking read, the successor is inserted and its access
-// token is signed, all inside the same transaction. A failure of the successor
+// read with a locking read before the claim (users row before refresh_tokens
+// rows, the order every session transaction follows), and the successor is
+// inserted and its access token signed, all inside the same transaction. A failure of the successor
 // insert or of the signing rolls the claim back with it, so the presented
 // token stays usable and no credentials are returned; nothing is left half
 // rotated. An inactive, erased or missing owner is the one rejection that
@@ -514,8 +537,8 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 }
 
 // rotateRefreshTokenInTransaction performs the rotation on transaction-bound
-// repositories: lookup, conditional claim, locking owner read, successor
-// insert and access token signing. It returns the owner id it learned from
+// repositories: lookup, locking owner read, conditional claim, owner verdict,
+// successor insert and access token signing. It returns the owner id it learned from
 // the token, if any, so the caller can log a rejection. Any error other than
 // errRefreshOwnerRejected discards every write, the claim included.
 func (s *authService) rotateRefreshTokenInTransaction(
@@ -538,11 +561,35 @@ func (s *authService) rotateRefreshTokenInTransaction(
 		return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
 	}
 
-	// Claim the token before reading anything else. The claim is the one
-	// write competing requests contend on: whoever revokes the row first owns
-	// the rotation, and every other request finds no row to revoke — even one
-	// that passed the lookup a moment ago, or one whose token expired or was
-	// revoked between the lookup and this statement.
+	// Lock the owner before claiming the token. Every transaction that
+	// writes both an account and its refresh tokens takes the users row
+	// first and the refresh_tokens rows second (the password change locks the
+	// owner and then revokes every token; the reset does the same); claiming
+	// first here would let a rotation of one token and a password change of
+	// its owner each hold the lock the other waits for. The locking read also
+	// returns the current committed row: on MySQL a plain SELECT inside this
+	// REPEATABLE READ transaction would answer from the snapshot taken at the
+	// token lookup, so an account deactivated or erased a moment after that
+	// lookup would still look active and receive a fresh session. The scoped
+	// lookup makes an erased (soft-deleted) owner a not-found; a deactivated
+	// one is refused the same way. A lookup failure aborts before anything is
+	// written, leaving the token usable once the database recovers.
+	user, err := userRepo.GetByID(stored.UserID)
+	ownerRejected := false
+	if err != nil {
+		if !apperrors.IsNotFound(err) {
+			return nil, stored.UserID, fmt.Errorf("refresh token owner lookup failed: %w", err)
+		}
+		ownerRejected = true
+	} else if !user.IsActive {
+		ownerRejected = true
+	}
+
+	// Claim the token. The claim is the one write competing requests contend
+	// on: whoever revokes the row first owns the rotation, and every other
+	// request finds no row to revoke — even one that passed the lookup a
+	// moment ago, or one whose token expired or was revoked between the
+	// lookup and this statement.
 	if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
 		if apperrors.IsNotFound(err) {
 			return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
@@ -550,24 +597,10 @@ func (s *authService) rotateRefreshTokenInTransaction(
 		return nil, stored.UserID, fmt.Errorf("failed to claim refresh token for rotation: %w", err)
 	}
 
-	// A token must never outlive or outrank its owner. The owner is read with
-	// a locking read: on MySQL a plain SELECT inside this REPEATABLE READ
-	// transaction would answer from the snapshot taken at the token lookup,
-	// so an account deactivated or erased a moment after that lookup would
-	// still look active and receive a fresh session. The locking read returns
-	// the current committed row. The scoped lookup makes an erased
-	// (soft-deleted) owner a not-found; a deactivated one is refused the same
-	// way. Both are reported as errRefreshOwnerRejected so the caller commits
-	// the claim as containment; a lookup failure is a plain error and rolls
-	// the claim back, leaving the token usable once the database recovers.
-	user, err := userRepo.GetByID(stored.UserID)
-	if err != nil {
-		if apperrors.IsNotFound(err) {
-			return nil, stored.UserID, errRefreshOwnerRejected
-		}
-		return nil, stored.UserID, fmt.Errorf("refresh token owner lookup failed: %w", err)
-	}
-	if !user.IsActive {
+	// A token must never outlive or outrank its owner. A missing, erased or
+	// inactive owner is reported as errRefreshOwnerRejected so the caller
+	// commits the claim as containment and issues nothing.
+	if ownerRejected {
 		return nil, stored.UserID, errRefreshOwnerRejected
 	}
 
@@ -636,52 +669,158 @@ func (s *authService) Logout(userID uint, refreshToken string) error {
 }
 
 // ChangePassword re-authenticates with the current password, applies the
-// complexity policy to the new one, updates the hash and revokes every
-// refresh token so stolen sessions die with the old password.
-func (s *authService) ChangePassword(userID uint, currentPassword, newPassword string) error {
+// complexity policy to the new one and replaces it, ending every refresh
+// session of the user except the one being renewed.
+//
+// refreshToken names the caller's current browser session. When it is given,
+// that session is renewed: the token is claimed and a replacement refresh
+// token and access token are returned. It must be a live token of this user;
+// anything else (unknown, revoked, expired, foreign) is ErrSessionStale and
+// nothing is written. When it is empty — API-key callers, scripts — the
+// password is changed, every refresh token is revoked and no credentials are
+// returned (nil tokens, nil error).
+//
+// The slow bcrypt work runs first, outside any transaction. The writes are one
+// transaction that locks the owner row before touching refresh tokens (the
+// order every session transaction follows): the locked row must still carry
+// the hash the current password was verified against, so of two concurrent
+// changes only one can succeed; then the presented token is claimed, the
+// password written, every other token revoked and the successor issued and
+// signed. Any failure rolls all of it back: the password is unchanged and
+// every session is as it was. Access tokens already issued elsewhere stay
+// valid until they expire — there is no blocklist — but can no longer renew.
+func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, refreshToken string) (*AuthTokens, error) {
+	if s.refreshTokenRepo == nil || s.txManager == nil {
+		return nil, errors.New("password change requires the session store")
+	}
+
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
-		return fmt.Errorf("failed to load user: %w", err)
+		if apperrors.IsNotFound(err) {
+			return nil, ErrAccountUnavailable
+		}
+		return nil, fmt.Errorf("failed to load user: %w", err)
 	}
-
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
 		utils.Logger.WithField("user_id", userID).Warn("Password change rejected - wrong current password")
-		return ErrInvalidCurrentPassword
+		return nil, ErrInvalidCurrentPassword
 	}
-
 	if err := utils.ValidatePasswordComplexity(newPassword); err != nil {
-		return err
+		return nil, err
 	}
-
 	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
-	user.Password = string(hashed)
+	verifiedHash := user.Password
 
-	if err := s.userRepo.Update(user); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
+	var presentedHash string
+	if refreshToken != "" {
+		presentedHash = hashOpaqueToken(refreshToken, s.sessionTokenSecret())
 	}
 
-	s.revokeAllSessionsBestEffort(userID, "password change")
-	utils.Logger.WithField("user_id", userID).Info("Password changed")
-	return nil
+	var tokens *AuthTokens
+	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		var err error
+		tokens, err = s.changePasswordInTransaction(
+			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.refreshTokenRepo.WithTx(tx),
+			userID, verifiedHash, string(hashed), presentedHash)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalidCurrentPassword) {
+			utils.Logger.WithField("user_id", userID).Warn("Password change rejected - password changed concurrently")
+		}
+		return nil, err
+	}
+
+	if tokens != nil {
+		utils.Logger.WithField("user_id", userID).Info("Password changed; current session renewed, other sessions revoked")
+	} else {
+		utils.Logger.WithField("user_id", userID).Info("Password changed; all sessions revoked")
+	}
+	return tokens, nil
 }
 
-// revokeAllSessionsBestEffort kills every refresh token of the user after a
-// password change. The credential update has already been committed, so a
-// revocation failure is logged loudly rather than surfaced as a failure of an
-// operation that in fact succeeded. The password reset flow does not use it:
-// there the revocation is part of the transaction and a failure rolls the
-// reset back.
-func (s *authService) revokeAllSessionsBestEffort(userID uint, reason string) {
-	if s.refreshTokenRepo == nil {
-		return
+// changePasswordInTransaction performs the password change on
+// transaction-bound repositories; userRepo is bound to a locking handle. Any
+// error discards every write.
+func (s *authService) changePasswordInTransaction(
+	userRepo repository.UserRepository,
+	refreshRepo repository.RefreshTokenRepository,
+	userID uint, verifiedHash, newHash, presentedHash string,
+) (*AuthTokens, error) {
+	// Owner first: SELECT ... FOR UPDATE on MySQL/MariaDB (SQLite drops the
+	// clause and serialises writers instead).
+	owner, err := userRepo.GetByID(userID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, ErrAccountUnavailable
+		}
+		return nil, fmt.Errorf("password change owner lookup failed: %w", err)
 	}
-	if err := s.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
-		utils.Logger.WithError(utils.LogError(err)).WithField("user_id", userID).WithField("reason", reason).
-			Error("Failed to revoke refresh tokens after credential change")
+	if !owner.IsActive {
+		return nil, ErrAccountUnavailable
 	}
+	// The current password was verified against verifiedHash outside the
+	// transaction. If the locked row carries another hash, a concurrent
+	// change committed first and the caller's "current" password is no
+	// longer current.
+	if owner.Password != verifiedHash {
+		return nil, ErrInvalidCurrentPassword
+	}
+
+	if presentedHash != "" {
+		stored, err := refreshRepo.GetByTokenHash(presentedHash)
+		if err != nil {
+			if apperrors.IsNotFound(err) {
+				return nil, ErrSessionStale
+			}
+			return nil, fmt.Errorf("password change session lookup failed: %w", err)
+		}
+		if stored.UserID != userID {
+			return nil, ErrSessionStale
+		}
+		if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
+			if apperrors.IsNotFound(err) {
+				return nil, ErrSessionStale
+			}
+			return nil, fmt.Errorf("failed to claim the current session: %w", err)
+		}
+	}
+
+	if err := userRepo.UpdateFields(userID, map[string]interface{}{"password": newHash}); err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, ErrAccountUnavailable
+		}
+		return nil, fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// Stolen sessions must die with the old password. A revocation that fails
+	// is a failure of the change itself and rolls the password back with it.
+	if err := refreshRepo.RevokeAllForUser(userID); err != nil {
+		return nil, fmt.Errorf("failed to revoke sessions after password change: %w", err)
+	}
+
+	if presentedHash == "" {
+		return nil, nil
+	}
+
+	owner.Password = newHash
+	newRefreshToken, err := s.issueRefreshToken(refreshRepo, userID)
+	if err != nil {
+		return nil, err
+	}
+	accessToken, err := s.accessTokenFor(owner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign access token during password change: %w", err)
+	}
+	return &AuthTokens{AccessToken: accessToken, RefreshToken: newRefreshToken, User: owner}, nil
 }
 
 // RequestPasswordReset starts the reset flow. It NEVER discloses whether the
@@ -862,12 +1001,12 @@ func (s *authService) confirmPasswordResetInTransaction(
 		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
 	}
 
-	user.Password = passwordHash
 	// Ownership of the mailbox has just been proven; clear any lockout so the
-	// user can sign in with the new password immediately.
-	user.FailedLoginAttempts = 0
-	user.LockedUntil = nil
-	if err := userRepo.Update(user); err != nil {
+	// user can sign in with the new password immediately. Only these columns
+	// are written, and only while the row is live.
+	if err := userRepo.UpdateFields(user.ID, map[string]interface{}{
+		"password": passwordHash, "failed_login_attempts": 0, "locked_until": nil,
+	}); err != nil {
 		return 0, fmt.Errorf("failed to update password: %w", err)
 	}
 

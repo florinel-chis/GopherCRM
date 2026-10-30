@@ -234,13 +234,13 @@ func (r *hookedUserRepository) WithTx(tx *gorm.DB) repository.UserRepository {
 	return &hookedUserRepository{UserRepository: r.UserRepository.WithTx(tx), hooks: r.hooks}
 }
 
-func (r *hookedUserRepository) Update(user *models.User) error {
+func (r *hookedUserRepository) UpdateFields(id uint, fields map[string]interface{}) error {
 	if hook := r.hooks.userUpdate(); hook != nil {
-		if err := hook(user); err != nil {
+		if err := hook(&models.User{BaseModel: models.BaseModel{ID: id}}); err != nil {
 			return err
 		}
 	}
-	return r.UserRepository.Update(user)
+	return r.UserRepository.UpdateFields(id, fields)
 }
 
 type hookedRefreshTokenRepository struct {

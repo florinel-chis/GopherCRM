@@ -18,6 +18,14 @@ type AuthTokens struct {
 	User *models.User
 }
 
+// Authentication methods recorded by the auth middleware under
+// AuthMethodContextKey.
+const (
+	AuthMethodContextKey = "auth_method"
+	AuthMethodBearer     = "bearer"
+	AuthMethodAPIKey     = "api_key"
+)
+
 type AuthService interface {
 	Login(email, password string) (string, error)
 	LoginWithTokens(email, password string) (*AuthTokens, error)
@@ -30,7 +38,7 @@ type AuthService interface {
 	// Logout revokes the given refresh token if it belongs to the user, or all
 	// of the user's refresh tokens when refreshToken is empty. Idempotent.
 	Logout(userID uint, refreshToken string) error
-	ChangePassword(userID uint, currentPassword, newPassword string) error
+	ChangePassword(userID uint, currentPassword, newPassword, refreshToken string) (*AuthTokens, error)
 	// RequestPasswordReset never discloses whether the account exists; mail
 	// and lookup failures are swallowed by design (anti-enumeration).
 	RequestPasswordReset(email string) error

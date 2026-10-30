@@ -65,6 +65,13 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 		return nil, err
 	}
 
+	// Only the fields the caller supplied are written, through a conditional
+	// update of the live row. A full save of the struct read above would put
+	// back every column as it was at that read — an older password hash, or
+	// an account erased in the meantime (GORM's Save upserts when its UPDATE
+	// matches nothing).
+	fields := map[string]interface{}{}
+
 	// Check if email is being updated and if it's already taken
 	if newEmail, ok := updates["email"].(string); ok && newEmail != user.Email {
 		// Unscoped for the same reason as in Register: a soft-deleted row still
@@ -74,22 +81,27 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 			return nil, fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
 		user.Email = newEmail
+		fields["email"] = newEmail
 	}
 
 	// Apply other updates
 	if firstName, ok := updates["first_name"].(string); ok {
 		user.FirstName = firstName
+		fields["first_name"] = firstName
 	}
 	if lastName, ok := updates["last_name"].(string); ok {
 		user.LastName = lastName
+		fields["last_name"] = lastName
 	}
 	if role, ok := updates["role"].(models.UserRole); ok {
 		user.Role = role
+		fields["role"] = role
 	}
 	if isActive, ok := updates["is_active"].(bool); ok {
 		user.IsActive = isActive
+		fields["is_active"] = isActive
 	}
-	
+
 	// Handle password update
 	if password, ok := updates["password"].(string); ok && password != "" {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -97,9 +109,13 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 			return nil, err
 		}
 		user.Password = string(hashedPassword)
+		fields["password"] = user.Password
 	}
 
-	if err := s.userRepo.Update(user); err != nil {
+	if err := s.userRepo.UpdateFields(id, fields); err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
+		}
 		return nil, err
 	}
 

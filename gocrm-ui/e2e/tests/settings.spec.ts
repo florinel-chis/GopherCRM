@@ -81,6 +81,9 @@ test.describe('Settings — Profile', () => {
     const newPassword = 'RotatedPass2@';
 
     await loginThroughUi(page, user.email, user.password);
+    // "Remember me" was ticked, so the session lives in localStorage.
+    const refreshBefore = await page.evaluate(() => localStorage.getItem('gophercrm_refresh_token'));
+    expect(refreshBefore).toBeTruthy();
 
     await page.goto('/settings/profile');
     await expect(page.getByText(user.email)).toBeVisible();
@@ -94,11 +97,26 @@ test.describe('Settings — Profile', () => {
         response.url().includes('/auth/change-password') && response.request().method() === 'POST'
     );
     await page.getByRole('button', { name: /change password/i }).click();
-    expect((await changeResponse).status()).toBe(200);
+    const response = await changeResponse;
+    expect(response.status()).toBe(200);
+    // The tab sent its refresh token, so the server renewed this session.
+    expect(response.request().postDataJSON()).toMatchObject({ refresh_token: refreshBefore });
+    const body = await response.json();
+    expect(body.data.token).toBeTruthy();
+    expect(body.data.refresh_token).toBeTruthy();
 
-    // The session survives on purpose: the backend revokes refresh tokens but
-    // cannot revoke the JWT already held by this tab.
-    await expect(page.getByText(/other sessions have been signed out/i)).toBeVisible();
+    await expect(page.getByText(/You stay signed in here/i)).toBeVisible();
+
+    // The replacement pair is stored where the session already lived, and it
+    // renews; the pre-change refresh token does not.
+    const stored = await page.evaluate(() => ({
+      local: localStorage.getItem('gophercrm_refresh_token'),
+      session: sessionStorage.getItem('gophercrm_refresh_token'),
+    }));
+    expect(stored.local).toBe(body.data.refresh_token);
+    expect(stored.session).toBeNull();
+    const stale = await request.post(`${API_BASE_URL}/auth/refresh`, { data: { refresh_token: refreshBefore } });
+    expect(stale.status()).toBe(401);
 
     const dashboard = new DashboardPage(page);
     await page.goto('/');

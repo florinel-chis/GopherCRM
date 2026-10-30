@@ -511,7 +511,11 @@ returns the unified envelope `{ success, data, error, meta }`.
   the presented token is revoked, replaying it returns `401`. The revocation is a single-use claim
   inside the transaction that stores the successor and signs the access token, so a presented
   token yields at most one successor even under concurrent requests, and a failed rotation leaves
-  it usable instead of stranding the session.
+  it usable instead of stranding the session. An invalid token is the generic `401`; an
+  operational failure (database, signing) is a retryable `503 SESSION_REFRESH_UNAVAILABLE` and the
+  token stays usable. The web client shares one refresh among all requests that hit a `401`,
+  settles every one of them (success, failure, or a 15 s timeout), replays each request at most
+  once and only under the session it was sent with.
 - `POST /api/v1/auth/password-reset` - Request a password-reset email. Always answers `200`
   whether or not the account exists (anti-enumeration). Delivery goes through SMTP when
   `SMTP_HOST` is configured, otherwise a logging fallback.
@@ -525,8 +529,14 @@ authentication and live on the moderate tier:
 
 - `POST /api/v1/auth/logout` - Revoke the caller's refresh tokens (all of them, or just the one in
   the optional `{refresh_token}` body). The JWT itself stays valid until expiry.
-- `POST /api/v1/auth/change-password` - Verify the current password, set a new one (same
-  complexity policy), and revoke all refresh tokens.
+- `POST /api/v1/auth/change-password` - Verify the current password and set a new one (same
+  complexity policy) in one transaction with the revocation of the user's refresh tokens; a
+  failure leaves the password and every session unchanged. A bearer session that sends its
+  current `refresh_token` is renewed: the response carries a replacement `token`,
+  `refresh_token` and `user`, and every other session loses renewal. A `refresh_token` that is not
+  a live session of the caller is `409 SESSION_STALE` with nothing changed. Without one, and
+  always for API-key requests, every refresh token is revoked and no credentials are returned.
+  Access tokens already issued elsewhere stay valid until they expire.
 
 ### Users
 - `GET /api/v1/users` - List all users *(admin)*
@@ -852,9 +862,14 @@ gophercrm/
 
 ## Known Limitations
 
-- **Access tokens cannot be revoked before expiry.** Logout and the refresh-token rotation revoke
-  the *refresh* tokens, but an already-issued JWT stays valid until `JWT_EXPIRY_HOURS` elapses —
-  there is no token blocklist.
+- **Access tokens cannot be revoked before expiry.** Logout, password change and the
+  refresh-token rotation revoke the *refresh* tokens, but an already-issued JWT stays valid until
+  `JWT_EXPIRY_HOURS` elapses — there is no token blocklist (deactivation and erasure do reject it).
+- **Session handling has two known gaps.** Browser tabs sharing a remembered session
+  (`localStorage`) do not coordinate their refreshes, so two tabs refreshing at the same moment can
+  sign each other out (#184). A login that verified the old password a moment before a password
+  change commits can still be issued a session afterwards, and login is not yet serialised against
+  erasure under the owner lock (#183).
 - **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
   password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
   automation rule — goes to the application log instead of a mailbox, and the sending code cannot

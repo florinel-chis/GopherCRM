@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,8 +24,24 @@ func (r *lockoutUserRepository) GetByEmail(string) (*models.User, error) {
 	return &copy, nil
 }
 
-func (r *lockoutUserRepository) Update(user *models.User) error {
-	r.stored = *user
+// UpdateFields applies the bookkeeping columns the login writes; any other
+// column would mean the login rewrote more than its own state.
+func (r *lockoutUserRepository) UpdateFields(_ uint, fields map[string]interface{}) error {
+	for column, value := range fields {
+		switch column {
+		case "failed_login_attempts":
+			r.stored.FailedLoginAttempts = value.(int)
+		case "locked_until":
+			if value == nil {
+				r.stored.LockedUntil = nil
+			} else {
+				until := *value.(*time.Time)
+				r.stored.LockedUntil = &until
+			}
+		default:
+			return fmt.Errorf("login wrote unexpected column %q", column)
+		}
+	}
 	r.writes++
 	return nil
 }

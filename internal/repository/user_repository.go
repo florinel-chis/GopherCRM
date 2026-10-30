@@ -64,12 +64,60 @@ func (r *userRepository) GetByEmailUnscoped(email string) (*models.User, error) 
 	return &user, nil
 }
 
-func (r *userRepository) Update(user *models.User) error {
-	if err := r.db.Save(user).Error; err != nil {
-		if isDuplicateKeyError(err) {
+// userUpdatableColumns is the closed set of columns UpdateFields may write.
+// Anything else (ids, timestamps, deleted_at) is refused outright.
+var userUpdatableColumns = map[string]struct{}{
+	"email":                 {},
+	"first_name":            {},
+	"last_name":             {},
+	"role":                  {},
+	"is_active":             {},
+	"password":              {},
+	"failed_login_attempts": {},
+	"locked_until":          {},
+	"last_login_at":         {},
+}
+
+// UpdateFields writes exactly the named columns of one live user and nothing
+// else. It is a conditional UPDATE (`WHERE id = ? AND deleted_at IS NULL`):
+// it never inserts, never touches a soft-deleted (erased) row, and reports
+// gorm.ErrRecordNotFound when no live row matched.
+//
+// It replaces a full-struct Save. GORM's Save falls back to an upsert when its
+// UPDATE matches no row, so a caller holding a struct read before an erasure
+// wrote the erased person's name, email and password hash back and cleared
+// deleted_at; writing every column of a stale struct could also put an old
+// password hash back over a newer one. Callers name the columns they own.
+func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	for column := range fields {
+		if _, ok := userUpdatableColumns[column]; !ok {
+			return fmt.Errorf("user column %q is not updatable", column)
+		}
+	}
+	result := r.db.Model(&models.User{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(fields)
+	if result.Error != nil {
+		if isDuplicateKeyError(result.Error) {
 			return fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL reports changed rows, not matched rows, so an UPDATE that wrote
+	// the values the row already held affects zero rows. Tell that apart
+	// from a missing or erased row.
+	var live int64
+	if err := r.db.Model(&models.User{}).Where("id = ? AND deleted_at IS NULL", id).Count(&live).Error; err != nil {
 		return err
+	}
+	if live == 0 {
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
@@ -79,7 +127,7 @@ func (r *userRepository) Update(user *models.User) error {
 // It is NOT the same operation as deactivation, and the two must not be
 // confused:
 //
-//   - Deactivation (IsActive = false, via Update) is the NON-destructive way to
+//   - Deactivation (IsActive = false, via UpdateFields) is the NON-destructive way to
 //     suspend an account. It keeps every field intact and is fully reversible.
 //     Use it for suspensions, offboarding, or anything that may be undone.
 //   - Delete is IRREVERSIBLE. Every personal-data field is overwritten in place
@@ -139,9 +187,11 @@ func (r *userRepository) Count() (int64, error) {
 	return count, err
 }
 
+// UpdateLastLogin stamps the login time of a live user; like UpdateFields it
+// never touches an erased row and reports gorm.ErrRecordNotFound for one.
 func (r *userRepository) UpdateLastLogin(id uint) error {
 	now := time.Now()
-	return r.db.Model(&models.User{}).Where("id = ?", id).Update("last_login_at", &now).Error
+	return r.UpdateFields(id, map[string]interface{}{"last_login_at": &now})
 }
 
 func (r *userRepository) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
