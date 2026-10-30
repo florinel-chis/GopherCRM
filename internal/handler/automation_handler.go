@@ -65,6 +65,22 @@ func (req *AutomationRuleRequest) toModel() *models.AutomationRule {
 	return rule
 }
 
+// AutomationRuleErrorDetails is error.details of a refused rule body: every
+// refused field with its path, code and message. The paths index the steps
+// array from zero (steps[2].config.title is the third step's title).
+type AutomationRuleErrorDetails struct {
+	Fields []service.RuleFieldError `json:"fields"`
+}
+
+// AutomationDraftDryRunRequest is the body of POST /automation/rules/dry-run:
+// an unsaved rule body (the create body; enabled is ignored) and the record
+// to simulate it against.
+type AutomationDraftDryRunRequest struct {
+	Rule       AutomationRuleRequest `json:"rule" binding:"required"`
+	EntityType string                `json:"entity_type" binding:"required,oneof=lead deal"`
+	EntityID   uint                  `json:"entity_id" binding:"required,min=1"`
+}
+
 // AutomationDryRunRequest is the body of POST /automation/rules/:id/dry-run.
 type AutomationDryRunRequest struct {
 	EntityType string `json:"entity_type" binding:"required,oneof=lead deal"`
@@ -73,7 +89,7 @@ type AutomationDryRunRequest struct {
 
 // CreateRule godoc
 // @Summary Create an automation rule
-// @Description Create a follow-up automation rule with its ordered steps (admin only). entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. An invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT and writes no row; an unknown, inactive or non-staff user id is 400 INVALID_REFERENCE. A new rule is disabled unless enabled is true.
+// @Description Create a follow-up automation rule with its ordered steps (admin only). entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. An invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT and writes no row; an unknown, inactive or non-staff user id is 400 INVALID_REFERENCE. A new rule is disabled unless enabled is true. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -81,7 +97,7 @@ type AutomationDryRunRequest struct {
 // @Security ApiKeyAuth
 // @Param request body AutomationRuleRequest true "Rule"
 // @Success 201 {object} utils.APIResponse{data=models.AutomationRule} "Rule created with its steps"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE); error.details.fields lists every refused field"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin role required"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
@@ -189,7 +205,7 @@ func (h *AutomationHandler) GetRule(c *gin.Context) {
 
 // UpdateRule godoc
 // @Summary Update an automation rule
-// @Description Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply and leave the rule untouched.
+// @Description Replace the rule wholesale (admin only): the same body as the create. In one transaction the version is incremented, the steps are replaced and the rule's pending, waiting and running runs are cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the rule's row lock inside the same transaction, so a disable committed meanwhile is not undone. The same 400 answers as the create apply, with the same error.details.fields, and leave the rule untouched.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -198,7 +214,7 @@ func (h *AutomationHandler) GetRule(c *gin.Context) {
 // @Param id path int true "Rule ID"
 // @Param request body AutomationRuleRequest true "Rule"
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRule} "Rule updated with its new version and steps"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "Invalid rule (INVALID_INPUT) or unknown user (INVALID_REFERENCE); error.details.fields lists every refused field"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Rule not found"
@@ -344,9 +360,42 @@ func (h *AutomationHandler) DryRun(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, report)
 }
 
+// DryRunDraft godoc
+// @Summary Dry-run an unsaved automation rule
+// @Description Simulate an unsaved rule body against one record (admin only): the rule editor's current values, for a new rule or for unsaved edits of an existing one. The body goes through the same normalisation and validation as the create (400 INVALID_INPUT or INVALID_REFERENCE with error.details.fields), then is simulated like POST /automation/rules/{id}/dry-run. Nothing is saved, no transaction is started and nothing is written, sent or notified; a saved rule's version and steps are untouched. The report has draft true and rule_id and rule_version 0. enabled in the rule body is ignored. A record of another entity type than the body's is 400 INVALID_INPUT; a missing record is 404.
+// @Tags automation
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param request body AutomationDraftDryRunRequest true "The unsaved rule and the record to simulate against"
+// @Success 200 {object} utils.APIResponse{data=models.AutomationDryRunReport} "Per-step report of the draft"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "Invalid body or rule (INVALID_INPUT, with error.details.fields for a refused rule), unknown user (INVALID_REFERENCE), or a record of the wrong entity type"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Record not found"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Router /automation/rules/dry-run [post]
+func (h *AutomationHandler) DryRunDraft(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "AutomationHandler.DryRunDraft")
+	var req AutomationDraftDryRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+	report, err := h.automationService.DryRunDraft(req.Rule.toModel(), req.EntityType, req.EntityID)
+	if err != nil {
+		h.respondError(c, logger, err)
+		return
+	}
+	utils.LogHandlerResponse(logger, http.StatusOK, report)
+	utils.RespondSuccess(c, http.StatusOK, report)
+}
+
 // ListRuns godoc
 // @Summary List automation runs
-// @Description One page of runs (admin and sales). The role scope is applied inside the query: an admin sees every run, a sales user only runs whose lead or deal it currently owns, so meta.total counts that set. Filters: status, rule_id, entity_type, entity_id. sort_by is limited to id, created_at, updated_at, status and resume_at (anything else is 400). Support and customer users get 403.
+// @Description One page of runs (admin and sales). The role scope is applied inside the query: an admin sees every run, a sales user only runs whose lead or deal it currently owns, so meta.total counts that set. Filters: status, rule_id, entity_type, entity_id. sort_by is limited to id, created_at, updated_at, status and resume_at (anything else is 400). Support and customer users get 403. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -403,7 +452,7 @@ func (h *AutomationHandler) ListRuns(c *gin.Context) {
 
 // GetRun godoc
 // @Summary Get an automation run
-// @Description The run with its step log (admin and sales). A sales user asking for a run on a record it does not own gets 404. Support and customer users get 403.
+// @Description The run with its step log (admin and sales), with rule_name and rule_deleted as in the list and never the rule's trigger or steps. A sales user asking for a run on a record it does not own gets 404. Support and customer users get 403.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -465,7 +514,17 @@ func (h *AutomationHandler) CancelRun(c *gin.Context) {
 // respondError maps the automation sentinels onto status codes. Anything
 // unclassified is a server error and is not echoed back to the client.
 func (h *AutomationHandler) respondError(c *gin.Context, logger *logrus.Entry, err error) {
+	var ruleErr *service.RuleValidationError
 	switch {
+	case errors.As(err, &ruleErr):
+		// Every refused field goes into error.details.fields; the message and
+		// the code are those of the first refusal, as before field errors.
+		code := apperrors.CodeInvalidInput
+		if service.IsReferenceRefusal(ruleErr) {
+			code = apperrors.CodeInvalidReference
+		}
+		logger.WithError(utils.LogError(err)).Warn("Automation rule rejected")
+		utils.RespondError(c, http.StatusBadRequest, code, err.Error(), AutomationRuleErrorDetails{Fields: ruleErr.Fields})
 	case errors.Is(err, apperrors.ErrAssigneeNotFound):
 		logger.WithError(utils.LogError(err)).Warn("Automation rule names an unknown user")
 		utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)

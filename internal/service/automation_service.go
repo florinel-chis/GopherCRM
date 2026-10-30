@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -29,308 +27,6 @@ type automationService struct {
 // and the engine (which performs the dry run).
 func NewAutomationService(repo repository.AutomationRepository, users repository.UserRepository, engine *AutomationEngine, txManager *utils.TransactionManager) AutomationService {
 	return &automationService{repo: repo, users: users, engine: engine, txManager: txManager, now: time.Now}
-}
-
-// automationTriggerTypes lists the trigger types each entity type accepts.
-var automationTriggerTypes = map[string]map[string]bool{
-	models.AutomationEntityLead: {
-		models.AutomationEventLeadCreated: true, models.AutomationEventLeadUpdated: true,
-		models.AutomationEventLeadStatusChanged: true, models.AutomationTriggerSchedule: true,
-	},
-	models.AutomationEntityDeal: {
-		models.AutomationEventDealCreated: true, models.AutomationEventDealUpdated: true,
-		models.AutomationEventDealStageChanged: true, models.AutomationTriggerSchedule: true,
-	},
-}
-
-func invalidRule(format string, args ...interface{}) error {
-	return fmt.Errorf(format+": %w", append(args, apperrors.ErrValidation)...)
-}
-
-// validateRule normalises and checks a rule and its steps. It writes
-// nothing: every refusal here precedes the transaction, so an invalid rule
-// leaves no rule or step row. Plain shape failures unwrap to
-// apperrors.ErrValidation (400 INVALID_INPUT); a step naming a user that does
-// not exist, is inactive or is not staff unwraps to apperrors.ErrAssigneeNotFound
-// (400 INVALID_REFERENCE).
-func (s *automationService) validateRule(rule *models.AutomationRule) error {
-	rule.Name = strings.TrimSpace(rule.Name)
-	if rule.Name == "" {
-		return invalidRule("name is required")
-	}
-	if utf8.RuneCountInString(rule.Name) > models.AutomationRuleNameMaxLength {
-		return invalidRule("name is longer than %d characters", models.AutomationRuleNameMaxLength)
-	}
-	if len(rule.Description) > models.AutomationRuleDescMaxBytes {
-		return invalidRule("description is longer than %d bytes", models.AutomationRuleDescMaxBytes)
-	}
-	triggers, ok := automationTriggerTypes[rule.EntityType]
-	if !ok {
-		return invalidRule("entity_type must be lead or deal")
-	}
-	if !triggers[rule.TriggerType] {
-		return invalidRule("trigger_type %q is not valid for %s rules", rule.TriggerType, rule.EntityType)
-	}
-	if err := validateTrigger(rule.EntityType, rule.TriggerType, &rule.Trigger); err != nil {
-		return err
-	}
-
-	if len(rule.Steps) == 0 {
-		return invalidRule("at least one step is required")
-	}
-	if len(rule.Steps) > models.AutomationMaxSteps {
-		return invalidRule("a rule has at most %d steps", models.AutomationMaxSteps)
-	}
-	var totalWait int64
-	referenced := map[uint]bool{}
-	for i := range rule.Steps {
-		step := &rule.Steps[i]
-		step.Position = i + 1
-		if err := validateStep(rule.EntityType, step, len(rule.Steps)); err != nil {
-			return err
-		}
-		if step.StepType == models.AutomationStepWait {
-			totalWait += step.Config.DurationMinutes
-		}
-		if step.StepType == models.AutomationStepAssignOwner || step.Config.Recipient == models.AutomationRecipientUser {
-			referenced[step.Config.UserID] = true
-		}
-	}
-	if totalWait > models.AutomationMaxWaitMinutes {
-		return invalidRule("the waits of a rule add up to more than 90 days")
-	}
-	for userID := range referenced {
-		if err := s.checkStaffUser(userID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// checkStaffUser requires the id to name a live, active staff account.
-func (s *automationService) checkStaffUser(userID uint) error {
-	user, err := s.users.GetByID(userID)
-	if err != nil {
-		if isNotFound(err) {
-			return fmt.Errorf("unknown user_id %d: %w", userID, apperrors.ErrAssigneeNotFound)
-		}
-		return err
-	}
-	if !user.IsActive {
-		return fmt.Errorf("user %d is inactive: %w", userID, apperrors.ErrAssigneeNotFound)
-	}
-	if user.Role == models.RoleCustomer {
-		return fmt.Errorf("user %d is not a staff user: %w", userID, apperrors.ErrAssigneeNotFound)
-	}
-	return nil
-}
-
-func validateTrigger(entityType, triggerType string, trigger *models.AutomationTrigger) error {
-	changed := triggerType == models.AutomationEventLeadStatusChanged || triggerType == models.AutomationEventDealStageChanged
-	if !changed && (trigger.From != "" || trigger.To != "") {
-		return invalidRule("from and to only apply to a status or stage change trigger")
-	}
-	if changed {
-		for name, value := range map[string]string{"from": trigger.From, "to": trigger.To} {
-			if value == "" {
-				continue
-			}
-			if !validAutomationValue(entityType, value) {
-				return invalidRule("trigger %s %q is not a valid %s value", name, value, entityType)
-			}
-		}
-	}
-	if triggerType != models.AutomationTriggerSchedule {
-		if trigger.HourUTC != 0 || trigger.StaleDays != 0 || trigger.Filters != nil {
-			return invalidRule("hour_utc, filters and stale_days only apply to a schedule trigger")
-		}
-		return nil
-	}
-	if trigger.HourUTC < 0 || trigger.HourUTC > 23 {
-		return invalidRule("hour_utc must be between 0 and 23")
-	}
-	if trigger.StaleDays < 0 {
-		return invalidRule("stale_days must not be negative")
-	}
-	if trigger.Filters != nil {
-		if trigger.Filters.Status != "" {
-			if entityType != models.AutomationEntityLead || !isValidLeadStatus(models.LeadStatus(trigger.Filters.Status)) {
-				return invalidRule("filters.status %q is not a lead status", trigger.Filters.Status)
-			}
-		}
-		if trigger.Filters.Stage != "" {
-			if entityType != models.AutomationEntityDeal || !models.DealStage(trigger.Filters.Stage).IsValid() {
-				return invalidRule("filters.stage %q is not a deal stage", trigger.Filters.Stage)
-			}
-		}
-	}
-	return nil
-}
-
-// validAutomationValue reports whether value is a lead status (lead rules)
-// or a deal stage (deal rules).
-func validAutomationValue(entityType, value string) bool {
-	if entityType == models.AutomationEntityLead {
-		return isValidLeadStatus(models.LeadStatus(value))
-	}
-	return models.DealStage(value).IsValid()
-}
-
-func validateStep(entityType string, step *models.AutomationStep, stepCount int) error {
-	cfg := &step.Config
-	pos := step.Position
-	textLimit := func(name, value string) error {
-		if utf8.RuneCountInString(value) > models.AutomationStepTextMaxLength {
-			return invalidRule("step %d: %s is longer than %d characters", pos, name, models.AutomationStepTextMaxLength)
-		}
-		if strings.ContainsAny(value, "\r\n") {
-			return invalidRule("step %d: %s must not contain a line break", pos, name)
-		}
-		return nil
-	}
-	bodyLimit := func(name, value string) error {
-		if len(value) > models.AutomationStepBodyMaxBytes {
-			return invalidRule("step %d: %s is longer than %d bytes", pos, name, models.AutomationStepBodyMaxBytes)
-		}
-		return nil
-	}
-	placeholders := func(name, value string) error {
-		if unknown := unknownPlaceholders(entityType, value); len(unknown) > 0 {
-			return invalidRule("step %d: %s uses an unknown placeholder %q", pos, name, unknown[0])
-		}
-		return nil
-	}
-	// A task outlives the erasure of the lead it links to, so its text is
-	// checked against the narrower task allowlist (no name, address, phone or
-	// company); a personal placeholder is an unknown placeholder here.
-	taskPlaceholders := func(name, value string) error {
-		if unknown := unknownTaskPlaceholders(entityType, value); len(unknown) > 0 {
-			return invalidRule("step %d: %s uses a placeholder not allowed in a task %q", pos, name, unknown[0])
-		}
-		return nil
-	}
-	recipient := func() error {
-		switch cfg.Recipient {
-		case "":
-			cfg.Recipient = models.AutomationRecipientOwner
-		case models.AutomationRecipientOwner:
-		case models.AutomationRecipientUser:
-			if cfg.UserID == 0 {
-				return invalidRule("step %d: user_id is required for recipient \"user\"", pos)
-			}
-		default:
-			return invalidRule("step %d: recipient must be owner or user", pos)
-		}
-		if cfg.Recipient == models.AutomationRecipientOwner && cfg.UserID != 0 {
-			return invalidRule("step %d: user_id only applies to recipient \"user\"", pos)
-		}
-		return nil
-	}
-
-	switch step.StepType {
-	case models.AutomationStepWait:
-		if cfg.DurationMinutes <= 0 {
-			return invalidRule("step %d: duration_minutes must be positive", pos)
-		}
-		if cfg.DurationMinutes > models.AutomationMaxWaitMinutes {
-			return invalidRule("step %d: a wait is at most 90 days", pos)
-		}
-	case models.AutomationStepCondition:
-		if err := validateCondition(entityType, *cfg); err != nil {
-			return invalidRule("step %d: %s", pos, err.Error())
-		}
-		switch cfg.Else {
-		case "":
-			cfg.Else = models.AutomationElseStop
-			fallthrough
-		case models.AutomationElseStop:
-			if cfg.ElsePosition != 0 {
-				return invalidRule("step %d: else_position only applies to else \"jump\"", pos)
-			}
-		case models.AutomationElseJump:
-			if cfg.ElsePosition <= pos || cfg.ElsePosition > stepCount {
-				return invalidRule("step %d: else_position must be after the step and at most %d", pos, stepCount)
-			}
-		default:
-			return invalidRule("step %d: else must be stop or jump", pos)
-		}
-	case models.AutomationStepCreateTask:
-		if strings.TrimSpace(cfg.Title) == "" {
-			return invalidRule("step %d: title is required", pos)
-		}
-		if err := textLimit("title", cfg.Title); err != nil {
-			return err
-		}
-		if err := bodyLimit("description", cfg.Description); err != nil {
-			return err
-		}
-		switch models.TaskPriority(cfg.Priority) {
-		case "", models.TaskPriorityLow, models.TaskPriorityMedium, models.TaskPriorityHigh:
-		default:
-			return invalidRule("step %d: priority must be low, medium or high", pos)
-		}
-		if cfg.DueInDays < 0 || cfg.DueInDays > 365 {
-			return invalidRule("step %d: due_in_days must be between 0 and 365", pos)
-		}
-		if err := recipient(); err != nil {
-			return err
-		}
-		if err := taskPlaceholders("title", cfg.Title); err != nil {
-			return err
-		}
-		if err := taskPlaceholders("description", cfg.Description); err != nil {
-			return err
-		}
-	case models.AutomationStepAssignOwner:
-		if cfg.UserID == 0 {
-			return invalidRule("step %d: user_id is required", pos)
-		}
-		cfg.Recipient = models.AutomationRecipientUser
-	case models.AutomationStepSendEmail:
-		if strings.TrimSpace(cfg.Subject) == "" {
-			return invalidRule("step %d: subject is required", pos)
-		}
-		if err := textLimit("subject", cfg.Subject); err != nil {
-			return err
-		}
-		if strings.TrimSpace(cfg.Body) == "" {
-			return invalidRule("step %d: body is required", pos)
-		}
-		if err := bodyLimit("body", cfg.Body); err != nil {
-			return err
-		}
-		if err := recipient(); err != nil {
-			return err
-		}
-		if err := placeholders("subject", cfg.Subject); err != nil {
-			return err
-		}
-		if err := placeholders("body", cfg.Body); err != nil {
-			return err
-		}
-	case models.AutomationStepNotify:
-		if strings.TrimSpace(cfg.Title) == "" {
-			return invalidRule("step %d: title is required", pos)
-		}
-		if err := textLimit("title", cfg.Title); err != nil {
-			return err
-		}
-		if err := bodyLimit("body", cfg.Body); err != nil {
-			return err
-		}
-		if err := recipient(); err != nil {
-			return err
-		}
-		if err := placeholders("title", cfg.Title); err != nil {
-			return err
-		}
-		if err := placeholders("body", cfg.Body); err != nil {
-			return err
-		}
-	default:
-		return invalidRule("step %d: unknown step type %q", pos, step.StepType)
-	}
-	return nil
 }
 
 // --- Rules -------------------------------------------------------------------
@@ -515,6 +211,32 @@ func (s *automationService) DryRun(ruleID uint, entityType string, entityID uint
 		return nil, err
 	}
 	logger.WithField("steps", len(report.Steps)).Info("Automation dry run completed")
+	return report, nil
+}
+
+// DryRunDraft simulates an unsaved rule body against one record. The body
+// goes through validateRule — the normalisation and every check of a create
+// or an update, the staff-user lookups included — and is then handed to the
+// engine as it is: no rule row, step row, run, event, task, notification or
+// email is created, no transaction is started and no row is locked.
+func (s *automationService) DryRunDraft(rule *models.AutomationRule, entityType string, entityID uint) (*models.AutomationDryRunReport, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"entity_type": entityType, "entity_id": entityID,
+	}), "AutomationService", "DryRunDraft")
+	if err := s.validateRule(rule); err != nil {
+		logger.WithError(utils.LogError(err)).Warn("Automation draft rejected")
+		return nil, err
+	}
+	rule.ID, rule.Version = 0, 0
+	report, err := s.engine.DryRun(rule, entityType, entityID)
+	if err != nil {
+		if !errors.Is(err, apperrors.ErrValidation) && !isNotFound(err) {
+			utils.LogServiceResponse(logger, err)
+		}
+		return nil, err
+	}
+	report.Draft = true
+	logger.WithField("steps", len(report.Steps)).Info("Automation draft dry run completed")
 	return report, nil
 }
 

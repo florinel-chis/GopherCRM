@@ -456,6 +456,12 @@ type AutomationService interface {
 	// and writes, sends and notifies nothing. A record of another entity
 	// type is apperrors.ErrValidation; a missing record apperrors.ErrNotFound.
 	DryRun(ruleID uint, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
+	// DryRunDraft simulates an unsaved rule body after the same normalisation
+	// and validation as CreateRule and UpdateRule (a refusal is a
+	// *RuleValidationError). It saves nothing, starts no transaction, takes no
+	// lock and writes, sends and notifies nothing; the report has Draft set
+	// and no rule id or version.
+	DryRunDraft(rule *models.AutomationRule, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
 
 	// ListRuns and GetRun apply the viewer's role scope inside the query: an
 	// admin sees every run, a sales user only runs whose lead or deal it owns

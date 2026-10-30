@@ -6,7 +6,6 @@ import {
   Paper,
   Typography,
   Button,
-  Chip,
   Divider,
   Stack,
   Tab,
@@ -27,7 +26,6 @@ import {
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
   AttachMoney as MoneyIcon,
-  Group as GroupIcon,
   Language as WebIcon,
   LocationOn as LocationIcon,
   History as HistoryIcon,
@@ -127,10 +125,6 @@ export const Component: React.FC = () => {
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="h4">{customer.company_name}</Typography>
-          <Chip
-            label={customer.is_active ? 'Active' : 'Inactive'}
-            color={customer.is_active ? 'success' : 'default'}
-          />
         </Box>
         <Box display="flex" gap={1}>
           <Button
@@ -206,15 +200,6 @@ export const Component: React.FC = () => {
                     </Box>
                   </Box>
                   <Box display="flex" alignItems="center" gap={1}>
-                    <BusinessIcon color="action" />
-                    <Box>
-                      <Typography variant="caption" color="text.secondary">
-                        Industry
-                      </Typography>
-                      <Typography>{customer.industry || 'Not specified'}</Typography>
-                    </Box>
-                  </Box>
-                  <Box display="flex" alignItems="center" gap={1}>
                     <EmailIcon color="action" />
                     <Box>
                       <Typography variant="caption" color="text.secondary">
@@ -261,28 +246,6 @@ export const Component: React.FC = () => {
                   Business Information
                 </Typography>
                 <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <MoneyIcon color="action" />
-                    <Box>
-                      <Typography variant="caption" color="text.secondary">
-                        Annual Revenue
-                      </Typography>
-                      <Typography>
-                        {customer.annual_revenue ? `$${customer.annual_revenue.toLocaleString()}` : 'Not specified'}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <GroupIcon color="action" />
-                    <Box>
-                      <Typography variant="caption" color="text.secondary">
-                        Employees
-                      </Typography>
-                      <Typography>
-                        {customer.employee_count ? customer.employee_count.toLocaleString() : 'Not specified'}
-                      </Typography>
-                    </Box>
-                  </Box>
                   <Box display="flex" alignItems="center" gap={1}>
                     <MoneyIcon color="action" />
                     <Box>

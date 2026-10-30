@@ -114,6 +114,9 @@ export const leadsApi = {
     if (data.source !== undefined) transformedData.source = data.source;
     if (data.notes !== undefined) transformedData.notes = data.notes;
     if (data.company_id !== undefined) transformedData.company_id = data.company_id;
+    // Absent keeps the current owner. The API lets only an admin reassign;
+    // a sales caller sending owner_id gets 403.
+    if (data.owner_id !== undefined) transformedData.owner_id = data.owner_id;
 
     const response = await api.put<BackendLead>(`/leads/${id}`, transformedData);
     return transformLeadFromBackend(response.data);

@@ -83,6 +83,17 @@ describe('StaffUserAutocomplete', () => {
     expect(screen.getByText('This user can no longer be assigned')).toBeInTheDocument();
   });
 
+  it('shows a field error message instead of the inactive hint', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValue(gone);
+    render(
+      <StaffUserAutocomplete label="User" value={9} onChange={vi.fn()} error helperText="the user is deactivated" />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText('User')).toHaveValue('Gone Away (inactive)'));
+    expect(screen.getByText('the user is deactivated')).toBeInTheDocument();
+    expect(screen.queryByText('This user can no longer be assigned')).not.toBeInTheDocument();
+  });
+
   it('reports a failed user search or lookup instead of an empty list', async () => {
     const failure = new AxiosError('Request failed with status code 500', 'ERR_BAD_RESPONSE', undefined, undefined, {
       status: 500,

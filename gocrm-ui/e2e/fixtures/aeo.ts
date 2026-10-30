@@ -18,30 +18,20 @@ interface AEOFixture {
 
 export const test = base.extend<{ aeo: AEOFixture }>({
   aeo: async ({ page, request }, provideFixture) => {
-    // Config saves invalidate several queries. Pace real browser and fixture
-    // traffic below the protected API's 2 requests/sec limit, including reloads.
-    let nextRequestAt = Date.now();
-    const gate = async () => {
-      const scheduledAt = nextRequestAt;
-      nextRequestAt = Math.max(Date.now(), scheduledAt) + 550;
-      await new Promise((resolve) => setTimeout(resolve, Math.max(0, scheduledAt - Date.now())));
-    };
-    await page.route(`${API_BASE_URL}/**`, async (route) => {
-      if (!new URL(route.request().url()).pathname.includes('/auth/')) await gate();
-      await route.continue();
-    });
+    // Requests are not paced: these tests run only under scripts/e2e/run.sh
+    // (E2E_AEO_STUBS=1), whose gophercrm_e2e backend bypasses every rate-limit
+    // tier. A client-side queue would also hold slots for requests of a page the
+    // test already left, delaying the next page by seconds.
     await new AdminAuthHelper(page).createAndLoginAdmin();
     const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
     if (!token) throw new Error('Admin login did not store its token');
 
-    const response = async (method: string, path: string, data?: unknown, bearer = token) => {
-      await gate();
-      return request.fetch(`${API_BASE_URL}${path}`, {
+    const response = async (method: string, path: string, data?: unknown, bearer = token) =>
+      request.fetch(`${API_BASE_URL}${path}`, {
         method,
         headers: { Authorization: `Bearer ${bearer}` },
         data,
       });
-    };
     const api = async <T>(
       method: string,
       path: string,

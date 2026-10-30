@@ -220,3 +220,31 @@ func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
 		}
 	}
 }
+
+// POST /automation/rules/dry-run (an unsaved draft) sits next to the :id
+// routes of the same group; it must reach the draft handler, and the saved
+// rule's dry run must keep reaching the :id route.
+func TestAutomationDraftDryRunRouteIsStatic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	var matched string
+	group := router.Group("/api/v1", func(c *gin.Context) {
+		matched = c.FullPath()
+		c.Abort()
+	})
+	SetupAutomationRoutes(group, &AutomationHandler{})
+
+	for _, route := range []struct{ method, path, want string }{
+		{http.MethodPost, "/api/v1/automation/rules/dry-run", "/api/v1/automation/rules/dry-run"},
+		{http.MethodPost, "/api/v1/automation/rules/7/dry-run", "/api/v1/automation/rules/:id/dry-run"},
+		{http.MethodPost, "/api/v1/automation/rules", "/api/v1/automation/rules"},
+		{http.MethodGet, "/api/v1/automation/rules/7", "/api/v1/automation/rules/:id"},
+		{http.MethodPut, "/api/v1/automation/rules/7", "/api/v1/automation/rules/:id"},
+	} {
+		matched = ""
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(route.method, route.path, nil))
+		if matched != route.want {
+			t.Errorf("%s %s matched %q, want %q", route.method, route.path, matched, route.want)
+		}
+	}
+}
