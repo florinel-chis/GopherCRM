@@ -216,20 +216,22 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
 	userService := service.NewUserService(userRepo)
+	configService := service.NewConfigurationService(configRepo,
+		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	// Every lead and deal write path records its automation events in the
 	// transaction that commits the write (issue #164): the lead service, the
 	// deal service, the form submission path and the bulk status path all take the
-	// same outbox repository.
+	// same outbox repository. Lead conversion enforces the administrator's
+	// lead-conversion settings (issue #104).
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager,
-		service.WithLeadAutomationEvents(automationRepo))
+		service.WithLeadAutomationEvents(automationRepo),
+		service.WithLeadConversionRules(configService))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
-	configService := service.NewConfigurationService(configRepo,
-		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,
 		service.WithDealAutomationEvents(automationRepo))
 	// Products take the deals' default currency; quotes email through the

@@ -48,14 +48,18 @@ function isLeadField(field: string): field is keyof LeadFormData {
   return leadFields.has(field);
 }
 
+// "Converted" is not offered: a lead becomes converted only through
+// "Convert to Customer", which creates the customer (the API refuses the
+// status on create and update). A lead that is already converted keeps it as
+// its current value, so its edit form still shows and resubmits it.
 const statusOptions = [
   { value: 'new', label: 'New' },
   { value: 'contacted', label: 'Contacted' },
   { value: 'qualified', label: 'Qualified' },
   { value: 'unqualified', label: 'Unqualified' },
-  { value: 'converted', label: 'Converted' },
   { value: 'lost', label: 'Lost' },
 ];
+const convertedStatusOption = { value: 'converted', label: 'Converted' };
 
 const sourceOptions = [
   { value: 'website', label: 'Website' },
@@ -316,7 +320,7 @@ export const Component: React.FC = () => {
                 <FormSelect
                   name="status"
                   label="Status"
-                  options={statusOptions}
+                  options={lead?.status === 'converted' ? [...statusOptions, convertedStatusOption] : statusOptions}
                   required
                 />
                 <FormSelect

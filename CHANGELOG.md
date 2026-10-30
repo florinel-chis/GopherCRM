@@ -373,7 +373,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and on MySQL consecutive pages repeated some rows and never showed others. The support-scoped
   ticket list used to break ties by ascending id even for a descending sort; it now follows the
   sort direction like the rest.
-
+- **Lead conversion keeps the company link and enforces the conversion settings (#104).**
+  `POST /leads/{id}/convert` copies the lead's `company_id` to the new customer when it still
+  names a live company (a link to a deleted company is dropped and the conversion still succeeds),
+  and now enforces the three lead-conversion settings on the server, before anything is written:
+  the lead's status must be in `leads.conversion.allowed_statuses`, non-blank `notes` are required
+  when `leads.conversion.require_notes` is on — a refusal is 400 `VALIDATION_ERROR` whose
+  `details` name the field (`status` with the allowed statuses, or `notes`) — and with
+  `leads.conversion.auto_assign_owner` on the lead's owner becomes the customer's
+  `assigned_to_id` (never `user_id`). Before, all three settings were ignored by the server. The
+  settings are read on every conversion; a failed read is a 500 with nothing written. The
+  allowed-status `valid_values` listed `lost`, which is not a lead status, instead of
+  `unqualified`; the list is now `new, contacted, qualified, unqualified`, and the boot-time seeder
+  corrects the metadata of existing rows while keeping the statuses an administrator chose.
+  `GET /configurations/ui` now also carries read-only `leads.conversion.require_notes` and
+  `leads.conversion.auto_assign_owner` entries next to the allowed statuses, with the values the
+  server enforces. The conversion is now the only way to reach `converted`: lead create, lead
+  update and `POST /leads/bulk/status` refuse it with 400 `VALIDATION_ERROR` (`details.field`
+  `status`), where they used to mark a lead converted without a customer and outside the
+  settings; a converted lead keeps its status on edit, and the lead form no longer offers
+  "Converted". The conversion reads the lead with a row lock and a lead update re-reads it under
+  the same lock, so a concurrent status change either lands first (the conversion is refused) or
+  after the commit (and keeps the new `customer_id`) instead of being lost or bypassing the
+  allowed statuses. A lead that already has a customer is refused as already converted even if its
+  status has since moved on (it used to be converted a second time). A lead erased between the
+  handler's lookup and the conversion is a 404, not a 500. Refused conversions, duplicate emails,
+  already converted or missing leads are logged as warnings by both the handler and the service;
+  only server failures are logged as errors. Known gap: a company deleted while a lead converts can still leave the new customer
+  linked to the soft-deleted company (tracked in #182).
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value

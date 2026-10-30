@@ -48,6 +48,12 @@ func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
 	suite.mockCompanyRepo = new(mocks.CompanyRepository)
 	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockCompanyRepo, suite.txManager)
+	// Update and ConvertToCustomer bind every repository to their
+	// transaction (the lead read with a row lock); the mocks stand in for
+	// the bound copies too.
+	suite.mockLeadRepo.On("WithTx", mock.Anything).Return(suite.mockLeadRepo).Maybe()
+	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo).Maybe()
+	suite.mockCompanyRepo.On("WithTx", mock.Anything).Return(suite.mockCompanyRepo).Maybe()
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {

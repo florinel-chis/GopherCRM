@@ -167,6 +167,10 @@ func (s *bulkStatusService) BulkSetLeadStatus(actorID uint, actorRole models.Use
 	if !isValidLeadStatus(status) {
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid lead status: %s", status))
 	}
+	// Only the conversion, which creates the customer, sets converted.
+	if status == models.LeadStatusConverted {
+		return nil, ConvertedStatusRefusal()
+	}
 	if actorRole != models.RoleAdmin && actorRole != models.RoleSales {
 		return nil, bulkStatusForbidden("Only sales and admin users can update leads", nil)
 	}

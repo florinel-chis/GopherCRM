@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -128,4 +129,58 @@ func TestInitializeDefaultsRepairsMissingCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, repaired.CreatedAt.IsZero(), "created_at must be populated, not written back as zero")
 	assert.Equal(t, "Acme Industries", repaired.Value, "the administrator's value must survive the repair")
+}
+
+// Issue #104: the allowed-status metadata listed "lost", which is not a lead
+// status, and lacked "unqualified", which is. A row seeded with the old
+// metadata gets the corrected list on the next boot, and the statuses an
+// administrator chose stay exactly as they were.
+func TestInitializeDefaultsCorrectsLeadConversionStatusMetadata(t *testing.T) {
+	db := setupConfigurationDB(t)
+	repo := NewConfigurationRepository(db)
+
+	seeded := models.Configuration{
+		Key:          "leads.conversion.allowed_statuses",
+		Value:        `["contacted"]`,
+		Type:         models.ConfigTypeArray,
+		Category:     models.CategoryLeads,
+		DefaultValue: `["qualified"]`,
+		IsSystem:     true,
+		ValidValues:  `["new", "contacted", "qualified", "converted", "lost"]`,
+	}
+	require.NoError(t, repo.Create(&seeded))
+
+	require.NoError(t, repo.InitializeDefaults())
+
+	upgraded, err := repo.GetByKey("leads.conversion.allowed_statuses")
+	require.NoError(t, err)
+	assert.Equal(t, `["contacted"]`, upgraded.Value, "the administrator's statuses are kept")
+	assert.NotContains(t, upgraded.ValidValues, `"lost"`)
+	assert.Contains(t, upgraded.ValidValues, `"unqualified"`)
+	assert.True(t, upgraded.IsValidValue([]interface{}{"unqualified"}))
+	assert.False(t, upgraded.IsValidValue([]interface{}{"lost"}))
+}
+
+// Every status in the shipped metadata is a real lead status, and every
+// status a lead can be converted from is offered.
+func TestLeadConversionStatusMetadataMatchesTheLeadEnum(t *testing.T) {
+	var entry *models.Configuration
+	for _, config := range models.DefaultConfigurations() {
+		if config.Key == "leads.conversion.allowed_statuses" {
+			c := config
+			entry = &c
+		}
+	}
+	require.NotNil(t, entry)
+	var listed []string
+	require.NoError(t, json.Unmarshal([]byte(entry.ValidValues), &listed))
+	assert.ElementsMatch(t, []string{
+		string(models.LeadStatusNew), string(models.LeadStatusContacted),
+		string(models.LeadStatusQualified), string(models.LeadStatusUnqualified),
+	}, listed)
+	var value, defaultValue []string
+	require.NoError(t, json.Unmarshal([]byte(entry.Value), &value))
+	require.NoError(t, json.Unmarshal([]byte(entry.DefaultValue), &defaultValue))
+	assert.Subset(t, listed, value)
+	assert.Subset(t, listed, defaultValue)
 }

@@ -81,7 +81,7 @@ Status meanings:
 
 ## 1. Authentication & Session Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 1.1 | **User Registration** | User fills form (name, email, password), account created, redirected to dashboard. **Always creates a `customer`** — a client-supplied role is ignored | `registration.spec.ts`: 15 tests (valid registration, validation errors, email format, password strength, duplicate email, network error, Enter key submit, loading state, visibility toggle) | `auth_handler_test.go`: 5 tests (RoleInjection_ForcedToCustomer, NoRole_DefaultsToCustomer, DuplicateEmail_Conflict, WeakPassword_BadRequest, Success); `user_service_test.go`: TestRegister_Success, TestRegister_UserExists, TestRegister_SoftDeletedUserExists | `AuthContext.test.tsx`: handles registration; `Register.validation.test.tsx`: 7 password-policy tests | `auth_integration_test.go`: TestRegisterEndpoint; `soft_delete_email_reuse_test.go`: TestRegisterRejectsEmailOfSoftDeletedUser, TestRegisterHandlerReturns409ForSoftDeletedEmail, TestRegisterHandlerReturns409ForLiveDuplicateEmail | **covered** | -- |
 | 1.2 | **User Login** | User enters email/password, receives JWT, redirected to dashboard | `login.spec.ts`: 11 tests (render, success, wrong password, unknown email, empty fields, invalid email format, visibility toggle, navigate to registration, Enter key, protected route access, unauthenticated redirect) | `auth_service_test.go`: `TestAuthService_Login` with subtests (successful login, invalid email, wrong password, inactive user) | `AuthContext.test.tsx`: handles login successfully | `auth_integration_test.go`: TestLoginEndpoint; `user_test.go`: TestUserLogin | **covered** | -- |
@@ -98,7 +98,7 @@ Status meanings:
 
 ## 2. Dashboard
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 2.1 | **Dashboard Stats** | Shows total leads, customers, open tickets, pending tasks, conversion rate | `admin-entity-suite.spec.ts`: navigation includes dashboard | -- | -- | -- | **gap** | No `dashboard_handler_test.go` exists; no test verifies the stat values |
 | 2.2 | **Quick Actions** | Dashboard has buttons to create leads, customers, etc. | -- | -- | -- | -- | **untested** | No tests for quick action navigation |
@@ -109,7 +109,7 @@ Status meanings:
 
 ## 3. Lead Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 3.1 | **View Leads List** | Table shows leads with company, contact, email, phone, status, classification, source, created date | `admin-leads.spec.ts`: admin can view leads list page; `leads-sorting-search.spec.ts`: should load leads page with data | `lead_handler_test.go`: TestList_AdminViewsAll, TestList_SalesViewsOwn, TestList_SupportUserSeesOnlyOwnLeads (+ search/sort/classification variants) | `LeadList.test.tsx`: renders lead list with data, shows loading state initially; `routes/index.test.tsx` "lead and customer creation routes" (support and customer redirected from every `/leads` route, admin and sales render, loading-then-authenticated transitions) | `lead_integration_test.go`: TestListLeads_AdminSeesAll, TestListLeads_SalesSeesOnlyOwn | **covered** | The whole `/leads` group is gated to admin+sales by `RequireRole` in `routes.go`, so the support/customer handler tests exercise a path the router does not reach. Since #120 the SPA routes carry the same admin+sales guard; the role redirect is Vitest-only (no role-login e2e helper) |
 | 3.2 | **Create Lead** | Form with company, contact, email, phone, source, status, notes; admin must specify owner | `admin-leads.spec.ts`: create a new lead, create with all optional fields, validation errors | `lead_handler_test.go`: TestCreate_Success, TestCreate_SalesUserWithOwnerID, TestCreate_AdminRequiresOwnerID | `LeadForm.test.tsx`: renders create form, submits with valid data | `lead_integration_test.go`: TestCreateLead_AdminSuccess, TestCreateLead_SalesSuccess, TestCreateLead_SalesCannotAssignToOthers | **covered** | -- |
@@ -120,14 +120,14 @@ Status meanings:
 | 3.7 | **Sort Leads** | Click column headers to sort asc/desc | `leads-sorting-search.spec.ts`: sort by Created desc, toggle sort order, search and sort together | `lead_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByCreatedAtAsc, TestList_SortByInvalidColumn, TestList_SortByInvalidOrder, TestList_SortWithPagination | -- | -- | **partial** | No integration test. Only `created_at` is exercised E2E; other columns untested |
 | 3.8 | **Filter by Status** | Dropdown to filter leads by status | `admin-leads.spec.ts`: admin can filter leads by status | -- | `LeadList.test.tsx`: filters leads by status | -- | **partial** | Confirmed: `lead_handler.go` reads `classification` but **not** `status` from the query string, so status filtering is client-side over the current page only |
 | 3.9 | **Filter by Classification** | Dropdown to filter by classification (hot_lead, lead, spam, etc.) | -- | `lead_handler_test.go`: TestList_CustomerUserWithClassificationSeesOnlyOwnLeads | -- | -- | **partial** | Backend reads `classification` (`lead_handler.go:154`) and one handler test now touches it, but no E2E test covers the dropdown |
-| 3.10 | **Convert Lead to Customer** | Convert a qualified lead into a customer record | `admin-entity-suite.spec.ts`: complete CRM workflow: Lead -> Customer -> Task | `lead_handler_test.go`: TestConvertToCustomer_Success, _AlreadyConverted, _SalesUserForbidden; `lead_service_test.go`: 4 conversion tests | `LeadList.rowActions.test.tsx`: the row menu ("More actions for <company>") appears only on convertible leads and converts the chosen lead after a re-sort, by mouse and keyboard; `LeadDetail.test.tsx` | `lead_integration_test.go`: 3 conversion tests; `lead_conversion_transaction_test.go`: 2 transaction tests | **covered** | -- |
+| 3.10 | **Convert Lead to Customer** | Convert a lead into a customer record. Since #104 the server enforces the lead-conversion settings before any write: status in `leads.conversion.allowed_statuses` (seeded `qualified`, `contacted`), non-blank `notes` when `leads.conversion.require_notes` is on (400 `VALIDATION_ERROR` with `details.field` `status` or `notes`), and with `leads.conversion.auto_assign_owner` on the lead owner becomes `assigned_to_id` (never `user_id`). The lead's `company_id` is copied when the company is live; a stale link is dropped. A lead that already has a `customer_id` is refused as already converted (400) whatever its status, checked on the locked row; a lead erased mid-request is a 404. Conversion is the only way to reach `converted`: lead create/update and `POST /leads/bulk/status` refuse it (400 `VALIDATION_ERROR`, `details.field` `status`; a converted lead may keep it on edit). The conversion reads the lead with a row lock and a lead update re-reads it under the same lock, so a concurrent status change serialises with the conversion; the company link is a plain read. `GET /configurations/ui` exposes the three settings read-only | `leads-convert-api.spec.ts`, `customer-website.spec.ts` (qualified leads) | `lead_handler_test.go`: TestConvertToCustomer_Success, _AlreadyConverted, _ConversionRuleRefusals, _LeavesDerivedLinksToTheService, _SalesUserForbidden; `lead_service_test.go`: 4 conversion tests; `lead_conversion_rules_test.go`: TestLeadConversionRules{SQLite,MySQL} (each rule, owner on/off, company link none/live/stale, already converted, a lead that already has a customer, rollback), TestLeadConversionSettingsReadFailureWritesNothing; `lead_status_integrity_test.go`: TestLeadConvertedStatusOnlyByConversion{SQLite,MySQL}, TestLeadConversionStatusRace{SQLite,MySQL}; `lead_conversion_rules_test.go`: TestLeadConversionLogLevels; `lead_handler_test.go`: TestCreate_ConvertedStatusIsRefused, TestUpdate_ConvertedStatusIsAValidationError, TestConvertToCustomer_LogLevelFollowsTheResponse; `bulk_handler_test.go`: TestBulkUpdateLeadStatus_ConvertedIsAValidationError; `configuration_handler_test.go`: TestGetUIConfigurations_CarriesTheLeadConversionContract; `configuration_repository_test.go`: TestInitializeDefaultsCorrectsLeadConversionStatusMetadata | `LeadList.rowActions.test.tsx`: the row menu ("More actions for <company>") appears only on convertible leads and converts the chosen lead after a re-sort, by mouse and keyboard; `LeadDetail.test.tsx`; `LeadForm.test.tsx`: does not offer Converted as a status, offers Converted only for a lead that is already converted, keeps Converted as the current status of a converted lead | `lead_integration_test.go`: 3 conversion tests; `lead_conversion_transaction_test.go`: 2 transaction tests | **partial** | The convert dialog does not yet read the notes and owner settings, and `ConfigurationProvider` never loads `/configurations/ui` (TC-SET-034), so the Convert button follows a hard-coded `['qualified']`; the server rules have no e2e. A company deleted while a lead converts can leave the customer linked to the soft-deleted company (#182). The status-race root uses a bounded 500 ms window, so on a very slow host it could pass without exercising the race |
 | 3.11 | **Pagination** | Navigate between pages of leads | -- | `lead_handler_test.go`: TestList_SortWithPagination | `LeadList.test.tsx`: handles pagination | -- | **partial** | No dedicated E2E pagination test |
 
 ---
 
 ## 4. Customer Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4.1 | **View Customers List** | Table showing customers with company, primary contact, email, phone, revenue and customer-since date; per-row menu with "Create Ticket" for admin and support; "Add Customer" for admin and sales | `admin-customers.spec.ts`: admin can view customers list page | `customer_handler_test.go`: TestList_Success, TestList_WithPagination | `CustomerList.test.tsx`: renders list, has no status column, formats total revenue; `CustomerList.rowActions.test.tsx`: Create Ticket targets the chosen row after a re-sort, menu and Add Customer per role | `customer_integration_test.go`: TestListCustomers_AdminSeesAll, _SalesCanSee, _SupportCanSee, _CustomerRoleForbidden | **covered** | -- |
 | 4.2 | **Create Customer** | Form with company (free text and linked Company), contact name, email, phone, website, full address and notes. Industry, employee count, annual revenue and an active switch were removed in #118: the API never stored them (industry and size live on the Company). `/customers/new` is admin+sales in the SPA as on the API (#120) | `admin-customers.spec.ts`: create customer, minimal data, validation errors, duplicate email | `customer_handler_test.go`: TestCreate_Success, TestCreate_DuplicateEmail, TestCreate_ForbiddenForSupportUser, TestCreate_DuplicateEmailDoesNotLeakDriverInternals; `customer_service_test.go`: TestCreate_SoftDeletedCustomerExists | `CustomerForm.test.tsx` "CustomerForm retained fields" (no removed control, exact create payload with and without the optional fields, edit-form load and the update payload with cleared fields — submission only: the API keeps the previous value of every cleared field except website, see ROADMAP); `customers.test.ts` "customer read model" | `customer_integration_test.go`: TestCreateCustomer_AdminSuccess, _SalesSuccess, _DuplicateEmail, _SupportUserForbidden; `soft_delete_email_reuse_test.go`: TestCustomerCreateRejectsEmailOfSoftDeletedCustomer, TestCreateCustomerHandlerDoesNotLeakDriverErrorForSoftDeletedEmail | **covered** | Duplicate email now returns **409** (previously 400) and no longer leaks driver text |
@@ -147,7 +147,7 @@ next to their untouched free-text `company` column. Companies hold no personal d
 erased: deleting one clears the links and soft-deletes the row. Catalog cases in
 `docs/testing/13-companies.md`; API contract in `api/swagger.yaml` under `/companies`.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4b.1 | **List companies** | `/companies` table with name, domain, industry, owner and live customer/lead counts; `search` over name, domain, industry, city; `sort_by` allowlist (`id, name, domain, industry, created_at, updated_at`, unknown → 400); `page`/`offset`/`limit` with `meta`. `data` is the bare array. Admin, sales, support | `admin-companies.spec.ts`: admin can view the companies list page, admin can search companies | `company_handler_test.go`: TestList_ReturnsTheArrayWithPaginationMeta, TestList_UnknownSortColumnIs400, TestRoleMatrix | `CompanyList.test.tsx`: 12 tests | `company_repository_test.go`: TestCompanyRepository_ListSearchSortAndPaginate, _ListRejectsUnknownSortColumns; `company_integration_test.go`: TestListSearchSortAndPagination, TestRoleMatrix | **covered** | Search is case-sensitive on SQLite only. Sales/support read access and the customer-role 403 are Go-only (no role-login e2e helper) |
 | 4b.2 | **Create company** | Name required (1–200 chars, trimmed); domain normalised (lower case, scheme/path/`www.` stripped) and unique among live rows → 409; website must be http(s); `employee_range` from a fixed list; every column bounded by its width → 400; `owner_id` validated → 400 `INVALID_REFERENCE`; sales gets itself as owner, admin may pick anyone or nobody. Admin, sales | `admin-companies.spec.ts`: admin can create a company with all fields and sees them on the detail page, validation errors keep the form open, a duplicate domain is refused with the server message on the domain field | `company_handler_test.go`: TestCreate_*, TestRoleMatrix; `company_service_test.go`: TestCreate_*, TestNormalizeCompanyDomain; `company_column_limits_test.go` | `CompanyForm.test.tsx`: create mode (fields, owner picker per role, validation, bounds, payload, 409 and 400 messages) | `company_integration_test.go`: TestCreateNormalisesTheDomainAndRefusesDuplicates, TestSalesOwnerRuleAndOwnLeadsOnly | **covered** | The sales owner rule (self-assigned, 403 for anyone else) is Go-only (no role-login e2e helper); the e2e sends a plain domain, so normalisation is pinned in Go |
@@ -167,7 +167,7 @@ history written in the same transaction as every stage change. Deals are admin a
 sales sees and edits its own. Deals hold no personal data and are not erased. Catalog cases in
 `docs/testing/14-deals.md`; API contract in `api/swagger.yaml` under `/deals`.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4c.1 | **List deals** | `GET /deals`: `search` over title and notes; server-side filters `stage`, `open=true` (neither won nor lost), `company_id`, `customer_id`, `owner_id` (admin; sales is always narrowed to itself); `sort_by` allowlist (`id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at, updated_at`, unknown → 400); `page`/`offset`/`limit` with `meta`; `data` is the bare array with owner, company, customer and lead preloaded | `admin-deals.spec.ts`: admin can view the deals list page, admin can filter the list by stage | `deal_handler_test.go`: TestList_PassesEveryFilterAndReturnsTheArrayWithMeta, TestList_SalesIsAlwaysNarrowedToItself, TestList_BadFiltersAre400, TestRoleMatrix | `DealList.test.tsx`: 10 tests (columns, server-side search, stage and open filters, sort allowlist, role buttons) | `deal_repository_test.go`: TestDealRepository_ListFiltersSortsAndPaginates, _ListRejectsUnknownSortColumns; `deal_integration_test.go`: TestListFiltersSortAndPagination, TestSalesOwnerRuleAndOwnDealsOnly, TestRoleMatrix | **covered** | Search is case-sensitive on SQLite only. Sales scoping and the customer/support 403 are Go-only (no role-login e2e helper); the e2e filters by stage on top of a search, the "Open only" toggle and sorting are Vitest and Go only |
 | 4c.2 | **Create deal** | Title required (1–200, trimmed); `stage` defaults to qualification; `amount_cents` 0 to 1000000000000 (10^12 cents, i.e. 10,000,000,000.00, `models.DealAmountCentsMax`, in the binding and the service, so the pipeline sums cannot overflow); `currency` `^[A-Z]{3}$`, default from `deals.default_currency` (seeded `EUR`, admin-editable, exposed on `/configurations/ui`); `probability` 0–100 with per-stage defaults 10/40/70, won pinned to 100 and lost to 0; `expected_close_date` YYYY-MM-DD; `lost_reason` kept only on lost; `company_id`/`customer_id`/`lead_id` optional live rows → 400 `INVALID_REFERENCE` naming the field; `owner_id` defaults to the caller, sales may only name itself (403), admin anyone; first history row (`from_stage` null) in the same transaction | `admin-deals.spec.ts`: admin can create a deal for a company and sees the formatted amount on both detail pages, validation errors keep the form open | `deal_handler_test.go`: TestCreate_*, TestDealStageBindingTagsMatchTheModel, TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage, TestDealAmountBindingTagMatchesTheModel; `deal_service_test.go`: TestCreate_*, TestAmountBound_OnCreateAndUpdate, TestApplyDealTransition, TestDealService_CreateWritesTheDealAndItsFirstHistoryRowTogether, _CurrencyDefaultComesFromConfiguration, _AFailedHistoryWriteRollsBackTheDeal; `deal_test.go` (column limits, stage defaults, date JSON) | `DealForm.test.tsx`: 27 tests (fields, currency default from `/configurations/ui`, validation including the amount bound, payload, dashboard pipeline invalidated after a create, `INVALID_REFERENCE` on the pickers); `ConfigurationSettings.test.tsx`: the `deals` category tab | `deal_integration_test.go`: TestCreateAppliesDefaultsAndValidates, TestDefaultCurrencyFollowsTheConfiguration; `configuration_repository_test.go`: TestInitializeDefaultsKeepsConfiguredValues | **covered** | `lost_reason` is not required by the API when moving to lost (the UI prompts for it). A configured currency that is not three upper-case letters falls back to EUR with a warning. The e2e validation test exercises the form's own checks only; the API 400s are Go |
@@ -205,7 +205,7 @@ percentages and sent as basis points, and the totals are always the server's. Ca
 `docs/testing/15-products-quotes.md`; API contract in `api/swagger.yaml` under `/products` and
 `/quotes`.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4d.1 | **Product catalogue** | `GET/POST /products`, `GET/PUT/DELETE /products/{id}`: admin writes, admin and sales read, support and customer 403, unauthenticated 401; name 1–200 trimmed, SKU ≤ 64 (indexed, not unique), `unit_price_cents` 0 to 10^12, currency `^[A-Z]{3}$` defaulting to `deals.default_currency`, `is_active` default true; the list goes through `utils.ParseOffsetLimit` (limit 0 → 20, capped at 100), filters `search` (name or SKU), `is_active`, `currency`, `sort_by` allowlist (`id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, unknown → 400 `BAD_REQUEST` with no data rows); delete is a soft delete and quote lines keep their copied values | `admin-quotes.spec.ts`: the product step of "admin creates a product, quotes a deal from its Quotes section, sends, prints and accepts the quote" (partial: create and the list row) | `product_handler_test.go`: TestProductPriceBindingTagMatchesTheModel, TestProductHandler_*; `product_service_test.go`: TestProductService_*; `product_test.go`: TestProductColumnWidthsMatchConstants; `sort_test.go`: TestValidateSortProductsAndQuotes | `ProductList.test.tsx`, `ProductForm.test.tsx`, `products.test.ts` (see 4d.9) | `product_repository_test.go`: TestProductRepository_*; `product_integration_test.go`: TestProductRoutesRoleMatrix, TestProductListPaginationSortAndFilters, TestProductDeleteKeepsQuoteLines | **covered** | Search is case-sensitive on SQLite only |
 | 4d.2 | **Create quote** | `POST /quotes`: at least one of `deal_id`/`customer_id` (400 otherwise); with only the deal the customer is taken from it (possibly none); a customer that is not the deal's is 400 `VALIDATION_ERROR`; unknown deal, customer or owner is 400 `INVALID_REFERENCE`; a won or lost deal is 409 (`ErrDealClosed`); sales may only quote its own deals and own the quote itself (403), admin may name any owner; currency defaults to `deals.default_currency`; the quote starts as a draft with totals 0 and one history row (`from_status` null) written in the same transaction; the JSON adds `number` (`Q-000042`) and summaries of customer, deal and owner | -- | `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors, TestQuoteHandler_CreateAndUpdateBodies; `quote_service_test.go`: TestQuoteCreateWritesQuoteAndHistoryTogether; `quote_test.go`: TestQuoteJSONAddsTheNumberAndSummaries, TestQuoteColumnWidthsMatchConstants | -- | `quote_integration_test.go`: TestQuoteCreateLinksAndDefaults | **covered** (API) | A deal with only a lead or a company gives a quote with no recipient; the email then refuses it (4d.7) |
@@ -235,7 +235,7 @@ notification bell and page) shipped on 2026-10-29 (4e.17); captures in
 cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 [DEVELOPMENT.md](DEVELOPMENT.md#automation-runtime); tables in [datamodel.md](datamodel.md#follow-up-automation).
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4e.1 | **Rule CRUD (admin)** | `POST /automation/rules` returns 201 with the steps numbered 1..n; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range `else_position` or an unknown `{{placeholder}}` is 400 `INVALID_INPUT` writing no row; an unknown, inactive or non-staff user id is 400 `INVALID_REFERENCE`; every refused field is listed in `error.details.fields` as `{field, code, message}` (paths such as `steps[2].config.title`, steps counted from zero) while `error.message` and `error.code` stay those of the first refusal; the staff-user lookups run once per distinct user; list through `ParseOffsetLimit` with the `automation_rules` sort allowlist; sales, support and customer get 403 on every rule route | `automation-rules.spec.ts` (create through the form; a user deactivated after the rule was saved is refused on save and the message lands under the user picker) | `automation_validation_test.go`: TestAutomationRuleValidationCollectsAllFields, TestAutomationRuleValidationLegacyMessage, TestAutomationRuleValidationReferencePaths, TestAutomationRuleValidationStopsOnEntityType; `sort_test.go`: TestValidateSortAutomationAllowlists; `routes_test.go`: TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter, TestAutomationDraftDryRunRouteIsStatic; `config_test.go`: TestLoad_AutomationDefaultsAndClamp | `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`, `ruleFormSchema.test.ts`, `conditionValues.test.ts`, `StaffUserAutocomplete.test.tsx`, `automation.test.ts` | `tests/automation_api_test.go`: TestAutomationRuleAPISQLite | **covered** | -- |
 | 4e.2 | **Rule lifecycle cancels runs** | Every update, in one transaction, increments `version`, replaces the steps and cancels the rule's pending, waiting and running runs with `rule_changed`; disable cancels with `rule_disabled`; delete soft-deletes and cancels with `rule_deleted`; a running run cancelled this way performs no further step (its conditional advance affects zero rows); a fault during the step replacement leaves version, steps and runs unchanged | -- | `automation_rule_lifecycle_test.go`: TestAutomationRuleLifecycle{SQLite,MySQL}, incl. the subtests "an update without enabled keeps a disable committed after the caller read the rule" and "an update with enabled sets the switch inside the transaction" | -- | `tests/automation_api_test.go`: TestAutomationRuleUpdateKeepsConcurrentDisableSQLite | **covered** | The MySQL root needs `TEST_MYSQL_DSN`. An update that omits `enabled` keeps the switch as read under the rule's row lock inside the update transaction (fixed 2026-10-29; before, a disable committed meanwhile was undone) |
@@ -259,7 +259,7 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 
 ## 5. Ticket Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 5.1 | **View Tickets List** | Table with subject, status, priority, customer, assignee. Admin and sales see every ticket; support sees only tickets assigned to it, with rows and totals scoped in the query before pagination | `admin-tickets.spec.ts`: admin can view tickets list page | `ticket_handler_test.go`: TestList_Success, TestList_CustomerRole_Forbidden, TestList_Support_ScopedToAssignee | `TicketList.test.tsx`: 19 tests; `TicketList.rowActions.test.tsx`: no overflow menu for any role (the row icons already cover view/edit/delete), row icons act on the chosen ticket after a re-sort, sales read-only | `ticket_test.go`: TestTicketLifecycle; `internal/integration/ticket_visibility_integration_test.go`: TestTicketListVisibility{SQLite,MySQL}, TestTicketPolicyConsistency{SQLite,MySQL} | **covered** | -- |
 | 5.2 | **Create Ticket** | Form with subject, description, priority, customer, assignee | `admin-tickets.spec.ts`: create ticket, validation errors, long description | `ticket_handler_test.go`: TestCreate_Success, TestCreate_ValidationError, TestCreate_CustomerRole_Forbidden; `ticket_service_test.go`: 4 create tests | `TicketForm.test.tsx`: 18 tests | `ticket_test.go`: TestTicketLifecycle, TestTicketValidation | **covered** | Only **admin and support** may create tickets (`ticket_handler.go:52`); sales cannot |
@@ -275,7 +275,7 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 
 ## 6. Task Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 6.1 | **View Tasks List** | Table with title, status, priority, assignee, due date | `admin-tasks.spec.ts`: admin can view tasks list page | `task_handler_test.go`: TestListTasks_Success, TestListTasks_NonAdminGetsOwnTasks | -- | `internal/integration/task_integration_test.go`: TestTaskLifecycle | **partial** | No frontend unit test for `TaskList` |
 | 6.2 | **Create Task** | Form with title, description, priority, due date, assignee, related lead/customer | `admin-tasks.spec.ts`: create task, minimal data, different priorities | `task_handler_test.go`: TestCreateTask_Success, _NonAdminAssignToOther_Forbidden, _ValidationError, _ServiceError; `task_service_test.go`: 8 create tests | -- | `internal/integration/task_integration_test.go`: TestTaskCreationPermissions, TestTaskValidation | **partial** | No frontend unit test for `TaskForm` |
@@ -294,7 +294,7 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 Free-form colored labels group tasks without a project hierarchy. Screenshots under
 `docs/screenshots/labels/`; catalog cases in `docs/testing/10-labels.md`.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 6b.1 | **Label CRUD** | `/labels` management page: create/rename/recolor with preset swatch picker, duplicate names rejected (409), delete is admin-only and hard-deletes | `labels.spec.ts`: create, duplicate-name error, rename+recolor, delete | `label_handler_test.go`, `label_service_test.go` | `LabelList.test.tsx` | `label_repository_test.go` (SQLite, many2many round-trip, hard delete clears join rows) | **covered** | Labels are hard-deleted (no PII, avoids the soft-delete unique-index trap) |
 | 6b.2 | **Attach labels to tasks** | Multi-select Autocomplete on the task form with inline creation (palette-assigned color); `label_ids` on create/update, capped at 100, unknown ids → 400 | `labels.spec.ts`: attach on create, inline create, replace set with [] | `task_labels_handler_test.go`, `task_labels_test.go` | `TaskForm.test.tsx` (incl. 409 recovery selecting the existing label) | -- | **covered** | Inline create hidden from customer role (would always 403) |
@@ -305,7 +305,7 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 ## 7. User Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 7.1 | **View Users List** | Admin sees table of all users with role and status | `admin-users.spec.ts`: admin can view users list page | `user_handler_test.go`: TestList_Success | `routes/index.test.tsx`: renders the REAL `UserList` at `/users` for an admin | `user_test.go`: TestUserCRUD | **covered** | The `/users` admin page was unreachable — the route defined both a static `element` and a `lazy` import, so React Router rendered a placeholder. `routes/index.test.tsx` pins the invariant |
 | 7.2 | **Create User** | Admin creates users with any role. This and the `create-admin` CLI are the only ways to obtain an elevated role | `admin-users.spec.ts`: create user, different roles, validation errors, password mismatch, duplicate email | `user_handler_test.go`: TestCreate_Success, TestCreate_EmailConflict | -- | `user_test.go`: TestUserRegistration, TestEmailUniqueness | **covered** | -- |
@@ -321,7 +321,7 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 ## 8. API Key Management
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 8.1 | **Generate API Key** | User creates a named API key for CLI access | -- | `apikey_handler_test.go`: TestCreate_Success, TestCreate_Error; `apikey_service_test.go`: TestAPIKeyService_Generate, _Generate_CreateError | -- | `apikey_integration_test.go`: TestCreateAPIKey | **partial** | No E2E test. Handler tests now exist (this row previously said they did not) |
 | 8.2 | **List API Keys** | View all keys (masked) with last-used info | -- | `apikey_handler_test.go`: TestList_Success, TestList_Error; `apikey_service_test.go`: TestAPIKeyService_GetByUser, _List | -- | `apikey_integration_test.go`: TestListAPIKeys | **partial** | No E2E test |
@@ -332,7 +332,7 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 ## 9. Configuration Settings
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 9.1 | **View Configurations** | Admin sees all system configurations; `/configurations/ui` is open to any authenticated user | -- | -- | -- | `configuration_integration_test.go`: TestGetAllConfigurations_AdminOnly, TestGetUIConfigurations, TestGetConfigurationByCategory, TestGetConfigurationByKey, TestUnauthorizedAccess | **partial** | No E2E test; no `configuration_handler_test.go` and no configuration service unit test |
 | 9.2 | **Update Configuration** | Admin can change configuration values | -- | -- | -- | `configuration_integration_test.go`: TestSetConfiguration, _InvalidValue, _ReadOnly, TestBooleanConfiguration, TestArrayConfiguration | **partial** | No E2E test |
@@ -350,7 +350,7 @@ the same transaction). An invalid status, an empty or oversized list or a role r
 records no history row. The
 generic create/update/delete/action subsystem, which no route ever reached, was removed in #112.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 10.1 | **Bulk status update** | Set one status on up to 100 leads, tickets or tasks; refused in full when any id is missing, not the caller's or in a forbidden transition | -- | `bulk_handler_test.go`: TestBulkStatusHandlerTestSuite, TestBulkStatusRoutesCoexistWithIDRoutes; `bulk_status_service_test.go`: TestBulkStatusService{SQLite,MySQL} (mid-write rollback, history rows, events, history-write faults); `bulk_operation_repository_test.go`: TestBulkOperationRepository_CreateAndUpdateStatus | -- | `bulk_status_update_test.go`: 21 tests incl. TestBulkSetStatus_RecordsTheOperation, TestBulkSetStatus_InputRefusalsRecordNothing; `ticket_visibility_integration_test.go` | **covered** (API level) | No page calls the endpoints (the `bulkUpdateStatus` client functions are unused) and no E2E test |
 
@@ -376,7 +376,7 @@ Tracks how often LLM answer engines mention the brand. Catalog cases in `docs/te
 live-provider smoke in `scripts/aeo_live_smoke.sh`. **No Playwright coverage exists yet** — every
 row below is unit/integration only, which is why none is marked *covered*.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 10c.1 | **Brand profile** | `/aeo/settings`: brand name, aliases, owned domains, competitors; single row pinned to ID 1; domains lowercased and `www.`-stripped on save | none | `aeo_handler_test.go`, `aeo_service_test.go` | `AEOSettings.test.tsx` | `aeo_repository_test.go` (SQLite, JSON-in-TEXT round-trip) | **partial** | Whitespace-only brand name returned 500 until 2026-08-11; now 400 |
 | 10c.2 | **Prompts** | `/aeo/prompts`: up to 100 active, ≤500 runes, duplicates rejected case-insensitively over live rows, soft delete keeps the answers | none | `aeo_handler_test.go`, `aeo_service_test.go` | `AEOPrompts.test.tsx` | `aeo_repository_test.go` | **partial** | No unique index on `text` by design — the soft-delete trap; uniqueness is a service-level `LOWER(text)` pre-check |
@@ -394,7 +394,7 @@ row below is unit/integration only, which is why none is marked *covered*.
 
 ## 11. Cross-Cutting Concerns
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 11.1 | **Role-Based Access** | Different roles see different data and have different permissions | `admin-users.spec.ts`: manage user permissions through roles; `login.spec.ts`: unauthenticated user is redirected to login | Handler tests cover role checks throughout; `auth_test.go`: 12 middleware tests | `ProtectedRoute.test.tsx`: 7 tests; `routes/index.test.tsx`: blocks non-admins from `/users` | `auth_integration_test.go`: TestProtectedRoute; `user_test.go`: TestPermissionEnforcement, TestProtectedRoutes | **covered** | -- |
 | 11.2 | **Rate Limiting** | Per-IP token buckets: strict (10/min, burst 5) on public auth and form writes; moderate (120/min, burst 30) on authenticated routes; generous (240/min, burst 40) on public form reads | -- | `rate_limit_live_test.go` tests all live-tier bursts and the legacy strict-only switch; normal/tagged build tests prove E2E opt-out isolation; `rate_limit_test.go`: TestRateLimitCapacity, TestRateLimitExpiry, TestRateLimitLifecycle, TestRateLimitConcurrency, TestRateLimitHTTPBehavior, TestRateLimitTrustedProxy, TestRateLimitTierIsolation | -- | -- | **backend covered** | `DISABLE_RATE_LIMIT=true` still bypasses only strict in ordinary builds. Functional `make e2e` uses the `gophercrm_e2e` build tag plus an explicit test switch to avoid shared limiter state; ordinary binaries ignore that switch. `make verify-backend` tests both build modes. Each middleware instance tracks at most 10,000 IPs and answers unseen IPs with 429 when full; records expire after five idle minutes once refilled, via bounded per-request cleanup with no goroutine (#99). Limits are process-local and depend on `TRUSTED_PROXIES`. The unwired config-driven `RateLimiter` and its tests were removed. No E2E/integration test |
@@ -413,7 +413,7 @@ Deleting a **user, customer or lead** is an erasure implementing GDPR Article 17
 soft delete. See [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#deleting-personal-data) for the full
 rationale. Implementation lives in `internal/repository/erasure.go` and `erasure_cascade.go`.
 
-| # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
+| # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 12.1 | **Personal fields overwritten** | Every personal column is overwritten in place before the row is soft-deleted | -- | -- | -- | `erasure_test.go`: TestUserErasureScrubsEveryPersonalFieldAndDisablesThePassword, TestUserErasureRemovesPersonalDataFromTheTable, TestCustomerErasureRemovesPersonalDataFromTheTable; `lead_erasure_test.go`: TestLeadErasureRemovesPersonalDataFromTheTable, TestLeadErasureKeepsTheNonPersonalBusinessFields | **covered** | -- |
 | 12.2 | **Non-reversible placeholder email** | Replacement address comes from `crypto/rand` in the reserved `.invalid` domain and is not derived from the original | -- | -- | -- | `erasure_test.go`: TestUserErasureKeepsTheRowSoftDeletedWithAPlaceholderEmail, TestSuccessiveUserErasuresProduceDistinctPlaceholders, TestSuccessiveCustomerErasuresProduceDistinctPlaceholders | **covered** | -- |
@@ -434,7 +434,7 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 
 ### Resolved by this work
 
-| # | Gap | Impact | Resolution |
+| # | Gap | Suggested Action |
 |---|-----|--------|------------|
 | ~~G1--G10~~ | ~~Search / sort / pagination non-functional across entities~~ | ~~Lists unusable~~ | **FIXED** earlier, in PR #4 and PR #9 |
 | ~~G24~~ | ~~Auth service tests don't compile~~ | ~~Package would not build~~ | **FIXED** — `internal/service` builds and passes |
@@ -484,7 +484,7 @@ tree, not from a test run.
 
 ### E2E Tests (Playwright) -- `gocrm-ui/e2e/tests/`
 
-| File | Tests | Entities |
+| File | Tests | Component |
 |------|-------|----------|
 | `registration.spec.ts` | 15 | Auth |
 | `login.spec.ts` | 11 | Auth |
@@ -495,7 +495,7 @@ tree, not from a test run.
 | `admin-users.spec.ts` | 12 | Users |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity |
 | `leads-sorting-search.spec.ts` | 8 | Leads |
-| **Total** | **100** | |
+| **Total** | **142** | 16 files |
 
 `debug-avatar.spec.ts` no longer exists. The admin account these suites log in as is provisioned by
 `gocrm-ui/e2e/global-setup.ts`, which shells out to `cmd/create-admin` — self-service registration
@@ -504,7 +504,7 @@ test --list` reports 100.
 
 ### Backend Unit Tests -- `internal/`
 
-| File | Tests | Layer |
+| File | Tests | Component |
 |------|-------|-------|
 | `handler/lead_handler_test.go` | 24 | Handler |
 | `handler/ticket_handler_test.go` | 28 | Handler |
@@ -556,7 +556,7 @@ test --list` reports 100.
 
 ### Integration Tests -- `test/integration/`, `tests/` and `internal/integration/`
 
-| File | Tests | Scope |
+| File | Tests | Component |
 |------|-------|-------|
 | `test/integration/erasure_test.go` | 28 | Erasure (users, customers); task and ticket deletes stay plain soft deletes |
 | `test/integration/lead_erasure_test.go` | 14 | Erasure (leads, conversion cascade) |

@@ -1900,6 +1900,9 @@ definitions:
       company_name:
         type: string
       notes:
+        description: |-
+          Notes are stored on the new customer. They are required (non-blank)
+          when the leads.conversion.require_notes setting is on.
         type: string
       website:
         type: string
@@ -7323,9 +7326,12 @@ paths:
     get:
       description: 'Retrieve the configurations the frontend is allowed to read: the
         whole ui category, general.company_name, deals.default_currency (the currency
-        a new deal takes when none is sent), and a synthetic leads.conversion.allowed_statuses
-        entry. Available to any authenticated user. A sensitive entry (is_sensitive)
-        is masked: its value is always empty and is_set reports whether one is stored.'
+        a new deal takes when none is sent), and three synthetic read-only lead-conversion
+        entries carrying the values the convert endpoint enforces: leads.conversion.allowed_statuses
+        (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner
+        (boolean). An entry whose setting cannot be read is omitted. Available to
+        any authenticated user. A sensitive entry (is_sensitive) is masked: its value
+        is always empty and is_set reports whether one is stored.'
       produces:
       - application/json
       responses:
@@ -11141,10 +11147,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new lead (sales and admin roles only). Optional company_id
+      description: 'Create a new lead (sales and admin roles only). Optional company_id
         links the lead to a company record, independently of the free-text company
         field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE,
-        and 0 or absent means no link.
+        and 0 or absent means no link. status "converted" is refused with 400 VALIDATION_ERROR
+        (details.field "status"): a lead becomes converted only through POST /leads/{id}/convert.'
       parameters:
       - description: Lead creation request
         in: body
@@ -11165,8 +11172,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
               type: object
         "400":
-          description: Invalid request data, missing owner_id for admin users, or
-            an unknown company_id (INVALID_REFERENCE)
+          description: Invalid request data, missing owner_id for admin users, an
+            unknown company_id (INVALID_REFERENCE), or status converted (VALIDATION_ERROR)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -11377,7 +11384,11 @@ paths:
         only update their own leads, and only admins can reassign the owner). company_id:
         absent leaves the company link unchanged, 0 clears it, any other value must
         name a live company or the request is rejected with 400 INVALID_REFERENCE.
-        The free-text company field is independent of the link.'
+        The free-text company field is independent of the link. status "converted"
+        is refused with 400 VALIDATION_ERROR (details.field "status") unless the lead
+        is already converted: a lead becomes converted only through POST /leads/{id}/convert.
+        The lead is re-read under a row lock in the writing transaction, so the update
+        never overwrites a concurrent conversion with a stale copy.'
       parameters:
       - description: Lead ID
         in: path
@@ -11403,7 +11414,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead'
               type: object
         "400":
-          description: Invalid lead ID or request data, or an unknown company_id (INVALID_REFERENCE)
+          description: Invalid lead ID or request data, an unknown company_id (INVALID_REFERENCE),
+            or status converted (VALIDATION_ERROR)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -11470,6 +11482,7 @@ paths:
       description: |-
         Convert a lead to a customer with additional customer information (admin or owning sales user only)
         Optional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.
+        The administrator's lead-conversion settings are enforced before anything is written: the lead's status must be one of leads.conversion.allowed_statuses, and notes must be non-blank when leads.conversion.require_notes is on; a refusal is 400 VALIDATION_ERROR whose details name the field ("status" with the lead's status and the allowed statuses, or "notes"). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id). The lead's company_id is copied to the customer when it still names a live company; a link to a deleted company is dropped and the conversion succeeds without it.
       parameters:
       - description: Lead ID
         in: path
@@ -11495,8 +11508,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.Customer'
               type: object
         "400":
-          description: Invalid request data, lead already converted, or lead has no
-            email address
+          description: Invalid request data, lead already converted (its status is
+            converted or it already has a customer), lead has no email address, or
+            a lead-conversion setting refused the conversion (VALIDATION_ERROR)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -11569,10 +11583,13 @@ paths:
     post:
       consumes:
       - application/json
-      description: Sets the same status on up to 100 leads in a single all-or-nothing
+      description: 'Sets the same status on up to 100 leads in a single all-or-nothing
         transaction. Requires the sales or admin role; sales users may only update
         leads they own. If any listed lead is missing or not owned by the caller,
-        nothing is written and the offending IDs are named in the error details.
+        nothing is written and the offending IDs are named in the error details. status
+        "converted" is refused with 400 VALIDATION_ERROR (details.field "status"):
+        a lead becomes converted only through POST /leads/{id}/convert, which creates
+        the customer.'
       parameters:
       - description: Lead IDs and the status to set
         in: body
@@ -11593,7 +11610,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.BulkStatusUpdateResult'
               type: object
         "400":
-          description: Empty ID list, more than 100 IDs, or an invalid lead status
+          description: Empty ID list, more than 100 IDs, an invalid lead status, or
+            status converted (VALIDATION_ERROR)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

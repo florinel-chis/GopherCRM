@@ -1,4 +1,5 @@
 import { api } from '../client';
+import type { Lead } from '@/types';
 
 export interface Configuration {
   id: number;
@@ -17,6 +18,24 @@ export interface Configuration {
   valid_values: string;
   created_at: string;
   updated_at: string;
+}
+
+// GET /configurations/ui carries three synthetic, read-only lead-conversion
+// entries with the values POST /leads/:id/convert enforces: the allowed
+// statuses (type 'array', a JSON list of lead statuses), whether conversion
+// notes are required and whether the lead owner becomes the customer's
+// assigned user (both type 'boolean', 'true' or 'false'). An entry whose
+// setting could not be read is absent; the server still enforces the rule.
+export type LeadConversionConfigKey =
+  | 'leads.conversion.allowed_statuses'
+  | 'leads.conversion.require_notes'
+  | 'leads.conversion.auto_assign_owner';
+
+// The parsed form of those three entries.
+export interface LeadConversionSettings {
+  allowedStatuses: Lead['status'][];
+  requireNotes: boolean;
+  autoAssignOwner: boolean;
 }
 
 export interface ConfigurationFilters {
