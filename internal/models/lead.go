@@ -24,18 +24,24 @@ const (
 // MySQL and MariaDB, which reject a longer value (SQLite does not).
 const LeadNotesMaxBytes = 65535
 
+// Lead indexes (#109): email serves GetLatestByEmail (the form double-opt-in
+// lookup; non-unique on purpose, one person may be captured twice),
+// classification serves the classification filter and its count, and
+// external_id serves GetByExternalID. Each lookup is an equality, so a single
+// column index is enough; the handful of rows sharing one email are sorted by
+// created_at, id after the index narrows to them.
 type Lead struct {
 	BaseModel
 	FirstName      string             `gorm:"not null;type:varchar(100)" json:"first_name"`
 	LastName       string             `gorm:"not null;type:varchar(100)" json:"last_name"`
-	Email          string             `gorm:"not null;type:varchar(255)" json:"email"`
+	Email          string             `gorm:"not null;type:varchar(255);index" json:"email"`
 	Phone          string             `gorm:"type:varchar(50)" json:"phone"`
 	Company        string             `gorm:"type:varchar(200)" json:"company"`
 	Position       string             `gorm:"type:varchar(100)" json:"position"`
 	Source         string             `gorm:"type:varchar(100)" json:"source"`
 	Status         LeadStatus         `gorm:"not null;default:'new';type:varchar(20)" json:"status"`
-	Classification LeadClassification `gorm:"type:varchar(20);default:'unclassified'" json:"classification"`
-	ExternalID     string             `gorm:"type:varchar(255)" json:"external_id,omitempty"`
+	Classification LeadClassification `gorm:"type:varchar(20);default:'unclassified';index" json:"classification"`
+	ExternalID     string             `gorm:"type:varchar(255);index" json:"external_id,omitempty"`
 	Notes          string             `gorm:"type:text" json:"notes"`
 	OwnerID        uint               `json:"owner_id"`
 	Owner          User               `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`

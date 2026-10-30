@@ -2,7 +2,6 @@ package repository
 
 import (
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -31,13 +30,13 @@ func (r *ticketRepository) GetByID(id uint) (*models.Ticket, error) {
 
 func (r *ticketRepository) GetByCustomerID(customerID uint, offset, limit int) ([]models.Ticket, error) {
 	var tickets []models.Ticket
-	err := r.db.Where("customer_id = ?", customerID).Offset(offset).Limit(limit).Find(&tickets).Error
+	err := orderByID(r.db.Where("customer_id = ?", customerID), "tickets").Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 
 func (r *ticketRepository) GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Ticket, error) {
 	var tickets []models.Ticket
-	err := r.db.Where("assigned_to_id = ?", assignedToID).Offset(offset).Limit(limit).Find(&tickets).Error
+	err := orderByID(r.db.Where("assigned_to_id = ?", assignedToID), "tickets").Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 
@@ -51,7 +50,7 @@ func (r *ticketRepository) Delete(id uint) error {
 
 func (r *ticketRepository) List(offset, limit int) ([]models.Ticket, error) {
 	var tickets []models.Ticket
-	err := r.db.Preload("Customer").Preload("AssignedTo").Offset(offset).Limit(limit).Find(&tickets).Error
+	err := orderByID(r.db.Preload("Customer").Preload("AssignedTo"), "tickets").Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 
@@ -85,16 +84,11 @@ func (r *ticketRepository) ListSortedWithPreloads(offset, limit int, sortBy, sor
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("tickets", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			query = query.Order(orderClause)
-		}
+	query, err := orderPage(query, "tickets", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&tickets).Error
+	err = query.Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 
@@ -109,16 +103,11 @@ func (r *ticketRepository) Search(query string, offset, limit int, sortBy, sortO
 		"title LIKE ? OR description LIKE ? OR resolution LIKE ?",
 		searchPattern, searchPattern, searchPattern,
 	)
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("tickets", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+	db, err := orderPage(db, "tickets", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := db.Offset(offset).Limit(limit).Find(&tickets).Error
+	err = db.Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 
@@ -150,8 +139,9 @@ func whereAssigneeScope(db *gorm.DB, scope TicketAssigneeScope) *gorm.DB {
 }
 
 // ListByAssigneeScope returns one page of the tickets matching scope. The
-// filter is part of the query, so it applies before offset and limit; id breaks
-// ties so that consecutive pages neither repeat nor skip a row.
+// filter is part of the query, so it applies before offset and limit; the id
+// breaks ties in the sort direction so that consecutive pages neither repeat
+// nor skip a row (see orderPage).
 func (r *ticketRepository) ListByAssigneeScope(scope TicketAssigneeScope, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error) {
 	tickets := []models.Ticket{}
 	query := r.db
@@ -159,14 +149,11 @@ func (r *ticketRepository) ListByAssigneeScope(scope TicketAssigneeScope, offset
 		query = query.Preload(preload)
 	}
 	query = whereAssigneeScope(query, scope)
-	orderClause, err := utils.SafeOrderClause("tickets", sortBy, sortOrder)
+	query, err := orderPage(query, "tickets", sortBy, sortOrder)
 	if err != nil {
 		return nil, err
 	}
-	if orderClause != "" {
-		query = query.Order(orderClause)
-	}
-	err = query.Order("id ASC").Offset(offset).Limit(limit).Find(&tickets).Error
+	err = query.Offset(offset).Limit(limit).Find(&tickets).Error
 	return tickets, err
 }
 

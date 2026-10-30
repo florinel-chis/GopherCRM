@@ -415,7 +415,7 @@ func runTicketListVisibility(t *testing.T, useMySQL bool) {
 		}
 		assert.Equal(t, byPriority, paged, "paging through ties reproduces the full order")
 
-		e.expectPage(t, e.sue, "/tickets?sort_by=created_at&sort_order=desc", idsOf(s7, s5, s6, s3, s4, s2, s1), 7)
+		e.expectPage(t, e.sue, "/tickets?sort_by=created_at&sort_order=desc", idsOf(s7, s6, s5, s4, s3, s2, s1), 7)
 		e.expectPage(t, e.sue, "/tickets?sort_by=title&sort_order=asc", idsOf(s4, s2, s3, s1, s5, s6, s7), 7)
 		e.expectPage(t, e.sue, "/tickets?sort_by=title&sort_order=asc&offset=4&limit=2", idsOf(s5, s6), 7)
 		// A column outside the handler's allowlist falls back to the plain listing.
@@ -426,7 +426,7 @@ func runTicketListVisibility(t *testing.T, useMySQL bool) {
 	t.Run("searched", func(t *testing.T) {
 		page := e.expectPage(t, e.sue, "/tickets?search=Printer", idsOf(s1, s2, s3, s4), 4)
 		assertNoneOf(t, page.body, hidden, "sue search")
-		e.expectPage(t, e.sue, "/tickets?search=Printer&sort_by=priority&sort_order=desc", idsOf(s4, s2, s1, s3), 4)
+		e.expectPage(t, e.sue, "/tickets?search=Printer&sort_by=priority&sort_order=desc", idsOf(s4, s2, s3, s1), 4)
 		page = e.expectPage(t, e.sue, "/tickets?search=Printer&limit=3&page=2", idsOf(s4), 4)
 		assert.Equal(t, int64(2), page.meta.TotalPages)
 		e.expectPage(t, e.sue, "/tickets?search=Printer&limit=3&page=3", []uint{}, 4)

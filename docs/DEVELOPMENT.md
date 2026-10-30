@@ -377,6 +377,39 @@ writes a byte. Regression roots: `TestCustomerExportTraversal{SQLite,MySQL}`
 to be chunked again, continue on a composite `(sort column, id)` keyset that handles NULL
 explicitly, never on the primary key alone.
 
+**Paginated reads walk a total order (#110).** OFFSET/LIMIT pages are separate statements, so
+an `ORDER BY` that leaves rows tied lets the engine return the tied rows in a different order on
+each page; MySQL's filesort with a LIMIT does exactly that, and consecutive pages repeated some
+rows and never showed others. Every list and search over leads, customers, tasks (including the
+label join), tickets, users and companies, and the company customer/lead sub-lists, therefore
+ends with the table's id: `orderPage` (`internal/repository/page_order.go`) validates the column
+through `utils.ValidateSort`, orders by it and then by id in the same direction, or by id
+ascending when no sort is requested; the company list keeps its newest-first default with id
+descending after `created_at`. Columns are emitted through `clause.OrderByColumn` qualified with
+the table name, so a joined query cannot resolve them against the other table. New paginated
+reads should use the same helpers. Regression roots: `TestPaginationDeterminism{SQLite,MySQL}`
+(`internal/repository/pagination_determinism_test.go`), where every row shares `created_at` and
+every sort column is tied, both directions, with filters, checking every page against the
+expected sequence and the count. The Database migrations workflow runs both roots, the MySQL one
+on MySQL 8 and MariaDB 10.11, and its checker rejects a skip.
+
+**Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
+`leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
+in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in
+[datamodel.md](datamodel.md#lookup-indexes-and-query-plans). A predicate that wraps an indexed
+column in a function (`LOWER(domain)`) hides it from the index on SQLite and on MySQL/MariaDB;
+store the value normalised and compare it plainly instead. `TestLookupIndexesServeLookupsSQLite`
+captures the statements the repository really runs and asserts their SQLite plans use the
+indexes; `TestLookupIndexesMigration` (fresh up/down, populated upgrade, AutoMigrate first,
+rollback and reapply, index parity) is one of the roots the Database migrations workflow requires.
+Plain equality relies on every stored domain being lower case: the service normalises on write,
+and `models.MigrateDatabase` lower-cases any other row on every start on every driver, which is how
+SQLite installs, which never run the SQL migration, get it. It discovers the rows with a plain
+non-locking `SELECT id` (binary comparison on MySQL/MariaDB) and updates only those ids, by primary
+key in chunks of 500, so a normalised database takes no write and no row lock on startup; a single
+predicate `UPDATE` would lock every scanned record under InnoDB REPEATABLE READ on every boot. Roots:
+`TestCompanyDomainNormalization{SQLite,MySQL}` (`internal/repository/company_domain_normalization_test.go`).
+
 **Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
 RateLimit.
 
