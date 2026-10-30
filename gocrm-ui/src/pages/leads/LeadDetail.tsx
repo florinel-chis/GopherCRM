@@ -85,7 +85,8 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { getLeadConversionStatuses } = useConfiguration();
+  const { getLeadConversionSettings, refreshConfigurations } = useConfiguration();
+  const conversionSettings = getLeadConversionSettings();
   
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -117,14 +118,27 @@ export const Component: React.FC = () => {
       navigate(`/customers/${data.customer_id}`);
     },
     onError: (error: unknown) => {
-      // The server explains refusals such as a lead without an email address.
-      showError(getAPIError(error)?.message || 'Failed to convert lead');
+      // The dialog stays open and shows the server's reason (on the notes
+      // field when the notes were refused). A settings refusal means this
+      // page followed stale settings; any other refusal (already converted,
+      // no email) may mean a stale lead.
+      const apiError = getAPIError(error);
+      if (apiError?.code === 'VALIDATION_ERROR') {
+        void refreshConfigurations();
+      }
+      if (apiError?.details?.field !== 'notes') {
+        queryClient.invalidateQueries({ queryKey: ['lead', id] });
+      }
     },
   });
 
   const handleConvert = (data: ConvertLeadData) => {
     convertMutation.mutate(data);
+  };
+
+  const closeConvertDialog = () => {
     setConvertDialog(false);
+    convertMutation.reset();
   };
 
   if (isLoading || !lead) {
@@ -159,7 +173,7 @@ export const Component: React.FC = () => {
           />
         </Box>
         <Box display="flex" gap={1}>
-          {getLeadConversionStatuses().includes(lead.status) && (
+          {conversionSettings.allowedStatuses.includes(lead.status) && (
             <Button
               variant="contained"
               color="success"
@@ -369,9 +383,12 @@ export const Component: React.FC = () => {
       <ConvertLeadDialog
         open={convertDialog}
         lead={lead}
-        onClose={() => setConvertDialog(false)}
+        onClose={closeConvertDialog}
         onConfirm={handleConvert}
         isLoading={convertMutation.isPending}
+        requireNotes={conversionSettings.requireNotes}
+        autoAssignOwner={conversionSettings.autoAssignOwner}
+        error={convertMutation.error}
       />
     </Box>
   );

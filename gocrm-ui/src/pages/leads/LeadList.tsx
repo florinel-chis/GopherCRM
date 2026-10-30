@@ -86,7 +86,8 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { getLeadConversionStatuses } = useConfiguration();
+  const { getLeadConversionSettings, refreshConfigurations } = useConfiguration();
+  const conversionSettings = getLeadConversionSettings();
   
   const [filters, setFilters] = useState<LeadFilters>({
     page: 1,
@@ -141,8 +142,17 @@ export const Component: React.FC = () => {
       navigate(`/customers/${data.customer_id}`);
     },
     onError: (error: unknown) => {
-      // The server explains refusals such as a lead without an email address.
-      showError(getAPIError(error)?.message || 'Failed to convert lead');
+      // The dialog stays open and shows the server's reason (on the notes
+      // field when the notes were refused). A settings refusal means this
+      // page followed stale settings; any other refusal (already converted,
+      // no email) may mean a stale row.
+      const apiError = getAPIError(error);
+      if (apiError?.code === 'VALIDATION_ERROR') {
+        void refreshConfigurations();
+      }
+      if (apiError?.details?.field !== 'notes') {
+        queryClient.invalidateQueries({ queryKey: ['leads'] });
+      }
     },
   });
 
@@ -208,7 +218,7 @@ export const Component: React.FC = () => {
   // View, edit and delete are the row's own icon buttons; the overflow menu
   // carries only what they do not, conversion, and only on leads whose status
   // allows it. Each menu closes over its own row.
-  const conversionStatuses = getLeadConversionStatuses();
+  const conversionStatuses = conversionSettings.allowedStatuses;
   const renderRowActions = (lead: Lead) => (
     <RowActionsMenu
       label={`More actions for ${lead.company_name || lead.contact_name}`}
@@ -231,6 +241,12 @@ export const Component: React.FC = () => {
       convertMutation.mutate({ id: convertDialog.lead.id, data });
     }
   }, [convertDialog.lead, convertMutation]);
+
+  const { reset: resetConvertMutation } = convertMutation;
+  const closeConvertDialog = useCallback(() => {
+    setConvertDialog({ open: false });
+    resetConvertMutation();
+  }, [resetConvertMutation]);
 
   const handleSearch = useCallback((value: string) => {
     setFilters(prev => ({ ...prev, search: value, page: 1 }));
@@ -370,9 +386,12 @@ export const Component: React.FC = () => {
       <ConvertLeadDialog
         open={convertDialog.open}
         lead={convertDialog.lead || null}
-        onClose={() => setConvertDialog({ open: false })}
+        onClose={closeConvertDialog}
         onConfirm={handleConvertConfirm}
         isLoading={convertMutation.isPending}
+        requireNotes={conversionSettings.requireNotes}
+        autoAssignOwner={conversionSettings.autoAssignOwner}
+        error={convertMutation.error}
       />
     </Box>
   );

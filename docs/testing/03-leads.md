@@ -707,9 +707,10 @@ the frontend gating.
 ### TC-LEAD-042 — Convert a qualified lead and observe the broken post-conversion redirect
 - **Priority:** P0
 - **Type:** functional
-- **Preconditions:** Admin logged in; a lead created by the test with status **Qualified** (the
-  default value of the `leads.conversion.allowed_statuses` configuration is `['qualified']`,
-  `ConfigurationContext.tsx:66`).
+- **Preconditions:** Admin logged in; a lead created by the test with status **Qualified** (a
+  status in the seeded `leads.conversion.allowed_statuses`, `["qualified", "contacted"]`; the UI
+  reads it from `GET /configurations/ui` since #117 and falls back to `['qualified']` until it has
+  loaded).
 - **Steps:**
   1. Open `/leads/{id}`.
   2. Click the green "Convert to Customer" button.
@@ -735,14 +736,22 @@ the frontend gating.
 ### TC-LEAD-043 — The Convert button appears only for allowed statuses
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** Admin logged in; two leads created by the test, one "New" and one "Qualified".
+- **Preconditions:** Admin logged in; `leads.conversion.allowed_statuses` at its seeded
+  `["qualified", "contacted"]`; three leads created by the test: "New", "Contacted" and "Qualified".
 - **Steps:**
   1. Open the "New" lead's detail page and look for the Convert button.
-  2. Open the "Qualified" lead's detail page and look again.
-- **Expected:** Absent for "New", present for "Qualified" — the button is gated on
-  `getLeadConversionStatuses().includes(lead.status)`, whose configuration key
-  `leads.conversion.allowed_statuses` defaults to `['qualified']` (`LeadDetail.tsx:158`).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
+  2. Open the "Contacted" and the "Qualified" lead's detail pages and look again.
+  3. Set the setting to `["new"]` on the Configuration page and repeat on `/leads` (row menus).
+- **Expected:** Absent for "New", present for "Contacted" and "Qualified"; after step 3 only the
+  "New" lead offers it. The button and the row menu follow the allowed statuses the server
+  reports on `GET /configurations/ui` (`getLeadConversionSettings().allowedStatuses`); an empty
+  list hides them everywhere, and only while the list is loading, or when it failed to load, the
+  built-in `['qualified']` applies. Before #117 the configuration was never loaded and only
+  "Qualified" ever showed the button. A save on the Configuration page refreshes the list.
+- **Automation:** automated (Vitest) — `src/pages/leads/LeadDetail.test.tsx` "offers conversion on
+  the statuses the server allows, not a built-in list", `src/pages/leads/LeadList.conversion.test.tsx`
+  "offers conversion on the statuses the server allows"; the `contacted` case runs in the browser in
+  `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` (TC-LEAD-066)
 
 ### TC-LEAD-044 — Convert a lead from its row menu on the list
 - **Priority:** P1
@@ -772,8 +781,9 @@ the frontend gating.
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
   transaction (`lead_service.go:272`, `:298`), and the handler classifies it with `errors.Is`
-  (`lead_handler.go:528`). No second customer is created. Driven through the UI the snackbar shows
-  the server's message (since 1.2.0; it used to read "Failed to convert lead"). The same 400
+  (`lead_handler.go:528`). No second customer is created. Driven through the UI the conversion dialog
+  stays open and shows the server's message above the form, and the page re-reads the lead (since
+  #117; from 1.2.0 a snackbar showed it, before that it read "Failed to convert lead"). The same 400
   answers a lead that already has a `customer_id` but whose status was later moved back (for
   example to `contacted`): it is never converted a second time (#104; before, it was).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new, via the `request`
@@ -1034,6 +1044,34 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   no converted customer had an account manager.
 - **Automation:** automated — `internal/service/lead_conversion_rules_test.go`
   `TestLeadConversionRules{SQLite,MySQL}`.
+
+### TC-LEAD-066 — The conversion dialog follows the notes and owner settings
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin logged in; `leads.conversion.allowed_statuses` set to `["contacted"]`
+  and `leads.conversion.require_notes` to `true` (record the previous values); a `contacted` lead
+  created by the test. Sign in after the change (or save it on the Configuration page in the same
+  session).
+- **Steps:**
+  1. Open the lead, click "Convert to Customer" and confirm with empty notes.
+  2. Enter notes and confirm.
+  3. Open a second `contacted` lead while `require_notes` is `false`; with that page still open,
+     set the setting to `true` from another session, then convert here with empty notes.
+  4. With `leads.conversion.auto_assign_owner` on, open the dialog again.
+  5. Restore the settings.
+- **Expected:** Step 1: the Conversion Notes field is marked required and shows "Conversion notes
+  are required." with no request sent (whitespace counts as empty, as on the server). Step 2: 200
+  and the app opens the new customer. Step 3: the server's 400 `VALIDATION_ERROR`
+  (`details.field` `notes`) is shown on the notes field, the dialog stays open and the page re-reads
+  the configuration. Step 4: the dialog says the lead's owner becomes the customer's assigned user;
+  with the setting off it says nothing about it. A status refusal or "lead already converted" shows
+  the server's message above the form. Before #117 the dialog ignored all three settings and a
+  refusal closed it, leaving only a snackbar.
+- **Automation:** automated — `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` "a contacted lead
+  converts only with notes when the settings say so" (steps 1–2); Vitest
+  `src/components/ConvertLeadDialog.test.tsx` "ConvertLeadDialog conversion settings",
+  `src/pages/leads/LeadDetail.test.tsx` and `src/pages/leads/LeadList.conversion.test.tsx` (steps 3–4
+  and the refusal placement).
 
 ### TC-LEAD-062 — The company link carries over; a stale one is dropped; a failure rolls back
 - **Priority:** P1

@@ -36,6 +36,7 @@ import {
 import type { Configuration, ConfigurationValue } from '@/api/endpoints/configurations';
 import { configurationsApi } from '@/api/endpoints/configurations';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { useConfiguration } from '@/hooks/useConfiguration';
 import { Loading } from '@/components/Loading';
 
 function isConfigurationValue(value: unknown): value is ConfigurationValue {
@@ -86,6 +87,9 @@ const ConfigurationSettings: React.FC = () => {
   const [editValue, setEditValue] = useState<ConfigurationValue>('');
   const [showEditDialog, setShowEditDialog] = useState(false);
   const { showSuccess, showError } = useSnackbar();
+  // The app-wide UI configuration (company name, lead-conversion rules, ...)
+  // is cached per session; a saved or reset setting must reach it.
+  const { refreshConfigurations } = useConfiguration();
 
   const loadConfigurations = useCallback(async () => {
     try {
@@ -128,6 +132,7 @@ const ConfigurationSettings: React.FC = () => {
       if (editValue === null) throw new Error('A configuration value is required');
       await configurationsApi.set(editingConfig.key, { value: editValue });
       showSuccess('Configuration updated successfully');
+      void refreshConfigurations();
       await loadConfigurations();
       setShowEditDialog(false);
       setEditingConfig(null);
@@ -140,6 +145,7 @@ const ConfigurationSettings: React.FC = () => {
     try {
       await configurationsApi.reset(config.key);
       showSuccess('Configuration reset to default');
+      void refreshConfigurations();
       await loadConfigurations();
     } catch {
       showError('Failed to reset configuration');

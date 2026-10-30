@@ -35,3 +35,122 @@ describe('ConvertLeadDialog website', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 });
+
+// The administrator's conversion settings (GET /configurations/ui) and the
+// server's refusals of POST /leads/:id/convert.
+describe('ConvertLeadDialog conversion settings', () => {
+  const notesRefusal = {
+    response: {
+      status: 400,
+      data: {
+        code: 'VALIDATION_ERROR',
+        message: 'Conversion notes are required.',
+        details: { field: 'notes' },
+      },
+    },
+  };
+
+  it('requires notes when the setting is on and does not submit blank ones', async () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={onConfirm} requireNotes />,
+    );
+    expect(screen.getByLabelText(/Conversion Notes/)).toBeRequired();
+    fireEvent.change(screen.getByLabelText(/Conversion Notes/), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to Customer' }));
+
+    expect(await screen.findByText('Conversion notes are required.')).toBeInTheDocument();
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/Conversion Notes/), { target: { value: ' Signed the contract ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to Customer' }));
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ notes: 'Signed the contract' })),
+    );
+  });
+
+  it('applies a notes requirement that arrives after the dialog mounted', async () => {
+    const onConfirm = vi.fn();
+    const lead = createMockLead();
+    const { rerender } = render(
+      <ConvertLeadDialog open lead={lead} onClose={vi.fn()} onConfirm={onConfirm} />,
+    );
+    rerender(<ConvertLeadDialog open lead={lead} onClose={vi.fn()} onConfirm={onConfirm} requireNotes />);
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to Customer' }));
+    expect(await screen.findByText('Conversion notes are required.')).toBeInTheDocument();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps notes optional when the setting is off', async () => {
+    const onConfirm = vi.fn();
+    render(<ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={onConfirm} />);
+    expect(screen.getByLabelText(/Conversion Notes/)).not.toBeRequired();
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to Customer' }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ company_name: 'Test Company' }));
+  });
+
+  it("shows the server's notes refusal on the notes field", async () => {
+    render(
+      <ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={vi.fn()} error={notesRefusal} />,
+    );
+    const notes = screen.getByLabelText(/Conversion Notes/);
+    await waitFor(() => expect(notes).toHaveAttribute('aria-invalid', 'true'));
+    expect(screen.getByText('Conversion notes are required.')).toBeInTheDocument();
+    // A field refusal is shown on its field, not repeated above the form.
+    expect(screen.queryByTestId('convert-lead-error')).not.toBeInTheDocument();
+  });
+
+  it('shows the server message when the lead is already converted', () => {
+    render(
+      <ConvertLeadDialog
+        open
+        lead={createMockLead()}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+        error={{ response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } } }}
+      />,
+    );
+    expect(screen.getByTestId('convert-lead-error')).toHaveTextContent('lead already converted');
+  });
+
+  it("shows the server's status refusal", () => {
+    const message = 'Leads with status "new" cannot be converted. Allowed statuses: qualified.';
+    render(
+      <ConvertLeadDialog
+        open
+        lead={createMockLead()}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+        error={{
+          response: {
+            status: 400,
+            data: {
+              code: 'VALIDATION_ERROR',
+              message,
+              details: { field: 'status', status: 'new', allowed_statuses: ['qualified'] },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId('convert-lead-error')).toHaveTextContent(message);
+  });
+
+  it('falls back to a generic message when the server gives none', () => {
+    render(
+      <ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={vi.fn()} error={new Error('Network Error')} />,
+    );
+    expect(screen.getByTestId('convert-lead-error')).toHaveTextContent('Failed to convert lead');
+  });
+
+  it('mentions owner assignment only when the setting is on', () => {
+    const { unmount } = render(
+      <ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={vi.fn()} autoAssignOwner />,
+    );
+    expect(screen.getByText(/lead's owner becomes the customer's assigned user/i)).toBeInTheDocument();
+    unmount();
+
+    render(<ConvertLeadDialog open lead={createMockLead()} onClose={vi.fn()} onConfirm={vi.fn()} />);
+    expect(screen.queryByText(/lead's owner becomes the customer's assigned user/i)).not.toBeInTheDocument();
+  });
+});
