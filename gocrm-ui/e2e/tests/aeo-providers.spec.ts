@@ -274,84 +274,89 @@ test.describe('AEO provider connections with real SDKs and verified TLS loopback
   });
 
   test('connection settings remain admin-only while staff and customer access matches their roles', async ({
-    page,
+    browser,
     aeo,
   }) => {
     const userIds: number[] = [];
     try {
       for (const role of ['sales', 'support', 'customer'] as const) {
-        const email = `aeo-${role}-${Date.now()}@example.com`;
-        const password = 'AeoRolePass123!';
-        const user = await aeo.api<{ id: number }>(
-          'POST',
-          '/users',
-          {
-            first_name: 'AEO',
-            last_name: role,
-            email,
-            password,
-            role,
-          },
-          201,
-        );
-        userIds.push(user.id);
-        const loginPage = new LoginPage(page);
-        await page.evaluate(() => {
-          localStorage.clear();
-          sessionStorage.clear();
-        });
-        await loginPage.goto();
-        await loginPage.emailInput.fill(email);
-        await loginPage.passwordInput.fill(password);
-        await loginPage.rememberMeCheckbox.check();
-        await loginPage.submit();
-        await page.waitForURL('/');
-        const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
-        if (!token) throw new Error(`No token for ${role}`);
-        expect(
-          (
-            await aeo.response('GET', '/configurations/category/integration', undefined, token)
-          ).status(),
-        ).toBe(403);
-        expect(
-          (
-            await aeo.response(
-              'PUT',
-              '/configurations/integration.aeo.gemini_model',
-              { value: 'unauthorized-model' },
-              token,
-            )
-          ).status(),
-        ).toBe(403);
-        await page.goto('/aeo/settings');
-        if (role === 'customer') {
-          await expect(page).toHaveURL(/\/unauthorized$/);
-          expect((await aeo.response('GET', '/aeo/providers', undefined, token)).status()).toBe(
-            403,
+        // Each role signs in in its own browser context: clearing the storage of a
+        // live page lets the running app redirect itself to /login on its next 401,
+        // which races the test's own navigation (net::ERR_ABORTED).
+        const context = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+        const page = await context.newPage();
+        try {
+          const email = `aeo-${role}-${Date.now()}@example.com`;
+          const password = 'AeoRolePass123!';
+          const user = await aeo.api<{ id: number }>(
+            'POST',
+            '/users',
+            {
+              first_name: 'AEO',
+              last_name: role,
+              email,
+              password,
+              role,
+            },
+            201,
           );
-        } else {
-          await expect(
-            page.getByRole('heading', { name: 'AEO Settings', exact: true }),
-          ).toBeVisible();
-          await expect(
-            page.getByRole('textbox', { name: 'Gemini model', exact: true }),
-          ).toHaveCount(0);
-          await expect(page.getByLabel('Gemini API key', { exact: true })).toHaveCount(0);
-          if (role === 'support') {
-            await expect(page.getByRole('button', { name: 'Run now', exact: true })).toHaveCount(0);
-            await expect(page.getByRole('textbox', { name: 'Brand name' })).toBeDisabled();
-            expect(
-              (await aeo.response('POST', '/aeo/prompts/generate', { count: 1 }, token)).status(),
-            ).toBe(403);
+          userIds.push(user.id);
+          const loginPage = new LoginPage(page);
+          await loginPage.goto();
+          await loginPage.emailInput.fill(email);
+          await loginPage.passwordInput.fill(password);
+          await loginPage.rememberMeCheckbox.check();
+          await loginPage.submit();
+          await page.waitForURL('/');
+          const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+          if (!token) throw new Error(`No token for ${role}`);
+          expect(
+            (
+              await aeo.response('GET', '/configurations/category/integration', undefined, token)
+            ).status(),
+          ).toBe(403);
+          expect(
+            (
+              await aeo.response(
+                'PUT',
+                '/configurations/integration.aeo.gemini_model',
+                { value: 'unauthorized-model' },
+                token,
+              )
+            ).status(),
+          ).toBe(403);
+          await page.goto('/aeo/settings');
+          if (role === 'customer') {
+            await expect(page).toHaveURL(/\/unauthorized$/);
+            expect((await aeo.response('GET', '/aeo/providers', undefined, token)).status()).toBe(
+              403,
+            );
           } else {
-            await expect(page.getByRole('button', { name: 'Run now', exact: true })).toBeVisible();
-            await expect(page.getByRole('textbox', { name: 'Brand name' })).toBeEnabled();
+            await expect(
+              page.getByRole('heading', { name: 'AEO Settings', exact: true }),
+            ).toBeVisible();
+            await expect(
+              page.getByRole('textbox', { name: 'Gemini model', exact: true }),
+            ).toHaveCount(0);
+            await expect(page.getByLabel('Gemini API key', { exact: true })).toHaveCount(0);
+            if (role === 'support') {
+              await expect(page.getByRole('button', { name: 'Run now', exact: true })).toHaveCount(
+                0,
+              );
+              await expect(page.getByRole('textbox', { name: 'Brand name' })).toBeDisabled();
+              expect(
+                (await aeo.response('POST', '/aeo/prompts/generate', { count: 1 }, token)).status(),
+              ).toBe(403);
+            } else {
+              await expect(
+                page.getByRole('button', { name: 'Run now', exact: true }),
+              ).toBeVisible();
+              await expect(page.getByRole('textbox', { name: 'Brand name' })).toBeEnabled();
+            }
           }
+        } finally {
+          await context.close();
         }
-        await page.evaluate(() => {
-          localStorage.clear();
-          sessionStorage.clear();
-        });
       }
     } finally {
       for (const id of userIds) await aeo.api('DELETE', `/users/${id}`, undefined, 204);
