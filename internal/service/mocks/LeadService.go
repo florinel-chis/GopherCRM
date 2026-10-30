@@ -272,6 +272,36 @@ func (_m *LeadService) GetByID(id uint) (*models.Lead, error) {
 	return r0, r1
 }
 
+// GetByIDContext provides a mock function with given fields: ctx, id
+func (_m *LeadService) GetByIDContext(ctx context.Context, id uint) (*models.Lead, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByIDContext")
+	}
+
+	var r0 *models.Lead
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uint) (*models.Lead, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uint) *models.Lead); ok {
+		r0 = rf(ctx, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uint) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetByOwner provides a mock function with given fields: ownerID, offset, limit
 func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models.Lead, int64, error) {
 	ret := _m.Called(ownerID, offset, limit)

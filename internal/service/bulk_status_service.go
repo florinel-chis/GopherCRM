@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -126,9 +127,20 @@ func isValidTaskStatus(status models.TaskStatus) bool {
 // to it, so a request cancelled before the history row is written leaves no
 // trace, and one cancelled while the batch waits for a connection or a row
 // lock rolls the batch back. The outcome is then recorded against the history
-// row regardless of the request, because that row already exists and must not
-// stay pending.
+// row on a context that keeps the request's values but not its cancellation,
+// bounded by bulkOutcomeTimeout, because that row already exists and should
+// not stay pending. An outcome write that cannot finish within the bound (the
+// connection or the row is still held elsewhere) is logged and the row stays
+// pending.
+//
+// A batch is a transaction root: its history row and outcome are committed on
+// their own, which an enclosing transaction could not roll back, so a ctx that
+// already carries a transaction is refused with utils.ErrTransactionRootRequired
+// before anything is written.
 func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error) (*models.BulkStatusUpdateResult, error) {
+	if utils.InTransaction(ctx) {
+		return nil, utils.ErrTransactionRootRequired
+	}
 	operation, err := s.createBulkOperation(ctx, actorID, resourceType, models.BulkAction, len(ids))
 	if err != nil {
 		return nil, err
@@ -143,19 +155,25 @@ func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uin
 	})
 
 	if err != nil {
-		s.recordBulkStatusOutcome(operation.ID, models.StatusFailed)
+		s.recordBulkStatusOutcome(ctx, operation.ID, models.StatusFailed)
 		return nil, err
 	}
 
-	s.recordBulkStatusOutcome(operation.ID, models.StatusCompleted)
+	s.recordBulkStatusOutcome(ctx, operation.ID, models.StatusCompleted)
 	return &models.BulkStatusUpdateResult{Updated: len(ids)}, nil
 }
+
+// bulkOutcomeTimeout bounds the write that records a batch's outcome once the
+// batch itself has finished or been abandoned.
+var bulkOutcomeTimeout = 5 * time.Second
 
 // recordBulkStatusOutcome updates the audit record. A failure to write it must
 // not change what the caller is told about the records themselves, which are
 // already committed (or already rolled back), so it is logged and swallowed.
-func (s *bulkStatusService) recordBulkStatusOutcome(operationID uint, status models.BulkOperationStatus) {
-	if err := s.updateBulkOperationStatus(operationID, status); err != nil {
+func (s *bulkStatusService) recordBulkStatusOutcome(ctx context.Context, operationID uint, status models.BulkOperationStatus) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkOutcomeTimeout)
+	defer cancel()
+	if err := s.updateBulkOperationStatus(ctx, operationID, status); err != nil {
 		s.logger.WithError(utils.LogError(err)).WithField("operation_id", operationID).
 			Warn("Failed to record bulk status operation outcome")
 	}
@@ -390,6 +408,6 @@ func (s *bulkStatusService) createBulkOperation(ctx context.Context, userID uint
 	return operation, nil
 }
 
-func (s *bulkStatusService) updateBulkOperationStatus(id uint, status models.BulkOperationStatus) error {
-	return s.bulkOperationRepo.UpdateStatus(id, status)
+func (s *bulkStatusService) updateBulkOperationStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error {
+	return s.bulkOperationRepo.UpdateStatus(ctx, id, status)
 }

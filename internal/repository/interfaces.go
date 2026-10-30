@@ -449,7 +449,7 @@ type PasswordResetTokenRepository interface {
 // outcome afterwards.
 type BulkOperationRepository interface {
 	Create(ctx context.Context, operation *models.BulkOperation) error
-	UpdateStatus(id uint, status models.BulkOperationStatus) error
+	UpdateStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error
 }
 
 // BulkStatusRepository holds the read and write halves of a bulk status change.

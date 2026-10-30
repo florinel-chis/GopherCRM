@@ -22,8 +22,10 @@ func (r *bulkOperationRepository) Create(ctx context.Context, operation *models.
 	return r.db.WithContext(ctx).Create(operation).Error
 }
 
-func (r *bulkOperationRepository) UpdateStatus(id uint, status models.BulkOperationStatus) error {
-	return r.db.Model(&models.BulkOperation{}).
+// UpdateStatus records an operation's outcome on the caller's context, which
+// bounds how long it may wait for a connection.
+func (r *bulkOperationRepository) UpdateStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error {
+	return r.db.WithContext(ctx).Model(&models.BulkOperation{}).
 		Where("id = ?", id).
 		Update("status", status).Error
 }

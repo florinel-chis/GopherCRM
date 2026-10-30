@@ -220,6 +220,18 @@ func (tm *TransactionManager) DB(ctx context.Context) *gorm.DB {
 	return tm.db.WithContext(ctx)
 }
 
+// ErrTransactionRootRequired is returned by an operation that must own its
+// transaction when it is called with a context that already carries one. Such
+// an operation sends mail or writes an audit row after its own commit, which
+// an enclosing transaction could still roll back, so it refuses to nest
+// instead of announcing work that may be discarded.
+var ErrTransactionRootRequired = errors.New("operation must run as its own transaction, not inside an enclosing one")
+
+// InTransaction reports whether ctx carries an active transaction.
+func InTransaction(ctx context.Context) bool {
+	return activeTransaction(ctx) != nil
+}
+
 // GetTxFromContext retrieves the transaction from the context
 func GetTxFromContext(ctx context.Context) (*gorm.DB, bool) {
 	tx, ok := ctx.Value(txKey).(*gorm.DB)

@@ -365,13 +365,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database work and the reCAPTCHA check on a fresh background context, so a client that
   disconnected or timed out left the request queued for SQLite's single pooled connection, a
   MySQL row lock or the captcha service, and its writes landed afterwards. The handlers now pass
-  the request context through the services into the transaction manager, the reads and the audit
-  row that precede the transaction, and the captcha call: a cancelled request returns at once
-  with nothing written, a confirmation link stays usable, a captcha check abandoned by the
-  visitor's request is no longer filed as captcha spam, and a bulk batch cancelled after its
-  history row is written is recorded as failed. Responses to requests that are still connected
-  are unchanged, and mail still goes out only after the commit. The conversion settings are
-  still read without the request context. AEO runs keep their own lifecycle context.
+  the request context through the services into the transaction manager, the reads that precede
+  the transaction (the conversion's ownership check included), the spam row, the bulk history row
+  and the captcha call: a cancelled request returns at once with nothing written, a confirmation
+  link stays usable, and a captcha check abandoned by the visitor's request is no longer filed as
+  captcha spam. A bulk batch cancelled after its history row is written is recorded as failed by
+  a write bounded to 5 s; if the connection or row is still held when that expires, the row stays
+  pending and a warning is logged. Conversion, submission, confirmation and the bulk updates are transaction roots: called inside an
+  enclosing transaction they now refuse with `utils.ErrTransactionRootRequired` and write or send
+  nothing (no caller does so today). Responses to requests that are still connected are
+  unchanged, and mail still goes out only after the commit. The conversion settings are still read
+  without the request context. AEO runs keep their own lifecycle context.
   `TransactionManager.DB(ctx)` returns the request-bound handle (the active transaction when
   there is one) for statements outside a managed callback.
 

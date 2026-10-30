@@ -132,6 +132,14 @@ func (s *leadService) GetByID(id uint) (*models.Lead, error) {
 	return s.leadRepo.GetByIDWithPreloads(id, "Owner", "CompanyRecord")
 }
 
+// GetByIDContext reads the lead like GetByID on a handle bound to ctx.
+func (s *leadService) GetByIDContext(ctx context.Context, id uint) (*models.Lead, error) {
+	if s.txManager == nil {
+		return s.GetByID(id)
+	}
+	return s.leadRepo.WithTx(s.txManager.DB(ctx)).GetByIDWithPreloads(id, "Owner", "CompanyRecord")
+}
+
 func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
 	return s.leadRepo.GetByExternalID(externalID)
 }
@@ -562,7 +570,15 @@ func logConversionFailure(logger *logrus.Entry, err error, message string) {
 // request returns the context's error and writes nothing. The conversion
 // settings are read through the configuration service, which does not take a
 // context yet.
+//
+// The conversion is a transaction root: a ctx that already carries a
+// transaction is refused with utils.ErrTransactionRootRequired before anything
+// is read, because the settings reads would need a second connection and the
+// conversion could not be undone by the enclosing rollback it cannot see.
 func (s *leadService) ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error) {
+	if utils.InTransaction(ctx) {
+		return nil, utils.ErrTransactionRootRequired
+	}
 	if err := normalizeCustomerWebsite(customerData); err != nil {
 		return nil, err
 	}

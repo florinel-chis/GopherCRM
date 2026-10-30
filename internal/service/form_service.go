@@ -635,7 +635,14 @@ func originHost(origin string) string {
 // validation is reported to the client; every spam layer produces the same
 // success-shaped outcome a genuine submission gets, with the submission stored
 // as spam so an admin can see what the filters caught.
+//
+// A submission is a transaction root: it mails after its own commit, so a ctx
+// that already carries a transaction is refused with
+// utils.ErrTransactionRootRequired before anything is read or written.
 func (s *formService) SubmitPublic(ctx context.Context, publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error) {
+	if utils.InTransaction(ctx) {
+		return nil, utils.ErrTransactionRootRequired
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "form"), "FormService", "SubmitPublic")
 
 	// Every statement of a submission is bound to the visitor's request: a
@@ -936,8 +943,14 @@ func (s *formService) storePendingSubmission(ctx context.Context, form *models.F
 //
 // The transaction runs on the visitor's request context: a request cancelled
 // while it waits for a connection or for the token's row lock rolls back
-// before anything is claimed, so the link stays usable.
+// before anything is claimed, so the link stays usable. Like a submission it
+// is a transaction root and refuses a ctx that already carries a transaction
+// (utils.ErrTransactionRootRequired): its mail could not be taken back if an
+// enclosing transaction rolled back.
 func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) error {
+	if utils.InTransaction(ctx) {
+		return utils.ErrTransactionRootRequired
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("handler", "confirm"), "FormService", "ConfirmSubmission")
 
 	if strings.TrimSpace(rawToken) == "" {

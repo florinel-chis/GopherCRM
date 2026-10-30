@@ -61,6 +61,9 @@ type UserService interface {
 type LeadService interface {
 	Create(lead *models.Lead) error
 	GetByID(id uint) (*models.Lead, error)
+	// GetByIDContext is GetByID bound to the caller's request: a cancelled
+	// request stops waiting for a connection and returns the context's error.
+	GetByIDContext(ctx context.Context, id uint) (*models.Lead, error)
 	GetByExternalID(externalID string) (*models.Lead, error)
 	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)

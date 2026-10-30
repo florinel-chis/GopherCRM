@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,12 +40,11 @@ const cancellationPromptBound = 3 * time.Second
 // waiting.
 const cancellationSetupBound = 10 * time.Second
 
-// cancellationPollInterval spaces the probes that detect the wait. It is
-// above InnoDB's 100 ms idle threshold on purpose: INFORMATION_SCHEMA.INNODB_TRX
-// is served from a cache that is refreshed only after it has gone unread for
-// that long, so a tighter loop would keep reading the snapshot taken before
-// the wait began.
-const cancellationPollInterval = 150 * time.Millisecond
+// cancellationPollInterval spaces the probes that detect the wait. The MySQL
+// lock-wait probe requires the same statement to be executing on two
+// consecutive polls, so the spacing is what tells a waiting statement from
+// one that merely happened to be running.
+const cancellationPollInterval = 100 * time.Millisecond
 
 var cancellationDBSeq atomic.Uint64
 
@@ -322,27 +322,318 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 		require.NoError(t, f.service.ConfirmSubmission(context.Background(), token))
 		assert.Len(t, f.leads(t), 1)
 	})
+
+	// The submission cases below let the published-form read through and take
+	// the connection only afterwards, so the call is cancelled while its
+	// transaction or its spam write waits, not while the first read does.
+	submitCases := []struct {
+		name    string
+		optIn   bool
+		prepare func(req *PublicSubmissionRequest)
+	}{
+		{name: "a received submission waiting for its transaction"},
+		{name: "a pending submission waiting for its transaction", optIn: true},
+		{name: "a spam submission waiting for its spam write", prepare: func(req *PublicSubmissionRequest) {
+			req.Honeypot = "http://spam.example"
+		}},
+	}
+	for _, tc := range submitCases {
+		t.Run(tc.name+" returns on cancellation and writes nothing", func(t *testing.T) {
+			env := newCancellationEnv(t, open(t))
+			f := env.forms
+			form := f.newForm()
+			if tc.optIn {
+				form = f.optInForm()
+			}
+			f.publish(t, form)
+			holder := &lateHolder{db: env.db}
+			f.wire(hookedFormRepo{FormRepository: f.repo, afterRead: holder.take}, f.leadRepo, f.mailer)
+			req := validSubmission()
+			if tc.prepare != nil {
+				tc.prepare(req)
+			}
+
+			pooled := poolWaiter(t, env.db)
+			err := cancelWhileWaiting(t, func() bool { return holder.held() && pooled() }, holder.release,
+				func(ctx context.Context) error {
+					_, err := f.service.SubmitPublic(ctx, form.PublicID, req, submissionMeta())
+					return err
+				})
+
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Empty(t, f.submissions(t, form.ID))
+			assert.Empty(t, f.leads(t))
+			assert.Zero(t, count(t, env.db, &models.FormConfirmationToken{}))
+			assert.Empty(t, f.mailer.messages())
+		})
+	}
+
+	t.Run("a batch cancelled after its history row is written is recorded failed", func(t *testing.T) {
+		env := newCancellationEnv(t, open(t))
+		lead := env.leads.bind(t).newLead(models.LeadStatusNew, nil)
+		svc, holder := env.hookedBulk()
+		t.Cleanup(holder.release)
+		sqlDB, err := env.db.DB()
+		require.NoError(t, err)
+		base := sqlDB.Stats().WaitCount
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			done <- err
+		}()
+		finish := func() { holder.release(); <-done }
+
+		if !assert.Eventually(t, func() bool { return holder.held() && sqlDB.Stats().WaitCount > base },
+			cancellationSetupBound, cancellationPollInterval, "the batch never waited for its transaction") {
+			cancel()
+			finish()
+			t.FailNow()
+		}
+		cancel()
+		// The outcome write now queues for the same connection; once the
+		// connection is free it records the failure.
+		if !assert.Eventually(t, func() bool { return sqlDB.Stats().WaitCount > base+1 },
+			cancellationSetupBound, cancellationPollInterval, "the outcome write never queued") {
+			finish()
+			t.FailNow()
+		}
+		holder.release()
+		select {
+		case err = <-done:
+		case <-time.After(cancellationPromptBound):
+			<-done
+			t.Fatalf("the batch did not return within %s once the connection was free", cancellationPromptBound)
+		}
+
+		require.ErrorIs(t, err, context.Canceled)
+		var stored models.Lead
+		require.NoError(t, env.db.First(&stored, lead.ID).Error)
+		assert.Equal(t, models.LeadStatusNew, stored.Status)
+		var operations []models.BulkOperation
+		require.NoError(t, env.db.Find(&operations).Error)
+		require.Len(t, operations, 1)
+		assert.Equal(t, models.StatusFailed, operations[0].Status)
+	})
+
+	t.Run("an outcome write that cannot get a connection gives up and leaves the row pending", func(t *testing.T) {
+		env := newCancellationEnv(t, open(t))
+		lead := env.leads.bind(t).newLead(models.LeadStatusNew, nil)
+		previous := bulkOutcomeTimeout
+		bulkOutcomeTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { bulkOutcomeTimeout = previous })
+		svc, holder := env.hookedBulk()
+		pooled := poolWaiter(t, env.db)
+
+		err := cancelWhileWaiting(t, func() bool { return holder.held() && pooled() }, holder.release,
+			func(ctx context.Context) error {
+				_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+				return err
+			})
+
+		require.ErrorIs(t, err, context.Canceled)
+		var stored models.Lead
+		require.NoError(t, env.db.First(&stored, lead.ID).Error)
+		assert.Equal(t, models.LeadStatusNew, stored.Status)
+		var operations []models.BulkOperation
+		require.NoError(t, env.db.Find(&operations).Error)
+		require.Len(t, operations, 1)
+		assert.Equal(t, models.StatusPending, operations[0].Status,
+			"a timed-out outcome write leaves the documented pending row")
+	})
+}
+
+// lateHolder takes the pool's only connection from inside the call under test,
+// at the point a hook fires, and gives it back on release.
+type lateHolder struct {
+	db *gorm.DB
+	mu sync.Mutex
+	tx *gorm.DB
+}
+
+func (h *lateHolder) take() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.tx != nil {
+		return
+	}
+	tx := h.db.Begin()
+	if tx.Error == nil {
+		_ = tx.Exec("SELECT 1").Error
+	}
+	h.tx = tx
+}
+
+func (h *lateHolder) held() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.tx != nil
+}
+
+func (h *lateHolder) release() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.tx != nil {
+		_ = h.tx.Rollback().Error
+	}
+}
+
+// hookedFormRepo runs afterRead once a published-form lookup has returned.
+type hookedFormRepo struct {
+	repository.FormRepository
+	afterRead func()
+}
+
+func (r hookedFormRepo) WithTx(tx *gorm.DB) repository.FormRepository {
+	return hookedFormRepo{FormRepository: r.FormRepository.WithTx(tx), afterRead: r.afterRead}
+}
+
+func (r hookedFormRepo) GetByPublicID(publicID string) (*models.Form, error) {
+	form, err := r.FormRepository.GetByPublicID(publicID)
+	if err == nil && r.afterRead != nil {
+		r.afterRead()
+	}
+	return form, err
+}
+
+// hookedOperationRepo runs afterCreate once a history row has been written.
+type hookedOperationRepo struct {
+	repository.BulkOperationRepository
+	afterCreate func()
+}
+
+func (r hookedOperationRepo) Create(ctx context.Context, operation *models.BulkOperation) error {
+	err := r.BulkOperationRepository.Create(ctx, operation)
+	if err == nil && r.afterCreate != nil {
+		r.afterCreate()
+	}
+	return err
+}
+
+// hookedBulk is a bulk service that takes the only connection right after it
+// has written the history row, before its transaction begins.
+func (e *cancellationEnv) hookedBulk() (BulkStatusService, *lateHolder) {
+	quiet := logrus.New()
+	quiet.SetLevel(logrus.PanicLevel)
+	holder := &lateHolder{db: e.db}
+	svc := NewBulkStatusService(
+		hookedOperationRepo{BulkOperationRepository: repository.NewBulkOperationRepository(e.db), afterCreate: holder.take},
+		repository.NewBulkStatusRepository(e.db), utils.NewTransactionManager(e.db), quiet)
+	return svc, holder
+}
+
+// TestRequestRootRequired pins that the request-scoped entry points refuse to
+// run inside an enclosing transaction: they send mail or record their outcome
+// after their own commit, which an enclosing rollback could not undo. No
+// production caller nests them; the refusal keeps it that way.
+func TestRequestRootRequiredSQLite(t *testing.T) {
+	runRequestRootRequired(t, openCancellationSQLite(t))
+}
+
+func TestRequestRootRequiredMySQL(t *testing.T) {
+	runRequestRootRequired(t, openCancellationMySQL(t, 4))
+}
+
+func runRequestRootRequired(t *testing.T, db *gorm.DB) {
+	env := newCancellationEnv(t, db)
+	f := env.forms
+	tm := utils.NewTransactionManager(db)
+	lead := env.leads.bind(t).newLead(models.LeadStatusQualified, nil)
+	form := f.publish(t, f.newForm())
+	optIn := f.publish(t, f.optInForm())
+	_, err := f.service.SubmitPublic(context.Background(), optIn.PublicID, validSubmission(), submissionMeta())
+	require.NoError(t, err)
+	require.Len(t, f.mailer.messages(), 1)
+	token := tokenFromLink(t, f.mailer.messages()[0].Body)
+
+	nested := func(t *testing.T, call func(ctx context.Context) error) error {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), cancellationPromptBound)
+		defer cancel()
+		var inner error
+		require.NoError(t, tm.WithTransaction(ctx, func(ctx context.Context) error {
+			inner = call(ctx)
+			return nil
+		}))
+		return inner
+	}
+
+	t.Run("conversion", func(t *testing.T) {
+		err := nested(t, func(ctx context.Context) error {
+			_, err := env.leads.svc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
+			return err
+		})
+		require.ErrorIs(t, err, utils.ErrTransactionRootRequired)
+		assert.Zero(t, count(t, db, &models.Customer{}))
+	})
+
+	t.Run("bulk status", func(t *testing.T) {
+		err := nested(t, func(ctx context.Context) error {
+			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			return err
+		})
+		require.ErrorIs(t, err, utils.ErrTransactionRootRequired)
+		assert.Zero(t, count(t, db, &models.BulkOperation{}))
+		var stored models.Lead
+		require.NoError(t, db.First(&stored, lead.ID).Error)
+		assert.Equal(t, models.LeadStatusQualified, stored.Status)
+	})
+
+	t.Run("submission", func(t *testing.T) {
+		err := nested(t, func(ctx context.Context) error {
+			_, err := f.service.SubmitPublic(ctx, form.PublicID, validSubmission(), submissionMeta())
+			return err
+		})
+		require.ErrorIs(t, err, utils.ErrTransactionRootRequired)
+		assert.Empty(t, f.submissions(t, form.ID))
+		assert.Len(t, f.mailer.messages(), 1, "no mail")
+	})
+
+	t.Run("confirmation", func(t *testing.T) {
+		err := nested(t, func(ctx context.Context) error {
+			return f.service.ConfirmSubmission(ctx, token)
+		})
+		require.ErrorIs(t, err, utils.ErrTransactionRootRequired)
+		assert.Len(t, f.mailer.messages(), 1, "no mail")
+		require.NoError(t, f.service.ConfirmSubmission(context.Background(), token), "the link stays usable")
+	})
+
+	assert.Len(t, f.leads(t), 2, "the seeded lead and the one the unnested confirmation created")
 }
 
 // TestRequestCancellationMySQLLockWait covers the wait MySQL deployments
 // actually see: a request queued behind another transaction's row lock.
 // Cancelling it must abandon the statement long before innodb_lock_wait_timeout
-// and leave nothing committed. The probe uses information_schema only, which
-// MySQL 8 and MariaDB 10.11 both provide.
+// and leave nothing committed. The probe reads information_schema.PROCESSLIST,
+// which MySQL 8 and MariaDB 10.11 both provide.
 func TestRequestCancellationMySQLLockWait(t *testing.T) {
 	open := func(t *testing.T) *gorm.DB { return openCancellationMySQL(t, 4) }
 
-	// lockWaiter reports when a transaction of this schema is waiting for a
-	// row lock. Other tests may share the server, hence the schema filter.
+	// lockWaiter reports when the call is blocked on the held row lock. The
+	// lock holder is idle between statements, so the only statement of this
+	// schema that can be executing on another connection is the call's (COMMAND
+	// is Execute for the driver's server-side prepared statements); an
+	// uncontended statement finishes in microseconds, so seeing one on two
+	// consecutive polls means it is waiting for the lock. INNODB_TRX is not
+	// usable here: MySQL 8 reports a lock wait taken during the optimizer's
+	// const-table read of a primary key as RUNNING in state "statistics", and
+	// it serves that view from a cache. Other tests may share the server,
+	// hence the schema filter.
 	lockWaiter := func(t *testing.T, db *gorm.DB) func() bool {
+		seen := 0
 		return func() bool {
-			var threads []uint64
-			if err := db.Raw("SELECT id FROM information_schema.processlist WHERE db = DATABASE()").Scan(&threads).Error; err != nil || len(threads) == 0 {
+			var n int64
+			err := db.Raw(`SELECT COUNT(*) FROM information_schema.PROCESSLIST
+				WHERE DB = DATABASE() AND ID <> CONNECTION_ID() AND COMMAND IN ('Query', 'Execute')
+				AND INFO IS NOT NULL`).Scan(&n).Error
+			if err != nil || n == 0 {
+				seen = 0
 				return false
 			}
-			var n int64
-			err := db.Raw("SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_state = 'LOCK WAIT' AND trx_mysql_thread_id IN ?", threads).Scan(&n).Error
-			return err == nil && n > 0
+			seen++
+			return seen >= 2
 		}
 	}
 	// lockRow takes an exclusive lock on one row in a separate transaction.
@@ -395,9 +686,34 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		assert.Equal(t, models.LeadStatusNew, stored.Status)
 		var operations []models.BulkOperation
 		require.NoError(t, env.db.Find(&operations).Error)
-		for _, op := range operations {
-			assert.NotEqual(t, models.StatusCompleted, op.Status, "a cancelled batch is never recorded as completed")
-		}
+		require.Len(t, operations, 1, "exactly one history row for the batch")
+		assert.Equal(t, models.StatusFailed, operations[0].Status)
+	})
+
+	t.Run("submission queued behind the existing lead's row lock", func(t *testing.T) {
+		env := newCancellationEnv(t, open(t))
+		f := env.forms
+		form := f.publish(t, f.newForm())
+		// The visitor is already a lead, so the submission appends to that
+		// lead: the published-form read and the submission insert pass, and
+		// the lead update waits for the row lock.
+		existing := models.Lead{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.com",
+			Status: models.LeadStatusNew, OwnerID: f.owner.ID, Notes: "Met at the fair."}
+		require.NoError(t, env.db.Create(&existing).Error)
+
+		release := lockRow(t, env.db, &models.Lead{}, existing.ID)
+		err := cancelWhileWaiting(t, lockWaiter(t, env.db), release, func(ctx context.Context) error {
+			_, err := f.service.SubmitPublic(ctx, form.PublicID, validSubmission(), submissionMeta())
+			return err
+		})
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Empty(t, f.submissions(t, form.ID), "the submission insert rolled back with the transaction")
+		var stored models.Lead
+		require.NoError(t, env.db.First(&stored, existing.ID).Error)
+		assert.Equal(t, "Met at the fair.", stored.Notes)
+		assert.Len(t, f.leads(t), 1)
+		assert.Empty(t, f.mailer.messages())
 	})
 
 	t.Run("confirmation queued behind the token's row lock", func(t *testing.T) {

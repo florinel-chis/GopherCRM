@@ -80,11 +80,11 @@ func (r faultyOperationRepo) Create(ctx context.Context, operation *models.BulkO
 	return r.BulkOperationRepository.Create(ctx, operation)
 }
 
-func (r faultyOperationRepo) UpdateStatus(id uint, status models.BulkOperationStatus) error {
+func (r faultyOperationRepo) UpdateStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error {
 	if r.failUpdate {
 		return errors.New("injected history update fault")
 	}
-	return r.BulkOperationRepository.UpdateStatus(id, status)
+	return r.BulkOperationRepository.UpdateStatus(ctx, id, status)
 }
 
 // eventFaultRepo lets the first `allow` automation events through the
