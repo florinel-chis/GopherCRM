@@ -206,7 +206,7 @@ go mod download
 make run
 
 # Or directly with Go
-go run cmd/main.go
+go run ./cmd
 ```
 
 The backend server will start on `http://localhost:8080`. Schema auto-migration runs at startup.

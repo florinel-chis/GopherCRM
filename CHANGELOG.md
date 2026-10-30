@@ -350,6 +350,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`make build` and `make run` work again.** They compiled only `cmd/main.go`, but the `cmd`
+  package now spans several files, so both failed with `undefined: drainAEO`. They build the
+  package (`./cmd`) now, and the documented run commands use `go run ./cmd`.
+
 - **Mail to internationalised domains the CRM accepts (#180).** The SMTP transport refused some
   non-ASCII domain labels the CRM's email validation accepts, for example `info@col·legi.cat`
   (U+00B7, allowed by RFC 5892), with `ErrInvalidAddress` before dialling even when the relay

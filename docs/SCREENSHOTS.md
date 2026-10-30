@@ -19,7 +19,7 @@ detail for each area.
 The suite drives the real API, so the backend must be running first. From the repository root:
 
 ```bash
-DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run cmd/main.go
+DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run ./cmd
 ```
 
 Then, from `gocrm-ui/`:

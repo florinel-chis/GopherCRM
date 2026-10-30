@@ -113,7 +113,7 @@ Every case carries a stable ID (`TC-<AREA>-NNN`, unique within its document) and
 
 ```bash
 # Backend (port must match gocrm-ui/.env VITE_API_BASE_URL)
-DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run cmd/main.go
+DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run ./cmd
 
 # E2E, from gocrm-ui/ (Vite is auto-started by the Playwright webServer block)
 npm run test:e2e          # existing suite
