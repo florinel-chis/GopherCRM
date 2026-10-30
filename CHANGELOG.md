@@ -350,6 +350,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mail to internationalised domains the CRM accepts (#180).** The SMTP transport refused some
+  non-ASCII domain labels the CRM's email validation accepts, for example `info@col·legi.cat`
+  (U+00B7, allowed by RFC 5892), with `ErrInvalidAddress` before dialling even when the relay
+  advertises SMTPUTF8, so password resets and quote emails to such saved addresses failed. A
+  domain label may now hold any non-ASCII character except controls (format controls included,
+  ZWNJ/ZWJ excepted) and whitespace; the address is delivered with SMTPUTF8 and still refused
+  before `MAIL FROM` when the relay does not advertise it. Domain literals, CR/LF, `<` and `>`
+  stay refused everywhere, the local part keeps its rules, and no refusal echoes the address.
+  Regression root: `TestSMTPInternationalisedDomains` (`internal/mailer/smtp_idn_test.go`).
 - **Cancelled requests stop lead conversion, form submissions and bulk status updates (#107).**
   `POST /leads/{id}/convert`, `POST /forms/public/{key}/submissions`,
   `POST /forms/public/confirm` and `POST /{leads,tickets,tasks}/bulk/status` used to run their

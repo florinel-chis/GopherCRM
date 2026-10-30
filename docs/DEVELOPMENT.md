@@ -440,7 +440,12 @@ quotes, where RFC 5321 would allow the brackets, because they are what lets text
 command's angle brackets — and domain literals are `mailer.ErrInvalidAddress`, without echoing
 the value. Non-ASCII addresses (RFC 6531) are delivered only when the relay advertises SMTPUTF8
 after EHLO (net/smtp's `Client.Mail` then adds the `SMTPUTF8` parameter itself) and are refused
-with `ErrInvalidAddress` before `MAIL FROM` otherwise. The headers carry
+with `ErrInvalidAddress` before `MAIL FROM` otherwise. A non-ASCII local part must be printable
+letters, digits and marks; a domain label may hold ASCII letters, digits and `-` and any
+non-ASCII character except controls (format controls such as bidi overrides included, ZWNJ/ZWJ
+excepted) and whitespace, so every label the CRM's validator accepts — `info@col·legi.cat`
+(U+00B7, RFC 5892) — goes out as `RCPT TO:<info@col·legi.cat>` with no IDNA conversion (#180;
+root `TestSMTPInternationalisedDomains`, `internal/mailer/smtp_idn_test.go`). The headers carry
 `mail.Address.String()`; CR/LF in the sender is `ErrInvalidHeader` like the recipient and
 subject. A non-ASCII subject is Q-encoded into encoded words that never split a character and
 folded so that every line holding encoded words, `Subject: ` included, is at most 76 characters
@@ -454,7 +459,8 @@ subjects are rendered from `{{lead.email}}` and similar placeholders), only the 
 `utils.LogError`, which also reduces a malformed relay reply (`textproto.ProtocolError`, which
 carries the whole line) to `smtp_protocol_error`. Roots, against in-process relays on `127.0.0.1` with injected
 sub-second timeouts (`internal/mailer/smtp_transport_test.go`): `TestSMTPDeadlines`,
-`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`.
+`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`, and
+`TestSMTPInternationalisedDomains` (`internal/mailer/smtp_idn_test.go`).
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
