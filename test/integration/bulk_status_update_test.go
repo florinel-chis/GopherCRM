@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -151,7 +152,7 @@ func TestBulkSetLeadStatus_AdminUpdatesEveryLead(t *testing.T) {
 	first := seedStatusLead(t, db, owner.ID, "lead-a@example.com", models.LeadStatusNew)
 	second := seedStatusLead(t, db, owner.ID, "lead-b@example.com", models.LeadStatusNew)
 
-	result, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{first.ID, second.ID}, models.LeadStatusQualified)
 
 	require.NoError(t, err)
@@ -171,7 +172,7 @@ func TestBulkSetLeadStatus_SalesNotOwner_LeavesEarlierLeadsUnchanged(t *testing.
 	mine := seedStatusLead(t, db, sales.ID, "mine@example.com", models.LeadStatusNew)
 	theirs := seedStatusLead(t, db, other.ID, "theirs@example.com", models.LeadStatusNew)
 
-	result, err := svc.BulkSetLeadStatus(sales.ID, models.RoleSales,
+	result, err := svc.BulkSetLeadStatus(context.Background(), sales.ID, models.RoleSales,
 		[]uint{mine.ID, theirs.ID}, models.LeadStatusQualified)
 
 	require.Error(t, err)
@@ -192,7 +193,7 @@ func TestBulkSetLeadStatus_SalesOwnsEveryLead_Succeeds(t *testing.T) {
 	first := seedStatusLead(t, db, sales.ID, "own-a@example.com", models.LeadStatusNew)
 	second := seedStatusLead(t, db, sales.ID, "own-b@example.com", models.LeadStatusContacted)
 
-	result, err := svc.BulkSetLeadStatus(sales.ID, models.RoleSales,
+	result, err := svc.BulkSetLeadStatus(context.Background(), sales.ID, models.RoleSales,
 		[]uint{first.ID, second.ID}, models.LeadStatusContacted)
 
 	require.NoError(t, err)
@@ -207,7 +208,7 @@ func TestBulkSetLeadStatus_MissingID_ChangesNothing(t *testing.T) {
 	admin := seedStatusUser(t, db, "admin-missing@example.com", models.RoleAdmin)
 	lead := seedStatusLead(t, db, admin.ID, "present@example.com", models.LeadStatusNew)
 
-	result, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{lead.ID, 4242}, models.LeadStatusQualified)
 
 	require.Error(t, err)
@@ -226,7 +227,7 @@ func TestBulkSetLeadStatus_DeletedLead_IsNotFound(t *testing.T) {
 	lead := seedStatusLead(t, db, admin.ID, "deleted@example.com", models.LeadStatusNew)
 	require.NoError(t, db.Delete(&models.Lead{}, lead.ID).Error)
 
-	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusQualified)
+	_, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusQualified)
 
 	require.Error(t, err)
 	assert.True(t, apperrors.IsNotFound(err))
@@ -239,7 +240,7 @@ func TestBulkSetLeadStatus_SupportRole_Forbidden(t *testing.T) {
 	support := seedStatusUser(t, db, "support-leads@example.com", models.RoleSupport)
 	lead := seedStatusLead(t, db, support.ID, "support-lead@example.com", models.LeadStatusNew)
 
-	_, err := svc.BulkSetLeadStatus(support.ID, models.RoleSupport, []uint{lead.ID}, models.LeadStatusQualified)
+	_, err := svc.BulkSetLeadStatus(context.Background(), support.ID, models.RoleSupport, []uint{lead.ID}, models.LeadStatusQualified)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
@@ -251,7 +252,7 @@ func TestBulkSetLeadStatus_RejectsEmptyAndOversizedLists(t *testing.T) {
 	svc := newBulkStatusService(db)
 	admin := seedStatusUser(t, db, "admin-limits@example.com", models.RoleAdmin)
 
-	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, nil, models.LeadStatusQualified)
+	_, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, nil, models.LeadStatusQualified)
 	require.Error(t, err)
 	appErr, ok := apperrors.AsAppError(err)
 	require.True(t, ok)
@@ -261,7 +262,7 @@ func TestBulkSetLeadStatus_RejectsEmptyAndOversizedLists(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = uint(i + 1)
 	}
-	_, err = svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, tooMany, models.LeadStatusQualified)
+	_, err = svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, tooMany, models.LeadStatusQualified)
 	require.Error(t, err)
 	appErr, ok = apperrors.AsAppError(err)
 	require.True(t, ok)
@@ -275,7 +276,7 @@ func TestBulkSetLeadStatus_RejectsInvalidStatus(t *testing.T) {
 	admin := seedStatusUser(t, db, "admin-status@example.com", models.RoleAdmin)
 	lead := seedStatusLead(t, db, admin.ID, "invalid-status@example.com", models.LeadStatusNew)
 
-	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatus("archived"))
+	_, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatus("archived"))
 
 	require.Error(t, err)
 	appErr, ok := apperrors.AsAppError(err)
@@ -294,7 +295,7 @@ func TestBulkSetTicketStatus_SupportUpdatesOwnTickets(t *testing.T) {
 	first := seedStatusTicket(t, db, &support.ID, models.TicketStatusOpen)
 	second := seedStatusTicket(t, db, &support.ID, models.TicketStatusOpen)
 
-	result, err := svc.BulkSetTicketStatus(support.ID, models.RoleSupport,
+	result, err := svc.BulkSetTicketStatus(context.Background(), support.ID, models.RoleSupport,
 		[]uint{first.ID, second.ID}, models.TicketStatusInProgress)
 
 	require.NoError(t, err)
@@ -313,7 +314,7 @@ func TestBulkSetTicketStatus_SupportNotAssigned_LeavesEarlierTicketsUnchanged(t 
 	theirs := seedStatusTicket(t, db, &other.ID, models.TicketStatusOpen)
 	unassigned := seedStatusTicket(t, db, nil, models.TicketStatusOpen)
 
-	_, err := svc.BulkSetTicketStatus(support.ID, models.RoleSupport,
+	_, err := svc.BulkSetTicketStatus(context.Background(), support.ID, models.RoleSupport,
 		[]uint{mine.ID, theirs.ID, unassigned.ID}, models.TicketStatusResolved)
 
 	require.Error(t, err)
@@ -331,11 +332,11 @@ func TestBulkSetTicketStatus_SalesAndCustomerAreForbidden(t *testing.T) {
 	customer := seedStatusUser(t, db, "customer-tickets@example.com", models.RoleCustomer)
 	ticket := seedStatusTicket(t, db, &sales.ID, models.TicketStatusOpen)
 
-	_, err := svc.BulkSetTicketStatus(sales.ID, models.RoleSales, []uint{ticket.ID}, models.TicketStatusResolved)
+	_, err := svc.BulkSetTicketStatus(context.Background(), sales.ID, models.RoleSales, []uint{ticket.ID}, models.TicketStatusResolved)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
 
-	_, err = svc.BulkSetTicketStatus(customer.ID, models.RoleCustomer, []uint{ticket.ID}, models.TicketStatusResolved)
+	_, err = svc.BulkSetTicketStatus(context.Background(), customer.ID, models.RoleCustomer, []uint{ticket.ID}, models.TicketStatusResolved)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
 
@@ -352,7 +353,7 @@ func TestBulkSetTicketStatus_ReopeningClosedTicket_RollsBackTheBatch(t *testing.
 	open := seedStatusTicket(t, db, &admin.ID, models.TicketStatusOpen)
 	closed := seedStatusTicket(t, db, &admin.ID, models.TicketStatusClosed)
 
-	_, err := svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin,
+	_, err := svc.BulkSetTicketStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{open.ID, closed.ID}, models.TicketStatusInProgress)
 
 	require.Error(t, err)
@@ -369,7 +370,7 @@ func TestBulkSetTicketStatus_MissingID_ChangesNothing(t *testing.T) {
 	admin := seedStatusUser(t, db, "admin-ticket-missing@example.com", models.RoleAdmin)
 	ticket := seedStatusTicket(t, db, &admin.ID, models.TicketStatusOpen)
 
-	_, err := svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin,
+	_, err := svc.BulkSetTicketStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{ticket.ID, 9999}, models.TicketStatusResolved)
 
 	require.Error(t, err)
@@ -389,7 +390,7 @@ func TestBulkSetTaskStatus_AdminUpdatesAnyTask(t *testing.T) {
 	first := seedStatusTask(t, db, assignee.ID, models.TaskStatusPending)
 	second := seedStatusTask(t, db, assignee.ID, models.TaskStatusPending)
 
-	result, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{first.ID, second.ID}, models.TaskStatusInProgress)
 
 	require.NoError(t, err)
@@ -407,7 +408,7 @@ func TestBulkSetTaskStatus_NotAssigned_LeavesEarlierTasksUnchanged(t *testing.T)
 	mine := seedStatusTask(t, db, support.ID, models.TaskStatusPending)
 	theirs := seedStatusTask(t, db, other.ID, models.TaskStatusPending)
 
-	_, err := svc.BulkSetTaskStatus(support.ID, models.RoleSupport,
+	_, err := svc.BulkSetTaskStatus(context.Background(), support.ID, models.RoleSupport,
 		[]uint{mine.ID, theirs.ID}, models.TaskStatusInProgress)
 
 	require.Error(t, err)
@@ -429,7 +430,7 @@ func TestBulkSetTaskStatus_CompletedTaskInBatch_RollsBackTheBatch(t *testing.T) 
 	completed := seedStatusTask(t, db, admin.ID, models.TaskStatusCompleted)
 	trailing := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 
-	result, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{pending.ID, completed.ID, trailing.ID}, models.TaskStatusInProgress)
 
 	require.Error(t, err)
@@ -452,7 +453,7 @@ func TestBulkSetTaskStatus_CompletedToCompleted_IsAllowed(t *testing.T) {
 	completed := seedStatusTask(t, db, admin.ID, models.TaskStatusCompleted)
 	pending := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 
-	result, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{completed.ID, pending.ID}, models.TaskStatusCompleted)
 
 	require.NoError(t, err)
@@ -467,7 +468,7 @@ func TestBulkSetTaskStatus_MissingID_ChangesNothing(t *testing.T) {
 	admin := seedStatusUser(t, db, "admin-task-missing@example.com", models.RoleAdmin)
 	task := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 
-	_, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin,
+	_, err := svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{task.ID, 7777}, models.TaskStatusCancelled)
 
 	require.Error(t, err)
@@ -484,7 +485,7 @@ func TestBulkSetTaskStatus_DuplicateIDsCountOnce(t *testing.T) {
 	admin := seedStatusUser(t, db, "admin-dupes@example.com", models.RoleAdmin)
 	task := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 
-	result, err := svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin,
+	result, err := svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin,
 		[]uint{task.ID, task.ID}, models.TaskStatusInProgress)
 
 	require.NoError(t, err)
@@ -516,17 +517,17 @@ func TestBulkSetStatus_RecordsTheOperation(t *testing.T) {
 	task := seedStatusTask(t, db, admin.ID, models.TaskStatusPending)
 	completed := seedStatusTask(t, db, admin.ID, models.TaskStatusCompleted)
 
-	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID, lead.ID}, models.LeadStatusContacted)
+	_, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{lead.ID, lead.ID}, models.LeadStatusContacted)
 	require.NoError(t, err)
-	_, err = svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID, 999999}, models.LeadStatusQualified)
+	_, err = svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{lead.ID, 999999}, models.LeadStatusQualified)
 	require.Error(t, err)
-	_, err = svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin, []uint{ticket.ID}, models.TicketStatusResolved)
+	_, err = svc.BulkSetTicketStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{ticket.ID}, models.TicketStatusResolved)
 	require.NoError(t, err)
-	_, err = svc.BulkSetTicketStatus(admin.ID, models.RoleAdmin, []uint{ticket.ID, closedTicket.ID}, models.TicketStatusOpen)
+	_, err = svc.BulkSetTicketStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{ticket.ID, closedTicket.ID}, models.TicketStatusOpen)
 	require.Error(t, err)
-	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, []uint{task.ID}, models.TaskStatusInProgress)
+	_, err = svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{task.ID}, models.TaskStatusInProgress)
 	require.NoError(t, err)
-	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, []uint{completed.ID}, models.TaskStatusPending)
+	_, err = svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{completed.ID}, models.TaskStatusPending)
 	require.Error(t, err)
 
 	type row struct {
@@ -570,13 +571,13 @@ func TestBulkSetStatus_InputRefusalsRecordNothing(t *testing.T) {
 		tooMany[i] = uint(i + 1)
 	}
 
-	_, err := svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatus("bogus"))
+	_, err := svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatus("bogus"))
 	require.Error(t, err)
-	_, err = svc.BulkSetLeadStatus(admin.ID, models.RoleAdmin, nil, models.LeadStatusContacted)
+	_, err = svc.BulkSetLeadStatus(context.Background(), admin.ID, models.RoleAdmin, nil, models.LeadStatusContacted)
 	require.Error(t, err)
-	_, err = svc.BulkSetTaskStatus(admin.ID, models.RoleAdmin, tooMany, models.TaskStatusPending)
+	_, err = svc.BulkSetTaskStatus(context.Background(), admin.ID, models.RoleAdmin, tooMany, models.TaskStatusPending)
 	require.Error(t, err)
-	_, err = svc.BulkSetLeadStatus(support.ID, models.RoleSupport, []uint{lead.ID}, models.LeadStatusContacted)
+	_, err = svc.BulkSetLeadStatus(context.Background(), support.ID, models.RoleSupport, []uint{lead.ID}, models.LeadStatusContacted)
 	require.Error(t, err)
 
 	assert.Empty(t, bulkOperationsOf(t, db, admin.ID))

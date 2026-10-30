@@ -72,7 +72,7 @@ type LeadService interface {
 	List(offset, limit int) ([]models.Lead, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
-	ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error)
+	ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error)
 	GetCount() (int64, error)
 	GetCountByClassification(classification models.LeadClassification) (int64, error)
 	// Dashboard analytics. The ByOwner variants narrow the query to one owner
@@ -372,9 +372,9 @@ type APIKeyService interface {
 // single-record update applies, and, once it passes the initial checks
 // (status, list size, role), recorded as a bulk_operations row.
 type BulkStatusService interface {
-	BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
-	BulkSetTicketStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
-	BulkSetTaskStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetLeadStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTicketStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTaskStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
 }
 
 // AEOService drives the Answer Engine Optimization module: the brand profile,
@@ -528,7 +528,7 @@ type FormService interface {
 	// SubmitPublic validates, spam-checks and stores a submission, then creates
 	// the lead and sends the mail the form configures — or, for a double-opt-in
 	// form, defers all of that to ConfirmSubmission.
-	SubmitPublic(publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error)
+	SubmitPublic(ctx context.Context, publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error)
 	// ConfirmSubmission spends a confirmation token exactly once.
-	ConfirmSubmission(rawToken string) error
+	ConfirmSubmission(ctx context.Context, rawToken string) error
 }

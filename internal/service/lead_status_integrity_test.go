@@ -23,6 +23,7 @@ package service
 // that bites. Every outcome is asserted on committed rows.
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -87,7 +88,7 @@ func runConvertedStatusScenarios(t *testing.T, db *gorm.DB) {
 		env := root.bind(t)
 		env.reset()
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 
 		// The edit form sends the current status back with the other fields.
@@ -111,12 +112,12 @@ func runConvertedStatusScenarios(t *testing.T, db *gorm.DB) {
 		env.reset()
 		first := env.newLead(models.LeadStatusQualified, nil)
 		second := env.newLead(models.LeadStatusNew, nil)
-		_, err := bulk.BulkSetLeadStatus(env.owner.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusConverted)
+		_, err := bulk.BulkSetLeadStatus(context.Background(), env.owner.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusConverted)
 		assertConvertedRefusal(t, err)
 		assert.Equal(t, models.LeadStatusQualified, env.committedLead(first.ID).Status)
 		assert.Equal(t, models.LeadStatusNew, env.committedLead(second.ID).Status)
 
-		_, err = bulk.BulkSetLeadStatus(env.owner.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusContacted)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.owner.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusContacted)
 		require.NoError(t, err, "every other status is unchanged")
 		assert.Equal(t, models.LeadStatusContacted, env.committedLead(first.ID).Status)
 		assert.Equal(t, models.LeadStatusContacted, env.committedLead(second.ID).Status)
@@ -218,7 +219,7 @@ func runConversionStatusRace(t *testing.T, db *gorm.DB) {
 	converting := NewLeadService(hookedLeadRepo{LeadRepository: env.leads, hook: hook}, customers, companies, txManager,
 		WithLeadConversionRules(env.config))
 
-	customer, convertErr := converting.ConvertToCustomer(lead.ID, &models.Customer{})
+	customer, convertErr := converting.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 	require.NotNil(t, rival, "the hook must have run")
 	rivalErr := rival.wait(t)
 	require.NoError(t, rivalErr, "the status change is legal either way")

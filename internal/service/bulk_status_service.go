@@ -121,13 +121,20 @@ func isValidTaskStatus(status models.TaskStatus) bool {
 // runBulkStatusUpdate records the operation, runs apply inside one transaction
 // and reports the outcome against that record. apply returning an error rolls
 // the transaction back, so nothing apply wrote survives a refusal.
-func (s *bulkStatusService) runBulkStatusUpdate(actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error) (*models.BulkStatusUpdateResult, error) {
-	operation, err := s.createBulkOperation(actorID, resourceType, models.BulkAction, len(ids))
+//
+// ctx is the caller's request. The history row and the transaction are bound
+// to it, so a request cancelled before the history row is written leaves no
+// trace, and one cancelled while the batch waits for a connection or a row
+// lock rolls the batch back. The outcome is then recorded against the history
+// row regardless of the request, because that row already exists and must not
+// stay pending.
+func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error) (*models.BulkStatusUpdateResult, error) {
+	operation, err := s.createBulkOperation(ctx, actorID, resourceType, models.BulkAction, len(ids))
 	if err != nil {
 		return nil, err
 	}
 
-	err = s.transactionMgr.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err = s.transactionMgr.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok || tx == nil {
 			return fmt.Errorf("transaction not found in context")
@@ -159,7 +166,7 @@ func (s *bulkStatusService) recordBulkStatusOutcome(operationID uint, status mod
 // Admins may update any lead; sales users only leads they own, and a batch
 // containing even one lead they do not own is refused in full, naming those
 // leads. Support and customer users have no access to leads at all.
-func (s *bulkStatusService) BulkSetLeadStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
@@ -175,7 +182,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(actorID uint, actorRole models.Use
 		return nil, bulkStatusForbidden("Only sales and admin users can update leads", nil)
 	}
 
-	return s.runBulkStatusUpdate(actorID, "leads", unique, func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "leads", unique, func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error {
 		leads, err := txRepo.GetLeadsByIDs(unique)
 		if err != nil {
 			return err
@@ -221,7 +228,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(actorID uint, actorRole models.Use
 // so both are refused outright. A closed ticket cannot be reopened here either:
 // the single-record update refuses that transition, and the bulk endpoint must
 // not be a way around it.
-func (s *bulkStatusService) BulkSetTicketStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
@@ -239,7 +246,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(actorID uint, actorRole models.U
 		return nil, bulkStatusForbidden("Your role cannot update tickets", nil)
 	}
 
-	return s.runBulkStatusUpdate(actorID, "tickets", unique, func(txRepo repository.BulkStatusRepository, _ repository.AutomationRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tickets", unique, func(txRepo repository.BulkStatusRepository, _ repository.AutomationRepository) error {
 		tickets, err := txRepo.GetTicketsByIDs(unique)
 		if err != nil {
 			return err
@@ -279,7 +286,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(actorID uint, actorRole models.U
 // Admins may update any task, everyone else only tasks assigned to them. A
 // completed task's status is final for admins too, exactly as it is through the
 // single-record update.
-func (s *bulkStatusService) BulkSetTaskStatus(actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
@@ -288,7 +295,7 @@ func (s *bulkStatusService) BulkSetTaskStatus(actorID uint, actorRole models.Use
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid task status: %s", status))
 	}
 
-	return s.runBulkStatusUpdate(actorID, "tasks", unique, func(txRepo repository.BulkStatusRepository, _ repository.AutomationRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(txRepo repository.BulkStatusRepository, _ repository.AutomationRepository) error {
 		tasks, err := txRepo.GetTasksByIDs(unique)
 		if err != nil {
 			return err
@@ -365,7 +372,7 @@ func NewBulkStatusService(
 
 // createBulkOperation writes the pending history row of one bulk status update
 // before the batch runs.
-func (s *bulkStatusService) createBulkOperation(userID uint, resourceType string, operationType models.BulkOperationType, totalItems int) (*models.BulkOperation, error) {
+func (s *bulkStatusService) createBulkOperation(ctx context.Context, userID uint, resourceType string, operationType models.BulkOperationType, totalItems int) (*models.BulkOperation, error) {
 	operation := &models.BulkOperation{
 		UserID:        userID,
 		ResourceType:  resourceType,
@@ -375,7 +382,7 @@ func (s *bulkStatusService) createBulkOperation(userID uint, resourceType string
 		TotalItems:    totalItems,
 	}
 
-	err := s.bulkOperationRepo.Create(operation)
+	err := s.bulkOperationRepo.Create(ctx, operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bulk operation: %w", err)
 	}

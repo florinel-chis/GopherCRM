@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,11 +112,11 @@ func (f *fakeFormService) PublicDefinition(publicID, origin string) (*service.Pu
 	return nil, apperrors.ErrNotFound
 }
 
-func (f *fakeFormService) SubmitPublic(publicID string, req *service.PublicSubmissionRequest, meta service.SubmissionMeta) (*service.SubmitOutcome, error) {
+func (f *fakeFormService) SubmitPublic(_ context.Context, publicID string, req *service.PublicSubmissionRequest, meta service.SubmissionMeta) (*service.SubmitOutcome, error) {
 	return nil, apperrors.ErrNotFound
 }
 
-func (f *fakeFormService) ConfirmSubmission(rawToken string) error {
+func (f *fakeFormService) ConfirmSubmission(_ context.Context, rawToken string) error {
 	return service.ErrInvalidConfirmationToken
 }
 

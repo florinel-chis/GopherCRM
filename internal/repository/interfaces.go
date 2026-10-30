@@ -448,7 +448,7 @@ type PasswordResetTokenRepository interface {
 // one bulk_operations row created before the batch runs, its status set to the
 // outcome afterwards.
 type BulkOperationRepository interface {
-	Create(operation *models.BulkOperation) error
+	Create(ctx context.Context, operation *models.BulkOperation) error
 	UpdateStatus(id uint, status models.BulkOperationStatus) error
 }
 

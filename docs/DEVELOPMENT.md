@@ -161,8 +161,29 @@ every wait bounded by a context; the MySQL roots create and drop a uniquely name
 injects begin/commit/rollback/savepoint failures deterministically, including poisoned commits
 across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCommitFailedRollback`
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
-be committed). Services still call the manager with `context.Background()`; request-context
-propagation is tracked in #107.
+be committed).
+
+**Request context (#107)** — lead conversion, the public form submission and confirmation, and the
+three routed bulk status updates run on the HTTP request's context: the handler passes
+`c.Request.Context()` to the service, the service hands it to `WithTransaction` /
+`WithTransactionAndRetry`, and the statements it issues outside the managed callback (the lead and
+published-form reads that precede the transaction, the spam row, the bulk history row) go through
+`txManager.DB(ctx)`, a handle bound to the context that reuses the active transaction when the
+context carries one. The reCAPTCHA call uses the same context. A request that is cancelled or
+times out therefore stops waiting for a pooled connection or a row lock, rolls back and writes
+nothing: a confirmation token stays unspent, a captcha check abandoned by the request returns the
+context's error instead of a spam verdict, and a bulk batch whose history row already exists is
+recorded `failed` on a background write so the row never stays pending. Mail and notifications
+still go out only after the commit and are not tied to the request. The cancellation surfaces as
+the generic failure answer (500, or the invalid-link page for a confirmation) to a client that is
+already gone, and is logged like any other failure of the route. Not yet bound: the conversion settings
+(`ConfigurationService` takes no context), and every other service, which still passes
+`context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
+take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}` (one-connection pool,
+cancelled while waiting and cancelled before the call), `TestRequestCancellationMySQLLockWait`
+(queued behind another transaction's row lock, detected through `information_schema`, which
+MySQL 8 and MariaDB 10.11 both provide), `TestRequestCancellationCaptchaVerifier` (a stalled
+verification server) and `TestTransactionManagerDB{SQLite,MySQL}`.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use

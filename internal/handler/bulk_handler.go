@@ -70,7 +70,7 @@ func (h *BulkHandler) BulkUpdateLeadStatus(c *gin.Context) {
 		return
 	}
 
-	result, err := h.bulkService.BulkSetLeadStatus(
+	result, err := h.bulkService.BulkSetLeadStatus(c.Request.Context(),
 		c.GetUint("user_id"), models.UserRole(c.GetString("user_role")), req.LeadIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk lead status update rejected")
@@ -122,7 +122,7 @@ func (h *BulkHandler) BulkUpdateTicketStatus(c *gin.Context) {
 		return
 	}
 
-	result, err := h.bulkService.BulkSetTicketStatus(
+	result, err := h.bulkService.BulkSetTicketStatus(c.Request.Context(),
 		c.GetUint("user_id"), currentUserRole, req.TicketIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk ticket status update rejected")
@@ -160,7 +160,7 @@ func (h *BulkHandler) BulkUpdateTaskStatus(c *gin.Context) {
 		return
 	}
 
-	result, err := h.bulkService.BulkSetTaskStatus(
+	result, err := h.bulkService.BulkSetTaskStatus(c.Request.Context(),
 		c.GetUint("user_id"), models.UserRole(c.GetString("user_role")), req.TaskIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk task status update rejected")

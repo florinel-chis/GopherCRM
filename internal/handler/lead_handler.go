@@ -598,7 +598,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		Notes:     req.Notes,
 	}
 
-	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
+	customer, err := h.leadService.ConvertToCustomer(c.Request.Context(), uint(id), customerData)
 	if err != nil {
 		// A refusal the caller can act on (4xx) is a warning; only a
 		// failure the server owns (500) is logged as an error.

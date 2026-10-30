@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -63,7 +64,7 @@ func TestLeadConversionTransaction(t *testing.T) {
 		customerData := &models.Customer{}
 
 		// Convert lead to customer
-		convertedCustomer, err := leadService.ConvertToCustomer(lead.ID, customerData)
+		convertedCustomer, err := leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 		require.NoError(t, err)
 		require.NotNil(t, convertedCustomer)
 
@@ -106,7 +107,7 @@ func TestLeadConversionTransaction(t *testing.T) {
 		}
 
 		// Attempt conversion - this should fail and rollback
-		_, err := leadService.ConvertToCustomer(lead.ID, customerData)
+		_, err := leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 
 		// The exact error depends on your validation rules
 		// For this test, we assume some validation error occurs
@@ -135,11 +136,11 @@ func TestLeadConversionTransaction(t *testing.T) {
 		customerData := &models.Customer{}
 
 		// First conversion should succeed
-		_, err := leadService.ConvertToCustomer(lead.ID, customerData)
+		_, err := leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 		require.NoError(t, err)
 
 		// Second conversion attempt should fail
-		_, err = leadService.ConvertToCustomer(lead.ID, customerData)
+		_, err = leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 		assert.Error(t, err)
 		// The error should indicate lead is already converted
 		assert.Contains(t, err.Error(), "already converted")
@@ -185,7 +186,7 @@ func TestLeadConversionTransactionEdgeCases(t *testing.T) {
 		// Convert with minimal customer data - should inherit from lead
 		customerData := &models.Customer{}
 
-		convertedCustomer, err := leadService.ConvertToCustomer(lead.ID, customerData)
+		convertedCustomer, err := leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 		require.NoError(t, err)
 
 		// Verify data inheritance
@@ -229,7 +230,7 @@ func TestLeadConversionTransactionEdgeCases(t *testing.T) {
 			Company:   "New Company",
 		}
 
-		convertedCustomer, err := leadService.ConvertToCustomer(lead.ID, customerData)
+		convertedCustomer, err := leadService.ConvertToCustomer(context.Background(), lead.ID, customerData)
 		require.NoError(t, err)
 
 		// Verify overridden data is used
@@ -243,7 +244,7 @@ func TestLeadConversionTransactionEdgeCases(t *testing.T) {
 	t.Run("nonexistent lead conversion", func(t *testing.T) {
 		customerData := &models.Customer{}
 
-		_, err := leadService.ConvertToCustomer(99999, customerData)
+		_, err := leadService.ConvertToCustomer(context.Background(), 99999, customerData)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
