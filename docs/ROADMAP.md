@@ -112,6 +112,13 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
   email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment
   check (refuse to start, or refuse to stamp, without a configured transport) is a candidate.
+- **SMTP require-TLS policy** — STARTTLS is opportunistic: without `SMTP_USER`, a relay that does
+  not advertise STARTTLS (or a path attacker who strips the offer) receives mail, including
+  password-reset and confirmation links, in cleartext. A setting that refuses delivery without
+  TLS (and optionally implicit TLS on port 465) is a known gap.
+- **Internationalised domains at send time** — the SMTP transport refuses some domains the CRM's
+  email validation accepts (for example a label containing U+00B7), even when the relay offers
+  SMTPUTF8, so mail to such saved addresses fails before dialling. Tracked in #180.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
   hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
 

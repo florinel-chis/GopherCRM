@@ -32,6 +32,12 @@ func LogError(err error) error {
 	if errors.As(err, &smtpError) {
 		return fmt.Errorf("SMTP request failed (smtp_code=%d)", smtpError.Code)
 	}
+	// A malformed reply ("550X who@example.com ...") is reported as a
+	// ProtocolError that carries the whole line; keep only a fixed marker.
+	var protocolError textproto.ProtocolError
+	if errors.As(err, &protocolError) {
+		return errors.New("SMTP request failed (smtp_protocol_error)")
+	}
 
 	message := err.Error()
 	quote := strings.IndexAny(message, "'\"")

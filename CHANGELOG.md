@@ -522,6 +522,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **SMTP delivery is bounded and validates its headers (#113).** The SMTP mailer no longer calls
+  `smtp.SendMail`, which had no timeout: a relay that stalled at the greeting or any later command
+  held the calling request or worker indefinitely. Each delivery now dials within 10 s and runs
+  the whole conversation (greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT) under one 30 s
+  deadline that is a hard bound: the raw connection is closed on every path and, at the latest,
+  when the deadline passes, so TLS cleanup cannot add its own grace period. STARTTLS stays
+  opportunistic — used whenever the relay advertises it, and a failed handshake aborts the
+  delivery; PLAIN credentials are never sent over an unencrypted connection to a host other than
+  localhost, and configured credentials against a relay that offers no AUTH fail instead of
+  submitting unauthenticated. The recipient and the configured `SMTP_FROM` must each be one RFC
+  5322 address (display names allowed). The envelope address is serialised safely: a dot-atom
+  local part as is, any other local part re-quoted (`RCPT TO:<"a b"@example.com>`) — `net/mail`
+  returns quoted local parts unquoted, so `"x> NOTIFY=NEVER"@example.com` would otherwise have
+  reached `RCPT TO` as extra ESMTP parameters. Control characters, `<` or `>` anywhere in the
+  address (even quoted) and domain literals are refused with `mailer.ErrInvalidAddress` before any
+  relay is contacted; an internationalised address is delivered only when the relay advertises
+  SMTPUTF8 and otherwise refused before `MAIL FROM`. CR or LF in the sender is refused like the recipient and subject
+  (`mailer.ErrInvalidHeader`), the envelope carries the bare address (previously a recipient with
+  a display name produced a malformed `RCPT TO`), and a non-ASCII subject is RFC 2047 encoded and
+  folded into lines of at most 76 characters. A relay reply such as a 535 is returned as it is even
+  when the abort that follows runs into the deadline; only I/O failures caused by the deadline are
+  reported as `os.ErrDeadlineExceeded`. The body, declared UTF-8, is now sent quoted-printable instead of raw 8-bit, with every
+  line ending (including a bare CR) normalised to CRLF and long lines soft-wrapped. Failure logs
+  no longer carry the subject (automation subjects can expand `{{lead.email}}`) or, for the
+  password reset, the recipient; transport errors go through `utils.LogError`, which now also
+  reduces a malformed relay reply (`textproto.ProtocolError`) to `smtp_protocol_error`.
 - **Service and HTTP logging privacy.** The sample `LOG_LEVEL` is now `info`. Service logs omit
   emails, names, titles, search terms and raw sort values, while shared helpers omit argument,
   result and handler response payloads (including issued credentials). Access logs omit query
