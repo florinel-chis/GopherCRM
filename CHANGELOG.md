@@ -377,7 +377,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now one transaction: the owner row is locked, the hash it was verified against is re-checked,
   the caller's current refresh token (new optional `refresh_token` body field) is claimed, the new
   hash written, every other refresh token revoked and the replacement session issued. Any failure
-  rolls all of it back — the revocation is no longer best-effort after a committed password. The
+  before the commit rolls all of it back — the revocation is no longer best-effort after a committed
+  password (a failed COMMIT stays ambiguous, as for every transaction). The
   response carries `token`, `refresh_token` and `user` when the session was renewed; a presented
   token that is not a live session of the caller is `409 SESSION_STALE`; API-key requests never
   receive session credentials. The Profile page stores the replacement pair in the storage the
@@ -393,8 +394,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ends the session; a timeout, network error or 5xx keeps the stored tokens. `/auth/refresh`
   answers operational failures with `503 SESSION_REFRESH_UNAVAILABLE` instead of the generic 401,
   so a transient database error no longer signs the user out. Logout drops the stored tokens at
-  once, waits for a refresh already on the wire and renews privately when its access token has
-  expired, so the server-side revoke-all still runs. The client reads the refresh token only from
+  once, waits for a refresh already on the wire and authenticates the server-side revoke-all with
+  that refresh's successor (kept privately, never stored) or, when its access token has expired,
+  with a private renewal. The password change retries only for the account and session it started
+  with. The client reads the refresh token only from
   the storage that holds the access token and a new sign-in replaces both keys. Cross-tab refresh
   coordination remains open (#184).
 - **A login paused across an erasure can no longer restore the erased account.** Login

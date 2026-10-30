@@ -48,11 +48,10 @@ const (
 	cpSibling     = "change-password-sibling"
 	cpBystander   = "change-password-bystander"
 	cpForeign     = "change-password-foreign"
-	// cpGrace is how long a forced-ordering scenario lets the second
-	// request run into the lock the first one holds before releasing it.
-	// The outcome assertions hold whether or not the second request got that
-	// far; the grace only makes the contended path the one usually taken.
-	cpGrace = 750 * time.Millisecond
+	// cpLockPoll is the polling interval while a forced-ordering scenario
+	// waits (bounded by resetTimeout) for the second request to be reported
+	// as waiting for a row lock.
+	cpLockPoll = 10 * time.Millisecond
 )
 
 // ------------------------------------------------------------------- hooks ---
@@ -616,15 +615,70 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 			t.Fatalf("%s never reached its hold point", what)
 		}
 	}
-	grace := func(ch <-chan result) {
+	// progress installs a hook on the transaction-bound owner read — the
+	// locking statement of both the rotation and the password change — and
+	// returns a channel closed when the second request is about to run it.
+	// It is installed after the first request is parked past its own owner
+	// read, so only the second request can fire it.
+	progress := func() <-chan struct{} {
+		reached := make(chan struct{})
+		var once sync.Once
+		f.hooks.install(func(h *cpHooks) {
+			h.txGetByID = func(uint) error {
+				once.Do(func() { close(reached) })
+				return nil
+			}
+		})
+		return reached
+	}
+	// contend waits until the second request is blocked on the lock the
+	// first one holds: it must reach its locking statement, and the server
+	// must then report that statement still executing. The first request is
+	// parked in Go between statements, so the only `... FOR UPDATE` running
+	// on this schema is the second request's (COMMAND is Execute for the
+	// driver's server-side prepared statements), and an uncontended primary-key
+	// read finishes in microseconds; seeing it in information_schema.PROCESSLIST
+	// on two polls in a row means it is waiting for the row lock. PROCESSLIST
+	// exists on MySQL 8 and MariaDB 10.11 alike (INNODB_TRX is not usable here:
+	// MySQL reports a lock wait taken during the optimizer's const-table read
+	// as RUNNING in state "statistics"). On SQLite the single pooled connection
+	// serialises the two requests: the second cannot start its transaction
+	// while the first holds the connection, so there is no lock to observe and
+	// the ordering is guaranteed by the pool instead.
+	contend := func(t *testing.T, reached <-chan struct{}, ch <-chan result) {
+		t.Helper()
 		if !contended {
 			return
 		}
-		// Bounded: the second request either finishes (it must not, when it
-		// needs a lock the first one holds) or runs into that lock.
 		select {
-		case <-ch:
-		case <-time.After(cpGrace):
+		case <-reached:
+		case r := <-ch:
+			t.Fatalf("the second request finished before reaching its locking read: %v", r.err)
+		case <-time.After(resetTimeout):
+			t.Fatalf("the second request never reached its locking read")
+		}
+		deadline := time.Now().Add(resetTimeout)
+		seen := 0
+		for seen < 2 {
+			var waiting int64
+			require.NoError(t, f.db.WithContext(resetContext(t)).Raw(`SELECT COUNT(*)
+				FROM information_schema.PROCESSLIST
+				WHERE DB = DATABASE() AND ID <> CONNECTION_ID() AND COMMAND IN ('Query', 'Execute')
+				AND INFO LIKE '%FOR UPDATE%'`).Scan(&waiting).Error)
+			if waiting > 0 {
+				seen++
+			} else {
+				seen = 0
+			}
+			select {
+			case r := <-ch:
+				t.Fatalf("the second request finished without waiting for the lock: %v", r.err)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the second request was never reported waiting for the row lock")
+			}
+			time.Sleep(cpLockPoll)
 		}
 	}
 	tokenID := func(t *testing.T, raw string) uint {
@@ -648,10 +702,11 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 		})
 		refresh := start(func() (*AuthTokens, error) { return f.svc.RefreshAccessToken(cpSibling) })
 		enter(t, entered, "the sibling refresh")
+		reached := progress()
 		change := start(func() (*AuthTokens, error) {
 			return f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
 		})
-		grace(change)
+		contend(t, reached, change)
 		release()
 
 		r := await(t, refresh, "the sibling refresh")
@@ -673,8 +728,9 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 			return f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
 		})
 		enter(t, entered, "the password change")
+		reached := progress()
 		refresh := start(func() (*AuthTokens, error) { return f.svc.RefreshAccessToken(cpSibling) })
-		grace(refresh)
+		contend(t, reached, refresh)
 		release()
 
 		c := await(t, change, "the password change")
@@ -701,10 +757,11 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 		refresh := start(func() (*AuthTokens, error) { return f.svc.RefreshAccessToken(cpPresented) })
 		enter(t, entered, "the refresh")
 		f.hooks.install(func(h *cpHooks) { h.afterClaim = nil })
+		reached := progress()
 		change := start(func() (*AuthTokens, error) {
 			return f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
 		})
-		grace(change)
+		contend(t, reached, change)
 		release()
 
 		r := await(t, refresh, "the refresh")
@@ -728,8 +785,9 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 			return f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
 		})
 		enter(t, entered, "the password change")
+		reached := progress()
 		refresh := start(func() (*AuthTokens, error) { return f.svc.RefreshAccessToken(cpPresented) })
-		grace(refresh)
+		contend(t, reached, refresh)
 		release()
 
 		c := await(t, change, "the password change")
@@ -752,10 +810,11 @@ func runChangePasswordConcurrentScenarios(t *testing.T, f *cpFixture, contended 
 		})
 		enter(t, entered, "the first change")
 		f.hooks.install(func(h *cpHooks) { h.revokeAll = nil })
+		reached := progress()
 		second := start(func() (*AuthTokens, error) {
 			return f.svc.ChangePassword(s.owner.ID, cpOldPassword, "AnotherPass12!", cpSibling)
 		})
-		grace(second)
+		contend(t, reached, second)
 		release()
 
 		a := await(t, first, "the first change")

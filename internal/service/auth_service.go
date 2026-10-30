@@ -686,8 +686,10 @@ func (s *authService) Logout(userID uint, refreshToken string) error {
 // the hash the current password was verified against, so of two concurrent
 // changes only one can succeed; then the presented token is claimed, the
 // password written, every other token revoked and the successor issued and
-// signed. Any failure rolls all of it back: the password is unchanged and
+// signed. Any failure before the commit rolls all of it back: the password is unchanged and
 // every session is as it was. Access tokens already issued elsewhere stay
+// (A failed COMMIT is the exception every transaction has: its outcome is
+// ambiguous, utils.ErrCommitFailed, and the caller reports it as an error.)
 // valid until they expire — there is no blocklist — but can no longer renew.
 func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, refreshToken string) (*AuthTokens, error) {
 	if s.refreshTokenRepo == nil || s.txManager == nil {

@@ -512,8 +512,8 @@ returns the unified envelope `{ success, data, error, meta }`.
   inside the transaction that stores the successor and signs the access token, so a presented
   token yields at most one successor even under concurrent requests, and a failed rotation leaves
   it usable instead of stranding the session. An invalid token is the generic `401`; an
-  operational failure (database, signing) is a retryable `503 SESSION_REFRESH_UNAVAILABLE` and the
-  token stays usable. The web client shares one refresh among all requests that hit a `401`,
+  operational failure (database, signing) is a retryable `503 SESSION_REFRESH_UNAVAILABLE`, and a
+  failure before the commit leaves the token usable (a failed COMMIT is ambiguous). The web client shares one refresh among all requests that hit a `401`,
   settles every one of them (success, failure, or a 15 s timeout), replays each request at most
   once and only under the session it was sent with.
 - `POST /api/v1/auth/password-reset` - Request a password-reset email. Always answers `200`
@@ -531,7 +531,8 @@ authentication and live on the moderate tier:
   the optional `{refresh_token}` body). The JWT itself stays valid until expiry.
 - `POST /api/v1/auth/change-password` - Verify the current password and set a new one (same
   complexity policy) in one transaction with the revocation of the user's refresh tokens; a
-  failure leaves the password and every session unchanged. A bearer session that sends its
+  failure before the commit leaves the password and every session unchanged (a failed COMMIT is
+  ambiguous and answered 500). A bearer session that sends its
   current `refresh_token` is renewed: the response carries a replacement `token`,
   `refresh_token` and `user`, and every other session loses renewal. A `refresh_token` that is not
   a live session of the caller is `409 SESSION_STALE` with nothing changed. Without one, and

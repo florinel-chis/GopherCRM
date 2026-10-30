@@ -80,6 +80,24 @@ const defaultSessionExpired = () => {
   }
 };
 
+/**
+ * The account an access token was issued for (its `user_id` claim), read
+ * without verifying the signature — only to tell two sessions apart, never to
+ * authorise anything. Null for anything that is not a readable JWT.
+ */
+export const tokenSubject = (token: string | null): string | null => {
+  if (!token) return null;
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+  try {
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(json) as { user_id?: unknown };
+    return claims.user_id === undefined || claims.user_id === null ? null : String(claims.user_id);
+  } catch {
+    return null;
+  }
+};
+
 const statusOf = (error: unknown): number | undefined =>
   (error as AxiosError | undefined)?.response?.status;
 
@@ -109,6 +127,10 @@ export class ApiClient {
   private onSessionExpired: () => void;
   private generation = 0;
   private refreshInFlight: { generation: number; promise: Promise<string> } | null = null;
+  // The pair a refresh obtained after its session had already ended. It is
+  // never stored; logout uses it to authenticate the revocation, since the
+  // refresh spent the token logout would otherwise have to renew with.
+  private discardedPair: { generation: number; pair: TokenPair } | null = null;
   private lockTail: Promise<void> = Promise.resolve();
 
   constructor(options: ApiClientOptions = {}) {
@@ -277,6 +299,7 @@ export class ApiClient {
     // The session ended, or this tab's tokens were replaced, while the
     // refresh was in flight: the late pair must not resurrect or overwrite.
     if (generation !== this.generation || this.getRefreshToken() !== presented) {
+      this.discardedPair = { generation, pair };
       throw new SessionChangedError();
     }
     this.setToken(pair.token, persist);
@@ -340,7 +363,9 @@ export class ApiClient {
         throw new SessionChangedError();
       }
       const persist = this.isPersistent();
-      const send = (refreshToken: string | null) =>
+      // Every attempt is authenticated with the pair read for it, so the
+      // request interceptor cannot substitute whatever another tab stored.
+      const send = (accessToken: string | null, refreshToken: string | null) =>
         this.client.post<ChangePasswordResponse>(
           '/auth/change-password',
           {
@@ -348,28 +373,40 @@ export class ApiClient {
             new_password: newPassword,
             ...(refreshToken ? { refresh_token: refreshToken } : {}),
           },
-          { _sessionGeneration: generation } as Partial<SessionRequestConfig>
+          {
+            _sessionGeneration: generation,
+            ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+          } as Partial<SessionRequestConfig>
         );
+      // The account this change was started for. A retry is only ever sent
+      // for the same account and the same session generation.
+      const subject = tokenSubject(this.getToken());
+      const sameIdentity = () =>
+        generation === this.generation && subject !== null && tokenSubject(this.getToken()) === subject;
 
       let presented = this.getRefreshToken();
       let response: AxiosResponse<ChangePasswordResponse>;
       try {
-        response = await send(presented);
+        response = await send(this.getToken(), presented);
       } catch (error) {
         const status = statusOf(error);
-        if (status === 401 && presented && generation === this.generation) {
+        if (status === 401 && presented && sameIdentity()) {
           // The access token expired. Renew privately (we hold the lock) and
           // rebuild the body from the renewed pair; the old refresh token is
           // spent now and would only earn a 409.
           await this.performRefresh(generation);
-        } else if (status === 409 && generation === this.generation && this.getRefreshToken() !== presented) {
-          // Another tab of this remembered session renewed it meanwhile:
-          // retry once with the replacement it stored.
+          if (!sameIdentity()) {
+            throw new SessionChangedError();
+          }
+        } else if (status === 409 && sameIdentity() && this.getRefreshToken() !== presented) {
+          // Another tab of this remembered session — the same account —
+          // renewed it meanwhile: retry once with the replacement it stored.
+          // Anything else (another account, a sign-out) surfaces the 409.
         } else {
           throw error;
         }
         presented = this.getRefreshToken();
-        response = await send(presented);
+        response = await send(this.getToken(), presented);
       }
 
       if (generation !== this.generation) {
@@ -397,23 +434,31 @@ export class ApiClient {
   public async endSession(revoke: (accessToken: string) => Promise<void>): Promise<void> {
     const access = this.getToken();
     const refresh = this.getRefreshToken();
-    const inFlight = this.refreshInFlight?.promise;
+    const endedGeneration = this.generation;
+    const inFlight = this.refreshInFlight?.generation === endedGeneration ? this.refreshInFlight.promise : undefined;
     this.clearTokens();
     if (inFlight) {
       // Let a refresh already on the wire settle first, so the server-side
       // revocation also covers any successor it commits.
       await inFlight.catch(() => undefined);
     }
-    if (!access) {
+    // A refresh that completed after the tokens were dropped spent `refresh`
+    // and returned a successor; that pair (kept privately, never stored) is
+    // the freshest credential of the ending session.
+    const successor = this.discardedPair?.generation === endedGeneration ? this.discardedPair.pair : null;
+    this.discardedPair = null;
+    const accessToken = successor?.token ?? access;
+    const refreshToken = successor?.refresh_token ?? refresh;
+    if (!accessToken) {
       return;
     }
     try {
-      await revoke(access);
+      await revoke(accessToken);
     } catch (error) {
-      if (statusOf(error) !== 401 || !refresh) {
+      if (statusOf(error) !== 401 || !refreshToken) {
         throw error;
       }
-      const pair = await this.requestRefresh(refresh);
+      const pair = await this.requestRefresh(refreshToken);
       await revoke(pair.token);
     }
   }

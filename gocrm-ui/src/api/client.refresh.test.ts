@@ -82,6 +82,12 @@ const bearer = (config: InternalAxiosRequestConfig) =>
 const accepts = (token: string, data: unknown = { ok: true }): Handler => (config) =>
   bearer(config) === `Bearer ${token}` ? ok(config, data) : unauthorized(config);
 
+/** An unsigned JWT-shaped token carrying the user id, as the server issues it. */
+const jwtFor = (userId: number, tag: string) => {
+  const encode = (value: object) => btoa(JSON.stringify(value)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ user_id: userId, tag })}.signature`;
+};
+
 const seedSession = (access: string, refresh: string, persist = false) => {
   const store = persist ? localStorage : sessionStorage;
   store.setItem(TOKEN_KEY, access);
@@ -143,6 +149,7 @@ describe('ApiClient 401 refresh', () => {
     const { api, refreshes, onSessionExpired } = setup({
       'GET /items': accepts('new'),
       'GET /other': accepts('new'),
+      'POST /items': accepts('new'),
       'POST /auth/refresh': (config) => refresh.promise.then(() => unauthorized(config)),
     });
     seedSession('old', 'r0');
@@ -152,7 +159,13 @@ describe('ApiClient 401 refresh', () => {
     refresh.resolve({} as AxiosResponse);
 
     const results = await settled;
-    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+    // Every waiter is rejected with the refresh's own 401, not by anything else.
+    for (const r of results) {
+      expect(r.status).toBe('rejected');
+      const reason = (r as PromiseRejectedResult).reason as AxiosError;
+      expect(reason.response?.status).toBe(401);
+      expect(reason.config?.url).toBe('/auth/refresh');
+    }
     expect(refreshes()).toHaveLength(1);
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
@@ -259,7 +272,10 @@ describe('ApiClient 401 refresh', () => {
     await expect(pending).rejects.toBeInstanceOf(SessionChangedError);
     await ending;
 
-    expect(revoke).toHaveBeenCalledWith('old');
+    // The refresh spent r0 and committed a successor; the revocation is
+    // authenticated with that successor, which is never stored.
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith('new');
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     expect(sent.filter((s) => s.authorization === 'Bearer new')).toHaveLength(0);
@@ -282,6 +298,42 @@ describe('ApiClient 401 refresh', () => {
     expect(revoke.mock.calls.map((c) => c[0])).toEqual(['expired', 'renewed']);
     expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+  });
+
+  it('logout with an expired access token during an in-flight refresh revokes with the successor', async () => {
+    // The in-flight refresh consumes r0 and returns the successor. Logout must
+    // authenticate its revocation with that successor (privately: it is never
+    // stored), because r0 is spent and the old access token has expired.
+    const refresh = deferred<AxiosResponse>();
+    let refreshCalls = 0;
+    const { client, api } = setup({
+      'GET /items': accepts('successor-access'),
+      'POST /auth/refresh': (config) => {
+        refreshCalls += 1;
+        return refreshCalls === 1 ? refresh.promise : unauthorized(config);
+      },
+    });
+    seedSession('expired', 'r0', true);
+    const revoke = vi.fn(async (token: string) => {
+      if (token !== 'successor-access') {
+        throw new AxiosError('401', 'ERR_BAD_REQUEST', undefined, null, { status: 401 } as AxiosResponse);
+      }
+    });
+
+    const pending = api.get('/items').catch((e) => e);
+    await flush();
+    const ending = client.endSession(revoke);
+    refresh.resolve({
+      data: { success: true, data: { token: 'successor-access', refresh_token: 'r1' } },
+      status: 200,
+    } as AxiosResponse);
+
+    await expect(ending).resolves.toBeUndefined();
+    expect(await pending).toBeInstanceOf(SessionChangedError);
+    expect(revoke).toHaveBeenCalledWith('successor-access');
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
   it('signing in to another account during an in-flight refresh keeps the new session', async () => {
@@ -433,18 +485,20 @@ describe('ApiClient.changePassword', () => {
     // itself hits 401. The change must renew privately (not wait on the
     // queued refresh), rebuild its body from the renewed pair, and the queued
     // request must then replay with the token the change stored.
+    const oldAccess = jwtFor(1, 'old');
+    const newAccess = jwtFor(1, 'new');
     const firstChange = deferred<void>();
     const { client, api, sent, refreshes } = setup({
       'GET /items': accepts('pc-token'),
-      'POST /auth/refresh': (config) => ok(config, { token: 'new', refresh_token: 'r1' }),
+      'POST /auth/refresh': (config) => ok(config, { token: newAccess, refresh_token: 'r1' }),
       'POST /auth/change-password': (config) => {
-        if (bearer(config) === 'Bearer old') {
+        if (bearer(config) === `Bearer ${oldAccess}`) {
           return firstChange.promise.then(() => unauthorized(config));
         }
         return renewing(config);
       },
     });
-    seedSession('old', 'r0');
+    seedSession(oldAccess, 'r0');
 
     const change = client.changePassword('OldStrongPass1!', 'NewStrongPass1!');
     await flush();
@@ -457,7 +511,7 @@ describe('ApiClient.changePassword', () => {
 
     const posts = sent.filter((s) => s.url === '/auth/change-password');
     expect(posts).toHaveLength(2);
-    expect(posts[1].authorization).toBe('Bearer new');
+    expect(posts[1].authorization).toBe(`Bearer ${newAccess}`);
     expect(posts[1].body).toEqual({
       current_password: 'OldStrongPass1!',
       new_password: 'NewStrongPass1!',
@@ -465,28 +519,74 @@ describe('ApiClient.changePassword', () => {
     });
     expect(refreshes()).toHaveLength(1);
     expect(sent.filter((s) => s.url === '/items').map((s) => s.authorization)).toEqual([
-      'Bearer old',
+      `Bearer ${oldAccess}`,
       'Bearer pc-token',
     ]);
   });
 
   it('retries once with the replacement token when another tab renewed the session', async () => {
+    const before = jwtFor(1, 'before');
+    const renewed = jwtFor(1, 'renewed-by-other-tab');
     let calls = 0;
     const { client, sent } = setup({
       'POST /auth/change-password': (config) => {
         calls += 1;
         if (calls === 1) {
-          // Another tab of this remembered session rotated the token.
+          // Another tab of this remembered session (same account) rotated it.
+          localStorage.setItem(TOKEN_KEY, renewed);
           localStorage.setItem(REFRESH_TOKEN_KEY, 'r-other-tab');
           return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
         }
         return renewing(config);
       },
     });
-    seedSession('old', 'r0', true);
+    seedSession(before, 'r0', true);
 
     await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).resolves.toEqual({ renewed: true });
     expect(sent.map((s) => s.body?.refresh_token)).toEqual(['r0', 'r-other-tab']);
+    expect(sent.map((s) => s.authorization)).toEqual([`Bearer ${before}`, `Bearer ${renewed}`]);
+  });
+
+  it('does not retry a stale password change under another account signed in by another tab', async () => {
+    const accountA = jwtFor(1, 'a');
+    const accountB = jwtFor(2, 'b');
+    const { client, sent } = setup({
+      'POST /auth/change-password': (config) => {
+        // Another tab logged A out and signed B in, in the shared storage.
+        localStorage.setItem(TOKEN_KEY, accountB);
+        localStorage.setItem(REFRESH_TOKEN_KEY, 'b-refresh');
+        return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
+      },
+    });
+    seedSession(accountA, 'a-refresh', true);
+
+    await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).rejects.toMatchObject({
+      response: { status: 409 },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent.filter((s) => s.authorization === `Bearer ${accountB}`)).toHaveLength(0);
+    expect(localStorage.getItem(TOKEN_KEY)).toBe(accountB);
+  });
+
+  it('does not renew or retry under another account when the access token expired', async () => {
+    const accountA = jwtFor(1, 'a-expired');
+    const accountB = jwtFor(2, 'b');
+    const { client, sent, refreshes } = setup({
+      'POST /auth/refresh': (config) => ok(config, { token: jwtFor(2, 'b-new'), refresh_token: 'b-r1' }),
+      'POST /auth/change-password': (config) => {
+        localStorage.setItem(TOKEN_KEY, accountB);
+        localStorage.setItem(REFRESH_TOKEN_KEY, 'b-refresh');
+        return unauthorized(config);
+      },
+    });
+    seedSession(accountA, 'a-refresh', true);
+
+    await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+    expect(refreshes()).toHaveLength(0);
+    expect(sent.filter((s) => s.url === '/auth/change-password')).toHaveLength(1);
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('b-refresh');
   });
 
   it('a stale session without a newer token is reported, not retried', async () => {

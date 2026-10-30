@@ -238,8 +238,10 @@ one for verification; the insert fault is injected through the transaction-bound
 the signing fault through an instance-local seam of the service under test, never a global), plus
 the claim tests in `internal/repository/refresh_token_repository_test.go` and the call-sequence
 cases in `internal/service/auth_session_test.go`. `POST /auth/refresh` answers only
-`ErrInvalidRefreshToken` with the generic 401; any other failure rolled the rotation back and is a
-`503 SESSION_REFRESH_UNAVAILABLE`, so clients keep the still-usable token and retry.
+`ErrInvalidRefreshToken` with the generic 401; any other failure is a `503
+SESSION_REFRESH_UNAVAILABLE`. A failure before the commit rolled the rotation back, so clients keep
+the still-usable token and retry; a failed COMMIT is ambiguous (the rotation may have been applied),
+in which case the retry answers 401 and the session ends.
 
 **Lock order for session writes** — every transaction that writes both an account and its refresh
 tokens locks the `users` row first and the `refresh_tokens` rows second: the reset (reset token,
@@ -256,7 +258,9 @@ be the one the password was verified against (otherwise a concurrent change won 
 `ErrInvalidCurrentPassword`, 400), the presented refresh token must be a live token of the caller
 and is claimed (otherwise `ErrSessionStale`, 409 `SESSION_STALE`, nothing written), the password is
 written with `UpdateFields`, every refresh token of the user is revoked, and the successor is
-inserted and its access token signed. Any failure rolls back everything. Without a refresh token —
+inserted and its access token signed. Any failure before the commit rolls back everything; a failed
+COMMIT (`utils.ErrCommitFailed`) is ambiguous — the server may have applied the change — and is
+answered 500 without credentials, so the client cannot assume either outcome. Without a refresh token —
 and always for API-key requests, which the auth middleware records under
 `service.AuthMethodContextKey` — every token is revoked and nothing is issued. Access JWTs already
 issued elsewhere stay valid until they expire. Roots:
@@ -265,7 +269,12 @@ issued elsewhere stay valid until they expire. Roots:
 `internal/service/auth_change_password_regression_test.go`; the MySQL concurrency root migrates a
 disposable schema with the real `migrations/` (foreign key and indexes as in production, server
 default REPEATABLE READ, checked portably on MySQL 8 and MariaDB 10.11) and forces both orderings
-of a password change against a refresh of the presented token and of a sibling token.
+of a password change against a refresh of the presented token and of a sibling token. Each
+ordering parks the first request inside its transaction, waits for the second to signal that it is
+about to run its locking owner read, and releases the first only once
+`information_schema.PROCESSLIST` (MySQL and MariaDB alike) shows that `FOR UPDATE` still executing
+on two consecutive polls — i.e. blocked on the row lock. On SQLite the single pooled connection
+serialises the two requests instead, so there is no lock wait to observe.
 
 **User writes never upsert** — `UserRepository` has no full-struct update. GORM's `Save` falls back
 to an INSERT … ON CONFLICT when its UPDATE matches no row, so a login that read an account before
@@ -284,11 +293,18 @@ session. Each session has a generation; sign-in, sign-out and an expired session
 a refresh or password change renews the current one. Requests are stamped with the generation they
 were sent under and replayed (once, marked `_retry`) only under it. All 401s of a generation share
 one refresh; refreshes and the password change run under one lock (the password change renews
-privately while holding it and rebuilds its body from the renewed pair). The refresh has its own
+privately while holding it and rebuilds its body from the renewed pair). The password change's
+retries — after an expired access token, or the single retry after a 409 when another tab stored a
+newer token — are bound to the account (the `user_id` claim of the access token, read unverified
+only to tell sessions apart) and the generation it started with, and each attempt carries the
+bearer read for it; if the stored session now belongs to another account, the original error is
+surfaced instead of sending the body under that account. The refresh has its own
 15 s deadline that rejects every waiter even if the transport ignores the abort; a 400/401 from
 refresh ends the session, a timeout, network failure or 5xx keeps the tokens. Logout
-(`endSession`) drops the tokens at once, waits for a refresh already on the wire and renews
-privately if its access token expired, so the no-body revoke-all is still authenticated. The
+(`endSession`) drops the tokens at once and waits for a refresh already on the wire. If that
+refresh completed, it spent the stored refresh token; its successor pair is kept privately (never
+stored) and authenticates the revocation. Otherwise the captured access token is used, and if it
+has expired the client renews privately once, so the no-body revoke-all is still authenticated. The
 refresh token is read only from the storage that holds the access token, and `startSession`
 replaces both keys. Tabs sharing a remembered session do not coordinate their refreshes yet (#184).
 Tests: `src/api/client.refresh.test.ts` drives the real interceptors through an injected adapter.
