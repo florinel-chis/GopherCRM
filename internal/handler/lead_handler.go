@@ -542,7 +542,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted, lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted (its status is converted or it already has a customer), lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
@@ -616,6 +616,10 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			warn("Failed to convert lead")
 			utils.RespondConflict(c, "customer with this email already exists")
+		case apperrors.IsNotFound(err):
+			// Erased between the lookup above and the conversion.
+			warn("Failed to convert lead")
+			utils.RespondNotFound(c, "Lead not found")
 		default:
 			logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
 			utils.RespondInternalError(c)

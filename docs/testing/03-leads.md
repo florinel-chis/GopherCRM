@@ -751,9 +751,12 @@ the frontend gating.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
   transaction (`lead_service.go:272`, `:298`), and the handler classifies it with `errors.Is`
   (`lead_handler.go:528`). No second customer is created. Driven through the UI the snackbar shows
-  the server's message (since 1.2.0; it used to read "Failed to convert lead").
+  the server's message (since 1.2.0; it used to read "Failed to convert lead"). The same 400
+  answers a lead that already has a `customer_id` but whose status was later moved back (for
+  example to `contacted`): it is never converted a second time (#104; before, it was).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new, via the `request`
-  fixture)
+  fixture); the moved-back case is automated in
+  `internal/service/lead_conversion_rules_test.go` `TestLeadConversionRules{SQLite,MySQL}`
 
 ### TC-LEAD-046 — Conversion persists the Website field
 - **Priority:** P1

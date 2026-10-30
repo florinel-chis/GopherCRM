@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/gorm"
 )
 
 type LeadHandlerTestSuite struct {
@@ -897,6 +898,9 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheRespo
 	}{
 		{&service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."}, http.StatusBadRequest, logrus.WarnLevel},
 		{fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail), http.StatusConflict, logrus.WarnLevel},
+		// The lead was erased between the handler's lookup and the service call.
+		{fmt.Errorf("lead 1 not found: %w", apperrors.ErrNotFound), http.StatusNotFound, logrus.WarnLevel},
+		{gorm.ErrRecordNotFound, http.StatusNotFound, logrus.WarnLevel},
 		{errors.New("connection refused"), http.StatusInternalServerError, logrus.ErrorLevel},
 	}
 	for _, tc := range cases {

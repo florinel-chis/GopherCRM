@@ -554,7 +554,7 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 		return nil, err
 	}
 
-	if lead.Status == models.LeadStatusConverted {
+	if lead.Status == models.LeadStatusConverted || lead.CustomerID != nil {
 		logger.Warn("Attempted to convert already converted lead")
 		return nil, apperrors.NewLeadAlreadyConverted(leadID)
 	}
@@ -602,7 +602,11 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 			return err
 		}
 
-		if txLead.Status == models.LeadStatusConverted {
+		// A lead that already has a customer was converted before, even if
+		// its status has since moved on: converting it again would create a
+		// second customer for the same person. Checked on the locked row,
+		// before any insert.
+		if txLead.Status == models.LeadStatusConverted || txLead.CustomerID != nil {
 			return apperrors.NewLeadAlreadyConverted(leadID)
 		}
 		// The status may have changed since the read above.

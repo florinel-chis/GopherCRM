@@ -326,6 +326,27 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, first.ID, *stored.CustomerID)
 	})
 
+	// A lead that was converted and later moved back to another status keeps
+	// its customer_id. Converting it again would create a second customer for
+	// the same person (and could deadlock against an erasure of the first).
+	t.Run("a lead that already has a customer is refused even when its status moved on", func(t *testing.T) {
+		env := root.bind(t)
+		env.reset()
+		lead := env.newLead(models.LeadStatusContacted, nil)
+		existing := models.Customer{FirstName: "Earlier", LastName: "Conversion", Email: "earlier-" + lead.Email}
+		require.NoError(t, db.Create(&existing).Error)
+		require.NoError(t, db.Model(&models.Lead{}).Where("id = ?", lead.ID).Update("customer_id", existing.ID).Error)
+
+		_, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, apperrors.ErrLeadConverted), "got %v", err)
+		assert.Zero(t, env.customersWithEmail(lead.Email), "no second customer is written")
+		stored := env.committedLead(lead.ID)
+		assert.Equal(t, models.LeadStatusContacted, stored.Status)
+		require.NotNil(t, stored.CustomerID)
+		assert.Equal(t, existing.ID, *stored.CustomerID)
+	})
+
 	t.Run("a failed lead write rolls the customer back", func(t *testing.T) {
 		env := root.bind(t)
 		env.reset()

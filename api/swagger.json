@@ -15160,7 +15160,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request data, lead already converted, lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)",
+                        "description": "Invalid request data, lead already converted (its status is converted or it already has a customer), lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)",
                         "schema": {
                             "allOf": [
                                 {
