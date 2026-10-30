@@ -310,14 +310,56 @@ an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipien
 contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
 let the remainder inject further headers (an extra recipient, a forged subject). The check is
 repeated inside the private `send`, so no future caller can bypass it. The generic `Send` failure
-log carries the subject and the transport error passed through `utils.LogError`, and not the
-recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
+log carries only the transport error passed through `utils.LogError` — neither the subject nor
+the recipient: an SMTP reply keeps its code and loses its text, because a relay that rejects a
 recipient normally echoes the address in that text (`550 5.1.1 <who@example.com>: Recipient address
-rejected`). The raw error is still returned for `errors.As`. The password-reset failure line and
-the development `LogMailer` still record the recipient as before. Roots:
+rejected`). The raw error is still returned for `errors.As`. The password-reset failure line logs
+the same sanitised error and the redacted link, without the recipient; the development
+`LogMailer` still records the recipient and the subject as before. Roots:
 `TestSMTPMailerRejectsHeaderInjection` (`internal/mailer/header_injection_test.go`) and
 `TestSMTPMailerSendLogOmitsTheRelayReply` (`internal/mailer/smtp_relay_reply_test.go`), whose stub
 relay answers `RCPT TO` with a 550 that quotes the address.
+
+**SMTP delivery is one bounded exchange (#113)** — `SMTPMailer` does not use `smtp.SendMail`,
+which has no timeout. It dials within `mailer.DefaultDialTimeout` (10 s), sets one deadline of
+`mailer.DefaultSendTimeout` (30 s, counted from the start of the dial) on the connection for the
+whole conversation — greeting, EHLO, STARTTLS, AUTH, MAIL/RCPT/DATA, QUIT — and closes the raw
+TCP connection on every path; a watchdog (`context.AfterFunc`) closes it at the deadline at the
+latest, so cleanup such as the TLS close_notify (which sets its own five-second write deadline)
+cannot extend the bound. A failure caused by the deadline matches `os.ErrDeadlineExceeded`.
+The timeouts are package defaults, not configuration. **STARTTLS is opportunistic**: it is used
+whenever the relay advertises it, verifying the certificate against `SMTP_HOST`, and a failed
+handshake aborts the delivery, but with no `SMTP_USER` a relay that does not offer STARTTLS —
+or an attacker on the path who strips the offer — receives the message unencrypted. There is no
+require-TLS setting (see the roadmap); implicit TLS (port 465) is not supported. With
+`SMTP_USER` set the relay must offer AUTH, and net/smtp's `PlainAuth` refuses to send the
+credentials over an unencrypted connection unless the host is `localhost`/`127.0.0.1`/`::1`. A
+failed QUIT after the relay accepted DATA is not a failure. The recipient and `SMTP_FROM` are
+parsed with `net/mail.ParseAddress` — exactly one address, display name allowed — and the
+addr-spec is then serialised for the envelope (`envelopeAddress`): a dot-atom local part as is,
+any other local part as an RFC 5321 quoted string with `"` and `\` escaped
+(`RCPT TO:<"a b"@example.com>`), because `net/mail` returns quoted local parts unquoted and
+`"x> NOTIFY=NEVER"@example.com` would otherwise end `RCPT TO:<…>` early and inject ESMTP
+parameters. Control characters, `<` and `>` anywhere in the address — refused even inside
+quotes, where RFC 5321 would allow the brackets, because they are what lets text escape the
+command's angle brackets — and domain literals are `mailer.ErrInvalidAddress`, without echoing
+the value. Non-ASCII addresses (RFC 6531) are delivered only when the relay advertises SMTPUTF8
+after EHLO (net/smtp's `Client.Mail` then adds the `SMTPUTF8` parameter itself) and are refused
+with `ErrInvalidAddress` before `MAIL FROM` otherwise. The headers carry
+`mail.Address.String()`; CR/LF in the sender is `ErrInvalidHeader` like the recipient and
+subject. A non-ASCII subject is Q-encoded into encoded words that never split a character and
+folded so that every line holding encoded words, `Subject: ` included, is at most 76 characters
+(RFC 2047 section 2). Only I/O failures caused by the deadline (a timeout, or the watchdog's
+close) are reported as `os.ErrDeadlineExceeded`; a relay reply such as a 535 that decided the
+outcome is returned as it is even when net/smtp's abort and QUIT afterwards stall. The body is sent as
+`Content-Transfer-Encoding: quoted-printable` (7-bit on the wire, long lines soft-wrapped) after
+its line endings (CRLF, bare LF, bare CR) are normalised to CRLF; dot-stuffing is left to the SMTP
+data writer. The `Send` failure log carries neither the recipient nor the subject (automation
+subjects are rendered from `{{lead.email}}` and similar placeholders), only the error through
+`utils.LogError`, which also reduces a malformed relay reply (`textproto.ProtocolError`, which
+carries the whole line) to `smtp_protocol_error`. Roots, against in-process relays on `127.0.0.1` with injected
+sub-second timeouts (`internal/mailer/smtp_transport_test.go`): `TestSMTPDeadlines`,
+`TestSMTPHeaders`, `TestSMTPTLSAuth`, `TestSMTPFailureRedaction`.
 
 **Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`.** GORM's
 `FindInBatches` continues each batch with `id > last id of the previous batch`, a cursor that is
