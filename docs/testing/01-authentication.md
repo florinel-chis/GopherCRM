@@ -582,9 +582,12 @@ file, not by trusting the coverage matrix.
   rejects every waiter without calling `/auth/refresh`. Each request carries the session it was
   sent under: after logout or a sign-in to another account, a late 401 is not replayed under the
   new session, and a late refresh answer is discarded instead of stored. Logout drops the stored
-  tokens at once and waits for a refresh already on the wire; when that refresh completed, its
-  successor (kept privately, never stored) authenticates `POST /auth/logout` (revoke every
-  session), otherwise an expired access token is renewed privately once for the same purpose.
+  tokens at once and waits for the refreshes and password changes still running; a successor one
+  of them obtained (kept privately, never stored, and only if it belongs to the session being
+  ended) authenticates `POST /auth/logout` (revoke every session), otherwise an expired access
+  token is renewed privately once for the same purpose. Another tab replacing the shared session
+  (sign-out, sign-in of another account) never makes this tab refresh, replay, write or revoke
+  as the wrong account.
 - **Known issue:** tabs sharing a remembered session do not coordinate (#184).
 - **Automation:** Vitest — `gocrm-ui/src/api/client.refresh.test.ts` (`ApiClient 401 refresh`,
   `ApiClient session storage`), driving the real interceptors through an injected adapter;
@@ -725,8 +728,9 @@ file, not by trusting the coverage matrix.
   access token signed. A failure at any step before the commit leaves the old password and every session as they
   were, and the same request then succeeds. A presented token that is unknown, revoked, expired or
   another user's is **409** `SESSION_STALE` with nothing changed; the UI tells the user to sign in
-  again (one automatic retry only when another tab of the same session and the same account stored
-  a newer token; a session that now belongs to another account surfaces the 409). Without a
+  again (it is never retried: following a rotation made by another tab needs cross-tab
+  coordination, #184). If another tab signs out or signs in another account while the change is
+  queued or in flight, nothing is sent under, or written over, that session. Without a
   refresh token, and always for an API-key request, every refresh token is revoked and no
   credentials are returned. A sibling refresh racing the change never makes it fail: committed
   first, its successor is revoked by the change; arriving during the change, it is rejected.

@@ -487,15 +487,17 @@ describe('ApiClient.changePassword', () => {
     // request must then replay with the token the change stored.
     const oldAccess = jwtFor(1, 'old');
     const newAccess = jwtFor(1, 'new');
+    // The server issues JWTs for the same account at every step.
+    const pcAccess = jwtFor(1, 'pc');
     const firstChange = deferred<void>();
     const { client, api, sent, refreshes } = setup({
-      'GET /items': accepts('pc-token'),
+      'GET /items': accepts(pcAccess),
       'POST /auth/refresh': (config) => ok(config, { token: newAccess, refresh_token: 'r1' }),
       'POST /auth/change-password': (config) => {
         if (bearer(config) === `Bearer ${oldAccess}`) {
           return firstChange.promise.then(() => unauthorized(config));
         }
-        return renewing(config);
+        return ok(config, { message: 'Password changed successfully', token: pcAccess, refresh_token: 'pc-refresh' });
       },
     });
     seedSession(oldAccess, 'r0');
@@ -520,31 +522,29 @@ describe('ApiClient.changePassword', () => {
     expect(refreshes()).toHaveLength(1);
     expect(sent.filter((s) => s.url === '/items').map((s) => s.authorization)).toEqual([
       `Bearer ${oldAccess}`,
-      'Bearer pc-token',
+      `Bearer ${pcAccess}`,
     ]);
   });
 
-  it('retries once with the replacement token when another tab renewed the session', async () => {
+  it('surfaces the 409 when another tab of the same account rotated the session', async () => {
+    // Following a rotation made by another tab needs cross-tab coordination
+    // (#184); until then the token it stored is not part of this session's
+    // lineage, so nothing is retried with it.
     const before = jwtFor(1, 'before');
-    const renewed = jwtFor(1, 'renewed-by-other-tab');
-    let calls = 0;
     const { client, sent } = setup({
       'POST /auth/change-password': (config) => {
-        calls += 1;
-        if (calls === 1) {
-          // Another tab of this remembered session (same account) rotated it.
-          localStorage.setItem(TOKEN_KEY, renewed);
-          localStorage.setItem(REFRESH_TOKEN_KEY, 'r-other-tab');
-          return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
-        }
-        return renewing(config);
+        localStorage.setItem(TOKEN_KEY, jwtFor(1, 'renewed-by-other-tab'));
+        localStorage.setItem(REFRESH_TOKEN_KEY, 'r-other-tab');
+        return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
       },
     });
     seedSession(before, 'r0', true);
 
-    await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).resolves.toEqual({ renewed: true });
-    expect(sent.map((s) => s.body?.refresh_token)).toEqual(['r0', 'r-other-tab']);
-    expect(sent.map((s) => s.authorization)).toEqual([`Bearer ${before}`, `Bearer ${renewed}`]);
+    await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).rejects.toMatchObject({
+      response: { status: 409 },
+    });
+    expect(sent.map((s) => s.body?.refresh_token)).toEqual(['r0']);
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('r-other-tab');
   });
 
   it('does not retry a stale password change under another account signed in by another tab', async () => {
@@ -594,7 +594,9 @@ describe('ApiClient.changePassword', () => {
       'POST /auth/change-password': (config) =>
         reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } }),
     });
-    seedSession('old', 'r0');
+    // JWT-shaped, so the account check has a subject to compare and the test
+    // does not pass merely because no identity could be read.
+    seedSession(jwtFor(1, 'unchanged'), 'r0');
 
     await expect(client.changePassword('OldStrongPass1!', 'NewStrongPass1!')).rejects.toMatchObject({
       response: { status: 409, data: { code: 'SESSION_STALE' } },
@@ -646,5 +648,149 @@ describe('ApiClient session storage', () => {
 
     expect(client.getToken()).toBe('tab-token');
     expect(client.getRefreshToken()).toBeNull();
+  });
+});
+
+// Another tab of a remembered session writes the same localStorage. Without
+// cross-tab coordination (#184) this tab cannot follow it, but it must never
+// act on, or write over, a session other than the one an operation started
+// with. Each test uses two ApiClient instances sharing the browser storage.
+describe('ApiClient with another tab replacing the shared session', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  const accountA = jwtFor(1, 'a');
+  const accountB = jwtFor(2, 'b');
+
+  it('a password change queued behind a refresh is not sent once another tab signed in another account', async () => {
+    const refresh = deferred<AxiosResponse>();
+    const tab = setup({
+      'GET /items': accepts('a-new'),
+      'POST /auth/refresh': () => refresh.promise,
+      'POST /auth/change-password': (config) =>
+        ok(config, { message: 'Password changed successfully', token: 'x', refresh_token: 'y' }),
+    });
+    const otherTab = setup({});
+    seedSession(accountA, 'a-r0', true);
+
+    const pending = tab.api.get('/items').catch((e) => e);
+    await flush();
+    const change = tab.client.changePassword('OldStrongPass1!', 'NewStrongPass1!');
+    await flush();
+    otherTab.client.startSession(accountB, 'b-r0', true);
+    refresh.resolve({ data: { success: true, data: { token: jwtFor(1, 'a-new'), refresh_token: 'a-r1' } }, status: 200 } as AxiosResponse);
+
+    await expect(change).rejects.toBeInstanceOf(SessionChangedError);
+    expect(await pending).toBeInstanceOf(SessionChangedError);
+    expect(tab.sent.filter((s) => s.url === '/auth/change-password')).toHaveLength(0);
+    expect(localStorage.getItem(TOKEN_KEY)).toBe(accountB);
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('b-r0');
+  });
+
+  it('logging out after another tab signed in another account revokes as that account, not with the earlier successor', async () => {
+    const refresh = deferred<AxiosResponse>();
+    const tab = setup({
+      'GET /items': accepts('never'),
+      'POST /auth/refresh': () => refresh.promise,
+    });
+    const otherTab = setup({});
+    seedSession(accountA, 'a-r0', true);
+    const revoke = vi.fn(async () => {});
+
+    const pending = tab.api.get('/items').catch((e) => e);
+    await flush();
+    otherTab.client.startSession(accountB, 'b-r0', true);
+    refresh.resolve({ data: { success: true, data: { token: jwtFor(1, 'a-successor'), refresh_token: 'a-r1' } }, status: 200 } as AxiosResponse);
+    expect(await pending).toBeInstanceOf(SessionChangedError);
+
+    // The user signs out in this tab; the stored session is now B's.
+    await tab.client.endSession(revoke);
+
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith(accountB);
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+  });
+
+  it('logout waits for the refresh a password change is making and revokes with its successor', async () => {
+    const oldAccess = jwtFor(1, 'expired');
+    const successorAccess = jwtFor(1, 'successor');
+    const refresh = deferred<AxiosResponse>();
+    let refreshCalls = 0;
+    const { client, sent } = setup({
+      'POST /auth/refresh': (config) => {
+        refreshCalls += 1;
+        return refreshCalls === 1 ? refresh.promise : unauthorized(config);
+      },
+      'POST /auth/change-password': (config) => unauthorized(config),
+    });
+    seedSession(oldAccess, 'r0', true);
+    const revoke = vi.fn(async (token: string) => {
+      if (token !== successorAccess) {
+        throw new AxiosError('401', 'ERR_BAD_REQUEST', undefined, null, { status: 401 } as AxiosResponse);
+      }
+    });
+
+    const change = client.changePassword('OldStrongPass1!', 'NewStrongPass1!').catch((e) => e);
+    // The change's first attempt got 401; its private refresh is on the wire.
+    await vi.waitFor(() => expect(refreshCalls).toBe(1));
+    const ending = client.endSession(revoke);
+    refresh.resolve({ data: { success: true, data: { token: successorAccess, refresh_token: 'r1' } }, status: 200 } as AxiosResponse);
+
+    await expect(ending).resolves.toBeUndefined();
+    expect(await change).toBeInstanceOf(SessionChangedError);
+    expect(revoke).toHaveBeenLastCalledWith(successorAccess);
+    expect(sent.filter((s) => s.url === '/auth/change-password')).toHaveLength(1);
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+  });
+
+  it('a password change answered after another tab signed in another account writes nothing over it', async () => {
+    const answer = deferred<void>();
+    const tab = setup({
+      'POST /auth/change-password': (config) =>
+        answer.promise.then(() =>
+          ok(config, { message: 'Password changed successfully', token: jwtFor(1, 'a-pc'), refresh_token: 'a-pc-r' })
+        ),
+    });
+    const otherTab = setup({});
+    seedSession(accountA, 'a-r0', true);
+    const revoke = vi.fn(async () => {});
+
+    const change = tab.client.changePassword('OldStrongPass1!', 'NewStrongPass1!');
+    await flush();
+    otherTab.client.startSession(accountB, 'b-r0', true);
+    answer.resolve();
+
+    await expect(change).rejects.toBeInstanceOf(SessionChangedError);
+    expect(localStorage.getItem(TOKEN_KEY)).toBe(accountB);
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('b-r0');
+
+    // The retained pair is A's; signing out B in this tab still revokes as B.
+    await tab.client.endSession(revoke);
+    expect(revoke).toHaveBeenCalledWith(accountB);
+    expect(revoke).not.toHaveBeenCalledWith(jwtFor(1, 'a-pc'));
+  });
+
+  it('a password change answered after another tab signed out writes nothing', async () => {
+    const answer = deferred<void>();
+    const tab = setup({
+      'POST /auth/change-password': (config) =>
+        answer.promise.then(() =>
+          ok(config, { message: 'Password changed successfully', token: jwtFor(1, 'a-pc'), refresh_token: 'a-pc-r' })
+        ),
+    });
+    const otherTab = setup({});
+    seedSession(accountA, 'a-r0', true);
+
+    const change = tab.client.changePassword('OldStrongPass1!', 'NewStrongPass1!');
+    await flush();
+    otherTab.client.clearTokens();
+    answer.resolve();
+
+    await expect(change).rejects.toBeInstanceOf(SessionChangedError);
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
   });
 });

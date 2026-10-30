@@ -395,9 +395,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answers operational failures with `503 SESSION_REFRESH_UNAVAILABLE` instead of the generic 401,
   so a transient database error no longer signs the user out. Logout drops the stored tokens at
   once, waits for a refresh already on the wire and authenticates the server-side revoke-all with
-  that refresh's successor (kept privately, never stored) or, when its access token has expired,
-  with a private renewal. The password change retries only for the account and session it started
-  with. The client reads the refresh token only from
+  the successor of a refresh or password change still running (kept privately, never stored, and
+  only when it belongs to the session being ended) or, when its access token has expired, with a
+  private renewal. Every operation is bound to the session it was requested under (generation,
+  account and refresh-token lineage), so another tab signing out or signing in another account
+  never makes this tab send, write or revoke as the wrong account. The client reads the refresh token only from
   the storage that holds the access token and a new sign-in replaces both keys. Cross-tab refresh
   coordination remains open (#184).
 - **A login paused across an erasure can no longer restore the erased account.** Login

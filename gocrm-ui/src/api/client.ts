@@ -56,8 +56,29 @@ export class RefreshTimeoutError extends Error {
 
 type SessionRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
-  _sessionGeneration?: number;
+  _session?: SessionSnapshot;
 };
+
+/**
+ * Which session an operation belongs to, captured when the operation is
+ * requested (before it waits for any lock). Another tab of a remembered
+ * session writes the same localStorage without changing this tab's
+ * generation, so the generation alone cannot tell sessions apart: the account
+ * (`subject`) and the refresh token are compared too.
+ */
+export interface SessionSnapshot {
+  readonly generation: number;
+  readonly subject: string | null;
+  readonly refreshToken: string | null;
+}
+
+/** A token pair this tab obtained for a session it may no longer store. */
+interface RetainedPair {
+  subject: string | null;
+  /** The refresh token the pair was rotated from. */
+  from: string;
+  pair: TokenPair;
+}
 
 interface TokenPair {
   token: string;
@@ -105,10 +126,17 @@ const statusOf = (error: unknown): number | undefined =>
  * The HTTP client and the owner of the browser session.
  *
  * Session rules:
- * - A session has a generation number. Signing in, signing out and an expired
- *   session start a new generation; a refresh or a password change renews
- *   the current one. Every request is stamped with the generation it was sent
- *   under and is only ever replayed under that same generation.
+ * - Every operation (request, refresh, password change, logout) captures a
+ *   SessionSnapshot when it is requested: this tab's generation, the account
+ *   of the access token and the refresh token. Before it sends, retries or
+ *   writes, storage must still hold that session — same generation, same
+ *   account, and the snapshot's refresh token or one this tab rotated from
+ *   it. Another tab of a remembered session writes the same localStorage
+ *   without changing this tab's generation; the account and the refresh
+ *   token lineage catch that, so no operation acts on or writes over a
+ *   session other than its own.
+ * - Signing in, signing out and an expired session start a new generation; a
+ *   refresh or a password change renews the current one.
  * - One refresh at a time: every request that hits a 401 waits on the same
  *   in-flight refresh and is resolved or rejected with it. Refreshes and
  *   session-replacing operations (password change) are serialised through one
@@ -127,10 +155,17 @@ export class ApiClient {
   private onSessionExpired: () => void;
   private generation = 0;
   private refreshInFlight: { generation: number; promise: Promise<string> } | null = null;
-  // The pair a refresh obtained after its session had already ended. It is
-  // never stored; logout uses it to authenticate the revocation, since the
-  // refresh spent the token logout would otherwise have to renew with.
-  private discardedPair: { generation: number; pair: TokenPair } | null = null;
+  // Refreshes and password changes still running, so logout can wait for
+  // them and revoke whatever successor they commit.
+  private sessionOps = new Set<{ generation: number; promise: Promise<unknown> }>();
+  // Rotations this tab performed itself (spent refresh token -> successor).
+  // A stored refresh token belongs to a snapshot's session only if it is the
+  // snapshot's token or descends from it through this map.
+  private rotations = new Map<string, string>();
+  // Pairs obtained after their session stopped being the stored one. They are
+  // never stored; logout uses the one that belongs to the session it ends to
+  // authenticate the revocation (the operation spent the stored token).
+  private retained: RetainedPair[] = [];
   private lockTail: Promise<void> = Promise.resolve();
 
   constructor(options: ApiClientOptions = {}) {
@@ -161,8 +196,8 @@ export class ApiClient {
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         const sessionConfig = config as SessionRequestConfig;
-        if (sessionConfig._sessionGeneration === undefined) {
-          sessionConfig._sessionGeneration = this.generation;
+        if (sessionConfig._session === undefined) {
+          sessionConfig._session = this.captureSession();
         }
         const token = this.getToken();
         if (token && config.headers && !config.headers.Authorization) {
@@ -209,33 +244,42 @@ export class ApiClient {
   }
 
   private async recoverFromUnauthorized(config: SessionRequestConfig): Promise<AxiosResponse> {
-    const generation = config._sessionGeneration ?? this.generation;
-    if (generation !== this.generation) {
-      // Sent under a session that has since ended or been replaced.
+    const session = config._session ?? this.captureSession();
+    if (!this.isCurrentSession(session)) {
+      // Sent under a session that has since ended or been replaced (here or
+      // by another tab): never refresh or replay it under another one.
       throw new SessionChangedError();
     }
     const sentHeader = config.headers?.Authorization;
     const sentToken = typeof sentHeader === 'string' ? sentHeader.replace(/^Bearer /, '') : undefined;
 
-    const token = await this.refreshFor(generation, sentToken);
-    if (generation !== this.generation) {
+    const token = await this.refreshFor(session, sentToken);
+    if (!this.isCurrentSession(session)) {
       throw new SessionChangedError();
     }
     // Every replay is marked, so a second 401 is final.
-    const replay: SessionRequestConfig = { ...config, _retry: true, _sessionGeneration: generation };
+    const replay: SessionRequestConfig = { ...config, _retry: true, _session: session };
     replay.headers = config.headers;
     replay.headers.Authorization = `Bearer ${token}`;
     return this.client(replay);
   }
 
   /** Joins the in-flight refresh of this generation, or starts one. */
-  private refreshFor(generation: number, sentToken?: string): Promise<string> {
-    if (this.refreshInFlight && this.refreshInFlight.generation === generation) {
+  private refreshFor(session: SessionSnapshot, sentToken?: string): Promise<string> {
+    if (this.refreshInFlight && this.refreshInFlight.generation === session.generation) {
       return this.refreshInFlight.promise;
     }
-    const promise = this.withLock(() => this.performRefresh(generation, sentToken));
+    return this.registerRefresh(
+      session.generation,
+      this.withLock(() => this.performRefresh(session, sentToken))
+    );
+  }
+
+  /** Makes a refresh joinable by other 401s and visible to logout. */
+  private registerRefresh(generation: number, promise: Promise<string>): Promise<string> {
     const entry = { generation, promise };
     this.refreshInFlight = entry;
+    this.trackSessionOp(generation, promise);
     promise
       .finally(() => {
         if (this.refreshInFlight === entry) {
@@ -244,6 +288,81 @@ export class ApiClient {
       })
       .catch(() => undefined);
     return promise;
+  }
+
+  private trackSessionOp(generation: number, promise: Promise<unknown>): void {
+    const entry = { generation, promise };
+    this.sessionOps.add(entry);
+    promise
+      .finally(() => {
+        this.sessionOps.delete(entry);
+      })
+      .catch(() => undefined);
+  }
+
+  /** The session currently stored, for later comparison. */
+  public captureSession(): SessionSnapshot {
+    return {
+      generation: this.generation,
+      subject: tokenSubject(this.getToken()),
+      refreshToken: this.getRefreshToken(),
+    };
+  }
+
+  /**
+   * Whether storage still holds the session of `snapshot`: same generation,
+   * same account, and a refresh token that is the snapshot's or one this tab
+   * rotated from it.
+   */
+  public isCurrentSession(snapshot: SessionSnapshot): boolean {
+    return (
+      snapshot.generation === this.generation &&
+      tokenSubject(this.getToken()) === snapshot.subject &&
+      this.descendsFrom(snapshot.refreshToken, this.getRefreshToken())
+    );
+  }
+
+  private descendsFrom(from: string | null, token: string | null): boolean {
+    if (from === null) {
+      return token === null;
+    }
+    const seen = new Set<string>();
+    let current: string | undefined = from;
+    while (current !== undefined && !seen.has(current)) {
+      if (current === token) {
+        return true;
+      }
+      seen.add(current);
+      current = this.rotations.get(current);
+    }
+    return false;
+  }
+
+  private recordRotation(from: string, to: string): void {
+    this.rotations.set(from, to);
+    if (this.rotations.size > 100) {
+      const oldest = this.rotations.keys().next().value;
+      if (oldest !== undefined) this.rotations.delete(oldest);
+    }
+  }
+
+  private retain(subject: string | null, from: string, pair: TokenPair): void {
+    this.retained.push({ subject, from, pair });
+    if (this.retained.length > 10) {
+      this.retained.shift();
+    }
+  }
+
+  /** The most recent retained pair that belongs to the session `ending`. */
+  private takeRetained(ending: SessionSnapshot): TokenPair | null {
+    for (let i = this.retained.length - 1; i >= 0; i--) {
+      const candidate = this.retained[i];
+      if (candidate.subject === ending.subject && this.descendsFrom(ending.refreshToken, candidate.from)) {
+        this.retained.splice(i, 1);
+        return candidate.pair;
+      }
+    }
+    return null;
   }
 
   /**
@@ -264,8 +383,8 @@ export class ApiClient {
    * it never takes the lock itself, so a lock holder (the password change)
    * can call it without waiting on work queued behind it.
    */
-  private async performRefresh(generation: number, sentToken?: string): Promise<string> {
-    if (generation !== this.generation) {
+  private async performRefresh(session: SessionSnapshot, sentToken?: string): Promise<string> {
+    if (!this.isCurrentSession(session)) {
       throw new SessionChangedError();
     }
     // A refresh that completed while this one waited for the lock already
@@ -277,7 +396,7 @@ export class ApiClient {
 
     const presented = this.getRefreshToken();
     if (!presented) {
-      this.expireSession(generation);
+      this.expireSession(session);
       throw new Error('No refresh token available');
     }
     const persist = this.isPersistent();
@@ -286,24 +405,27 @@ export class ApiClient {
     try {
       pair = await this.requestRefresh(presented);
     } catch (error) {
-      if (generation !== this.generation) {
+      if (!this.isCurrentSession(session)) {
         throw new SessionChangedError();
       }
       const status = statusOf(error);
       if (status === 400 || status === 401) {
-        this.expireSession(generation);
+        this.expireSession(session);
       }
       throw error;
     }
 
-    // The session ended, or this tab's tokens were replaced, while the
-    // refresh was in flight: the late pair must not resurrect or overwrite.
-    if (generation !== this.generation || this.getRefreshToken() !== presented) {
-      this.discardedPair = { generation, pair };
+    // The session ended or was replaced (here or by another tab) while the
+    // refresh was in flight: the late pair must not resurrect or overwrite
+    // anything. It is kept privately so a logout of this session can still
+    // authenticate its revocation.
+    if (!this.isCurrentSession(session) || this.getRefreshToken() !== presented) {
+      this.retain(session.subject, presented, pair);
       throw new SessionChangedError();
     }
     this.setToken(pair.token, persist);
     this.setRefreshToken(pair.refresh_token, persist);
+    this.recordRotation(presented, pair.refresh_token);
     return pair.token;
   }
 
@@ -341,8 +463,10 @@ export class ApiClient {
     }
   }
 
-  private expireSession(generation: number): void {
-    if (generation !== this.generation) {
+  private expireSession(session: SessionSnapshot): void {
+    // Never clear a session that is not the one that failed: in shared
+    // storage that could be another tab's sign-in.
+    if (!this.isCurrentSession(session)) {
       return;
     }
     this.clearTokens();
@@ -357,9 +481,11 @@ export class ApiClient {
    * renewed once and the request rebuilt from the renewed pair.
    */
   public async changePassword(currentPassword: string, newPassword: string): Promise<{ renewed: boolean }> {
-    const generation = this.generation;
-    return this.withLock(async () => {
-      if (generation !== this.generation) {
+    // The session this change is for, captured before waiting for the lock.
+    // Every attempt, retry and write below is checked against it.
+    const session = this.captureSession();
+    const operation = this.withLock(async () => {
+      if (!this.isCurrentSession(session)) {
         throw new SessionChangedError();
       }
       const persist = this.isPersistent();
@@ -374,54 +500,50 @@ export class ApiClient {
             ...(refreshToken ? { refresh_token: refreshToken } : {}),
           },
           {
-            _sessionGeneration: generation,
+            _session: session,
             ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
           } as Partial<SessionRequestConfig>
         );
-      // The account this change was started for. A retry is only ever sent
-      // for the same account and the same session generation.
-      const subject = tokenSubject(this.getToken());
-      const sameIdentity = () =>
-        generation === this.generation && subject !== null && tokenSubject(this.getToken()) === subject;
 
       let presented = this.getRefreshToken();
       let response: AxiosResponse<ChangePasswordResponse>;
       try {
         response = await send(this.getToken(), presented);
       } catch (error) {
-        const status = statusOf(error);
-        if (status === 401 && presented && sameIdentity()) {
-          // The access token expired. Renew privately (we hold the lock) and
-          // rebuild the body from the renewed pair; the old refresh token is
-          // spent now and would only earn a 409.
-          await this.performRefresh(generation);
-          if (!sameIdentity()) {
-            throw new SessionChangedError();
-          }
-        } else if (status === 409 && sameIdentity() && this.getRefreshToken() !== presented) {
-          // Another tab of this remembered session — the same account —
-          // renewed it meanwhile: retry once with the replacement it stored.
-          // Anything else (another account, a sign-out) surfaces the 409.
-        } else {
+        // Only an expired access token of this same session is recovered: it
+        // is renewed (as a registered refresh, so logout waits for it) and the
+        // body rebuilt from the renewed pair, the old refresh token being
+        // spent. A 409 SESSION_STALE always surfaces — following a rotation
+        // made by another tab needs cross-tab coordination (#184).
+        if (statusOf(error) !== 401 || !presented || !this.isCurrentSession(session)) {
           throw error;
+        }
+        await this.registerRefresh(session.generation, this.performRefresh(session));
+        if (!this.isCurrentSession(session)) {
+          throw new SessionChangedError();
         }
         presented = this.getRefreshToken();
         response = await send(this.getToken(), presented);
       }
 
-      if (generation !== this.generation) {
-        // Signed out or signed in elsewhere during the request: never store
-        // credentials into a session that is no longer this one.
-        throw new SessionChangedError();
-      }
       const data = response.data;
       if (data?.token && data.refresh_token) {
-        this.setToken(data.token, persist);
-        this.setRefreshToken(data.refresh_token, persist);
+        const pair = { token: data.token, refresh_token: data.refresh_token };
+        if (!this.isCurrentSession(session)) {
+          // Signed out, or another account signed in (here or in another
+          // tab), while the request was in flight: never write over that.
+          if (presented) this.retain(session.subject, presented, pair);
+          throw new SessionChangedError();
+        }
+        this.setToken(pair.token, persist);
+        this.setRefreshToken(pair.refresh_token, persist);
+        if (presented) this.recordRotation(presented, pair.refresh_token);
         return { renewed: true };
       }
       return { renewed: false };
     });
+    this.trackSessionOp(session.generation, operation);
+    return operation;
   }
 
   /**
@@ -432,23 +554,20 @@ export class ApiClient {
    * revocation is still authenticated.
    */
   public async endSession(revoke: (accessToken: string) => Promise<void>): Promise<void> {
+    const ending = this.captureSession();
     const access = this.getToken();
-    const refresh = this.getRefreshToken();
-    const endedGeneration = this.generation;
-    const inFlight = this.refreshInFlight?.generation === endedGeneration ? this.refreshInFlight.promise : undefined;
+    const running = [...this.sessionOps].filter((op) => op.generation === ending.generation).map((op) => op.promise);
     this.clearTokens();
-    if (inFlight) {
-      // Let a refresh already on the wire settle first, so the server-side
-      // revocation also covers any successor it commits.
-      await inFlight.catch(() => undefined);
-    }
-    // A refresh that completed after the tokens were dropped spent `refresh`
-    // and returned a successor; that pair (kept privately, never stored) is
-    // the freshest credential of the ending session.
-    const successor = this.discardedPair?.generation === endedGeneration ? this.discardedPair.pair : null;
-    this.discardedPair = null;
+    // Let refreshes and password changes already running settle first, so
+    // the server-side revocation also covers any successor they commit.
+    await Promise.allSettled(running);
+    // Such an operation spent the stored refresh token; its successor (kept
+    // privately, never stored) is the freshest credential of the ending
+    // session — but only one that belongs to this session (same account,
+    // rotated from this session's refresh token) may be used.
+    const successor = this.takeRetained(ending);
     const accessToken = successor?.token ?? access;
-    const refreshToken = successor?.refresh_token ?? refresh;
+    const refreshToken = successor?.refresh_token ?? ending.refreshToken;
     if (!accessToken) {
       return;
     }

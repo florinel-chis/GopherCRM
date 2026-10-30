@@ -289,21 +289,27 @@ re-checked). Login bookkeeping, `UpdateLastLogin`, the reset, the password chang
 owner lock when a login issues its session is tracked in #183.
 
 **Web client session** (#115, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the stored
-session. Each session has a generation; sign-in, sign-out and an expired session start a new one,
-a refresh or password change renews the current one. Requests are stamped with the generation they
-were sent under and replayed (once, marked `_retry`) only under it. All 401s of a generation share
-one refresh; refreshes and the password change run under one lock (the password change renews
-privately while holding it and rebuilds its body from the renewed pair). The password change's
-retries — after an expired access token, or the single retry after a 409 when another tab stored a
-newer token — are bound to the account (the `user_id` claim of the access token, read unverified
-only to tell sessions apart) and the generation it started with, and each attempt carries the
-bearer read for it; if the stored session now belongs to another account, the original error is
-surfaced instead of sending the body under that account. The refresh has its own
+session. Every operation — a request, a refresh, a password change, a logout — captures a session
+snapshot when it is requested (before waiting for any lock): this tab's generation, the account of
+the access token (the `user_id` claim, read unverified only to tell sessions apart) and the refresh
+token. Before it sends, retries or writes anything, storage must still hold that session: same
+generation, same account, and the snapshot's refresh token or one this tab rotated from it. That
+matters because another tab of a remembered session writes the same `localStorage` without changing
+this tab's generation; with the check, nothing is ever sent under, or written over, a session other
+than the operation's own (a late pair is kept privately, only for revocation). Sign-in, sign-out and
+an expired session start a new generation; a refresh or password change renews the current one.
+Requests are replayed (once, marked `_retry`) only under the session they were sent with. All 401s
+of a generation share one refresh; refreshes and the password change run under one lock. The
+password change recovers only an expired access token of its own session — through a registered
+refresh, so logout waits for it — and rebuilds its body from the renewed pair; each attempt carries
+the bearer read for it, and a 409 `SESSION_STALE` always surfaces (following another tab's rotation
+needs cross-tab coordination, #184). The refresh has its own
 15 s deadline that rejects every waiter even if the transport ignores the abort; a 400/401 from
 refresh ends the session, a timeout, network failure or 5xx keeps the tokens. Logout
-(`endSession`) drops the tokens at once and waits for a refresh already on the wire. If that
-refresh completed, it spent the stored refresh token; its successor pair is kept privately (never
-stored) and authenticates the revocation. Otherwise the captured access token is used, and if it
+(`endSession`) drops the tokens at once and waits for the refreshes and password changes of the
+ending generation still running. If one of them spent the stored refresh token, its successor pair
+— kept privately, never stored, and used only when it belongs to the session being ended (same
+account, rotated from that session's refresh token) — authenticates the revocation. Otherwise the captured access token is used, and if it
 has expired the client renews privately once, so the no-body revoke-all is still authenticated. The
 refresh token is read only from the storage that holds the access token, and `startSession`
 replaces both keys. Tabs sharing a remembered session do not coordinate their refreshes yet (#184).

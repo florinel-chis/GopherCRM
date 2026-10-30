@@ -30,6 +30,8 @@ vi.mock('@/api/client', () => ({
     startSession: vi.fn(),
     endSession: vi.fn(),
     getSessionGeneration: vi.fn(() => session.generation),
+    captureSession: vi.fn(() => ({ generation: session.generation, subject: null, refreshToken: null })),
+    isCurrentSession: vi.fn((snapshot: { generation: number }) => snapshot.generation === session.generation),
   },
   TOKEN_KEY: 'gophercrm_token',
   REFRESH_TOKEN_KEY: 'gophercrm_refresh_token',
@@ -53,6 +55,12 @@ describe('AuthContext', () => {
     sessionStorage.clear();
     session.generation = 0;
     vi.mocked(apiClient.getSessionGeneration).mockImplementation(() => session.generation);
+    vi.mocked(apiClient.captureSession).mockImplementation(() => ({
+      generation: session.generation,
+      subject: null,
+      refreshToken: null,
+    }));
+    vi.mocked(apiClient.isCurrentSession).mockImplementation((snapshot) => snapshot.generation === session.generation);
     vi.mocked(apiClient.endSession).mockImplementation(async (revoke) => {
       session.generation += 1;
       await revoke('captured-access-token');

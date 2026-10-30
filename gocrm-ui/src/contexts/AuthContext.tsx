@@ -22,7 +22,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const signInAttemptRef = useRef(0);
 
   const loadUser = useCallback(async () => {
-    const generation = apiClient.getSessionGeneration();
+    // The session this lookup is for; another tab may replace the stored
+    // session without this tab's generation changing.
+    const session = apiClient.captureSession();
     try {
       const token = apiClient.getToken();
       if (!token) {
@@ -33,7 +35,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const userData = await authApi.getCurrentUser();
       // A sign-out or another sign-in happened while /users/me was in flight:
       // this answer belongs to a session that is no longer the current one.
-      if (generation !== apiClient.getSessionGeneration()) {
+      if (!apiClient.isCurrentSession(session)) {
         return;
       }
       setUser(userData);
@@ -42,7 +44,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // network issues) should not log the user out. A late failure of an
       // earlier session must not clear the one that replaced it.
       const status = getHTTPStatus(error);
-      if ((status === 401 || status === 403) && generation === apiClient.getSessionGeneration()) {
+      if ((status === 401 || status === 403) && apiClient.isCurrentSession(session)) {
         apiClient.clearTokens();
         queryClient?.clear();
       }
