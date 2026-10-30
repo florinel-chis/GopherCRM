@@ -49,6 +49,7 @@ type AuthSessionIntegrationTestSuite struct {
 	db          *gorm.DB
 	router      *gin.Engine
 	userService service.UserService
+	apiKeys     service.APIKeyService
 	mailer      *capturingMailer
 }
 
@@ -79,6 +80,7 @@ func (suite *AuthSessionIntegrationTestSuite) SetupSuite() {
 		userRepo, apiKeyRepo, refreshRepo, resetRepo, utils.NewTransactionManager(db), suite.mailer,
 		jwtConfig, "http://localhost:5173", "")
 	suite.userService = service.NewUserService(userRepo)
+	suite.apiKeys = service.NewAPIKeyService(apiKeyRepo, "")
 
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
@@ -99,6 +101,11 @@ func (suite *AuthSessionIntegrationTestSuite) SetupSuite() {
 		{
 			protected.POST("/auth/logout", authHandler.Logout)
 			protected.POST("/auth/change-password", authHandler.ChangePassword)
+			// A minimal authenticated probe: answers 200 for any credential
+			// the auth middleware accepts.
+			protected.GET("/test/whoami", func(c *gin.Context) {
+				utils.RespondSuccess(c, http.StatusOK, map[string]interface{}{"user_id": c.GetUint("user_id")})
+			})
 		}
 	}
 }
@@ -268,6 +275,98 @@ func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordFlow() {
 		"current_password": "NewSecret123!", "new_password": "YetAnother12!",
 	})
 	suite.Equal(http.StatusUnauthorized, w.Code)
+}
+
+func (suite *AuthSessionIntegrationTestSuite) getWithAuth(path, header string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", header)
+	w := httptest.NewRecorder()
+	suite.router.ServeHTTP(w, req)
+	return w
+}
+
+func (suite *AuthSessionIntegrationTestSuite) loginPair(email, password string) (string, string) {
+	w := suite.postJSON("/api/v1/auth/login", "", map[string]string{"email": email, "password": password})
+	suite.Require().Equal(http.StatusOK, w.Code)
+	data := suite.decodeData(w)
+	access, _ := data["token"].(string)
+	refresh, _ := data["refresh_token"].(string)
+	suite.Require().NotEmpty(access)
+	suite.Require().NotEmpty(refresh)
+	return access, refresh
+}
+
+// TestChangePasswordRenewsCurrentSession: the session that changes the
+// password presents its refresh token and receives a replacement pair; every
+// other session (and the presented token itself) loses renewal, while access
+// tokens already issued keep authorising until they expire.
+func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordRenewsCurrentSession() {
+	user := &models.User{Email: "renewer@example.com", FirstName: "Renew", LastName: "Session", Role: models.RoleSales}
+	suite.Require().NoError(suite.userService.Register(user, "Password123!"))
+	currentAccess, currentRefresh := suite.loginPair("renewer@example.com", "Password123!")
+	otherAccess, otherRefresh := suite.loginPair("renewer@example.com", "Password123!")
+
+	w := suite.postJSON("/api/v1/auth/change-password", currentAccess, map[string]string{
+		"current_password": "Password123!", "new_password": "NewSecret123!", "refresh_token": currentRefresh,
+	})
+	suite.Require().Equal(http.StatusOK, w.Code, w.Body.String())
+	data := suite.decodeData(w)
+	renewedAccess, _ := data["token"].(string)
+	renewedRefresh, _ := data["refresh_token"].(string)
+	suite.Require().NotEmpty(renewedAccess, "the current session must receive a new access token")
+	suite.Require().NotEmpty(renewedRefresh, "the current session must receive a replacement refresh token")
+	suite.NotNil(data["user"])
+
+	// The renewed session keeps renewing.
+	w = suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": renewedRefresh})
+	suite.Equal(http.StatusOK, w.Code)
+
+	// The pre-change current token and the other session cannot renew.
+	for _, stale := range []string{currentRefresh, otherRefresh} {
+		w = suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": stale})
+		suite.Equal(http.StatusUnauthorized, w.Code)
+	}
+
+	// Revocation ends renewal, not access: issued JWTs still authorise.
+	suite.Equal(http.StatusOK, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+otherAccess).Code)
+	suite.Equal(http.StatusOK, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+renewedAccess).Code)
+
+	// Presenting a spent token is a 409 and changes nothing.
+	w = suite.postJSON("/api/v1/auth/change-password", renewedAccess, map[string]string{
+		"current_password": "NewSecret123!", "new_password": "ThirdSecret123!", "refresh_token": currentRefresh,
+	})
+	suite.Equal(http.StatusConflict, w.Code)
+	_, _ = suite.loginPair("renewer@example.com", "NewSecret123!")
+}
+
+// TestChangePasswordWithAPIKeyNeverIssuesSession: an API-key request goes
+// through the real auth middleware; even with a live refresh token of its
+// owner in the body it receives no credentials, and every session is revoked.
+func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordWithAPIKeyNeverIssuesSession() {
+	user := &models.User{Email: "apikey-changer@example.com", FirstName: "Api", LastName: "Key", Role: models.RoleSales}
+	suite.Require().NoError(suite.userService.Register(user, "Password123!"))
+	_, liveRefresh := suite.loginPair("apikey-changer@example.com", "Password123!")
+	rawKey, _, err := suite.apiKeys.Generate(user.ID, "integration", nil)
+	suite.Require().NoError(err)
+	suite.Require().Equal(http.StatusOK, suite.getWithAuth("/api/v1/test/whoami", "ApiKey "+rawKey).Code)
+
+	for _, body := range []map[string]string{
+		{"current_password": "Password123!", "new_password": "NewSecret123!", "refresh_token": liveRefresh},
+		{"current_password": "NewSecret123!", "new_password": "ThirdSecret123!"},
+	} {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "ApiKey "+rawKey)
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		suite.Require().Equal(http.StatusOK, w.Code, w.Body.String())
+		data := suite.decodeData(w)
+		suite.NotContains(data, "token", "an API-key caller must never receive a JWT")
+		suite.NotContains(data, "refresh_token", "an API-key caller must never receive a refresh token")
+	}
+	w := suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": liveRefresh})
+	suite.Equal(http.StatusUnauthorized, w.Code, "the presented refresh token was revoked, not renewed")
 }
 
 func TestAuthSessionIntegrationTestSuite(t *testing.T) {

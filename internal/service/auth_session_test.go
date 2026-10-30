@@ -103,8 +103,8 @@ func sessionActiveUser(id uint, password string) *models.User {
 	}
 }
 
-// The mock-based rotation cases pin the call sequence: lookup, conditional
-// claim, owner read, successor insert, access token — all on the
+// The mock-based rotation cases pin the call sequence: lookup, locking owner
+// read, conditional claim, successor insert, access token — all on the
 // transaction-bound repositories. Whether the writes really share one
 // transaction on SQL, and what concurrent callers see, is proven by the real
 // database roots in auth_refresh_rotation_regression_test.go.
@@ -178,7 +178,8 @@ func TestAuthService_RefreshAccessToken_UnknownRevokedOrExpired(t *testing.T) {
 
 func TestAuthService_RefreshAccessToken_LostClaimIsRejectedBeforeAnySuccessor(t *testing.T) {
 	// Both requests read the token as live; this one lost the claim. It must
-	// be rejected generically without reading the owner or minting anything.
+	// be rejected generically without minting anything. The owner is read
+	// (and locked) before the claim: users row before refresh_tokens rows.
 	d := newSessionAuthService(t)
 	d.expectTransactionBoundRepos()
 	raw := "contended-token"
@@ -190,13 +191,13 @@ func TestAuthService_RefreshAccessToken_LostClaimIsRejectedBeforeAnySuccessor(t 
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	d.refreshRepo.On("GetByTokenHash", hash).Return(stored, nil)
+	d.userRepo.On("GetByID", uint(1)).Return(sessionActiveUser(1, "OldPass123!"), nil)
 	d.refreshRepo.On("ClaimForRotation", uint(11)).Return(gorm.ErrRecordNotFound)
 
 	tokens, err := d.svc.RefreshAccessToken(raw)
 
 	assert.Nil(t, tokens)
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
-	d.userRepo.AssertNotCalled(t, "GetByID", mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "RevokeByTokenHash", mock.Anything)
 }
@@ -380,11 +381,13 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		user := sessionActiveUser(1, "CurrentPass1!")
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 
-		err := d.svc.ChangePassword(1, "WrongPass1!", "NewSecret123!")
+		tokens, err := d.svc.ChangePassword(1, "WrongPass1!", "NewSecret123!", "current-refresh")
 
 		assert.ErrorIs(t, err, ErrInvalidCurrentPassword)
-		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+		assert.Nil(t, tokens)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
 		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
 	})
 
 	t.Run("weak new password is rejected", func(t *testing.T) {
@@ -392,32 +395,89 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		user := sessionActiveUser(1, "CurrentPass1!")
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 
-		err := d.svc.ChangePassword(1, "CurrentPass1!", "weakpassword")
+		_, err := d.svc.ChangePassword(1, "CurrentPass1!", "weakpassword", "")
 
 		assert.Error(t, err)
-		d.userRepo.AssertNotCalled(t, "Update", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
 	})
 
-	t.Run("success updates the hash and revokes every refresh token", func(t *testing.T) {
+	t.Run("without a refresh token every session is revoked and nothing is issued", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
 		user := sessionActiveUser(1, "CurrentPass1!")
 		oldHash := user.Password
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
-
-		var updated *models.User
-		d.userRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-			updated = u
-			return u.ID == 1
+		var written string
+		d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+			written, _ = f["password"].(string)
+			return len(f) == 1
 		})).Return(nil)
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
 
-		err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!")
+		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "")
 
-		assert.NoError(t, err)
-		assert.NotNil(t, updated)
-		assert.NotEqual(t, oldHash, updated.Password)
-		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated.Password), []byte("NewSecret123!")))
+		require.NoError(t, err)
+		assert.Nil(t, tokens)
+		assert.NotEqual(t, oldHash, written)
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(written), []byte("NewSecret123!")))
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
+		d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
+	})
+
+	t.Run("with the current refresh token the session is renewed", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+		hash := hashOpaqueToken("current-refresh", sessionTestSecret)
+		d.refreshRepo.On("GetByTokenHash", hash).Return(&models.RefreshToken{
+			BaseModel: models.BaseModel{ID: 7}, UserID: 1, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour),
+		}, nil)
+		d.refreshRepo.On("ClaimForRotation", uint(7)).Return(nil)
+		d.userRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
+		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
+		d.refreshRepo.On("Create", mock.MatchedBy(func(tok *models.RefreshToken) bool { return tok.UserID == 1 })).Return(nil)
+
+		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "current-refresh")
+
+		require.NoError(t, err)
+		require.NotNil(t, tokens)
+		assert.NotEmpty(t, tokens.AccessToken)
+		assert.NotEmpty(t, tokens.RefreshToken)
+		assert.NotEqual(t, "current-refresh", tokens.RefreshToken)
+		d.refreshRepo.AssertCalled(t, "ClaimForRotation", uint(7))
+	})
+
+	t.Run("a refresh token of another user is stale and nothing is written", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+		hash := hashOpaqueToken("foreign-refresh", sessionTestSecret)
+		d.refreshRepo.On("GetByTokenHash", hash).Return(&models.RefreshToken{
+			BaseModel: models.BaseModel{ID: 9}, UserID: 2, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour),
+		}, nil)
+
+		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "foreign-refresh")
+
+		assert.ErrorIs(t, err, ErrSessionStale)
+		assert.Nil(t, tokens)
+		d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
+	})
+
+	t.Run("a revocation failure fails the change instead of being swallowed", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+		d.userRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
+		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(errors.New("database unavailable"))
+
+		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "")
+
+		assert.Error(t, err)
+		assert.Nil(t, tokens)
 	})
 }
 
@@ -521,10 +581,10 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 		d.resetRepo.On("MarkUsed", uint(9)).Return(nil)
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 
-		var updated *models.User
-		d.userRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-			updated = u
-			return u.ID == 1
+		var updated map[string]interface{}
+		d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+			updated = f
+			return true
 		})).Return(nil)
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
 
@@ -533,9 +593,10 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 		assert.NoError(t, err)
 		d.resetRepo.AssertCalled(t, "MarkUsed", uint(9))
 		require.NotNil(t, updated)
-		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated.Password), []byte("BrandNewPass1!")))
-		assert.Zero(t, updated.FailedLoginAttempts)
-		assert.Nil(t, updated.LockedUntil)
+		require.Len(t, updated, 3, "only the password and the lockout columns are written")
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated["password"].(string)), []byte("BrandNewPass1!")))
+		assert.Equal(t, 0, updated["failed_login_attempts"])
+		assert.Nil(t, updated["locked_until"])
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
 		// Every write went through the transaction-bound repositories.
 		d.resetRepo.AssertCalled(t, "WithTx", mock.Anything)
@@ -637,7 +698,7 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 		d.resetRepo.On("GetByTokenHash", hash).Return(spendable(), nil)
 		d.resetRepo.On("MarkUsed", uint(9)).Return(nil)
 		d.userRepo.On("GetByID", uint(1)).Return(sessionActiveUser(1, "CurrentPass1!"), nil)
-		d.userRepo.On("Update", mock.Anything).Return(nil)
+		d.userRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(injected)
 
 		err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")

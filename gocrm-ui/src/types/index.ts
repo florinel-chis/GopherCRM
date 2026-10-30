@@ -481,6 +481,16 @@ export interface LoginResponse {
   user: User;
 }
 
+// POST /auth/change-password. token, refresh_token and user are present only
+// when the current session was renewed (a bearer session that sent its
+// refresh token); otherwise only the message comes back.
+export interface ChangePasswordResponse {
+  message: string;
+  token?: string;
+  refresh_token?: string;
+  user?: User;
+}
+
 export interface RegisterRequest {
   email: string;
   password: string;

@@ -70,7 +70,7 @@ describe('Profile', () => {
   });
 
   it('changes the password and reports that other sessions were signed out', async () => {
-    vi.mocked(authApi.changePassword).mockResolvedValue(undefined);
+    vi.mocked(authApi.changePassword).mockResolvedValue({ renewed: true });
 
     render(<Profile />);
     await fillPasswordForm('OldStrongPass1!');
@@ -79,8 +79,41 @@ describe('Profile', () => {
       expect(authApi.changePassword).toHaveBeenCalledWith('OldStrongPass1!', 'NewStrongPass1!');
     });
 
-    expect(await screen.findByText(/other sessions have been signed out/i)).toBeInTheDocument();
+    const message = await screen.findByText(/You stay signed in here/i);
+    expect(message).toHaveTextContent(/other sessions can no longer renew themselves/i);
+    // No blocklist: the copy must not promise an immediate sign-out elsewhere.
+    expect(message).toHaveTextContent(/access they already hold ends when it expires/i);
+    expect(message).not.toHaveTextContent(/signed out immediately/i);
     expect(showSuccess).toHaveBeenCalledWith('Password changed successfully');
+  });
+
+  it('explains that every session must sign in again when no session was renewed', async () => {
+    vi.mocked(authApi.changePassword).mockResolvedValue({ renewed: false });
+
+    render(<Profile />);
+    await fillPasswordForm('OldStrongPass1!');
+
+    expect(
+      await screen.findByText(/Every session, including this one, will need to sign in again/i)
+    ).toBeInTheDocument();
+  });
+
+  it('tells the user to sign in again when the session changed during the request', async () => {
+    vi.mocked(authApi.changePassword).mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: 'SESSION_STALE',
+          message: 'Your session is no longer current. Sign in again, then change your password.',
+        },
+      },
+    });
+
+    render(<Profile />);
+    await fillPasswordForm('OldStrongPass1!');
+
+    expect(await screen.findByText(/Sign in again, then change your password/i)).toBeInTheDocument();
+    expect(showSuccess).not.toHaveBeenCalled();
   });
 
   it('surfaces the server message when the current password is wrong', async () => {

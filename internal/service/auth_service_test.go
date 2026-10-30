@@ -51,8 +51,8 @@ func (m *MockUserRepository) GetByEmailUnscoped(email string) (*models.User, err
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) Update(user *models.User) error {
-	args := m.Called(user)
+func (m *MockUserRepository) UpdateFields(id uint, fields map[string]interface{}) error {
+	args := m.Called(id, fields)
 	return args.Error(0)
 }
 
@@ -214,7 +214,7 @@ func TestAuthService_Login(t *testing.T) {
 		}
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
-		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+		mockUserRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
 
 		token, err := authService.Login("test@example.com", "wrong-password")
 
@@ -309,7 +309,7 @@ func TestAuthService_Login(t *testing.T) {
 		}
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
-		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+		mockUserRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
 		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
 
 		token, err := authService.Login("test@example.com", password)
@@ -339,8 +339,9 @@ func TestAuthService_Login(t *testing.T) {
 		}
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
-		mockUserRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-			return u.FailedLoginAttempts == 5 && u.LockedUntil != nil
+		mockUserRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+			until, locked := f["locked_until"].(*time.Time)
+			return len(f) == 2 && f["failed_login_attempts"] == 5 && locked && until != nil
 		})).Return(nil)
 
 		token, err := authService.Login("test@example.com", "wrong-password")
@@ -373,8 +374,8 @@ func TestAuthService_Login(t *testing.T) {
 		}
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(user, nil)
-		mockUserRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-			return u.FailedLoginAttempts == 0 && u.LockedUntil == nil
+		mockUserRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+			return len(f) == 2 && f["failed_login_attempts"] == 0 && f["locked_until"] == nil
 		})).Return(nil)
 		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
 

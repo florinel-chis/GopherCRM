@@ -1,4 +1,4 @@
-import { api } from '../client';
+import { api, apiClient } from '../client';
 import type { LoginRequest, LoginResponse, RegisterRequest, User } from '@/types';
 
 export interface RegistrationStatus {
@@ -25,8 +25,15 @@ export const authApi = {
     return response.data;
   },
 
-  logout: async (): Promise<void> => {
-    await api.post('/auth/logout');
+  // Revokes every refresh session of the user (no body). The access token is
+  // passed explicitly because the session's stored tokens are already gone
+  // by the time the request goes out (see ApiClient.endSession).
+  logout: async (accessToken?: string): Promise<void> => {
+    await api.post(
+      '/auth/logout',
+      undefined,
+      accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
+    );
   },
 
   getCurrentUser: async (): Promise<User> => {
@@ -47,10 +54,9 @@ export const authApi = {
     await api.post('/auth/password-reset/confirm', { token, new_password: newPassword });
   },
 
-  changePassword: async (currentPassword: string, newPassword: string): Promise<void> => {
-    await api.post('/auth/change-password', {
-      current_password: currentPassword,
-      new_password: newPassword,
-    });
+  // Sends the current refresh token so the server renews this session, and
+  // stores the replacement pair; see ApiClient.changePassword.
+  changePassword: async (currentPassword: string, newPassword: string): Promise<{ renewed: boolean }> => {
+    return apiClient.changePassword(currentPassword, newPassword);
   },
 };

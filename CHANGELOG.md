@@ -433,6 +433,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transaction, so they also work with GORM's `PrepareStmt` on MySQL, which cannot prepare them.
 - **Soft-deleted ticket comments are redacted on user erasure.** The redaction skipped comments
   that had been soft-deleted earlier, which kept their bodies.
+- **The session that changes the password stays signed in (#116).** `POST /auth/change-password`
+  is now one transaction: the owner row is locked, the hash it was verified against is re-checked,
+  the caller's current refresh token (new optional `refresh_token` body field) is claimed, the new
+  hash written, every other refresh token revoked and the replacement session issued. Any failure
+  before the commit rolls all of it back — the revocation is no longer best-effort after a committed
+  password (a failed COMMIT stays ambiguous, as for every transaction). The
+  response carries `token`, `refresh_token` and `user` when the session was renewed; a presented
+  token that is not a live session of the caller is `409 SESSION_STALE`; API-key requests never
+  receive session credentials. The Profile page stores the replacement pair in the storage the
+  session already used and no longer promises that other devices are signed out immediately
+  (their access tokens keep working until they expire). Refresh rotation now locks the owner row
+  before claiming the token, the order every session transaction follows, so a password change
+  and a concurrent refresh can no longer deadlock on MySQL/MariaDB.
+- **The 401 refresh interceptor settles every request (#115).** One shared refresh per session;
+  every waiting request is resolved or rejected on every outcome; every replay is marked so a
+  second 401 is final; a refresh that does not answer within 15 s rejects its waiters on its own;
+  requests are tagged with the session they were sent under and never replayed, nor their late
+  refresh stored, after logout or a sign-in to another account. A refresh rejected with 400/401
+  ends the session; a timeout, network error or 5xx keeps the stored tokens. `/auth/refresh`
+  answers operational failures with `503 SESSION_REFRESH_UNAVAILABLE` instead of the generic 401,
+  so a transient database error no longer signs the user out. Logout drops the stored tokens at
+  once, waits for a refresh already on the wire and authenticates the server-side revoke-all with
+  the successor of a refresh or password change still running (kept privately, never stored, and
+  only when it belongs to the session being ended) or, when its access token has expired, with a
+  private renewal. Every operation is bound to the session it was requested under (generation,
+  account and refresh-token lineage), so another tab signing out or signing in another account
+  never makes this tab send, write or revoke as the wrong account. The client reads the refresh token only from
+  the storage that holds the access token and a new sign-in replaces both keys. Cross-tab refresh
+  coordination remains open (#184).
+- **A login paused across an erasure can no longer restore the erased account.** Login
+  bookkeeping, password writes and profile updates wrote the whole user struct with GORM `Save`,
+  which falls back to an upsert when its update matches no row: a login that read the account
+  before an erasure wrote the name, email and password hash back and cleared `deleted_at`. User
+  writes are now conditional, column-specific updates of a live row (`UserRepository.UpdateFields`;
+  the full-struct `Update` is gone), and such a login is refused. Re-verifying the password under
+  the owner lock at login is tracked in #183.
+
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value
@@ -516,8 +553,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on SQLite and on a disposable MySQL schema
   (`TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}`), with the insert fault
   injected through the transaction-bound repository and the signing fault through an
-  instance-local seam; see `docs/testing/01-authentication.md` TC-AUTH-033a. The client-side
-  refresh coalescing stays deferred (#115).
+  instance-local seam; see `docs/testing/01-authentication.md` TC-AUTH-033a. Client-side
+  refresh coalescing is the #115 entry above.
 - **Password reset confirmation is atomic and single-use (#102).**
   `POST /auth/password-reset/confirm` used to mark the token used by an unconditional update
   before hashing and writing the password, and revoked sessions only best-effort afterwards: a

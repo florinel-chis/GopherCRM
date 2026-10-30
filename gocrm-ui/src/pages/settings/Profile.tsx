@@ -88,11 +88,14 @@ export const Profile: React.FC = () => {
     setError(null);
     setSuccess(null);
     try {
-      await authApi.changePassword(data.current_password, data.new_password);
-      // The backend revokes every refresh token but cannot revoke the JWT that
-      // is already in this tab, so the session stays alive on purpose.
-      const message =
-        'Password changed. Your other sessions have been signed out; this one stays active.';
+      const { renewed } = await authApi.changePassword(data.current_password, data.new_password);
+      // The server revokes every other refresh session in the same
+      // transaction. It cannot revoke access tokens already issued (there is
+      // no blocklist), so other devices keep working until theirs expires —
+      // the copy must not promise an immediate sign-out.
+      const message = renewed
+        ? 'Password changed. You stay signed in here. Your other sessions can no longer renew themselves; access they already hold ends when it expires.'
+        : 'Password changed. Every session, including this one, will need to sign in again once its current access expires.';
       setSuccess(message);
       showSuccess('Password changed successfully');
       reset();

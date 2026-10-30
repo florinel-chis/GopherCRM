@@ -13,16 +13,19 @@ func Auth(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var user *models.User
 		var err error
+		var method string
 
 		// Check for Bearer token
 		authHeader := c.GetHeader("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			user, err = authService.ValidateToken(token)
+			method = service.AuthMethodBearer
 		} else if strings.HasPrefix(authHeader, "ApiKey ") {
 			// Check for API Key
 			apiKey := strings.TrimPrefix(authHeader, "ApiKey ")
 			user, err = authService.ValidateAPIKey(apiKey)
+			method = service.AuthMethodAPIKey
 		} else {
 			utils.RespondUnauthorized(c, "Missing or invalid authorization header")
 			c.Abort()
@@ -39,6 +42,10 @@ func Auth(authService service.AuthService) gin.HandlerFunc {
 		c.Set("user", user)
 		c.Set("user_id", user.ID)
 		c.Set("user_role", string(user.Role))
+		// Handlers that issue session credentials need to know how the
+		// request authenticated: an API-key caller must never be handed a
+		// browser session (refresh token or JWT).
+		c.Set(service.AuthMethodContextKey, method)
 
 		c.Next()
 	}

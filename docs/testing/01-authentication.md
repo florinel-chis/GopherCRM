@@ -8,7 +8,7 @@ file, not by trusting the coverage matrix.
 
 **Sources**
 
-- `docs/FEATURES.md` section 1 (rows 1.1–1.9), section 10b "Auth sessions", section 11.1, Gap
+- `docs/FEATURES.md` section 1 (rows 1.1–1.11), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route, no
   access-token blocklist, concurrent-refresh stampede)
@@ -21,7 +21,8 @@ file, not by trusting the coverage matrix.
   `internal/service/auth_service.go`, `internal/repository/password_reset_token_repository.go`,
   `internal/repository/refresh_token_repository.go`,
   `internal/service/auth_password_reset_regression_test.go`,
-  `internal/service/auth_refresh_rotation_regression_test.go`, `internal/middleware/rate_limit.go`,
+  `internal/service/auth_refresh_rotation_regression_test.go`,
+  `internal/service/auth_change_password_regression_test.go`, `internal/middleware/rate_limit.go`,
   `cmd/main.go`
 - `gocrm-ui/e2e/tests/login.spec.ts`, `gocrm-ui/e2e/tests/registration.spec.ts`,
   `gocrm-ui/e2e/pages/login.page.ts`, `gocrm-ui/e2e/pages/register.page.ts`,
@@ -465,15 +466,16 @@ file, not by trusting the coverage matrix.
   1. Overwrite `localStorage.gophercrm_token` with a syntactically valid but bogus JWT, leaving the
      refresh token intact.
   2. Reload or trigger a list fetch (e.g. navigate to `/leads`).
-- **Expected:** The first `GET` returns **401**; the client then issues `POST /auth/refresh` through a
-  bare axios instance (no `Authorization` header) and gets **200**; the original request is replayed
-  with the new bearer token and succeeds; the page renders data without a visit to `/login`. Both
+- **Expected:** The first `GET` returns **401**; the client then issues one `POST /auth/refresh`
+  through a bare axios instance (no `Authorization` header) and gets **200**; the original request
+  is replayed once, marked as retried, with the new bearer token and succeeds; the page renders data
+  without a visit to `/login`. Every other request that hit a 401 meanwhile waits on the same
+  refresh and is replayed with the same token — the page sends exactly one refresh. Both
   `gophercrm_token` and the rotated `gophercrm_refresh_token` in storage differ from their previous
   values — rotation is strict, so the replacement must be persisted.
-- **Known issue:** FEATURES.md row 1.3 ("Not implemented", "no `/auth/refresh` route is registered")
-  is stale; the route exists at `cmd/main.go:188` and the interceptor is wired in
-  `gocrm-ui/src/api/client.ts`. Closes gap **G12**.
-- **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new)
+- **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new). The interceptor
+  itself is covered by Vitest with the real interceptors (`gocrm-ui/src/api/client.refresh.test.ts`,
+  "concurrent 401s share one refresh and replay every request with the new token").
 
 ### TC-AUTH-032 — A failed refresh logs the user out and hard-redirects to /login
 - **Priority:** P1
@@ -482,10 +484,16 @@ file, not by trusting the coverage matrix.
 - **Steps:**
   1. Overwrite both `gophercrm_token` and `gophercrm_refresh_token` with garbage.
   2. Navigate to `/customers`.
-- **Expected:** The data request 401s, `POST /auth/refresh` 401s, and the interceptor's catch branch
-  runs `clearTokens()` followed by `window.location.href = '/login'` — a full page load, not a
-  React Router navigation. Both storages end up empty.
-- **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new)
+- **Expected:** The data request 401s, `POST /auth/refresh` 401s, and the client ends the session
+  once: `clearTokens()` and then `window.location.href = '/login'` (skipped when already on
+  `/login`) — a full page load, not a React Router navigation. Every request waiting on that
+  refresh is rejected; none stays pending. Both storages end up empty. A refresh that fails with a
+  **503** (`SESSION_REFRESH_UNAVAILABLE`), a network error or no answer within 15 s rejects the
+  waiting requests but keeps the stored tokens and does not redirect.
+- **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new). Vitest:
+  `client.refresh.test.ts` "a failed refresh rejects every waiting request and signs out once",
+  "a refresh that never answers settles every waiter after the timeout", "a 503 from refresh keeps
+  the stored tokens and a later retry renews".
 
 ### TC-AUTH-033 — Refresh keeps the rotated tokens in the storage the session already used
 - **Priority:** P2
@@ -496,9 +504,9 @@ file, not by trusting the coverage matrix.
   1. Invalidate only `sessionStorage.gophercrm_token`.
   2. Trigger a data request and wait for the refresh round-trip.
 - **Expected:** The new access and refresh tokens land back in `sessionStorage`, and `localStorage`
-  stays empty. `client.ts` derives `persist` from
-  `sessionStorage.getItem(REFRESH_TOKEN_KEY) === null`, so a non-remembered session is not silently
-  promoted to a persistent one.
+  stays empty. `client.ts` reads the session from the storage that holds the access token and
+  writes the rotated pair back there, so a non-remembered session is not silently promoted to a
+  persistent one; a refresh token is never taken from the other storage.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new)
 
 ### TC-AUTH-033a — Refresh rotation is atomic and single-use
@@ -506,10 +514,11 @@ file, not by trusting the coverage matrix.
 - **Type:** regression
 - **Expected:** `POST /auth/refresh` rotates in one transaction (`internal/service/auth_service.go`
   `RefreshAccessToken`, `internal/repository/refresh_token_repository.go` `ClaimForRotation`). The
-  presented token is looked up, then claimed by a conditional update that revokes the row only
-  while it is still not revoked and strictly unexpired and must affect exactly one row; the owner
-  is re-read with a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL, a
-  plain read on SQLite); the successor row is inserted and its access JWT signed, all before the
+  presented token is looked up; the owner is re-read with a locking read (the transaction-bound
+  `UserRepository`, `FOR UPDATE` on MySQL, a plain read on SQLite) before the token is claimed by
+  a conditional update that revokes the row only while it is still not revoked and strictly
+  unexpired and must affect exactly one row (users row before refresh_tokens rows, the order every
+  session transaction follows); the successor row is inserted and its access JWT signed, all before the
   commit. A failure of the successor insert or of the signing rolls everything back, the claim
   included: the presented token stays usable, no extra row exists, no credentials are returned,
   and the same token rotates once the fault is gone. An unknown, revoked or expired token, one
@@ -525,9 +534,8 @@ file, not by trusting the coverage matrix.
   neither adds a row nor invalidates the winner. Logout stays idempotent around a rotation: logging
   out with the spent token, an unknown token or someone else's token is a no-op success, logging
   out with the successor revokes exactly that session and a second logout still succeeds.
-- **Known issue:** several parallel 401s in the SPA still each send a refresh; the backend rejects
-  all but one and the client-side coalescing is deferred (`docs/ROADMAP.md`, "Concurrent-refresh
-  stampede", #115). A JWT issued before a rotation or logout stays valid until it expires.
+- **Known issue:** a JWT issued before a rotation or logout stays valid until it expires. Two tabs
+  sharing a remembered session still refresh independently (#184).
 - **Automation:** `internal/service/auth_refresh_rotation_regression_test.go` runs every scenario
   on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
   created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
@@ -563,6 +571,27 @@ file, not by trusting the coverage matrix.
 ---
 
 ## Password reset & change (FEATURES 10b)
+
+### TC-AUTH-033b — The refresh interceptor settles every request and respects the session
+- **Priority:** P0
+- **Type:** regression
+- **Expected:** In one tab, all requests that hit a 401 share one refresh; on success each is
+  replayed once (marked retried, so a 401 on the replay is final and starts no second refresh), on
+  failure each is rejected, and a refresh that never answers rejects all of them after 15 s even
+  when the transport ignores the abort, after which a new attempt works. A missing refresh token
+  rejects every waiter without calling `/auth/refresh`. Each request carries the session it was
+  sent under: after logout or a sign-in to another account, a late 401 is not replayed under the
+  new session, and a late refresh answer is discarded instead of stored. Logout drops the stored
+  tokens at once and waits for the refreshes and password changes still running; a successor one
+  of them obtained (kept privately, never stored, and only if it belongs to the session being
+  ended) authenticates `POST /auth/logout` (revoke every session), otherwise an expired access
+  token is renewed privately once for the same purpose. Another tab replacing the shared session
+  (sign-out, sign-in of another account) never makes this tab refresh, replay, write or revoke
+  as the wrong account.
+- **Known issue:** tabs sharing a remembered session do not coordinate (#184).
+- **Automation:** Vitest — `gocrm-ui/src/api/client.refresh.test.ts` (`ApiClient 401 refresh`,
+  `ApiClient session storage`), driving the real interceptors through an injected adapter;
+  `AuthContext.test.tsx` covers the stale `/users/me` answer, the stale 401 and competing sign-ins.
 
 ### TC-AUTH-034 — "Forgot password?" leads to the 404 page
 - **Priority:** P1
@@ -678,11 +707,41 @@ file, not by trusting the coverage matrix.
 - **Type:** functional
 - **Preconditions:** Logged in as a user the test created.
 - **Steps:** Open a change-password form, supply the current and a new password, submit.
-- **Expected:** `POST /auth/change-password` returns **200** with "Password changed successfully" and
-  revokes all refresh tokens; a wrong current password returns **400** with "The current password is
-  incorrect" (not 401 — the session presenting it is still authenticated).
-- **Automation:** blocked — `authApi.changePassword` exists but no page calls it; there is no UI to
-  drive (`docs/ROADMAP.md`, "UI pages for the new auth flows")
+- **Steps (UI):** `/settings/profile`, "Change password".
+- **Expected:** `POST /auth/change-password` carries the tab's current `refresh_token` and returns
+  **200** with "Password changed successfully" plus a replacement `token`, `refresh_token` and
+  `user`; the page stores the pair in the storage the session already used ("Remember me" →
+  `localStorage`) and says "You stay signed in here. Your other sessions can no longer renew
+  themselves; access they already hold ends when it expires." The pre-change refresh token and
+  every other session's refresh token answer **401** at `/auth/refresh`; access tokens already
+  issued keep working until they expire. A wrong current password returns **400** with "The
+  current password is incorrect" (not 401 — the session presenting it is still authenticated).
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings.spec.ts` "changes the password and the
+  new one works on the next login", "rejects a wrong current password with the server message"
+
+### TC-AUTH-038a — Password change is atomic and renews only the presenting session
+- **Priority:** P0
+- **Type:** regression
+- **Expected:** One transaction: locking owner read, the hash the current password was verified
+  against re-checked (a concurrent change makes the second one a 400), the presented refresh token
+  claimed, the new hash written, every other refresh token revoked, the successor inserted and its
+  access token signed. A failure at any step before the commit leaves the old password and every session as they
+  were, and the same request then succeeds. A presented token that is unknown, revoked, expired or
+  another user's is **409** `SESSION_STALE` with nothing changed; the UI tells the user to sign in
+  again (it is never retried: following a rotation made by another tab needs cross-tab
+  coordination, #184). If another tab signs out or signs in another account while the change is
+  queued or in flight, nothing is sent under, or written over, that session. Without a
+  refresh token, and always for an API-key request, every refresh token is revoked and no
+  credentials are returned. A sibling refresh racing the change never makes it fail: committed
+  first, its successor is revoked by the change; arriving during the change, it is rejected.
+- **Known issue:** a login that verified the old password a moment before the change commits can
+  still be issued a session afterwards (#183).
+- **Automation:** `internal/service/auth_change_password_regression_test.go`
+  (`TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}`; the MySQL
+  concurrency root runs on a schema built by the real migrations and forces both lock orderings);
+  `tests/auth_session_integration_test.go` `TestChangePasswordRenewsCurrentSession`,
+  `TestChangePasswordWithAPIKeyNeverIssuesSession`; Vitest `client.refresh.test.ts`
+  (`ApiClient.changePassword`) and `Profile.test.tsx`.
 
 ---
 

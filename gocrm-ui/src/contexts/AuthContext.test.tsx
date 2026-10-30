@@ -17,12 +17,21 @@ vi.mock('@/api/endpoints', () => ({
   },
 }));
 
+// The session generation the mocked client reports; tests bump it to stand
+// for a sign-out or sign-in that happened while a request was in flight.
+const session = vi.hoisted(() => ({ generation: 0 }));
+
 vi.mock('@/api/client', () => ({
   apiClient: {
     getToken: vi.fn(),
     setToken: vi.fn(),
     setRefreshToken: vi.fn(),
     clearTokens: vi.fn(),
+    startSession: vi.fn(),
+    endSession: vi.fn(),
+    getSessionGeneration: vi.fn(() => session.generation),
+    captureSession: vi.fn(() => ({ generation: session.generation, subject: null, refreshToken: null })),
+    isCurrentSession: vi.fn((snapshot: { generation: number }) => snapshot.generation === session.generation),
   },
   TOKEN_KEY: 'gophercrm_token',
   REFRESH_TOKEN_KEY: 'gophercrm_refresh_token',
@@ -44,6 +53,18 @@ describe('AuthContext', () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    session.generation = 0;
+    vi.mocked(apiClient.getSessionGeneration).mockImplementation(() => session.generation);
+    vi.mocked(apiClient.captureSession).mockImplementation(() => ({
+      generation: session.generation,
+      subject: null,
+      refreshToken: null,
+    }));
+    vi.mocked(apiClient.isCurrentSession).mockImplementation((snapshot) => snapshot.generation === session.generation);
+    vi.mocked(apiClient.endSession).mockImplementation(async (revoke) => {
+      session.generation += 1;
+      await revoke('captured-access-token');
+    });
   });
 
   it('provides auth context to children', () => {
@@ -110,8 +131,7 @@ describe('AuthContext', () => {
       });
     });
 
-    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', true);
-    expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', true);
+    expect(apiClient.startSession).toHaveBeenCalledWith('test-token', 'test-refresh-token', true);
     expect(result.current.user).toEqual(mockUser);
   });
 
@@ -133,11 +153,10 @@ describe('AuthContext', () => {
       });
     });
 
-    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', false);
-    expect(apiClient.setRefreshToken).toHaveBeenCalledWith('test-refresh-token', false);
+    expect(apiClient.startSession).toHaveBeenCalledWith('test-token', 'test-refresh-token', false);
   });
 
-  it('does not store a refresh token when the login response omits it', async () => {
+  it('starts the session without a refresh token when the login response omits it', async () => {
     vi.mocked(authApi.login).mockResolvedValue({
       token: 'test-token',
       user: mockUser,
@@ -155,7 +174,9 @@ describe('AuthContext', () => {
       });
     });
 
-    expect(apiClient.setToken).toHaveBeenCalledWith('test-token', true);
+    // startSession replaces both keys, so no predecessor refresh token
+    // survives next to the new access token (storage covered in client tests).
+    expect(apiClient.startSession).toHaveBeenCalledWith('test-token', undefined, true);
     expect(apiClient.setRefreshToken).not.toHaveBeenCalled();
   });
 
@@ -175,13 +196,10 @@ describe('AuthContext', () => {
       await result.current.logout();
     });
 
-    expect(authApi.logout).toHaveBeenCalled();
-    // clearTokens wipes access AND refresh tokens from both storages, and the
-    // server must be told first, while the access token is still available.
-    expect(apiClient.clearTokens).toHaveBeenCalled();
-    const logoutOrder = vi.mocked(authApi.logout).mock.invocationCallOrder[0];
-    const clearOrder = vi.mocked(apiClient.clearTokens).mock.invocationCallOrder[0];
-    expect(logoutOrder).toBeLessThan(clearOrder);
+    // endSession drops the stored tokens first and then revokes on the
+    // server with the access token it captured before dropping them.
+    expect(apiClient.endSession).toHaveBeenCalledTimes(1);
+    expect(authApi.logout).toHaveBeenCalledWith('captured-access-token');
     expect(result.current.user).toBe(null);
     expect(result.current.isAuthenticated).toBe(false);
   });
@@ -210,7 +228,7 @@ describe('AuthContext', () => {
     });
 
     expect(authApi.register).toHaveBeenCalled();
-    expect(apiClient.setToken).toHaveBeenCalledWith('test-token');
+    expect(apiClient.startSession).toHaveBeenCalledWith('test-token', undefined, true);
   });
 
   it('clears query cache on logout when QueryClientProvider is present', async () => {
@@ -310,5 +328,91 @@ describe('AuthContext', () => {
     }).toThrow('useAuth must be used within an AuthProvider');
     
     consoleError.mockRestore();
+  });
+  it('signs out immediately even while the server-side revocation is still pending', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue('test-token');
+    vi.mocked(authApi.getCurrentUser).mockResolvedValue(mockUser);
+    let finishRevocation: () => void = () => {};
+    vi.mocked(apiClient.endSession).mockImplementation(
+      () => new Promise<void>((resolve) => { finishRevocation = resolve; })
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user).toEqual(mockUser));
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.logout();
+    });
+    await waitFor(() => expect(result.current.user).toBe(null));
+
+    await act(async () => {
+      finishRevocation();
+      await pending;
+    });
+    expect(result.current.isAuthenticated).toBe(false);
+  });
+
+  it('ignores a /users/me answer that arrives after the session changed', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue('old-session-token');
+    let answer: (user: typeof mockUser) => void = () => {};
+    vi.mocked(authApi.getCurrentUser).mockImplementation(
+      () => new Promise((resolve) => { answer = resolve; })
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    // The session ends (sign-out elsewhere in the app) before the answer lands.
+    session.generation += 1;
+    await act(async () => {
+      answer(mockUser);
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.user).toBe(null);
+  });
+
+  it('a late 401 from /users/me does not clear the session that replaced it', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue('old-session-token');
+    let fail: (error: unknown) => void = () => {};
+    vi.mocked(authApi.getCurrentUser).mockImplementation(
+      () => new Promise((_, reject) => { fail = reject; })
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    session.generation += 1; // a new sign-in replaced the session
+    await act(async () => {
+      fail(Object.assign(new Error('Unauthorized'), { response: { status: 401 } }));
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(apiClient.clearTokens).not.toHaveBeenCalled();
+  });
+
+  it('a slower earlier sign-in cannot replace a later one', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue(null);
+    const otherUser = { ...mockUser, id: 2, email: 'other@example.com' };
+    let answerFirst: (value: { token: string; refresh_token: string; user: typeof mockUser }) => void = () => {};
+    vi.mocked(authApi.login)
+      .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve; }))
+      .mockResolvedValueOnce({ token: 'second-token', refresh_token: 'second-refresh', user: otherUser });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.login({ email: 'test@example.com', password: 'password' });
+      await result.current.login({ email: 'other@example.com', password: 'password' });
+    });
+    await act(async () => {
+      answerFirst({ token: 'first-token', refresh_token: 'first-refresh', user: mockUser });
+      await first;
+    });
+
+    expect(apiClient.startSession).toHaveBeenCalledTimes(1);
+    expect(apiClient.startSession).toHaveBeenCalledWith('second-token', 'second-refresh', false);
+    expect(result.current.user).toEqual(otherUser);
   });
 });

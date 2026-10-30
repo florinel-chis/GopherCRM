@@ -15,7 +15,7 @@ that the test was executed as part of writing this catalog.
 
 | Document | Area | Cases | P0 | P1 | P2 | Automated | Planned | Blocked |
 |---|---|---|---|---|---|---|---|---|
-| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 26 | 19 | 3 |
+| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 27 | 19 | 2 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 42 | 11 | 18 | 13 | 2 | 31 | 9 |
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 65 | 15 | 34 | 16 | 24 | 32 | 9 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 42 | 15 | 15 | 12 | 10 | 22 | 10 |
@@ -30,7 +30,7 @@ that the test was executed as part of writing this catalog.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **618** | **197** | **274** | **147** | **204** | **330** | **84** |
+| **Total** | | **618** | **197** | **274** | **147** | **205** | **330** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

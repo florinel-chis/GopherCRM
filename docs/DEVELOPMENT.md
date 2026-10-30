@@ -193,8 +193,7 @@ FOR UPDATE` on MySQL, a plain read on SQLite where the dialector drops the claus
 inactive or erased, the password is written with the lockout cleared, and every refresh token of
 the account is revoked. The locking read matters on MySQL: a plain read inside the REPEATABLE READ
 transaction answers from the snapshot taken at the token lookup, so an account deactivated or
-erased by another connection just after that lookup would still look active and the full-row
-password update would write the stale `is_active` back. A failure of the password
+erased by another connection just after that lookup would still look active and be reset. A failure of the password
 update or of the revocation is returned and rolls the claim back, so the same link works on retry;
 competing confirmations commit exactly once, and a token that expires or is spent between the
 lookup and the claim is refused. The service refuses the confirmation rather than running the
@@ -214,10 +213,11 @@ as well.
 
 A refresh token is rotated by the same kind of unit of work (#103). `RefreshAccessToken` runs one
 transaction through the transaction manager and the `WithTx` repositories: the presented token is
-looked up, then claimed by `RefreshTokenRepository.ClaimForRotation`, a conditional update
-(`is_revoked = false AND expires_at > now`, exactly one affected row, else the generic rejection),
-the owner is re-read with the same locking read as the reset flow (`FOR UPDATE` on MySQL, a plain
-read on SQLite), the successor row is inserted and its access JWT is signed. A failure of the
+looked up, the owner is re-read with the same locking read as the reset flow (`FOR UPDATE` on
+MySQL, a plain read on SQLite), the token is claimed by `RefreshTokenRepository.ClaimForRotation`,
+a conditional update (`is_revoked = false AND expires_at > now`, exactly one affected row, else the
+generic rejection), the successor row is inserted and its access JWT is signed. An owner lookup
+that fails for a database reason aborts before the claim. A failure of the
 successor insert or of the signing rolls the claim back with it, so the presented token stays
 usable, no extra row exists and no credentials are returned; the same token succeeds once the
 fault is gone. Two requests presenting one token therefore commit exactly one successor: the loser's
@@ -237,9 +237,83 @@ owner-deactivated-after-lookup case, the MySQL concurrent root one connection pe
 one for verification; the insert fault is injected through the transaction-bound repository and
 the signing fault through an instance-local seam of the service under test, never a global), plus
 the claim tests in `internal/repository/refresh_token_repository_test.go` and the call-sequence
-cases in `internal/service/auth_session_test.go`. The frontend still sends several refreshes when
-parallel requests see a 401 at once; the backend now rejects all but one of them, and coalescing
-them client-side is tracked separately (#115).
+cases in `internal/service/auth_session_test.go`. `POST /auth/refresh` answers only
+`ErrInvalidRefreshToken` with the generic 401; any other failure is a `503
+SESSION_REFRESH_UNAVAILABLE`. A failure before the commit rolled the rotation back, so clients keep
+the still-usable token and retry; a failed COMMIT is ambiguous (the rotation may have been applied),
+in which case the retry answers 401 and the session ends.
+
+**Lock order for session writes** — every transaction that writes both an account and its refresh
+tokens locks the `users` row first and the `refresh_tokens` rows second: the reset (reset token,
+owner, refresh tokens), the rotation (owner, then the claim) and the password change (owner, then
+the claim, the revocation and the successor). `refresh_tokens.user_id` references `users` with a
+foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
+a rotation that claimed its token before locking the owner deadlocked against a password change
+(error 1213). New session flows must follow the same order.
+
+**Password change** (#116) — `ChangePassword(userID, current, new, refreshToken)` verifies the
+current password and hashes the new one before any transaction, then runs one transaction: locking
+owner read (missing, erased or inactive → `ErrAccountUnavailable`, 401), the locked hash must still
+be the one the password was verified against (otherwise a concurrent change won →
+`ErrInvalidCurrentPassword`, 400), the presented refresh token must be a live token of the caller
+and is claimed (otherwise `ErrSessionStale`, 409 `SESSION_STALE`, nothing written), the password is
+written with `UpdateFields`, every refresh token of the user is revoked, and the successor is
+inserted and its access token signed. Any failure before the commit rolls back everything; a failed
+COMMIT (`utils.ErrCommitFailed`) is ambiguous — the server may have applied the change — and is
+answered 500 without credentials, so the client cannot assume either outcome. Without a refresh token —
+and always for API-key requests, which the auth middleware records under
+`service.AuthMethodContextKey` — every token is revoked and nothing is issued. Access JWTs already
+issued elsewhere stay valid until they expire. Roots:
+`TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}` and
+`TestRefreshRotationLocksOwnerBeforeClaimSQLite` in
+`internal/service/auth_change_password_regression_test.go`; the MySQL concurrency root migrates a
+disposable schema with the real `migrations/` (foreign key and indexes as in production, server
+default REPEATABLE READ, checked portably on MySQL 8 and MariaDB 10.11) and forces both orderings
+of a password change against a refresh of the presented token and of a sibling token. Each
+ordering parks the first request inside its transaction, waits for the second to signal that it is
+about to run its locking owner read, and releases the first only once
+`information_schema.PROCESSLIST` (MySQL and MariaDB alike) shows that `FOR UPDATE` still executing
+on two consecutive polls — i.e. blocked on the row lock. On SQLite the single pooled connection
+serialises the two requests instead, so there is no lock wait to observe.
+
+**User writes never upsert** — `UserRepository` has no full-struct update. GORM's `Save` falls back
+to an INSERT … ON CONFLICT when its UPDATE matches no row, so a login that read an account before
+an erasure wrote the erased name, email and hash back and cleared `deleted_at`, and any stale
+struct could put an old password hash back. `UpdateFields(id, columns)` writes only the named
+columns (a closed allowlist) with `WHERE id = ? AND deleted_at IS NULL` and reports
+`gorm.ErrRecordNotFound` when no live row matched (MySQL reports changed rows, so a zero count is
+re-checked). Login bookkeeping, `UpdateLastLogin`, the reset, the password change and
+`UserService.Update` all go through it; a login whose account vanished underneath it is refused
+(`TestLoginErasedDuringAuthentication{SQLite,MySQL}` in
+`internal/service/auth_login_erasure_regression_test.go`). Re-verifying the password under the
+owner lock when a login issues its session is tracked in #183.
+
+**Web client session** (#115, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the stored
+session. Every operation — a request, a refresh, a password change, a logout — captures a session
+snapshot when it is requested (before waiting for any lock): this tab's generation, the account of
+the access token (the `user_id` claim, read unverified only to tell sessions apart) and the refresh
+token. Before it sends, retries or writes anything, storage must still hold that session: same
+generation, same account, and the snapshot's refresh token or one this tab rotated from it. That
+matters because another tab of a remembered session writes the same `localStorage` without changing
+this tab's generation; with the check, nothing is ever sent under, or written over, a session other
+than the operation's own (a late pair is kept privately, only for revocation). Sign-in, sign-out and
+an expired session start a new generation; a refresh or password change renews the current one.
+Requests are replayed (once, marked `_retry`) only under the session they were sent with. All 401s
+of a generation share one refresh; refreshes and the password change run under one lock. The
+password change recovers only an expired access token of its own session — through a registered
+refresh, so logout waits for it — and rebuilds its body from the renewed pair; each attempt carries
+the bearer read for it, and a 409 `SESSION_STALE` always surfaces (following another tab's rotation
+needs cross-tab coordination, #184). The refresh has its own
+15 s deadline that rejects every waiter even if the transport ignores the abort; a 400/401 from
+refresh ends the session, a timeout, network failure or 5xx keeps the tokens. Logout
+(`endSession`) drops the tokens at once and waits for the refreshes and password changes of the
+ending generation still running. If one of them spent the stored refresh token, its successor pair
+— kept privately, never stored, and used only when it belongs to the session being ended (same
+account, rotated from that session's refresh token) — authenticates the revocation. Otherwise the captured access token is used, and if it
+has expired the client renews privately once, so the no-body revoke-all is still authenticated. The
+refresh token is read only from the storage that holds the access token, and `startSession`
+replaces both keys. Tabs sharing a remembered session do not coordinate their refreshes yet (#184).
+Tests: `src/api/client.refresh.test.ts` drives the real interceptors through an injected adapter.
 
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit

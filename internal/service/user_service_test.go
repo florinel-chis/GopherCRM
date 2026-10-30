@@ -146,9 +146,11 @@ func (suite *UserServiceTestSuite) TestUpdate_Success() {
 	}
 
 	suite.mockRepo.On("GetByID", uint(1)).Return(existingUser, nil)
-	suite.mockRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-		return u.FirstName == "Updated" && u.LastName == "Name"
-	})).Return(nil)
+	// Only the supplied columns are written: a full save would put every
+	// other column of the struct read above back as it was.
+	suite.mockRepo.On("UpdateFields", uint(1), map[string]interface{}{
+		"first_name": "Updated", "last_name": "Name",
+	}).Return(nil)
 
 	user, err := suite.userService.Update(1, updates)
 	assert.NoError(suite.T(), err)
@@ -194,10 +196,10 @@ func (suite *UserServiceTestSuite) TestUpdate_PasswordChange() {
 	}
 
 	suite.mockRepo.On("GetByID", uint(1)).Return(existingUser, nil)
-	suite.mockRepo.On("Update", mock.MatchedBy(func(u *models.User) bool {
-		// Verify new password is properly hashed
-		err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte("newpassword123"))
-		return err == nil
+	suite.mockRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+		// Verify new password is properly hashed and nothing else is written
+		hash, ok := f["password"].(string)
+		return ok && len(f) == 1 && bcrypt.CompareHashAndPassword([]byte(hash), []byte("newpassword123")) == nil
 	})).Return(nil)
 
 	user, err := suite.userService.Update(1, updates)

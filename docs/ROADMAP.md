@@ -107,18 +107,22 @@ pagination, strict configuration typing, and — instead of deleting the fronten
 called missing routes — the routes now exist (auth session lifecycle, dashboard analytics, bulk
 status updates, API-key management, customer export/assign, upcoming tasks). Still open:
 
-- **Access-token blocklist** — logout/rotation revoke refresh tokens only; an issued JWT stays
-  valid until expiry.
+- **Access-token blocklist** — logout, rotation and password change revoke refresh tokens only;
+  an issued JWT stays valid until expiry.
+- **Cross-tab refresh coordination** — within one tab the refresh is shared and every request
+  settles (#115). Tabs that share a remembered session (`localStorage`) still refresh
+  independently: two tabs presenting the same token at once commit one rotation, and the loser's
+  401 signs both out. Coordinating refresh and session replacement across tabs (Web Locks or
+  BroadcastChannel) and storing the session as one record are #184.
+- **Login issued from an obsolete verification** — a login that verified the old password a moment
+  before a password change commits still gets its session inserted after the change; login should
+  re-verify the hash and the active state under the owner lock in the issuing transaction, with one
+  lock protocol shared by erasure and the auth flows (#183).
 - **Erasure vs conversion/authentication concurrency: tracked in #183.** The identity erasure
   (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
   customer/login linking, login, refresh rotation, password reset or API-key creation: a
   conversion or credential committed while an erasure is in flight can be missed, and opposite
   entry points can deadlock (an error, never a partial commit).
-- **Concurrent-refresh stampede** — several simultaneous 401s can race the refresh interceptor;
-  with strict rotation the losers get logged out. The backend side is settled (#103): competing
-  refreshes of one token commit exactly one successor and the others get the generic 401, so the
-  server can no longer mint two sessions or strand one. What remains is client-side: a shared
-  in-flight refresh promise so only one request is sent (#115).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
   `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
   email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment

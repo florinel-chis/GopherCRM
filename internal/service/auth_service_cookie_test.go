@@ -52,7 +52,7 @@ func TestAuthService_LoginWithTokens(t *testing.T) {
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
 		mockUserRepo.On("GetByEmail", "test@example.com").Return(activeUser, nil)
-		mockUserRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+		mockUserRepo.On("UpdateFields", mock.Anything, mock.Anything).Return(nil)
 
 		tokens, err := authService.LoginWithTokens("test@example.com", "wrongpassword")
 

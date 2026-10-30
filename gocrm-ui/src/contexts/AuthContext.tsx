@@ -17,7 +17,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const prevUserIdRef = useRef<number | undefined>(undefined);
 
+  // Sign-in attempts are ordered: only the most recently started one may
+  // install its session, whatever order the responses arrive in.
+  const signInAttemptRef = useRef(0);
+
   const loadUser = useCallback(async () => {
+    // The session this lookup is for; another tab may replace the stored
+    // session without this tab's generation changing.
+    const session = apiClient.captureSession();
     try {
       const token = apiClient.getToken();
       if (!token) {
@@ -26,12 +33,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       const userData = await authApi.getCurrentUser();
+      // A sign-out or another sign-in happened while /users/me was in flight:
+      // this answer belongs to a session that is no longer the current one.
+      if (!apiClient.isCurrentSession(session)) {
+        return;
+      }
       setUser(userData);
     } catch (error) {
       // Only clear tokens on auth errors (401). Other errors (429 rate limit,
-      // network issues) should not log the user out.
+      // network issues) should not log the user out. A late failure of an
+      // earlier session must not clear the one that replaced it.
       const status = getHTTPStatus(error);
-      if (status === 401 || status === 403) {
+      if ((status === 401 || status === 403) && apiClient.isCurrentSession(session)) {
         apiClient.clearTokens();
         queryClient?.clear();
       }
@@ -52,13 +65,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [user?.id, queryClient]);
 
   const login = useCallback(async (data: LoginRequest) => {
+    const attempt = ++signInAttemptRef.current;
     try {
       const response = await authApi.login(data);
-      const persist = Boolean(data.remember_me);
-      apiClient.setToken(response.token, persist);
-      if (response.refresh_token) {
-        apiClient.setRefreshToken(response.refresh_token, persist);
+      if (attempt !== signInAttemptRef.current) {
+        return;
       }
+      apiClient.startSession(response.token, response.refresh_token, Boolean(data.remember_me));
       queryClient?.clear();
       setUser(response.user);
     } catch (error) {
@@ -68,13 +81,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [queryClient]);
 
   const register = useCallback(async (data: RegisterRequest) => {
+    const attempt = ++signInAttemptRef.current;
     try {
       const response = await authApi.register(data);
-      // Registration returns token and user, so set them directly
-      apiClient.setToken(response.token);
-      if (response.refresh_token) {
-        apiClient.setRefreshToken(response.refresh_token);
+      if (attempt !== signInAttemptRef.current) {
+        return;
       }
+      // Registration returns token and user, so set them directly
+      apiClient.startSession(response.token, response.refresh_token, true);
       queryClient?.clear();
       setUser(response.user);
     } catch (error) {
@@ -84,14 +98,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [queryClient]);
 
   const logout = useCallback(async () => {
+    // The stored session ends at once — no refresh or replay can use or
+    // store tokens for it any more — and the UI signs out immediately. The
+    // server-side revocation of every refresh session follows; it is
+    // authenticated with the access token captured before the tokens were
+    // dropped.
+    signInAttemptRef.current += 1;
+    const revoked = apiClient.endSession((accessToken) => authApi.logout(accessToken));
+    queryClient?.clear();
+    setUser(null);
     try {
-      await authApi.logout();
+      await revoked;
     } catch (error) {
       console.error('Logout error:', error);
-    } finally {
-      apiClient.clearTokens();
-      queryClient?.clear();
-      setUser(null);
     }
   }, [queryClient]);
 
