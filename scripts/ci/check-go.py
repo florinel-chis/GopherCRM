@@ -51,8 +51,10 @@ AEO_SOURCES = {
     'internal/utils': ('transaction*_test.go',),
 }
 MIGRATION_SOURCES = {
-    'cmd/migrate': ('main_test.go', 'customer_website_test.go'),
+    'cmd/migrate': ('main_test.go', 'customer_website_test.go', 'lookup_indexes_migration_test.go'),
     'internal/models': ('database_sqlite_upgrade_test.go', 'customer_website_upgrade_test.go'),
+    'internal/repository': ('lookup_index_plan_test.go', 'pagination_determinism_test.go',
+                            'company_domain_normalization_test.go'),
 }
 KNOWN_SKIPS = {
     ('github.com/florinel-chis/gophercrm/test/integration',
@@ -88,13 +90,18 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
     else:
         required_by_package = {
             'cmd/migrate': {'TestMigrationFresh_FullUpAndDown',
-                            'TestMigrationUpgrade_FromMainAutoMigratedSchema', 'TestCustomerWebsiteMigration'},
+                            'TestMigrationUpgrade_FromMainAutoMigratedSchema', 'TestCustomerWebsiteMigration',
+                            'TestLookupIndexesMigration'},
             'internal/models': {'TestMigrateDatabase_SQLiteUpgradeFromV120',
                                 'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120',
                                 'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
                                 'TestCustomerWebsiteUpgradeFromSQLiteFixture'},
+            'internal/repository': {'TestLookupIndexesServeLookupsSQLite',
+                                    'TestPaginationDeterminismSQLite', 'TestPaginationDeterminismMySQL',
+                                    'TestCompanyDomainNormalizationSQLite',
+                                    'TestCompanyDomainNormalizationMySQL'},
         }
-        if any(not names.issubset(selected[package]) for package, names in required_by_package.items()):
+        if any(not names.issubset(selected.get(package, [])) for package, names in required_by_package.items()):
             raise go_checks.GateError('Missing required SQL migration or SQLite upgrade regressions')
     if profile == 'aeo' and any(not names.issubset(selected.get(package, []))
                                 for package, names in AEO_REQUIRED_ROOTS.items()):

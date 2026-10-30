@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -93,13 +92,13 @@ func (r *leadRepository) GetByExternalID(externalID string) (*models.Lead, error
 
 func (r *leadRepository) GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error) {
 	var leads []models.Lead
-	err := r.db.Where("owner_id = ?", ownerID).Offset(offset).Limit(limit).Find(&leads).Error
+	err := orderByID(r.db.Where("owner_id = ?", ownerID), "leads").Offset(offset).Limit(limit).Find(&leads).Error
 	return leads, err
 }
 
 func (r *leadRepository) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error) {
 	var leads []models.Lead
-	err := r.db.Where("classification = ?", classification).Offset(offset).Limit(limit).Find(&leads).Error
+	err := orderByID(r.db.Where("classification = ?", classification), "leads").Offset(offset).Limit(limit).Find(&leads).Error
 	return leads, err
 }
 
@@ -152,7 +151,7 @@ func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string)
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	err := query.Offset(offset).Limit(limit).Find(&leads).Error
+	err := orderByID(query, "leads").Offset(offset).Limit(limit).Find(&leads).Error
 	return leads, err
 }
 
@@ -162,16 +161,11 @@ func (r *leadRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortO
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("leads", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			query = query.Order(orderClause)
-		}
+	query, err := orderPage(query, "leads", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&leads).Error
+	err = query.Offset(offset).Limit(limit).Find(&leads).Error
 	return leads, err
 }
 
@@ -186,16 +180,11 @@ func (r *leadRepository) Search(query string, offset, limit int, sortBy, sortOrd
 		"first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?",
 		searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
 	)
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("leads", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+	db, err := orderPage(db, "leads", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := db.Offset(offset).Limit(limit).Find(&leads).Error
+	err = db.Offset(offset).Limit(limit).Find(&leads).Error
 	return leads, err
 }
 

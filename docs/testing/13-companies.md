@@ -187,8 +187,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   1. Create another company with domain `HTTPS://WWW.<RUN>.EXAMPLE/`; submit.
 - **Expected:** `POST /api/v1/companies` → **409**, `error.code` `CONFLICT`, message
   `domain "<run>.example" is already used by another company: a company with this domain already
-  exists`. The form stays open and shows the message. The check is `LOWER(domain)` among live rows
-  (`companyRepository.ExistsByDomain`); there is deliberately no unique index, so a soft-deleted
+  exists`. The form stays open and shows the message. The check compares the stored, lower-cased
+  domain with the lower-cased input among live rows (`companyRepository.ExistsByDomain`, served by
+  the non-unique `idx_companies_domain`); there is deliberately no unique index, so a soft-deleted
   company does not reserve its domain.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "a duplicate domain is refused with the server message on the domain field" (sends the same

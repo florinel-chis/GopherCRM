@@ -301,6 +301,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unrelated entity browsers and frontend unit suites are excluded from this
   bounded profile; explicit full/release validation remains complete.
 
+- **Lookup indexes for leads and companies (#109).** `leads.email`, `leads.classification`,
+  `leads.external_id` and `companies.domain` are now indexed, non-uniquely (a person may be
+  captured as a lead twice; a soft-deleted company keeps its domain while a live one reuses it).
+  The duplicate-domain check compares the stored, already lower-cased domain with plain equality
+  instead of `LOWER(domain)`, which no index could serve on SQLite or MySQL. MySQL/MariaDB
+  upgrades run `migrations/20261029140000_add_lead_company_lookup_indexes` (idempotent after an
+  AutoMigrate start, lower-cases any domain written outside the application; rollback drops the
+  four indexes); SQLite gets the same indexes from AutoMigrate, and application startup
+  (`models.MigrateDatabase`) lower-cases such domains on every driver, so SQLite installs, which
+  never run the SQL migration, keep catching a mixed-case duplicate. Query plans before and after are
+  recorded in `docs/datamodel.md`.
+
 - **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite
   passes on the queue's temporary branch, on top of the current `main`, before a pull request
   merges. Production deploys still follow only CI runs of pushes to `main`.
@@ -355,6 +367,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route guard matching the API, so a support or customer deep link lands on Access Denied
   instead of a page whose requests all fail. The customer list hides "Add Customer" from the same
   roles. Customer list, detail and edit routes are unchanged.
+- **Paginated lists no longer repeat or skip rows that share a sort value (#110).** The lead,
+  customer, task (including the label filter), ticket, user and company lists and searches, and
+  the company customer and lead sub-lists, now always end their `ORDER BY` with the table's id:
+  ascending id without a sort, otherwise the requested column then id in the same direction, the
+  id qualified with the table so the label join stays unambiguous. Before, tied values (every row
+  of one import shares `created_at`) came back in whatever order the engine chose per statement,
+  and on MySQL consecutive pages repeated some rows and never showed others. The support-scoped
+  ticket list used to break ties by ascending id even for a descending sort; it now follows the
+  sort direction like the rest.
 - **Erasure follows the customer login (#108).** A customer record and its own login
   (`customers.user_id` pointing at a `customer`-role account) are now erased together, from either
   end and through a converted lead, with every lead converted into those customers, in one

@@ -6,7 +6,6 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -148,7 +147,7 @@ func userErasurePlan() erasurePlan {
 
 func (r *userRepository) List(offset, limit int) ([]models.User, error) {
 	var users []models.User
-	err := r.db.Offset(offset).Limit(limit).Find(&users).Error
+	err := orderByID(r.db, "users").Offset(offset).Limit(limit).Find(&users).Error
 	return users, err
 }
 
@@ -166,16 +165,11 @@ func (r *userRepository) UpdateLastLogin(id uint) error {
 func (r *userRepository) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
 	var users []models.User
 	query := r.db
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("users", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			query = query.Order(orderClause)
-		}
+	query, err := orderPage(query, "users", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&users).Error
+	err = query.Offset(offset).Limit(limit).Find(&users).Error
 	return users, err
 }
 
@@ -187,16 +181,11 @@ func (r *userRepository) Search(query string, offset, limit int, sortBy, sortOrd
 		"email LIKE ? OR first_name LIKE ? OR last_name LIKE ?",
 		searchPattern, searchPattern, searchPattern,
 	)
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("users", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+	db, err := orderPage(db, "users", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := db.Offset(offset).Limit(limit).Find(&users).Error
+	err = db.Offset(offset).Limit(limit).Find(&users).Error
 	return users, err
 }
 

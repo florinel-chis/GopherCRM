@@ -79,6 +79,10 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   `modernc.org/sqlite` v1.23.1; module resolution here settles on v1.59.0
   (engine 3.53.4), a much newer build than its author tested against. It works,
   but the pairing is worth re-checking whenever glebarez cuts a release.
+- **Domain repair locking on MySQL** — the startup normalisation of mixed-case company domains
+  updates them by primary key in chunks of 500; the optimiser may still plan a large `IN` list as
+  a full scan and lock unrelated rows while it runs. It only runs when mixed-case domains exist.
+  Tracked in #181.
 
 ## Companies — follow-ups
 

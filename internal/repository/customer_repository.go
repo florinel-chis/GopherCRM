@@ -140,7 +140,7 @@ func customerErasurePlan() erasurePlan {
 
 func (r *customerRepository) List(offset, limit int) ([]models.Customer, error) {
 	var customers []models.Customer
-	err := r.db.Preload("User").Offset(offset).Limit(limit).Find(&customers).Error
+	err := orderByID(r.db.Preload("User"), "customers").Offset(offset).Limit(limit).Find(&customers).Error
 	return customers, err
 }
 
@@ -150,16 +150,11 @@ func (r *customerRepository) ListSortedWithPreloads(offset, limit int, sortBy, s
 	for _, preload := range preloads {
 		query = query.Preload(preload)
 	}
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			query = query.Order(orderClause)
-		}
+	query, err := orderPage(query, "customers", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := query.Offset(offset).Limit(limit).Find(&customers).Error
+	err = query.Offset(offset).Limit(limit).Find(&customers).Error
 	return customers, err
 }
 
@@ -174,16 +169,11 @@ func (r *customerRepository) Search(query string, offset, limit int, sortBy, sor
 		"first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?",
 		searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
 	)
-	if sortBy != "" {
-		orderClause, err := utils.SafeOrderClause("customers", sortBy, sortOrder)
-		if err != nil {
-			return nil, err
-		}
-		if orderClause != "" {
-			db = db.Order(orderClause)
-		}
+	db, err := orderPage(db, "customers", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
 	}
-	err := db.Offset(offset).Limit(limit).Find(&customers).Error
+	err = db.Offset(offset).Limit(limit).Find(&customers).Error
 	return customers, err
 }
 
