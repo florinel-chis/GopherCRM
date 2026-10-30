@@ -56,7 +56,9 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	suite.NoError(err)
 	
 	// Migrate the schema
-	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{})
+	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{},
+		// The erasure closure: deleting a customer erases the whole person.
+		&models.Lead{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 	suite.NoError(err)
 	
 	suite.db = db

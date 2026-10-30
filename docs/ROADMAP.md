@@ -96,6 +96,8 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   (free-mail domains excluded). Today the forms module writes only the text column, so a lead
   from `jane@acme.example` is not linked to the Acme company even when it exists; linking by hand
   on the lead form is the only path.
+- **Lead conversion vs company deletion race** — a company deleted while a lead converts can leave
+  the new customer linked to a soft-deleted company; tracked in #182.
 
 ## Follow-ups from the backend build-out
 
@@ -116,6 +118,11 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   before a password change commits still gets its session inserted after the change; login should
   re-verify the hash and the active state under the owner lock in the issuing transaction, with one
   lock protocol shared by erasure and the auth flows (#183).
+- **Erasure vs conversion/authentication concurrency: tracked in #183.** The identity erasure
+  (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
+  customer/login linking, login, refresh rotation, password reset or API-key creation: a
+  conversion or credential committed while an erasure is in flight can be missed, and opposite
+  entry points can deadlock (an error, never a partial commit).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
   `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
   email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment

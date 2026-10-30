@@ -416,7 +416,7 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Erase a customer
-// @Description Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. If the customer originated from a converted lead, that lead is erased in the same transaction. Use deactivation instead when the data must be recoverable.
+// @Description Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. The same person is erased everywhere in the same transaction: every lead converted into the customer and, when user_id names a customer-role account, that login (credentials purged) and its other customer records. A staff account in user_id, the account manager (assigned_to_id) and other business links are never erased. Use deactivation instead when the data must be recoverable.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth

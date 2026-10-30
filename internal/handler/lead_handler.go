@@ -64,16 +64,25 @@ type UpdateLeadRequest struct {
 	CompanyID *uint `json:"company_id,omitempty"`
 }
 
+// respondLeadRuleError answers a lead write refused by a conversion rule — a
+// conversion setting, or converted asked for outside the conversion — with
+// 400 VALIDATION_ERROR, the rule's message and the field it is about.
+func respondLeadRuleError(c *gin.Context, ruleErr *service.LeadConversionRuleError) {
+	utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, ruleErr.Message, ruleErr.Details())
+}
+
 type ConvertLeadRequest struct {
 	CompanyName string `json:"company_name,omitempty"`
 	Website     string `json:"website,omitempty"`
 	Address     string `json:"address,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	// Notes are stored on the new customer. They are required (non-blank)
+	// when the leads.conversion.require_notes setting is on.
+	Notes string `json:"notes,omitempty"`
 }
 
 // Create godoc
 // @Summary Create a new lead
-// @Description Create a new lead (sales and admin roles only). Optional company_id links the lead to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
+// @Description Create a new lead (sales and admin roles only). Optional company_id links the lead to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link. status "converted" is refused with 400 VALIDATION_ERROR (details.field "status"): a lead becomes converted only through POST /leads/{id}/convert.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -81,7 +90,7 @@ type ConvertLeadRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateLeadRequest true "Lead creation request"
 // @Success 201 {object} utils.APIResponse{data=models.Lead} "Lead created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, missing owner_id for admin users, or an unknown company_id (INVALID_REFERENCE)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, missing owner_id for admin users, an unknown company_id (INVALID_REFERENCE), or status converted (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only assign leads to themselves"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
@@ -97,6 +106,11 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	}
 	if len(req.Notes) > models.LeadNotesMaxBytes {
 		utils.RespondBadRequest(c, leadNotesTooLongMessage)
+		return
+	}
+	// A lead becomes converted only through the conversion endpoint.
+	if req.Status == models.LeadStatusConverted {
+		respondLeadRuleError(c, service.ConvertedStatusRefusal())
 		return
 	}
 
@@ -335,7 +349,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a lead
-// @Description Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner). company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
+// @Description Update a lead by ID (sales and admin roles only; sales users can only update their own leads, and only admins can reassign the owner). company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link. status "converted" is refused with 400 VALIDATION_ERROR (details.field "status") unless the lead is already converted: a lead becomes converted only through POST /leads/{id}/convert. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -344,7 +358,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body UpdateLeadRequest true "Lead update request; empty fields are left unchanged"
 // @Success 200 {object} utils.APIResponse{data=models.Lead} "Lead updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID or request data, or an unknown company_id (INVALID_REFERENCE)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID or request data, an unknown company_id (INVALID_REFERENCE), or status converted (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only update their own leads; only admins can reassign owners"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
@@ -443,6 +457,12 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 	updatedLead, err := h.leadService.Update(uint(id), updates)
 	if err != nil {
+		var ruleErr *service.LeadConversionRuleError
+		if errors.As(err, &ruleErr) {
+			logger.WithError(utils.LogError(err)).Warn("Lead update refused")
+			respondLeadRuleError(c, ruleErr)
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
 		if errors.Is(err, apperrors.ErrCompanyNotFound) {
 			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
@@ -458,7 +478,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a lead
-// @Description Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row; a converted lead's customer record is erased in the same transaction.
+// @Description Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row. A converted lead is the same person as the customer it became, so erasing it also erases that customer, the customer's own customer-role login (credentials included) and every other lead converted into it, in one transaction; staff accounts, owners and assignees are never erased. Only an admin may delete a converted lead: an owning sales user gets 403 and nothing changes.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -468,7 +488,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 // @Success 204 "No Content"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only delete their own leads"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only delete their own leads, and only leads that were never converted"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
@@ -499,7 +519,11 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.leadService.Delete(uint(id)); err != nil {
+	if err := h.leadService.Delete(uint(id), models.UserRole(currentUserRole)); err != nil {
+		if errors.Is(err, apperrors.ErrForbidden) {
+			utils.RespondForbidden(c, "Only an admin can delete a converted lead: it also erases the customer it became")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to delete lead")
 		utils.RespondInternalError(c)
 		return
@@ -513,6 +537,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Summary Convert lead to customer
 // @Description Convert a lead to a customer with additional customer information (admin or owning sales user only)
 // @Description Optional website is saved on the customer, trimmed, limited to 255 characters, and must be an http or https URL.
+// @Description The administrator's lead-conversion settings are enforced before anything is written: the lead's status must be one of leads.conversion.allowed_statuses, and notes must be non-blank when leads.conversion.require_notes is on; a refusal is 400 VALIDATION_ERROR whose details name the field ("status" with the lead's status and the allowed statuses, or "notes"). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id). The lead's company_id is copied to the customer when it still names a live company; a link to a deleted company is dropped and the conversion succeeds without it.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -521,7 +546,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body ConvertLeadRequest true "Lead conversion request with customer details"
 // @Success 200 {object} utils.APIResponse{data=models.Customer} "Lead converted to customer successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted, or lead has no email address"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, lead already converted (its status is converted or it already has a customer), lead has no email address, or a lead-conversion setting refused the conversion (VALIDATION_ERROR)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - requires sales or admin role; sales users can only convert their own leads"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
@@ -575,17 +600,32 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 
 	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
+		// A refusal the caller can act on (4xx) is a warning; only a
+		// failure the server owns (500) is logged as an error.
+		warn := logger.WithError(utils.LogError(err)).Warn
+		var ruleErr *service.LeadConversionRuleError
 		switch {
+		case errors.As(err, &ruleErr):
+			warn("Failed to convert lead")
+			respondLeadRuleError(c, ruleErr)
 		case errors.Is(err, apperrors.ErrValidation):
+			warn("Failed to convert lead")
 			utils.RespondBadRequest(c, err.Error())
 		case errors.Is(err, apperrors.ErrLeadConverted):
+			warn("Failed to convert lead")
 			utils.RespondBadRequest(c, "lead already converted")
 		case errors.Is(err, apperrors.ErrLeadMissingEmail):
+			warn("Failed to convert lead")
 			utils.RespondBadRequest(c, "This lead has no email address. Add one before converting it: every customer needs an email.")
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
+			warn("Failed to convert lead")
 			utils.RespondConflict(c, "customer with this email already exists")
+		case apperrors.IsNotFound(err):
+			// Erased between the lookup above and the conversion.
+			warn("Failed to convert lead")
+			utils.RespondNotFound(c, "Lead not found")
 		default:
+			logger.WithError(utils.LogError(err)).Error("Failed to convert lead")
 			utils.RespondInternalError(c)
 		}
 		return

@@ -249,7 +249,7 @@ func TestErasingAConvertedLeadAlsoErasesTheCustomerItBecame(t *testing.T) {
 // there while holding a complete copy of the person.
 func TestErasingAConvertedCustomerAlsoErasesTheOriginatingLead(t *testing.T) {
 	db := setupLeadErasureDB(t)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "converted-customer@example.com")
@@ -271,7 +271,7 @@ func TestErasingAConvertedCustomerAlsoErasesTheOriginatingLead(t *testing.T) {
 func TestCustomerServiceErasureFollowsTheConversionLink(t *testing.T) {
 	db := setupLeadErasureDB(t)
 	customerService := service.NewCustomerService(
-		repository.NewCustomerRepositoryWithLeadErasure(db),
+		repository.NewCustomerRepository(db),
 		repository.NewUserRepository(db),
 		repository.NewCompanyRepository(db),
 	)
@@ -290,7 +290,7 @@ func TestCustomerServiceErasureFollowsTheConversionLink(t *testing.T) {
 // customer, and every one of them holds its own copy of the person.
 func TestErasingACustomerErasesEveryLeadConvertedIntoIt(t *testing.T) {
 	db := setupLeadErasureDB(t)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 	leadRepo := repository.NewLeadRepository(db)
 
 	owner := seedLeadOwner(t, db)
@@ -315,7 +315,7 @@ func TestErasingACustomerErasesEveryLeadConvertedIntoIt(t *testing.T) {
 func TestErasureDoesNotReachPeopleWhoAreNotLinked(t *testing.T) {
 	db := setupLeadErasureDB(t)
 	leadRepo := repository.NewLeadRepository(db)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "unconverted@example.com")
@@ -376,7 +376,7 @@ func TestConvertedPairErasureRollsBackWithTheCallersTransaction(t *testing.T) {
 
 func TestCustomerFirstPairErasureRollsBackWithTheCallersTransaction(t *testing.T) {
 	db := setupLeadErasureDB(t)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "atomic-pair-2@example.com")
@@ -442,7 +442,7 @@ func TestLeadServiceErasureOfAMissingLeadIsNotFound(t *testing.T) {
 		utils.NewTransactionManager(db),
 	)
 
-	err := leadService.Delete(4242)
+	err := leadService.Delete(4242, models.RoleAdmin)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, apperrors.ErrNotFound)
 }
@@ -462,8 +462,8 @@ func TestLeadServiceErasureIsNotRepeatable(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "twice@example.com")
 
-	require.NoError(t, leadService.Delete(lead.ID))
-	assert.ErrorIs(t, leadService.Delete(lead.ID), apperrors.ErrNotFound)
+	require.NoError(t, leadService.Delete(lead.ID, models.RoleAdmin))
+	assert.ErrorIs(t, leadService.Delete(lead.ID, models.RoleAdmin), apperrors.ErrNotFound)
 
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
 }

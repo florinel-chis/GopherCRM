@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -48,6 +49,12 @@ func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
 	suite.mockCompanyRepo = new(mocks.CompanyRepository)
 	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockCompanyRepo, suite.txManager)
+	// Update and ConvertToCustomer bind every repository to their
+	// transaction (the lead read with a row lock); the mocks stand in for
+	// the bound copies too.
+	suite.mockLeadRepo.On("WithTx", mock.Anything).Return(suite.mockLeadRepo).Maybe()
+	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo).Maybe()
+	suite.mockCompanyRepo.On("WithTx", mock.Anything).Return(suite.mockCompanyRepo).Maybe()
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {
@@ -186,8 +193,32 @@ func (suite *LeadServiceTestSuite) TestDelete_Success() {
 	}, nil)
 	suite.mockLeadRepo.On("Delete", uint(1)).Return(nil)
 
-	err := suite.leadService.Delete(1)
+	err := suite.leadService.Delete(1, models.RoleAdmin)
 	assert.NoError(suite.T(), err)
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "DeleteUnconverted", uint(1))
+}
+
+// Only an admin may erase a converted lead, because that erases the customer
+// it became. Every other caller gets the erasure that refuses a converted lead
+// inside the erasure unit.
+func (suite *LeadServiceTestSuite) TestDelete_NonAdminUsesUnconvertedErasure() {
+	suite.mockLeadRepo.On("GetByID", uint(2)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 2}}, nil)
+	suite.mockLeadRepo.On("DeleteUnconverted", uint(2)).Return(nil)
+
+	err := suite.leadService.Delete(2, models.RoleSales)
+
+	assert.NoError(suite.T(), err)
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "Delete", uint(2))
+}
+
+func (suite *LeadServiceTestSuite) TestDelete_RefusedConvertedLeadIsForbidden() {
+	suite.mockLeadRepo.On("GetByID", uint(3)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 3}}, nil)
+	suite.mockLeadRepo.On("DeleteUnconverted", uint(3)).Return(fmt.Errorf("refused: %w", apperrors.ErrForbidden))
+
+	err := suite.leadService.Delete(3, models.RoleSales)
+
+	assert.ErrorIs(suite.T(), err, apperrors.ErrForbidden)
+	suite.mockLeadRepo.AssertNotCalled(suite.T(), "Delete", uint(3))
 }
 
 // Deleting a lead is an erasure, and an erasure that matched no row must not
@@ -197,7 +228,7 @@ func (suite *LeadServiceTestSuite) TestDelete_Success() {
 func (suite *LeadServiceTestSuite) TestDelete_NotFound() {
 	suite.mockLeadRepo.On("GetByID", uint(404)).Return(nil, gorm.ErrRecordNotFound)
 
-	err := suite.leadService.Delete(404)
+	err := suite.leadService.Delete(404, models.RoleAdmin)
 
 	assert.ErrorIs(suite.T(), err, apperrors.ErrNotFound)
 	suite.mockLeadRepo.AssertNotCalled(suite.T(), "Delete", uint(404))
@@ -209,7 +240,7 @@ func (suite *LeadServiceTestSuite) TestDelete_LookupFailurePropagates() {
 	boom := errors.New("connection reset by peer")
 	suite.mockLeadRepo.On("GetByID", uint(7)).Return(nil, boom)
 
-	err := suite.leadService.Delete(7)
+	err := suite.leadService.Delete(7, models.RoleAdmin)
 
 	assert.ErrorIs(suite.T(), err, boom)
 	assert.NotErrorIs(suite.T(), err, apperrors.ErrNotFound)

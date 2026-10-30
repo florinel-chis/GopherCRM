@@ -1,6 +1,7 @@
 package repository
 
-// Erasure across the lead/customer conversion link.
+// Erasure across the identity links: the lead/customer conversion link and
+// the customer/login link.
 //
 // A lead and the customer it was converted into describe the SAME person. The
 // conversion (leadService.ConvertToCustomer) copies the lead's email, names,
@@ -18,7 +19,11 @@ package repository
 // data in the customer. An Article 17 request is about the PERSON, not about a
 // table, so erasure has to follow the link in both directions.
 //
-// Both directions run in ONE transaction. A cascade that erased the customer,
+// The same holds for a customer and its own login (customers.user_id, to a
+// customer-role account): the login carries the person's name and email, and
+// its credentials, so erasing one without the other erases half a person.
+//
+// Every direction runs in ONE unit. A cascade that erased the customer,
 // committed, and then failed on the lead would leave exactly the half-erased
 // state that erasure.go goes out of its way to avoid.
 
@@ -26,8 +31,10 @@ import (
 	"errors"
 	"fmt"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // leadErasurePlan lists what counts as personal data on a lead.
@@ -128,61 +135,88 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 	return nil
 }
 
-// erasureCascade erases a person out of both the lead and the customer half of
-// a conversion, following leads.customer_id in whichever direction it is
-// entered from.
+// ErrConvertedLeadNeedsAdmin refuses the erasure of a converted lead by a
+// caller that may erase only unconverted ones. A converted lead is the same
+// person as the customer it became (and that customer's login), so erasing it
+// erases those too — and erasing a customer is an admin action. It matches
+// apperrors.ErrForbidden.
+var ErrConvertedLeadNeedsAdmin = fmt.Errorf("%w: erasing a converted lead also erases its customer, which requires an admin", apperrors.ErrForbidden)
+
+// erasureCascade erases one person out of every row that stores them,
+// following the identity links in whichever direction it is entered from:
 //
-// It remembers what it has already erased. Without that, erasing a lead would
-// erase its customer, which would look for the leads converted into that
-// customer, which would erase the original lead again, forever. A row is marked
-// BEFORE it is erased, so a cycle terminates.
+//	lead --leads.customer_id--> customer --customers.user_id--> login user
 //
-// A cascade lives for exactly one erasure, which runs inside one transaction
-// (see eraseLeadWithConversionLink and eraseCustomerWithConversionLink). If
-// that transaction rolls back, the cascade and its marks are discarded with it,
-// so a mark can never outlive the database work it describes.
+// The customers.user_id edge is followed only to and from a user whose role is
+// customer. That column means "this customer's own login"; a staff account in
+// it is a data error, not evidence that the two are the same person, and
+// following it would let a customer (or lead) erasure destroy an admin, sales
+// or support account past the admin-only user route and its self-delete
+// guard. A staff user erased directly is erased alone. assigned_to_id,
+// owner_id and every other staff or business link are never followed.
+//
+// It remembers what it has already visited, and checks that before reading or
+// writing anything, so every node is scrubbed exactly once and a cycle
+// (user -> customer -> lead -> customer -> user) terminates. A row is marked
+// BEFORE it is erased.
+//
+// A cascade lives for exactly one erasure unit (runErasureUnit). If that unit
+// rolls back, the cascade and its marks are discarded with it, so a mark can
+// never outlive the database work it describes.
 type erasureCascade struct {
 	leads     map[uint]struct{}
 	customers map[uint]struct{}
+	users     map[uint]struct{}
+
+	// allowCustomers is false for an erasure that may only remove an
+	// unconverted lead (a non-admin caller): reaching a customer is refused
+	// before anything is written.
+	allowCustomers bool
 }
 
-func newErasureCascade() *erasureCascade {
+func newErasureCascade(allowCustomers bool) *erasureCascade {
 	return &erasureCascade{
-		leads:     make(map[uint]struct{}),
-		customers: make(map[uint]struct{}),
+		leads:          make(map[uint]struct{}),
+		customers:      make(map[uint]struct{}),
+		users:          make(map[uint]struct{}),
+		allowCustomers: allowCustomers,
 	}
 }
 
-// leadErased and customerErased report whether this cascade has already erased
-// the row, i.e. whether it is gone because of earlier work in the same unit of
-// work rather than because it never existed.
-func (c *erasureCascade) leadErased(id uint) bool {
-	_, done := c.leads[id]
-	return done
+// eraseGraph is the one entry point: it runs root against a fresh cascade
+// inside one erasure unit. Nothing else creates a cascade, so no step of an
+// erasure can start a second traversal with its own visited set.
+func eraseGraph(db *gorm.DB, allowCustomers bool, root func(c *erasureCascade, tx *gorm.DB) error) error {
+	return runErasureUnit(db, func(tx *gorm.DB) error {
+		return root(newErasureCascade(allowCustomers), tx)
+	})
 }
 
-func (c *erasureCascade) customerErased(id uint) bool {
-	_, done := c.customers[id]
-	return done
+// lockingRead returns a handle for a read that locks the rows it returns
+// (FOR UPDATE on MySQL/MariaDB; SQLite drops the clause and serialises writers
+// on its single connection anyway). The fresh Session keeps the clause from
+// leaking into the next statement on the same handle.
+func lockingRead(tx *gorm.DB) *gorm.DB {
+	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
 }
 
 // eraseLead erases the lead and, if the lead was converted, the customer it
-// became. tx must be a transaction handle: the caller owns the atomicity of the
-// whole cascade, not of the individual rows.
+// became.
 func (c *erasureCascade) eraseLead(tx *gorm.DB, id uint) error {
-	if c.leadErased(id) {
+	if _, done := c.leads[id]; done {
 		return nil
 	}
-	c.leads[id] = struct{}{}
-	return c.eraseLeadRow(tx, id)
-}
 
-func (c *erasureCascade) eraseLeadRow(tx *gorm.DB, id uint) error {
 	// Unscoped: a lead soft-deleted before deletion became an erasure still
 	// holds the person's data and still has to be scrubbed. A row that is not
-	// there at all is not an error here — the caller (the service layer) is
-	// responsible for telling a caller that there was nobody to erase, exactly
-	// as it is for users and customers.
+	// there at all is not an error here — the service layer tells a caller
+	// that there was nobody to erase.
+	//
+	// This first read is deliberately NOT a locking read. An automation step
+	// holds the lead row under FOR UPDATE while it runs, and the lead plan
+	// cancels the lead's runs before touching the row (see
+	// erasurePlan.BeforeScrub); waiting on the lead here, before anything is
+	// modified, would undo that ordering.
 	var lead models.Lead
 	err := tx.Unscoped().Select("id", "customer_id").First(&lead, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -191,31 +225,56 @@ func (c *erasureCascade) eraseLeadRow(tx *gorm.DB, id uint) error {
 	if err != nil {
 		return fmt.Errorf("loading lead %d for erasure: %w", id, err)
 	}
+	// A caller that may erase only unconverted leads is refused before the
+	// first write of the unit.
+	if lead.CustomerID != nil && !c.allowCustomers {
+		return ErrConvertedLeadNeedsAdmin
+	}
 
+	c.leads[id] = struct{}{}
 	if err := eraseRecord(tx, id, leadErasurePlan()); err != nil {
 		return fmt.Errorf("erasing lead %d: %w", id, err)
 	}
 
-	if lead.CustomerID == nil {
+	// The scrub holds the row lock now, so this read is current: a
+	// conversion committed after the first read is seen here. A refused
+	// erasure returns an error and the unit rolls everything back, the
+	// automation cancel included, so a refusal changes nothing.
+	var current models.Lead
+	if err := lockingRead(tx).Unscoped().Select("id", "customer_id").First(&current, id).Error; err != nil {
+		return fmt.Errorf("re-reading erased lead %d: %w", id, err)
+	}
+	if current.CustomerID == nil {
 		return nil
 	}
-	return c.eraseCustomer(tx, *lead.CustomerID)
+	if !c.allowCustomers {
+		return ErrConvertedLeadNeedsAdmin
+	}
+	return c.eraseCustomer(tx, *current.CustomerID)
 }
 
-// eraseCustomer erases the customer and every lead that was converted into it.
+// eraseCustomer erases the customer, every lead converted into it and, when
+// it is a customer-role account, its login.
 func (c *erasureCascade) eraseCustomer(tx *gorm.DB, id uint) error {
-	if c.customerErased(id) {
+	if _, done := c.customers[id]; done {
 		return nil
 	}
-	c.customers[id] = struct{}{}
-	return c.eraseCustomerRow(tx, id)
-}
+	if !c.allowCustomers {
+		return ErrConvertedLeadNeedsAdmin
+	}
 
-func (c *erasureCascade) eraseCustomerRow(tx *gorm.DB, id uint) error {
-	// The customer half is erased by the customer repository itself rather than
-	// by a second copy of its erasure plan here: the authoritative list of a
-	// customer's personal-data columns must exist exactly once.
-	if err := NewCustomerRepository(tx).Delete(id); err != nil {
+	// Read plainly: the scrub below takes the row lock straight away.
+	var customer models.Customer
+	err := tx.Unscoped().Select("id", "user_id").First(&customer, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("loading customer %d for erasure: %w", id, err)
+	}
+
+	c.customers[id] = struct{}{}
+	if err := eraseRecord(tx, id, customerErasurePlan()); err != nil {
 		return fmt.Errorf("erasing customer %d: %w", id, err)
 	}
 
@@ -224,64 +283,62 @@ func (c *erasureCascade) eraseCustomerRow(tx *gorm.DB, id uint) error {
 	// soft-deleted earlier still holds personal data.
 	var leadIDs []uint
 	if err := tx.Unscoped().Model(&models.Lead{}).
-		Where("customer_id = ?", id).Pluck("id", &leadIDs).Error; err != nil {
+		Where("customer_id = ?", id).Order("id").Pluck("id", &leadIDs).Error; err != nil {
 		return fmt.Errorf("finding the leads converted into customer %d: %w", id, err)
 	}
-
 	for _, leadID := range leadIDs {
 		if err := c.eraseLead(tx, leadID); err != nil {
 			return err
 		}
 	}
-	return nil
-}
 
-// eraseLeadWithConversionLink erases a lead and, when it was converted, the
-// customer it became — in a single transaction, joining the caller's if the
-// handle it is given is already one.
-func eraseLeadWithConversionLink(db *gorm.DB, leadID uint) error {
-	return runInTransaction(db, func(tx *gorm.DB) error {
-		return newErasureCascade().eraseLead(tx, leadID)
-	})
-}
-
-// eraseCustomerWithConversionLink erases a customer and every lead that was
-// converted into it, in a single transaction.
-func eraseCustomerWithConversionLink(db *gorm.DB, customerID uint) error {
-	return runInTransaction(db, func(tx *gorm.DB) error {
-		return newErasureCascade().eraseCustomer(tx, customerID)
-	})
-}
-
-// NewCustomerRepositoryWithLeadErasure returns a customer repository whose
-// Delete also erases the lead the customer was converted from.
-//
-// It is a wrapper rather than a change to customerRepository.Delete because the
-// cascade is a rule ABOUT the relationship between the two entities: the
-// customer repository knows nothing about leads, and the erasure of a lead
-// belongs to the lead repository. Every other method is the plain customer
-// repository's, including the WithTx handle, which stays wrapped so that a
-// caller composing the erasure into its own transaction still gets the cascade.
-//
-// This is the constructor the application must be wired with (see
-// cmd/main.go): erasing a customer through the unwrapped repository erases only
-// half the person.
-func NewCustomerRepositoryWithLeadErasure(db *gorm.DB) CustomerRepository {
-	return &cascadingCustomerRepository{
-		CustomerRepository: NewCustomerRepository(db),
-		db:                 db,
+	if customer.UserID == nil {
+		return nil
 	}
+	return c.eraseUser(tx, *customer.UserID, true)
 }
 
-type cascadingCustomerRepository struct {
-	CustomerRepository
-	db *gorm.DB
-}
+// eraseUser erases a user. viaLink is true when the user was reached through
+// customers.user_id: a staff account reached that way is left alone. A
+// customer-role user takes every customer row linked to it along.
+func (c *erasureCascade) eraseUser(tx *gorm.DB, id uint, viaLink bool) error {
+	if _, done := c.users[id]; done {
+		return nil
+	}
 
-func (r *cascadingCustomerRepository) Delete(id uint) error {
-	return eraseCustomerWithConversionLink(r.db, id)
-}
+	// The role decides whether the identity link holds, so it is read with a
+	// locking read inside the unit. Erasure never scrubs the role, so a login
+	// erased earlier is still recognised (and re-scrubbed) as a customer.
+	var user models.User
+	err := lockingRead(tx).Unscoped().Select("id", "role").First(&user, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("loading user %d for erasure: %w", id, err)
+	}
+	isCustomerLogin := user.Role == models.RoleCustomer
+	if viaLink && !isCustomerLogin {
+		return nil
+	}
 
-func (r *cascadingCustomerRepository) WithTx(tx *gorm.DB) CustomerRepository {
-	return NewCustomerRepositoryWithLeadErasure(tx)
+	c.users[id] = struct{}{}
+	if err := eraseRecord(tx, id, userErasurePlan()); err != nil {
+		return fmt.Errorf("erasing user %d: %w", id, err)
+	}
+	if !isCustomerLogin {
+		return nil
+	}
+
+	var customerIDs []uint
+	if err := tx.Unscoped().Model(&models.Customer{}).
+		Where("user_id = ?", id).Order("id").Pluck("id", &customerIDs).Error; err != nil {
+		return fmt.Errorf("finding the customers of login %d: %w", id, err)
+	}
+	for _, customerID := range customerIDs {
+		if err := c.eraseCustomer(tx, customerID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

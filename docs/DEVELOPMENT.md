@@ -511,8 +511,9 @@ the status — plus, for leads, the automation events on the same transaction. T
 set to `completed` or `failed` afterwards; a failure to do so is logged and never changes the
 response. There is no generic bulk create/update/delete/action machinery any more (#112); a new
 bulk operation gets its own narrow service method and repository halves the same way, and a bulk
-erasure would need per-item isolation designed afresh (`runInTransaction` joins the caller's
-transaction, which is wrong for an item of a batch that reports per-item failures).
+erasure would need per-item isolation designed afresh (each erasure is one savepoint-bracketed
+unit, `runErasureUnit`, but a batch would also have to report per-item failures and authorize
+every item's whole graph).
 
 **Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
 
@@ -748,18 +749,48 @@ is retention, not erasure. It is implemented in `internal/repository/erasure.go`
 
 What happens on `DELETE`:
 
+- **The person is erased, not the row you clicked.** One person can be stored three times: a lead,
+  the customer it was converted into (`leads.customer_id`) and that customer's own login
+  (`customers.user_id` pointing at a `customer`-role account). Deleting any of them erases every
+  row of that connected graph — every customer whose `user_id` is the erased login, every lead
+  converted into an erased customer, the customer a converted lead became, the login of an erased
+  customer — soft-deleted rows included, in one transaction (`internal/repository/erasure_cascade.go`).
+  The cascade lives in the plain repositories (`NewUserRepository`, `NewCustomerRepository`,
+  `NewLeadRepository`); there is no special constructor to wire.
+- **Staff links are never followed.** The `customers.user_id` edge counts only when the user's
+  role, read inside the transaction, is `customer`. A staff account in that column is a data error,
+  not the same person, and following it would let a customer erasure destroy an admin, sales or
+  support account past the admin-only `DELETE /users/{id}` and its self-delete guard. So a customer
+  or lead erasure leaves a staff user there alone, and erasing a staff user directly erases that
+  user only. `assigned_to_id`, `owner_id`, ticket/task assignees, `company_id` and deal, quote and
+  ticket links are business links: never followed, never cleared. `customers.user_id` itself is
+  kept (an id, not personal data). Note the naming trap: the body of `POST /customers/{id}/assign`
+  calls its field `user_id`, but it writes `assigned_to_id`.
+- **Who may erase what.** `DELETE /users/{id}` and `DELETE /customers/{id}` are admin-only routes.
+  `DELETE /leads/{id}` admits the admin and the owning sales user, but a converted lead reaches a
+  customer, so only an admin may erase one: `LeadService.Delete(id, actorRole)` gives any other
+  role `LeadRepository.DeleteUnconverted`, which refuses a converted lead
+  (`ErrConvertedLeadNeedsAdmin`, an `apperrors.ErrForbidden`, 403) inside the erasure transaction
+  before anything is written, and again once the lead row is locked by the scrub. A refusal
+  changes nothing.
 - Every personal field is overwritten in place. The email is replaced with a unique, non-routable
   placeholder in the reserved `.invalid` domain (RFC 2606) that is generated from `crypto/rand` and
   is **not** derived from the original address, so it cannot be reversed or linked back.
-- The user's API keys, refresh tokens and password-reset tokens are purged, so no credential can
-  outlive the account. An API key whose owner has been erased or deactivated is rejected at
-  authentication time regardless.
-- Only then is the row soft-deleted. The row is deliberately **kept** so that foreign keys from
-  tickets, tasks and leads still resolve — business records survive, the person does not.
-- Scrub and soft-delete happen in one transaction, so a failure part-way cannot leave a half-erased
-  but still-live record.
-- A lead that was converted into a customer is cascaded in both directions via `leads.customer_id`,
-  because conversion copies the person's details into the customer row.
+- Every erased user, however it was reached, loses its API keys, refresh tokens and password-reset
+  tokens and the notifications addressed to it, and the ticket comments it wrote are redacted to
+  `[deleted]` — soft-deleted comments included, each keeping its own deletion state. An API key
+  whose owner has been erased or deactivated is rejected at authentication time regardless.
+- Only then is each row soft-deleted. The rows are deliberately **kept** so that foreign keys from
+  tickets, tasks, deals, quotes and leads still resolve — business records survive, the person
+  does not.
+- **One unit, exactly once.** The whole graph is one transaction; a repository obtained through
+  `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction (released on success,
+  rolled back on an error or a panic, sent past GORM's prepared-statement wrapper), so a caller
+  that handles a failed erasure, or recovers its panic, and commits keeps none of it (a failed `ROLLBACK TO SAVEPOINT` rolls
+  the caller's transaction back and reports `utils.ErrRollbackFailed` +
+  `utils.ErrTransactionPoisoned`). Nothing is retried inside; a deadlock reaches the caller. The
+  traversal remembers every row it has visited, checked before any read, so each row is scrubbed
+  once and the cycle user → customer → lead → customer → user terminates.
 - The lead's automation state ends in the same transaction, *before* the scrub
   (`erasurePlan.BeforeScrub`): every pending, waiting or running run on the lead is cancelled with
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification
@@ -779,6 +810,30 @@ What happens on `DELETE`:
   rows by the time it waits, which makes it the survivor of the resulting deadlock — the step
   (nothing modified yet) is rolled back, retried, and finds the run cancelled and the lead gone.
 
+What the erasure touches, and what it keeps on purpose:
+
+| Table | Scrubbed in place / removed | Kept, and why |
+|---|---|---|
+| `users` (erased account) | `email` → placeholder; `password` → unusable marker; `first_name`, `last_name`; `is_active` false; `last_login_at`, `failed_login_attempts`, `locked_until` | `id`, `role` (not personal; recognises an erased customer login), timestamps |
+| `customers` | `email` → placeholder; names, `phone`, `company`, `website`, `position`, `address`, `city`, `state`, `country`, `postal_code`, `notes` | `user_id`, `assigned_to_id`, `company_id` (ids, business links) |
+| `leads` | `email` → placeholder; names, `phone`, `company`, `position`, `notes`, `external_id` | `source`, `status`, `classification`, `owner_id`, `customer_id`, `company_id` |
+| `form_submissions` linked by `lead_id` | `data` → `{}`; `email` → the lead's placeholder; `ip_address`, `user_agent`, `referrer` | form, status, `lead_id` |
+| `form_confirmation_tokens` of those submissions | hard-deleted | — |
+| `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
+| `notifications` addressed to an erased user, or whose entity is an erased lead | hard-deleted | notifications about deals and other leads |
+| `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
+| `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only) |
+| `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content) |
+| `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes |
+| `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
+| `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) | not touched | Not linked to any person the CRM can erase; a retention concern (roadmap) |
+| Logs, already-issued JWTs | out of reach | See below |
+
+The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
+`internal/repository/identity_erasure_test.go`) seed the person into every scrubbed target above
+first and assert the sweep can see each copy before the erasure; an empty table would prove
+nothing.
+
 Two consequences worth knowing:
 
 - **It is irreversible.** To suspend access reversibly, set `is_active = false` instead; deactivation
@@ -786,9 +841,55 @@ Two consequences worth knowing:
 - **The email address becomes reusable.** Because the original address no longer exists anywhere in
   the table, the person can register again with it.
 
-Rows that were soft-deleted *before* this behaviour existed still hold personal data. They are not
-migrated automatically — run `scripts/anonymize_legacy_deleted_pii.sql` by hand once you have taken a
-backup. It is irreversible.
+**Deploying a new erasure rule does not repair history.** Graphs erased before #108 can still hold
+the other half of the person: a live customer whose login was erased, or a live customer-role login
+whose customers were erased. Finding them is a read-only query:
+
+```sql
+-- live customers linked to an erased customer-role login
+SELECT c.id FROM customers c JOIN users u ON u.id = c.user_id
+ WHERE c.deleted_at IS NULL AND u.deleted_at IS NOT NULL AND u.role = 'customer';
+-- live customer-role logins with an erased customer
+SELECT DISTINCT u.id FROM users u JOIN customers c ON c.user_id = u.id
+ WHERE u.deleted_at IS NULL AND u.role = 'customer' AND c.deleted_at IS NOT NULL;
+-- live leads converted into an erased customer
+SELECT l.id FROM leads l JOIN customers c ON c.id = l.customer_id
+ WHERE l.deleted_at IS NULL AND c.deleted_at IS NOT NULL;
+```
+
+Every query returns a **live** row. Review each hit (it is the same person only if the link was
+right), take a backup, and erase it as an admin through the API (`DELETE /customers/{id}`,
+`/users/{id}`, `/leads/{id}`): that runs the shared cascade, which also re-scrubs the
+already-erased rows of the graph. Do this under supervision; it is irreversible.
+
+There is **no supported path yet for a graph whose rows are all soft-deleted.** The API refuses to
+erase what it cannot see: every `DELETE` looks the row up with an ordinary (scoped) query first, so
+a soft-deleted root answers 404 — the same check that makes a second `DELETE` of an erased record a
+404 rather than a silent success. The repository cascade itself would scrub such a graph, but no
+command exposes it; until one exists (follow-up to #108, alongside #183), such rows can only be
+handled by hand under supervision.
+
+Rows that were soft-deleted *before* deletion became an erasure at all still hold personal data.
+`scripts/anonymize_legacy_deleted_pii.sql` scrubs soft-deleted `users` and `customers` rows and
+purges API keys and refresh tokens, run by hand once you have taken a backup. It is **not**
+equivalent to the erasure above: it does not touch leads, password-reset tokens, notifications,
+ticket comments or form submissions, and does not follow any link to a live counterpart, so its
+own verification can pass while linked personal data survives. After running it, run the queries
+above and erase every live hit through the API; fully soft-deleted graphs remain the gap described
+in the previous paragraph. It is irreversible.
+
+Known limits of the erasure, in one place:
+
+- **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
+  lead conversion, customer/login linking, login, refresh rotation, password reset or API-key
+  creation. A conversion, link or credential committed while an erasure is in flight can escape
+  the cascade; opposite entry points can deadlock (an error, never a partial commit). Tracked in
+  #183.
+- **History.** Deploying a new erasure rule does not repair graphs erased under an older one (see
+  above); fully soft-deleted graphs have no supported path yet.
+- **Retained content.** Business free text (tickets, tasks, deals, quotes, quote lines, company
+  notes, staff-written comments), legacy `bulk_operation_items` payloads and unlinked form
+  submissions are kept by design (see the matrix); logs and issued JWTs are out of reach.
 
 The sample configuration defaults to `LOG_LEVEL=info`. Service logs keep operation names, entity
 IDs, validated statuses and counts, and omit email, name, title, search and raw sort fields. Shared

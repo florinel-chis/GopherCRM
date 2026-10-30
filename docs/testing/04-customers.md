@@ -446,11 +446,30 @@ depend on that are flagged.
   4. Go to `/leads` and search for the original lead company name and email.
 - **Expected:** 204 on the delete. The lead no longer appears in `/leads`, and its email address is
   free for reuse — the cascade runs in the same transaction via `leads.customer_id`
-  (`internal/repository/erasure_cascade.go`, wired through
-  `NewCustomerRepositoryWithLeadErasure` in `cmd/main.go`). FEATURES.md 12.6 covers this at the
-  integration level only.
+  (`internal/repository/erasure_cascade.go`; the cascade lives in the plain customer repository).
+  FEATURES.md 12.6 covers this at the integration level only.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; may need to live in a
   cross-entity spec alongside `admin-entity-suite.spec.ts`)
+
+### TC-CUST-042 — Deleting a customer erases its customer login
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin logged in; a customer whose `user_id` names a `customer`-role account
+  (set by import or SQL — no screen writes `user_id`), the login holding an API key; a second
+  customer whose `user_id` names a sales account.
+- **Steps:**
+  1. Delete the first customer from `/customers`.
+  2. Try the login's API key against `GET /api/v1/tickets`; look for the login in `/users`.
+  3. Delete the second customer; look for the sales account in `/users`.
+- **Expected:** Step 1 → 204. Step 2 → 401, and the login is gone from `/users`: it is the same
+  person, so it is erased in the same transaction (names, email, password, API keys, refresh and
+  reset tokens), and so is every other customer record linked to it (#108). Step 3 → 204, and the
+  sales account is untouched: a staff account in `user_id` is never followed, and neither is
+  `assigned_to_id`.
+- **Automation:** planned — needs a fixture that links a login to a customer. Go coverage:
+  `internal/repository/identity_erasure_test.go` (`customer_root_erases_the_whole_graph`,
+  `staff_login_link_is_never_followed`); `erasure_pii_sweep_test.go`
+  `TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable`.
 
 ### TC-CUST-026 — Sales user cannot delete a customer
 - **Priority:** P0

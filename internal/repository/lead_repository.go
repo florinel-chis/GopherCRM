@@ -119,14 +119,30 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 // same way users and customers are; see erasure.go for the full rationale and
 // leadErasurePlan for the authoritative list of what is scrubbed.
 //
-// If the lead was converted, the customer it became is erased too: the
-// conversion copied the person's data into that customer, so erasing only the
-// lead would leave the copy behind. See erasure_cascade.go.
+// If the lead was converted, the customer it became is erased too — the
+// conversion copied the person's data into that customer — and with it that
+// customer's customer-role login and the other leads converted into it. See
+// erasure_cascade.go. Callers that may erase only unconverted leads use
+// DeleteUnconverted instead.
 //
-// The transaction is the caller's when this repository was obtained through
-// WithTx, and a fresh one otherwise.
+// The unit is a savepoint of the caller's transaction when this repository was
+// obtained through WithTx, and a fresh transaction otherwise.
 func (r *leadRepository) Delete(id uint) error {
-	return eraseLeadWithConversionLink(r.db, id)
+	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
+		return c.eraseLead(tx, id)
+	})
+}
+
+// DeleteUnconverted erases a lead that was never converted. A converted lead
+// is refused with ErrConvertedLeadNeedsAdmin (an apperrors.ErrForbidden),
+// decided inside the erasure unit before anything is written and re-checked
+// once the lead row is locked; a refusal changes nothing. It is the erasure a
+// non-admin caller gets: erasing a converted lead erases a customer, which only
+// an admin may do.
+func (r *leadRepository) DeleteUnconverted(id uint) error {
+	return eraseGraph(r.db, false, func(c *erasureCascade, tx *gorm.DB) error {
+		return c.eraseLead(tx, id)
+	})
 }
 
 func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error) {

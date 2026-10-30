@@ -126,7 +126,7 @@ func TestLeadErasureScrubsLinkedFormSubmissions(t *testing.T) {
 
 func TestConvertedLeadErasureScrubsSubmissionsViaTheCascade(t *testing.T) {
 	db := setupFormErasureDB(t)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 
 	owner := seedLeadOwner(t, db)
 	form := &models.Form{

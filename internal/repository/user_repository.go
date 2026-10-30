@@ -137,11 +137,19 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 // business records is neither required by Article 17 nor desirable. Erasure is
 // satisfied by making the retained row non-personal — anonymisation in place.
 //
-// Anonymisation, the credential purge and the soft delete run in a SINGLE
-// transaction — the caller's, if this repository was obtained through WithTx,
-// otherwise one started here. A crash between the steps would otherwise leave a
-// live, anonymised, still-listed account behind, or an anonymised account whose
-// API keys still authenticate.
+// A customer-role user is the login of one or more customer records
+// (customers.user_id), and those records — and the leads converted into
+// them — are the same person, so they are erased with it in the same unit.
+// A staff user (admin, sales, support) is erased alone: the customers that
+// point at it, and everything it owns or is assigned to, stay. See
+// erasure_cascade.go.
+//
+// Anonymisation, the credential purge, the soft delete and the linked records
+// run as ONE unit — inside a savepoint of the caller's transaction if this
+// repository was obtained through WithTx, otherwise in a transaction started
+// here. A crash between the steps would otherwise leave a live, anonymised,
+// still-listed account behind, or an anonymised account whose API keys still
+// authenticate.
 //
 // Side effect worth knowing: because the address is replaced, the original
 // email becomes free for re-registration. The unique index on users.email is
@@ -150,12 +158,23 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 //
 // See erasure.go for the shared machinery and the full GDPR rationale.
 func (r *userRepository) Delete(id uint) error {
-	return eraseRecord(r.db, id, erasurePlan{
+	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
+		return c.eraseUser(tx, id, false)
+	})
+}
+
+// userErasurePlan lists what counts as personal data on a user, and what goes
+// with the account. It is the only copy: every path that erases a user, from
+// any entry point of the identity cascade, uses it.
+func userErasurePlan() erasurePlan {
+	return erasurePlan{
 		Model:       &models.User{},
 		EmailColumn: "email",
 		// The NOT NULL name columns are blanked rather than nulled. The login
 		// bookkeeping goes too: a last-login timestamp and a lock-out window are
-		// behavioural data about the person, not business records.
+		// behavioural data about the person, not business records. The role
+		// stays: it is not personal, and the cascade needs it to recognise an
+		// erased customer login.
 		Scrub: map[string]interface{}{
 			"password":              unusablePasswordHash,
 			"first_name":            "",
@@ -171,7 +190,7 @@ func (r *userRepository) Delete(id uint) error {
 			}
 			return scrubUserTicketComments(tx, id)
 		},
-	})
+	}
 }
 
 func (r *userRepository) List(offset, limit int) ([]models.User, error) {

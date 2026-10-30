@@ -9,15 +9,20 @@ import (
 	"strings"
 	"testing"
 
+	"errors"
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gorm.io/gorm"
 )
 
 type LeadHandlerTestSuite struct {
@@ -415,7 +420,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("Delete", uint(1)).Return(nil)
+	suite.mockService.On("Delete", uint(1), models.RoleAdmin).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil)
 	rec := httptest.NewRecorder()
@@ -423,6 +428,27 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+// An owning sales user may not erase a converted lead: the service refuses it
+// with ErrForbidden and the handler answers 403, not 500.
+func (suite *LeadHandlerTestSuite) TestDelete_ConvertedLeadForbiddenForSales() {
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_role", "sales")
+		c.Set("user_id", uint(2))
+	})
+	router.DELETE("/leads/:id", suite.handler.Delete)
+
+	suite.mockService.On("GetByID", uint(5)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 5}, OwnerID: 2}, nil)
+	suite.mockService.On("Delete", uint(5), models.RoleSales).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
+
+	req := httptest.NewRequest(http.MethodDelete, "/leads/5", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Contains(suite.T(), rec.Body.String(), "Only an admin can delete a converted lead")
 }
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
@@ -501,6 +527,84 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+}
+
+// Issue #104: a refusal by a lead-conversion setting is a 400
+// VALIDATION_ERROR naming the field, with the allowed statuses for a status
+// refusal, so the dialog can say what to change.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_ConversionRuleRefusals() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	existingLead := &models.Lead{BaseModel: models.BaseModel{ID: 1}, Status: models.LeadStatusNew, OwnerID: 1}
+	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+
+	cases := []struct {
+		name    string
+		err     error
+		details map[string]interface{}
+	}{
+		{
+			name: "status",
+			err: &service.LeadConversionRuleError{
+				Field: "status", Message: "Leads with status \"new\" cannot be converted. Allowed statuses: qualified.",
+				Status: models.LeadStatusNew, AllowedStatuses: []string{"qualified"},
+			},
+			details: map[string]interface{}{"field": "status", "status": "new", "allowed_statuses": []interface{}{"qualified"}},
+		},
+		{
+			name:    "notes",
+			err:     &service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."},
+			details: map[string]interface{}{"field": "notes"},
+		},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+			defer call.Unset()
+
+			req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			suite.router.ServeHTTP(rec, req)
+
+			suite.Equal(http.StatusBadRequest, rec.Code)
+			var response struct {
+				Success bool `json:"success"`
+				Error   struct {
+					Code    string                 `json:"code"`
+					Message string                 `json:"message"`
+					Details map[string]interface{} `json:"details"`
+				} `json:"error"`
+			}
+			suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+			suite.False(response.Success)
+			suite.Equal(utils.ErrCodeValidation, response.Error.Code)
+			suite.Equal(tc.err.Error(), response.Error.Message)
+			suite.Equal(tc.details, response.Error.Details)
+		})
+	}
+}
+
+// The handler never sets the customer's own login, account manager or
+// company link: those come from the lead, in the service, and only under the
+// conversion settings.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LeavesDerivedLinksToTheService() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	companyID := uint(7)
+	existingLead := &models.Lead{
+		BaseModel: models.BaseModel{ID: 1}, Email: "lead@example.com", Status: models.LeadStatusQualified,
+		OwnerID: 1, CompanyID: &companyID,
+	}
+	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+	suite.mockService.On("ConvertToCustomer", uint(1), mock.MatchedBy(func(c *models.Customer) bool {
+		return c.UserID == nil && c.AssignedToID == nil && c.CompanyID == nil && c.Notes == "Pilot signed"
+	})).Return(&models.Customer{BaseModel: models.BaseModel{ID: 3}}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{"notes":"Pilot signed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.Equal(http.StatusOK, rec.Code)
 }
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_SalesUserForbidden() {
@@ -755,4 +859,89 @@ func (suite *LeadHandlerTestSuite) TestList_CustomerUserWithClassificationSeesOn
 
 func TestLeadHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(LeadHandlerTestSuite))
+}
+
+// Issue #104, round 2: a lead create or update cannot set converted — only
+// the conversion endpoint does, with the customer and the settings. The
+// refusal is 400 VALIDATION_ERROR naming the status field and pointing at the
+// convert endpoint.
+func (suite *LeadHandlerTestSuite) decodeLeadRuleRefusal(rec *httptest.ResponseRecorder) {
+	suite.Equal(http.StatusBadRequest, rec.Code)
+	var response struct {
+		Error struct {
+			Code    string                 `json:"code"`
+			Message string                 `json:"message"`
+			Details map[string]interface{} `json:"details"`
+		} `json:"error"`
+	}
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+	suite.Equal(utils.ErrCodeValidation, response.Error.Code)
+	suite.Contains(response.Error.Message, "/convert")
+	suite.Equal(map[string]interface{}{"field": "status"}, response.Error.Details)
+}
+
+func (suite *LeadHandlerTestSuite) TestCreate_ConvertedStatusIsRefused() {
+	suite.router.POST("/leads", suite.handler.Create)
+	req := httptest.NewRequest(http.MethodPost, "/leads",
+		bytes.NewBufferString(`{"first_name":"A","last_name":"B","email":"a@example.com","status":"converted","owner_id":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.decodeLeadRuleRefusal(rec)
+	suite.mockService.AssertNotCalled(suite.T(), "Create", mock.Anything)
+}
+
+func (suite *LeadHandlerTestSuite) TestUpdate_ConvertedStatusIsAValidationError() {
+	suite.router.PUT("/leads/:id", suite.handler.Update)
+	suite.mockService.On("GetByID", uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1, Status: models.LeadStatusQualified}, nil)
+	suite.mockService.On("Update", uint(1), mock.Anything).Return(nil, service.ConvertedStatusRefusal())
+
+	req := httptest.NewRequest(http.MethodPut, "/leads/1", bytes.NewBufferString(`{"status":"converted"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	suite.decodeLeadRuleRefusal(rec)
+}
+
+// A refused conversion (400) and a duplicate email (409) are the caller's
+// doing and log at Warn; only a failure the server owns (500) logs at Error.
+func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheResponse() {
+	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
+	suite.mockService.On("GetByID", uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1}, nil)
+	hook := logtest.NewLocal(utils.Logger)
+
+	cases := []struct {
+		err   error
+		code  int
+		level logrus.Level
+	}{
+		{&service.LeadConversionRuleError{Field: "notes", Message: "Conversion notes are required."}, http.StatusBadRequest, logrus.WarnLevel},
+		{fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail), http.StatusConflict, logrus.WarnLevel},
+		// The lead was erased between the handler's lookup and the service call.
+		{fmt.Errorf("lead 1 not found: %w", apperrors.ErrNotFound), http.StatusNotFound, logrus.WarnLevel},
+		{gorm.ErrRecordNotFound, http.StatusNotFound, logrus.WarnLevel},
+		{errors.New("connection refused"), http.StatusInternalServerError, logrus.ErrorLevel},
+	}
+	for _, tc := range cases {
+		hook.Reset()
+		call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+		req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		suite.router.ServeHTTP(rec, req)
+		call.Unset()
+
+		suite.Equal(tc.code, rec.Code)
+		var failure *logrus.Entry
+		for _, entry := range hook.AllEntries() {
+			if entry.Message == "Failed to convert lead" {
+				failure = entry
+			}
+		}
+		if suite.NotNil(failure, "the failure is logged (%d)", tc.code) {
+			suite.Equal(tc.level, failure.Level, "log level for %d", tc.code)
+		}
+	}
 }

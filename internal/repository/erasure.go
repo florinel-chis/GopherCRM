@@ -25,18 +25,24 @@ package repository
 // touch a single field of personal data. Everything in this file is
 // irreversible by design: there is nothing left to restore afterwards.
 //
-// The scrub and the soft delete always run in ONE transaction. A crash between
-// the two steps would otherwise leave a live, still-listed, already-anonymised
-// account behind — the worst of both worlds.
+// The scrub and the soft delete always run in ONE unit (runErasureUnit), and
+// so does every other row of the same person (erasure_cascade.go). A crash
+// between the steps would otherwise leave a live, still-listed,
+// already-anonymised account behind — the worst of both worlds.
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"reflect"
+	"sync/atomic"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -119,67 +125,163 @@ func (p erasurePlan) newModel() interface{} {
 	return reflect.New(reflect.TypeOf(p.Model).Elem()).Interface()
 }
 
+// erasureScrubObserver, when set, is told about every row eraseRecord scrubs.
+// It is a TEST-ONLY seam for the tests that prove every node of an identity
+// graph is scrubbed exactly once; nothing in production sets it. It is held
+// atomically so that setting it in a test never races a concurrent erasure.
+var erasureScrubObserver atomic.Pointer[func(table string, id uint)]
+
 // eraseRecord performs a GDPR Article 17 erasure of a single row: it overwrites
 // the personal-data columns named by the plan, runs the plan's extra in-place
-// clean-up, and only then soft-deletes the row — all atomically.
+// clean-up, and only then soft-deletes the row.
 //
-// It runs inside a transaction, but starts one only if db is not already backed
-// by one. Repositories expose WithTx, so db may well BE a transaction handle
-// already, and calling Begin on a transaction is invalid; when that is the case
-// the caller's transaction is used and the caller keeps control of the commit.
-// Either way the scrub and the soft delete cannot be separated by a failure.
-func eraseRecord(db *gorm.DB, id uint, plan erasurePlan) error {
-	return runInTransaction(db, func(tx *gorm.DB) error {
-		if plan.BeforeScrub != nil {
-			if err := plan.BeforeScrub(tx, id); err != nil {
-				return err
-			}
-		}
-
-		erased := make(map[string]interface{}, len(plan.Scrub)+1)
-		for column, value := range plan.Scrub {
-			erased[column] = value
-		}
-
-		if plan.EmailColumn != "" {
-			placeholder, err := newAnonymizedEmail()
-			if err != nil {
-				return err
-			}
-			erased[plan.EmailColumn] = placeholder
-		}
-
-		// Unscoped so that re-running an erasure over an already soft-deleted
-		// row — a legacy row soft-deleted before deletion became an erasure, and
-		// therefore still holding personal data — still scrubs it.
-		if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased).Error; err != nil {
+// tx must already be the transactional handle of the erasure unit (see
+// runErasureUnit): a person is erased as a whole graph of rows, and the unit
+// that makes the graph atomic belongs to the cascade, never to a single row.
+func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
+	if plan.BeforeScrub != nil {
+		if err := plan.BeforeScrub(tx, id); err != nil {
 			return err
 		}
+	}
 
-		if plan.AfterScrub != nil {
-			if err := plan.AfterScrub(tx, id); err != nil {
-				return err
-			}
+	erased := make(map[string]interface{}, len(plan.Scrub)+1)
+	for column, value := range plan.Scrub {
+		erased[column] = value
+	}
+
+	if plan.EmailColumn != "" {
+		placeholder, err := newAnonymizedEmail()
+		if err != nil {
+			return err
 		}
+		erased[plan.EmailColumn] = placeholder
+	}
 
-		return tx.Delete(plan.newModel(), id).Error
-	})
+	// Unscoped so that re-running an erasure over an already soft-deleted
+	// row — a legacy row soft-deleted before deletion became an erasure, and
+	// therefore still holding personal data — still scrubs it.
+	scrub := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased)
+	if scrub.Error != nil {
+		return scrub.Error
+	}
+	if observe := erasureScrubObserver.Load(); observe != nil {
+		(*observe)(scrub.Statement.Table, id)
+	}
+
+	if plan.AfterScrub != nil {
+		if err := plan.AfterScrub(tx, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Delete(plan.newModel(), id).Error
 }
 
-// runInTransaction executes fn against a transactional handle, starting a
-// transaction only when db is not already one.
+// erasureSavepointSeq numbers the savepoints of erasure units so that two
+// erasures joined to the same caller transaction never reuse a name.
+var erasureSavepointSeq atomic.Uint64
+
+// runErasureUnit runs fn as ONE all-or-nothing unit.
 //
-// This exists because every repository implements WithTx(tx) as part of its
-// published interface: the *gorm.DB a repository holds may be the database
-// handle or an open transaction, and the two need opposite treatment. Beginning
-// a transaction on a handle that is already one is invalid, while running a
-// multi-statement erasure without any transaction at all would sacrifice
-// atomicity.
-func runInTransaction(db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	if inTransaction(db) {
-		return fn(db)
+// Every repository exposes WithTx, so the handle may be the database or a
+// transaction the caller opened. On the database a transaction is begun and
+// committed or rolled back here (GORM rolls it back on a panic too). On a
+// caller's transaction the unit is bracketed by a SAVEPOINT of its own: joining
+// the caller's transaction bare would let a caller that handles a late erasure
+// error — or recovers a panic — and then commits keep half a person's erasure:
+// some rows scrubbed, some credentials purged, the rest intact.
+//
+//   - The SAVEPOINT statement is checked (utils.ErrSavepointFailed).
+//   - On success the savepoint is released; the unit's writes stay provisional
+//     in the caller's transaction.
+//   - On an error, and on a panic unwinding through fn, the unit is rolled
+//     back to the savepoint. A panic then continues to propagate unchanged.
+//   - When a ROLLBACK TO SAVEPOINT (or a failed RELEASE's rollback) itself
+//     fails, the unit's writes may still be in the caller's transaction, so the
+//     whole caller transaction is rolled back through its committer and the
+//     error carries utils.ErrRollbackFailed and utils.ErrTransactionPoisoned:
+//     nothing of it can be committed any more.
+//
+// The control statements are sent to the underlying transaction, bypassing
+// GORM's prepared-statement wrapper: MySQL cannot prepare SAVEPOINT, RELEASE or
+// ROLLBACK TO. Nothing is retried here; a deadlock or lock timeout reaches the
+// caller, whose whole transaction is the only safe unit to replay.
+func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
+	if !inTransaction(db) {
+		return db.Transaction(fn)
 	}
-	return db.Transaction(fn)
+
+	name := fmt.Sprintf("gocrm_erasure_%d", erasureSavepointSeq.Add(1))
+	if execErr := erasureControlExec(db, "SAVEPOINT "+name); execErr != nil {
+		return fmt.Errorf("%w: %w", utils.ErrSavepointFailed, execErr)
+	}
+
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		// fn is unwinding through a panic (or runtime.Goexit). Discard the
+		// unit before the caller can recover and commit; the panic itself is
+		// not recovered here and reaches the caller unchanged. A failed
+		// rollback aborts the caller's transaction instead.
+		_ = rollbackErasureUnit(db, name)
+	}()
+	err = fn(db)
+	finished = true
+
+	if err == nil {
+		releaseErr := erasureControlExec(db, "RELEASE SAVEPOINT "+name)
+		if releaseErr == nil {
+			return nil
+		}
+		err = fmt.Errorf("releasing erasure savepoint: %w", releaseErr)
+	}
+	if abort := rollbackErasureUnit(db, name); abort != nil {
+		return errors.Join(err, abort)
+	}
+	return err
+}
+
+// rollbackErasureUnit rolls the caller's transaction back to the unit's
+// savepoint. When that fails the whole caller transaction is rolled back, and
+// the returned error says nothing of it may be committed.
+func rollbackErasureUnit(db *gorm.DB, name string) error {
+	rbErr := erasureControlExec(db, "ROLLBACK TO SAVEPOINT "+name)
+	if rbErr == nil {
+		return nil
+	}
+	abort := fmt.Errorf("%w: %w: %w", utils.ErrTransactionPoisoned, utils.ErrRollbackFailed, rbErr)
+	if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
+		if rootErr := committer.Rollback(); rootErr != nil && !errors.Is(rootErr, sql.ErrTxDone) {
+			abort = errors.Join(abort, fmt.Errorf("%w: %w", utils.ErrRollbackFailed, rootErr))
+		}
+	}
+	return abort
+}
+
+// erasureControlExec runs a transaction-control statement (SAVEPOINT, RELEASE
+// SAVEPOINT, ROLLBACK TO SAVEPOINT) on the transaction behind db. It is a
+// variable only so a test can make one of them fail; production never replaces
+// it.
+var erasureControlExec = execTransactionControl
+
+// execTransactionControl sends stmt straight to the transaction's connection
+// pool, unwrapping GORM's prepared-statement transaction the way GORM's own
+// SavePoint/RollbackTo do — but without swapping the pool on the shared
+// statement, and without the SQLite dialector's habit of dropping the error.
+func execTransactionControl(db *gorm.DB, stmt string) error {
+	pool := db.Statement.ConnPool
+	if prepared, ok := pool.(*gorm.PreparedStmtTX); ok {
+		pool = prepared.Tx
+	}
+	ctx := db.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := pool.ExecContext(ctx, stmt)
+	return err
 }
 
 // inTransaction reports whether db is already backed by an open transaction.
@@ -273,8 +375,12 @@ func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) er
 // scrubUserTicketComments redacts the body of ticket comments authored by this
 // user to "[deleted]" so personal data in comment text is scrubbed while the
 // ticket discussion history remains coherent.
+//
+// Unscoped: a comment soft-deleted earlier still holds its body, and a hidden
+// copy of the person is still a copy. Each comment keeps its own deletion
+// state; only the body changes.
 func scrubUserTicketComments(tx *gorm.DB, userID uint) error {
-	if err := tx.Model(&models.TicketComment{}).Where("author_user_id = ?", userID).Update("body", "[deleted]").Error; err != nil {
+	if err := tx.Unscoped().Model(&models.TicketComment{}).Where("author_user_id = ?", userID).Update("body", "[deleted]").Error; err != nil {
 		return fmt.Errorf("scrubbing ticket comments of user %d: %w", userID, err)
 	}
 	return nil

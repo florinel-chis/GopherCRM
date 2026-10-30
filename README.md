@@ -300,10 +300,19 @@ GopherCRM includes a powerful configuration management system that allows admini
 - **Real-Time Updates**: Changes take effect immediately
 
 #### Lead Conversion Settings
-The configuration system includes specific settings for lead conversion:
+The configuration system includes specific settings for lead conversion, enforced by the server on
+every `POST /leads/:id/convert` before anything is written (a refusal is 400 `VALIDATION_ERROR`):
 - `leads.conversion.allowed_statuses`: Which lead statuses allow conversion to customer
-- `leads.conversion.require_notes`: Whether notes are required during conversion
-- `leads.conversion.auto_assign_owner`: Auto-assign lead owner as customer owner
+  (any of `new`, `contacted`, `qualified`, `unqualified`; seeded as `qualified` and `contacted`)
+- `leads.conversion.require_notes`: Whether non-blank conversion notes are required
+- `leads.conversion.auto_assign_owner`: Make the lead's owner the customer's assigned user
+
+If the `leads.conversion.allowed_statuses` row is missing (seeding never ran), conversion falls back
+to `qualified` only, the entry's default value, rather than the seeded `qualified, contacted`; the
+next start re-seeds the row. A lead reaches `converted` only through the convert endpoint: lead
+create/update and the bulk status endpoint refuse it. The lead's company link is carried over to
+the customer as well. `GET /configurations/ui` exposes
+the three settings read-only, so the conversion dialog can follow them.
 
 ### Answer Engine Optimization (AEO)
 
@@ -411,9 +420,16 @@ It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-a
 Deleting a **user, customer or lead** is an erasure under GDPR Art. 17, not a recoverable soft
 delete. Every personal field on the row is overwritten in place — the email address is replaced
 with a random, non-routable placeholder in the reserved `.invalid` domain — and the row is only then
-soft-deleted, all in a single transaction. API keys and refresh tokens belonging to the account are
-purged with it. The row itself is deliberately kept so foreign keys from tickets and tasks still
-resolve: business records survive, the person does not.
+soft-deleted, all in a single transaction. API keys, refresh tokens and password-reset tokens
+belonging to the account are purged with it. The row itself is deliberately kept so foreign keys
+from tickets and tasks still resolve: business records survive, the person does not.
+
+Erasure follows the person, not the table: a lead, the customer it was converted into and that
+customer's own customer-role login are erased together whichever of them you delete. Staff
+accounts are never erased that way, and only an admin may delete a converted lead. Erasures made
+before this rule existed are not repaired automatically: `docs/DEVELOPMENT.md` lists the queries
+that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
+are all soft-deleted have no supported path yet.
 
 Two consequences:
 
@@ -546,14 +562,14 @@ authentication and live on the moderate tier:
 - `PUT /api/v1/users/me` - Update current user profile
 - `GET /api/v1/users/:id` - Get specific user *(self or admin)*
 - `PUT /api/v1/users/:id` - Update user *(self or admin; only admins may change `role` or `is_active`)*
-- `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself)*
+- `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself; a customer-role user takes its customer records along)*
 
 ### Leads *(entire group requires admin or sales)*
 - `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`)
 - `POST /api/v1/leads` - Create new lead
 - `GET /api/v1/leads/:id` - Get specific lead
 - `PUT /api/v1/leads/:id` - Update lead
-- `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into)
+- `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into and its login; converted leads admin-only)
 - `POST /api/v1/leads/:id/convert` - Convert lead to customer
 - `POST /api/v1/leads/bulk/status` - Set the status of up to 100 leads at once, all-or-nothing
   *(sales may only touch leads they own)*
@@ -563,7 +579,7 @@ authentication and live on the moderate tier:
 - `POST /api/v1/customers` - Create new customer *(admin, sales)*
 - `GET /api/v1/customers/:id` - Get specific customer *(admin, sales, support)*
 - `PUT /api/v1/customers/:id` - Update customer *(admin, sales)*
-- `DELETE /api/v1/customers/:id` - **Erase** customer *(admin; cascades to the lead it came from)*
+- `DELETE /api/v1/customers/:id` - **Erase** customer *(admin; cascades to the lead it came from and its customer-role login)*
 - `GET /api/v1/customers/:id/tickets` - List that customer's tickets *(a customer-role user may only
   read their own)*
 - `GET /api/v1/customers/export` - Download all matching customers as CSV *(admin only — mass PII

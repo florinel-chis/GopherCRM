@@ -466,6 +466,50 @@ func (suite *ConfigurationServiceTestSuite) TestSet_NonSensitiveValueIsStoredVer
 	assert.Equal(suite.T(), "Acme Industries", value)
 }
 
+// --- Lead-conversion getters (issue #104) ---
+
+// An unseeded database keeps converting under the shipped behaviour; a failed
+// read is reported, because the lead service enforces these settings and must
+// not guess a policy.
+func (suite *ConfigurationServiceTestSuite) TestLeadConversionGetters_MissingRowFallsBack() {
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionAllowedStatuses).Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionRequireNotes).Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionAutoAssignOwner).Return(nil, gorm.ErrRecordNotFound)
+
+	statuses, err := suite.service.GetLeadConversionStatuses()
+	suite.NoError(err)
+	suite.Equal([]string{"qualified"}, statuses)
+	required, err := suite.service.IsLeadConversionRequireNotes()
+	suite.NoError(err)
+	suite.False(required)
+	assign, err := suite.service.IsLeadConversionAutoAssignOwner()
+	suite.NoError(err)
+	suite.True(assign)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestLeadConversionGetters_DatabaseErrorIsReturned() {
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionAllowedStatuses).Return(nil, errDatabase)
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionRequireNotes).Return(nil, errDatabase)
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionAutoAssignOwner).Return(nil, errDatabase)
+
+	_, err := suite.service.GetLeadConversionStatuses()
+	suite.ErrorIs(err, errDatabase)
+	_, err = suite.service.IsLeadConversionRequireNotes()
+	suite.ErrorIs(err, errDatabase)
+	_, err = suite.service.IsLeadConversionAutoAssignOwner()
+	suite.ErrorIs(err, errDatabase)
+}
+
+func (suite *ConfigurationServiceTestSuite) TestLeadConversionStatuses_StoredValue() {
+	suite.mockRepo.On("GetByKey", ConfigLeadConversionAllowedStatuses).Return(&models.Configuration{
+		Key: ConfigLeadConversionAllowedStatuses, Value: `["contacted", "unqualified"]`, Type: models.ConfigTypeArray,
+	}, nil)
+
+	statuses, err := suite.service.GetLeadConversionStatuses()
+	suite.NoError(err)
+	suite.Equal([]string{"contacted", "unqualified"}, statuses)
+}
+
 func TestConfigurationServiceTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigurationServiceTestSuite))
 }

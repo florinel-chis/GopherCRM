@@ -134,7 +134,9 @@ func openCustomerExportCSVDB(t *testing.T, useMySQL bool) *gorm.DB {
 func newCustomerExportCSVHarness(t *testing.T, db *gorm.DB) *customerExportCSVHarness {
 	t.Helper()
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{},
+		// The erasure closure: deleting a customer erases the whole person.
+		&models.Lead{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
 
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)

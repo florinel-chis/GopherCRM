@@ -404,8 +404,10 @@ blocked until the page is built.
   1. Leads tab, edit `leads.conversion.allowed_statuses`.
   2. Open the "Select Values" multi-select and read the options.
   3. Deselect `contacted`, save.
-- **Expected:** The dialog shows `Valid values: ["new", "contacted", "qualified", "converted",
-  "lost"]` and a multi-select offering exactly those five options, because the entry's type is
+- **Expected:** The dialog shows `Valid values: ["new", "contacted", "qualified", "unqualified"]`
+  and a multi-select offering exactly those four options (before #104 the list was `new, contacted,
+  qualified, converted, lost`: `lost` is not a lead status and `unqualified` could not be chosen;
+  the seeder corrects the metadata of existing rows on boot and keeps their value), because the entry's type is
   `array` and `valid_values` parses to a string array. Saving sends a JSON array; the service checks
   every element against the allowlist (`Configuration.IsValidValue`) before storing. The result is
   **200** and the Current Value cell drops the `contacted` chip.
@@ -607,14 +609,19 @@ blocked until the page is built.
 - **Steps:**
   1. `GET /configurations/ui` as the customer.
   2. Compare with the same call as admin.
-- **Expected:** **200** for both, with the same three entries: the whole `ui` category
-  (`ui.theme.primary_color`), `general.company_name`, and a *synthetic*
-  `leads.conversion.allowed_statuses` assembled in the handler. The synthetic entry is not a stored
-  row — it comes back with `id: 0`, zero timestamps and an empty `default_value`, and its `category`
-  is `leads` even though the whole `leads` category is otherwise admin-only. No `RequireRole` guards
+- **Expected:** **200** for both, with the same entries: the whole `ui` category
+  (`ui.theme.primary_color`), `general.company_name`, `deals.default_currency`, and three
+  *synthetic* read-only lead-conversion entries assembled in the handler (since #104):
+  `leads.conversion.allowed_statuses` (array), `leads.conversion.require_notes` and
+  `leads.conversion.auto_assign_owner` (boolean, `"true"`/`"false"`), carrying the values the
+  convert endpoint enforces. The synthetic entries are not stored rows — they come back with
+  `id: 0`, zero timestamps, an empty `default_value` and `is_read_only: true`, and their
+  `category` is `leads` even though the whole `leads` category is otherwise admin-only. An entry
+  whose setting cannot be read is omitted. No `RequireRole` guards
   this route, deliberately: it is the one configuration read the frontend is allowed to make.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`; backend coverage in
-  `tests/configuration_integration_test.go` `TestGetUIConfigurations`
+  `tests/configuration_integration_test.go` `TestGetUIConfigurations` and, for the lead-conversion
+  entries, `configuration_handler_test.go` `TestGetUIConfigurations_CarriesTheLeadConversionContract`
 
 ### TC-SET-034 — Confirm configuration changes do not reach the leads pages
 - **Priority:** P1

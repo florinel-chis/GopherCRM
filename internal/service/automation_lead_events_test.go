@@ -172,13 +172,20 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 		assert.Len(t, env.eventsOf(models.AutomationEntityLead, second.ID), 2)
 		assert.Equal(t, models.LeadStatusQualified, env.lead(first.ID).Status)
 
-		// Moving to converted records the status change with origin bulk.
+		// Conversion is the only way to reach converted (#104): the batch is
+		// refused and records nothing.
 		_, err = bulk.BulkSetLeadStatus(env.admin.ID, models.RoleAdmin, []uint{second.ID}, models.LeadStatusConverted)
+		require.Error(t, err)
+		assert.Len(t, env.eventsOf(models.AutomationEntityLead, second.ID), 2)
+		assert.Equal(t, models.LeadStatusQualified, env.lead(second.ID).Status)
+
+		// Any other move records the status change with origin bulk.
+		_, err = bulk.BulkSetLeadStatus(env.admin.ID, models.RoleAdmin, []uint{second.ID}, models.LeadStatusContacted)
 		require.NoError(t, err)
 		secondEvents := env.eventsOf(models.AutomationEntityLead, second.ID)
 		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged}, eventTypes(secondEvents))
 		assert.Equal(t, string(models.LeadStatusQualified), secondEvents[3].FromValue)
-		assert.Equal(t, string(models.LeadStatusConverted), secondEvents[3].ToValue)
+		assert.Equal(t, string(models.LeadStatusContacted), secondEvents[3].ToValue)
 		assert.Equal(t, models.AutomationOriginBulk, secondEvents[3].Origin)
 		assertEventsHoldNoPersonalData(t, db, automationCanaryFirstName, automationCanaryLastName, automationCanaryPhone, automationCanaryNotes)
 	})

@@ -449,3 +449,19 @@ func TestBulkStatusRoutesCoexistWithIDRoutes(t *testing.T) {
 		require.True(t, stub.called, "%s must reach the bulk handler", route.path)
 	}
 }
+
+// Issue #104, round 2: converted is set only by the conversion endpoint; the
+// service's refusal is a 400 VALIDATION_ERROR naming the status field.
+func (suite *BulkStatusHandlerTestSuite) TestBulkUpdateLeadStatus_ConvertedIsAValidationError() {
+	suite.stub.result = nil
+	suite.stub.err = service.ConvertedStatusRefusal()
+
+	w := suite.post("/leads/bulk/status", gin.H{"lead_ids": []uint{1, 2}, "status": "converted"})
+
+	suite.Equal(http.StatusBadRequest, w.Code)
+	resp := suite.decode(w)
+	suite.Require().NotNil(resp.Error)
+	suite.Equal(utils.ErrCodeValidation, resp.Error.Code)
+	suite.Contains(resp.Error.Message, "/convert")
+	suite.Equal(map[string]interface{}{"field": "status"}, resp.Error.Details)
+}

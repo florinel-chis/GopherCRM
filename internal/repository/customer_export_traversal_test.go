@@ -100,7 +100,9 @@ func openCustomerExportTraversalDB(t *testing.T, useMySQL bool) *gorm.DB {
 		// One connection, as the production SQLite pool has.
 		sqlDB.SetMaxOpenConns(1)
 		t.Cleanup(func() { _ = sqlDB.Close() })
-		require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}))
+		require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
+			// The erasure closure: deleting a customer erases the whole person.
+			&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
 		return db
 	}
 
@@ -130,7 +132,9 @@ func openCustomerExportTraversalDB(t *testing.T, useMySQL bool) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
+		// The erasure closure: deleting a customer erases the whole person.
+		&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
 	return db
 }
 

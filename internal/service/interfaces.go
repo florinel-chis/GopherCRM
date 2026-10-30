@@ -65,7 +65,10 @@ type LeadService interface {
 	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)
 	Update(id uint, updates map[string]interface{}) (*models.Lead, error)
-	Delete(id uint) error
+	// Delete erases the lead. Only an admin (actorRole) may erase a converted
+	// lead, because that erases the customer it became; anyone else is refused
+	// with an apperrors.ErrForbidden and nothing changes.
+	Delete(id uint, actorRole models.UserRole) error
 	List(offset, limit int) ([]models.Lead, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
