@@ -418,8 +418,9 @@ from tickets and tasks still resolve: business records survive, the person does 
 Erasure follows the person, not the table: a lead, the customer it was converted into and that
 customer's own customer-role login are erased together whichever of them you delete. Staff
 accounts are never erased that way, and only an admin may delete a converted lead. Erasures made
-before this rule existed are not repaired automatically; `docs/DEVELOPMENT.md` lists the queries
-that find them and the supervised way to finish them.
+before this rule existed are not repaired automatically: `docs/DEVELOPMENT.md` lists the queries
+that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
+are all soft-deleted have no supported path yet.
 
 Two consequences:
 

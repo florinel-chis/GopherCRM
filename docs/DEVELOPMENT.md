@@ -635,8 +635,9 @@ What happens on `DELETE`:
   tickets, tasks, deals, quotes and leads still resolve — business records survive, the person
   does not.
 - **One unit, exactly once.** The whole graph is one transaction; a repository obtained through
-  `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction, so a caller that
-  handles a failed erasure and commits keeps none of it (a failed `ROLLBACK TO SAVEPOINT` rolls
+  `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction (released on success,
+  rolled back on an error or a panic, sent past GORM's prepared-statement wrapper), so a caller
+  that handles a failed erasure, or recovers its panic, and commits keeps none of it (a failed `ROLLBACK TO SAVEPOINT` rolls
   the caller's transaction back and reports `utils.ErrRollbackFailed` +
   `utils.ErrTransactionPoisoned`). Nothing is retried inside; a deadlock reaches the caller. The
   traversal remembers every row it has visited, checked before any read, so each row is scrubbed
@@ -707,19 +708,39 @@ SELECT l.id FROM leads l JOIN customers c ON c.id = l.customer_id
  WHERE l.deleted_at IS NULL AND c.deleted_at IS NOT NULL;
 ```
 
-Review each hit (it is the same person only if the link was right), take a backup, and erase it as
-an admin through the API (`DELETE /customers/{id}`, `/users/{id}`, `/leads/{id}`): that runs the
-shared cascade, which also re-scrubs the already-erased rows of the graph. Do this under
-supervision; it is irreversible.
+Every query returns a **live** row. Review each hit (it is the same person only if the link was
+right), take a backup, and erase it as an admin through the API (`DELETE /customers/{id}`,
+`/users/{id}`, `/leads/{id}`): that runs the shared cascade, which also re-scrubs the
+already-erased rows of the graph. Do this under supervision; it is irreversible.
+
+There is **no supported path yet for a graph whose rows are all soft-deleted.** The API refuses to
+erase what it cannot see: every `DELETE` looks the row up with an ordinary (scoped) query first, so
+a soft-deleted root answers 404 — the same check that makes a second `DELETE` of an erased record a
+404 rather than a silent success. The repository cascade itself would scrub such a graph, but no
+command exposes it; until one exists (follow-up to #108, alongside #183), such rows can only be
+handled by hand under supervision.
 
 Rows that were soft-deleted *before* deletion became an erasure at all still hold personal data.
 `scripts/anonymize_legacy_deleted_pii.sql` scrubs soft-deleted `users` and `customers` rows and
 purges API keys and refresh tokens, run by hand once you have taken a backup. It is **not**
 equivalent to the erasure above: it does not touch leads, password-reset tokens, notifications,
 ticket comments or form submissions, and does not follow any link to a live counterpart, so its
-own verification can pass while linked personal data survives. After running it, use the queries
-above (and their soft-deleted variants) and erase the remaining graphs through the API. It is
-irreversible.
+own verification can pass while linked personal data survives. After running it, run the queries
+above and erase every live hit through the API; fully soft-deleted graphs remain the gap described
+in the previous paragraph. It is irreversible.
+
+Known limits of the erasure, in one place:
+
+- **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
+  lead conversion, customer/login linking, login, refresh rotation, password reset or API-key
+  creation. A conversion, link or credential committed while an erasure is in flight can escape
+  the cascade; opposite entry points can deadlock (an error, never a partial commit). Tracked in
+  #183.
+- **History.** Deploying a new erasure rule does not repair graphs erased under an older one (see
+  above); fully soft-deleted graphs have no supported path yet.
+- **Retained content.** Business free text (tickets, tasks, deals, quotes, quote lines, company
+  notes, staff-written comments), legacy `bulk_operation_items` payloads and unlinked form
+  submissions are kept by design (see the matrix); logs and issued JWTs are out of reach.
 
 The sample configuration defaults to `LOG_LEVEL=info`. Service logs keep operation names, entity
 IDs, validated statuses and counts, and omit email, name, title, search and raw sort fields. Shared

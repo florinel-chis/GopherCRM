@@ -53,7 +53,15 @@ func TestIdentityErasureMySQL(t *testing.T) {
 // schema and foreign keys on.
 func openIdentityErasureDB(t *testing.T, useMySQL bool) *gorm.DB {
 	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
+	return openIdentityErasureDBWith(t, useMySQL, false)
+}
+
+// openIdentityErasureDBWith optionally turns on GORM's PrepareStmt, under which
+// a transaction's connection pool is a *gorm.PreparedStmtTX and MySQL refuses
+// to prepare SAVEPOINT statements.
+func openIdentityErasureDBWith(t *testing.T, useMySQL, prepareStmt bool) *gorm.DB {
+	t.Helper()
+	cfg := &gorm.Config{Logger: logger.Discard, PrepareStmt: prepareStmt}
 	var db *gorm.DB
 	if !useMySQL {
 		path := filepath.Join(t.TempDir(), "identity.db")
@@ -606,13 +614,14 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 			// lead 1 ...), so the count is kept per table and id.
 			var mu sync.Mutex
 			counts := map[string]int{}
-			erasureScrubObserver = func(table string, id uint) {
+			observe := func(table string, id uint) {
 				mu.Lock()
 				defer mu.Unlock()
 				counts[fmt.Sprintf("%s:%d", table, id)]++
 			}
+			erasureScrubObserver.Store(&observe)
 			err := root.erase(db, g)
-			erasureScrubObserver = nil
+			erasureScrubObserver.Store(nil)
 			require.NoError(t, err)
 			want := map[string]int{
 				fmt.Sprintf("users:%d", g.login.ID):            1,
@@ -662,14 +671,14 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		sentinel, _ := failSoftDeletesOn(t, db, "customers")
 		rollbackFault := errors.New("injected ROLLBACK TO SAVEPOINT failure")
 		var rollbackCalls int
-		const name = "identity_erasure_test:fail_rollback_to"
-		require.NoError(t, db.Callback().Raw().Before("gorm:raw").Register(name, func(tx *gorm.DB) {
-			if strings.HasPrefix(tx.Statement.SQL.String(), "ROLLBACK TO SAVEPOINT gocrm_erasure_") {
+		erasureControlExec = func(db *gorm.DB, stmt string) error {
+			if strings.HasPrefix(stmt, "ROLLBACK TO SAVEPOINT gocrm_erasure_") {
 				rollbackCalls++
-				_ = tx.AddError(rollbackFault)
+				return rollbackFault
 			}
-		}))
-		t.Cleanup(func() { _ = db.Callback().Raw().Remove(name) })
+			return execTransactionControl(db, stmt)
+		}
+		t.Cleanup(func() { erasureControlExec = execTransactionControl })
 
 		tx := db.Begin()
 		require.NoError(t, tx.Error)
@@ -681,9 +690,88 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		require.ErrorIs(t, err, utils.ErrTransactionPoisoned)
 		require.Equal(t, 1, rollbackCalls)
 		assert.Error(t, tx.Commit().Error, "the caller can no longer commit anything")
-		require.NoError(t, db.Callback().Raw().Remove(name))
+		erasureControlExec = execTransactionControl
 		require.NoError(t, db.Callback().Delete().Remove("identity_erasure_test:fail_customers"))
 
 		assert.Equal(t, before, snapshotIdentityDB(t, db), "neither the erasure nor the caller's write survived")
+	})
+
+	t.Run("panic_inside_a_joined_erasure_is_rolled_back_before_the_caller_commits", func(t *testing.T) {
+		db := openIdentityErasureDB(t, useMySQL)
+		g := seedIdentityGraph(t, db)
+		before := snapshotIdentityDB(t, db, "labels")
+		const name = "identity_erasure_test:panic_customers"
+		calls := 0
+		require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(name, func(tx *gorm.DB) {
+			if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Table == "customers" {
+				calls++
+				panic("injected panic soft-deleting customers")
+			}
+		}))
+		t.Cleanup(func() { _ = db.Callback().Delete().Remove(name) })
+
+		tx := db.Begin()
+		require.NoError(t, tx.Error)
+		label := &models.Label{Name: "outer-" + g.tag, Color: "#112233"}
+		require.NoError(t, tx.Create(label).Error)
+		recovered := func() (r interface{}) {
+			defer func() { r = recover() }()
+			_ = NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+			return nil
+		}()
+		require.Equal(t, "injected panic soft-deleting customers", recovered, "the panic reaches the caller unchanged")
+		require.Equal(t, 1, calls)
+		// The caller recovers and commits its own work.
+		require.NoError(t, tx.Commit().Error)
+		require.NoError(t, db.Callback().Delete().Remove(name))
+
+		assert.EqualValues(t, 1, countRows(t, db, &models.Label{}, "name = ?", label.Name))
+		assert.Equal(t, before, snapshotIdentityDB(t, db, "labels"), "no part of the panicked erasure may be committed")
+	})
+
+	t.Run("prepared_statement_transactions_get_a_working_savepoint", func(t *testing.T) {
+		db := openIdentityErasureDBWith(t, useMySQL, true)
+		g := seedIdentityGraph(t, db)
+		failing := seedIdentityGraph(t, db)
+
+		tx := db.Begin()
+		require.NoError(t, tx.Error)
+		require.NoError(t, NewUserRepository(db).WithTx(tx).Delete(g.login.ID))
+		require.NoError(t, tx.Commit().Error)
+		assertGraphErased(t, db, g)
+
+		before := snapshotIdentityDB(t, db)
+		sentinel, calls := failSoftDeletesOn(t, db, "leads")
+		tx = db.Begin()
+		require.NoError(t, tx.Error)
+		err := NewCustomerRepository(db).WithTx(tx).Delete(failing.customerLive.ID)
+		require.ErrorIs(t, err, sentinel)
+		require.GreaterOrEqual(t, calls(), 1)
+		require.NoError(t, tx.Commit().Error)
+		require.NoError(t, db.Callback().Delete().Remove("identity_erasure_test:fail_leads"))
+		assert.Equal(t, before, snapshotIdentityDB(t, db), "the failed erasure left nothing behind")
+	})
+
+	t.Run("failed_release_rolls_the_unit_back", func(t *testing.T) {
+		db := openIdentityErasureDB(t, useMySQL)
+		g := seedIdentityGraph(t, db)
+		before := snapshotIdentityDB(t, db, "labels")
+		releaseFault := errors.New("injected RELEASE SAVEPOINT failure")
+		erasureControlExec = func(db *gorm.DB, stmt string) error {
+			if strings.HasPrefix(stmt, "RELEASE SAVEPOINT gocrm_erasure_") {
+				return releaseFault
+			}
+			return execTransactionControl(db, stmt)
+		}
+		t.Cleanup(func() { erasureControlExec = execTransactionControl })
+
+		tx := db.Begin()
+		require.NoError(t, tx.Error)
+		require.NoError(t, tx.Create(&models.Label{Name: "outer-" + g.tag, Color: "#112233"}).Error)
+		err := NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+		require.ErrorIs(t, err, releaseFault)
+		require.NoError(t, tx.Commit().Error)
+		erasureControlExec = execTransactionControl
+		assert.Equal(t, before, snapshotIdentityDB(t, db, "labels"), "an erasure that reports failure leaves nothing behind")
 	})
 }

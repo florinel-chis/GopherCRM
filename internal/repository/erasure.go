@@ -31,6 +31,7 @@ package repository
 // already-anonymised account behind — the worst of both worlds.
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -125,9 +126,10 @@ func (p erasurePlan) newModel() interface{} {
 }
 
 // erasureScrubObserver, when set, is told about every row eraseRecord scrubs.
-// It exists for the tests that prove every node of an identity graph is
-// scrubbed exactly once; it is nil in production.
-var erasureScrubObserver func(table string, id uint)
+// It is a TEST-ONLY seam for the tests that prove every node of an identity
+// graph is scrubbed exactly once; nothing in production sets it. It is held
+// atomically so that setting it in a test never races a concurrent erasure.
+var erasureScrubObserver atomic.Pointer[func(table string, id uint)]
 
 // eraseRecord performs a GDPR Article 17 erasure of a single row: it overwrites
 // the personal-data columns named by the plan, runs the plan's extra in-place
@@ -163,8 +165,8 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 	if scrub.Error != nil {
 		return scrub.Error
 	}
-	if erasureScrubObserver != nil {
-		erasureScrubObserver(scrub.Statement.Table, id)
+	if observe := erasureScrubObserver.Load(); observe != nil {
+		(*observe)(scrub.Statement.Table, id)
 	}
 
 	if plan.AfterScrub != nil {
@@ -184,42 +186,101 @@ var erasureSavepointSeq atomic.Uint64
 //
 // Every repository exposes WithTx, so the handle may be the database or a
 // transaction the caller opened. On the database a transaction is begun and
-// committed or rolled back here. On a caller's transaction the unit is
-// bracketed by a SAVEPOINT of its own: joining the caller's transaction bare
-// would let a caller that handles a late erasure error and then commits keep
-// half a person's erasure — some rows scrubbed, some credentials purged, the
-// rest intact.
+// committed or rolled back here (GORM rolls it back on a panic too). On a
+// caller's transaction the unit is bracketed by a SAVEPOINT of its own: joining
+// the caller's transaction bare would let a caller that handles a late erasure
+// error — or recovers a panic — and then commits keep half a person's erasure:
+// some rows scrubbed, some credentials purged, the rest intact.
 //
-// The SAVEPOINT statement is checked (utils.ErrSavepointFailed). On failure the
-// unit is rolled back to it; when that ROLLBACK TO SAVEPOINT itself fails, the
-// unit's writes may still be in the caller's transaction, so the whole caller
-// transaction is rolled back through its committer and the error carries
-// utils.ErrRollbackFailed and utils.ErrTransactionPoisoned: nothing of it can be
-// committed any more. Nothing is retried here; a deadlock or lock timeout
-// reaches the caller, whose whole transaction is the only safe unit to replay.
-func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) error {
+//   - The SAVEPOINT statement is checked (utils.ErrSavepointFailed).
+//   - On success the savepoint is released; the unit's writes stay provisional
+//     in the caller's transaction.
+//   - On an error, and on a panic unwinding through fn, the unit is rolled
+//     back to the savepoint. A panic then continues to propagate unchanged.
+//   - When a ROLLBACK TO SAVEPOINT (or a failed RELEASE's rollback) itself
+//     fails, the unit's writes may still be in the caller's transaction, so the
+//     whole caller transaction is rolled back through its committer and the
+//     error carries utils.ErrRollbackFailed and utils.ErrTransactionPoisoned:
+//     nothing of it can be committed any more.
+//
+// The control statements are sent to the underlying transaction, bypassing
+// GORM's prepared-statement wrapper: MySQL cannot prepare SAVEPOINT, RELEASE or
+// ROLLBACK TO. Nothing is retried here; a deadlock or lock timeout reaches the
+// caller, whose whole transaction is the only safe unit to replay.
+func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
 	if !inTransaction(db) {
 		return db.Transaction(fn)
 	}
 
 	name := fmt.Sprintf("gocrm_erasure_%d", erasureSavepointSeq.Add(1))
-	if err := db.Exec("SAVEPOINT " + name).Error; err != nil {
-		return fmt.Errorf("%w: %w", utils.ErrSavepointFailed, err)
+	if execErr := erasureControlExec(db, "SAVEPOINT "+name); execErr != nil {
+		return fmt.Errorf("%w: %w", utils.ErrSavepointFailed, execErr)
 	}
 
-	err := fn(db)
-	if err == nil {
-		return nil
-	}
-	if rbErr := db.Exec("ROLLBACK TO SAVEPOINT " + name).Error; rbErr != nil {
-		abort := fmt.Errorf("%w: %w: %w", utils.ErrTransactionPoisoned, utils.ErrRollbackFailed, rbErr)
-		if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
-			if rootErr := committer.Rollback(); rootErr != nil && !errors.Is(rootErr, sql.ErrTxDone) {
-				abort = errors.Join(abort, fmt.Errorf("%w: %w", utils.ErrRollbackFailed, rootErr))
-			}
+	finished := false
+	defer func() {
+		if finished {
+			return
 		}
+		// fn is unwinding through a panic (or runtime.Goexit). Discard the
+		// unit before the caller can recover and commit; the panic itself is
+		// not recovered here and reaches the caller unchanged. A failed
+		// rollback aborts the caller's transaction instead.
+		_ = rollbackErasureUnit(db, name)
+	}()
+	err = fn(db)
+	finished = true
+
+	if err == nil {
+		releaseErr := erasureControlExec(db, "RELEASE SAVEPOINT "+name)
+		if releaseErr == nil {
+			return nil
+		}
+		err = fmt.Errorf("releasing erasure savepoint: %w", releaseErr)
+	}
+	if abort := rollbackErasureUnit(db, name); abort != nil {
 		return errors.Join(err, abort)
 	}
+	return err
+}
+
+// rollbackErasureUnit rolls the caller's transaction back to the unit's
+// savepoint. When that fails the whole caller transaction is rolled back, and
+// the returned error says nothing of it may be committed.
+func rollbackErasureUnit(db *gorm.DB, name string) error {
+	rbErr := erasureControlExec(db, "ROLLBACK TO SAVEPOINT "+name)
+	if rbErr == nil {
+		return nil
+	}
+	abort := fmt.Errorf("%w: %w: %w", utils.ErrTransactionPoisoned, utils.ErrRollbackFailed, rbErr)
+	if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
+		if rootErr := committer.Rollback(); rootErr != nil && !errors.Is(rootErr, sql.ErrTxDone) {
+			abort = errors.Join(abort, fmt.Errorf("%w: %w", utils.ErrRollbackFailed, rootErr))
+		}
+	}
+	return abort
+}
+
+// erasureControlExec runs a transaction-control statement (SAVEPOINT, RELEASE
+// SAVEPOINT, ROLLBACK TO SAVEPOINT) on the transaction behind db. It is a
+// variable only so a test can make one of them fail; production never replaces
+// it.
+var erasureControlExec = execTransactionControl
+
+// execTransactionControl sends stmt straight to the transaction's connection
+// pool, unwrapping GORM's prepared-statement transaction the way GORM's own
+// SavePoint/RollbackTo do — but without swapping the pool on the shared
+// statement, and without the SQLite dialector's habit of dropping the error.
+func execTransactionControl(db *gorm.DB, stmt string) error {
+	pool := db.Statement.ConnPool
+	if prepared, ok := pool.(*gorm.PreparedStmtTX); ok {
+		pool = prepared.Tx
+	}
+	ctx := db.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := pool.ExecContext(ctx, stmt)
 	return err
 }
 

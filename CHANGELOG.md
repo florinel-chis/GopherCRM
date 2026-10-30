@@ -325,7 +325,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `user_id` is left alone by a customer or lead erasure, a staff user's own erasure leaves the
   customers pointing at it alone, and owners, assignees and account managers are never touched.
   Each person is scrubbed exactly once per erasure, cycles terminate, and a failure anywhere rolls
-  back the whole graph.
+  back the whole graph. Limits: an erasure can still miss a conversion, link or credential committed
+  concurrently (#183); graphs erased before this change are not repaired automatically, and fully
+  soft-deleted ones have no supported path yet (`docs/DEVELOPMENT.md` lists finder queries for the
+  rest); business free text, legacy `bulk_operation_items` payloads and unlinked form submissions
+  are retained by design.
 - **Only an admin can delete a converted lead.** Erasing a converted lead erases the customer it
   became (and now that customer's login), and deleting a customer is admin-only, but the owning
   sales user could do it through `DELETE /leads/{id}`. The sales owner now gets 403 for a
@@ -333,10 +337,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unconverted lead is unchanged. `LeadService.Delete` takes the caller's role, and the lead
   repository gains `DeleteUnconverted`.
 - **An erasure joined to a caller's transaction is all-or-nothing.** Repositories obtained through
-  `WithTx` now bracket the erasure in a checked `SAVEPOINT`; a caller that handled a failed erasure
-  and committed used to keep its partial writes (some rows scrubbed, some credentials purged). A
-  failed `ROLLBACK TO SAVEPOINT` rolls the caller's transaction back and is reported with
-  `ErrRollbackFailed` and `ErrTransactionPoisoned`.
+  `WithTx` now bracket the erasure in a checked `SAVEPOINT`, released on success and rolled back on
+  an error or a panic; a caller that handled a failed erasure (or recovered its panic) and
+  committed used to keep its partial writes (some rows scrubbed, some credentials purged). A failed
+  `ROLLBACK TO SAVEPOINT` rolls the caller's transaction back and is reported with
+  `ErrRollbackFailed` and `ErrTransactionPoisoned`. The savepoint statements go to the underlying
+  transaction, so they also work with GORM's `PrepareStmt` on MySQL, which cannot prepare them.
 - **Soft-deleted ticket comments are redacted on user erasure.** The redaction skipped comments
   that had been soft-deleted earlier, which kept their bodies.
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
