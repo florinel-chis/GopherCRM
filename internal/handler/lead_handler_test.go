@@ -420,7 +420,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("Delete", uint(1)).Return(nil)
+	suite.mockService.On("Delete", uint(1), models.RoleAdmin).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil)
 	rec := httptest.NewRecorder()
@@ -428,6 +428,27 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+// An owning sales user may not erase a converted lead: the service refuses it
+// with ErrForbidden and the handler answers 403, not 500.
+func (suite *LeadHandlerTestSuite) TestDelete_ConvertedLeadForbiddenForSales() {
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_role", "sales")
+		c.Set("user_id", uint(2))
+	})
+	router.DELETE("/leads/:id", suite.handler.Delete)
+
+	suite.mockService.On("GetByID", uint(5)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 5}, OwnerID: 2}, nil)
+	suite.mockService.On("Delete", uint(5), models.RoleSales).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
+
+	req := httptest.NewRequest(http.MethodDelete, "/leads/5", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Contains(suite.T(), rec.Body.String(), "Only an admin can delete a converted lead")
 }
 
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {

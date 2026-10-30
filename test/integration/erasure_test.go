@@ -46,6 +46,13 @@ func setupErasureDB(t *testing.T) *gorm.DB {
 		&models.Ticket{},
 		&models.TicketComment{},
 		&models.Task{},
+		// The rest of the erasure closure: a customer erasure follows the
+		// conversion link into leads, and a lead erasure scrubs its form
+		// submissions.
+		&models.Lead{},
+		&models.Form{},
+		&models.FormSubmission{},
+		&models.FormConfirmationToken{},
 	))
 	return db
 }

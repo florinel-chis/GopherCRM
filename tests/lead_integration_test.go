@@ -421,6 +421,72 @@ func (suite *LeadIntegrationTestSuite) TestDeleteLead_Success() {
 	assert.Error(suite.T(), err)
 }
 
+// convertForDeletion creates a sales-owned lead and converts it as the admin,
+// returning the lead and the customer it became.
+func (suite *LeadIntegrationTestSuite) convertForDeletion(email string) (*models.Lead, *models.Customer) {
+	lead := &models.Lead{
+		FirstName: "Converted",
+		LastName:  "Person",
+		Email:     email,
+		Phone:     "+40 700 000 111",
+		OwnerID:   suite.salesUser.ID,
+		Status:    models.LeadStatusQualified,
+	}
+	suite.Require().NoError(suite.leadService.Create(lead))
+	rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID),
+		handler.ConvertLeadRequest{CompanyName: "Acme"}, suite.adminToken)
+	suite.Require().Equal(http.StatusOK, rec.Code)
+	var customer models.Customer
+	suite.Require().NoError(suite.db.Where("email = ?", email).First(&customer).Error)
+	return lead, &customer
+}
+
+// Erasing a converted lead also erases the customer it became, and erasing a
+// customer is an admin action: the owning sales user is refused, and the
+// refusal changes nothing.
+func (suite *LeadIntegrationTestSuite) TestDeleteConvertedLead_SalesOwnerForbiddenAndNothingChanges() {
+	lead, customer := suite.convertForDeletion("owned-converted@example.com")
+
+	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.salesToken)
+
+	suite.Equal(http.StatusForbidden, rec.Code)
+	var keptLead models.Lead
+	suite.Require().NoError(suite.db.First(&keptLead, lead.ID).Error, "the lead is still live")
+	suite.Equal("owned-converted@example.com", keptLead.Email)
+	suite.Equal("Converted", keptLead.FirstName)
+	var keptCustomer models.Customer
+	suite.Require().NoError(suite.db.First(&keptCustomer, customer.ID).Error, "the customer is still live")
+	suite.Equal("owned-converted@example.com", keptCustomer.Email)
+}
+
+// The owning sales user may still erase a lead that was never converted.
+func (suite *LeadIntegrationTestSuite) TestDeleteUnconvertedLead_SalesOwnerSucceeds() {
+	lead := &models.Lead{FirstName: "Plain", LastName: "Prospect", Email: "owned-plain@example.com",
+		OwnerID: suite.salesUser.ID, Status: models.LeadStatusNew}
+	suite.Require().NoError(suite.leadService.Create(lead))
+
+	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.salesToken)
+
+	suite.Equal(http.StatusNoContent, rec.Code)
+	var erased models.Lead
+	suite.Require().NoError(suite.db.Unscoped().First(&erased, lead.ID).Error)
+	suite.True(erased.DeletedAt.Valid)
+	suite.Empty(erased.FirstName)
+}
+
+// An admin erases the converted lead and, with it, the customer it became.
+func (suite *LeadIntegrationTestSuite) TestDeleteConvertedLead_AdminErasesTheCustomer() {
+	lead, customer := suite.convertForDeletion("admin-converted@example.com")
+
+	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.adminToken)
+
+	suite.Equal(http.StatusNoContent, rec.Code)
+	var erased models.Customer
+	suite.Require().NoError(suite.db.Unscoped().First(&erased, customer.ID).Error)
+	suite.True(erased.DeletedAt.Valid)
+	suite.NotEqual("admin-converted@example.com", erased.Email)
+}
+
 func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_Success() {
 	lead := &models.Lead{
 		FirstName: "John",

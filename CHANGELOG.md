@@ -327,6 +327,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`repository.NewCustomerRepositoryWithLeadErasure` (#108).** The identity cascade now lives in
+  the plain user, customer and lead repositories, so no constructor can erase half a person;
+  `cmd/main.go` uses `NewCustomerRepository`.
 - **The unused generic bulk subsystem (#112).** Nothing routed it since the generic
   `/bulk/:resource` handlers were dropped: the `ProcessBulk*` dispatchers, the
   `BulkCreate*`/`BulkUpdate*`/`BulkDelete*`/`BulkAction*` service methods for users, leads,
@@ -401,6 +404,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already converted or missing leads are logged as warnings by both the handler and the service;
   only server failures are logged as errors. Known gap: a company deleted while a lead converts can still leave the new customer
   linked to the soft-deleted company (tracked in #182).
+- **Erasure follows the customer login (#108).** A customer record and its own login
+  (`customers.user_id` pointing at a `customer`-role account) are now erased together, from either
+  end and through a converted lead, with every lead converted into those customers, in one
+  transaction. Erasing a login used to leave its customer records holding the person's name,
+  email, phone and address; erasing a customer left the login, its password hash and working API
+  keys and refresh tokens behind. Staff accounts are never erased this way: a staff user in
+  `user_id` is left alone by a customer or lead erasure, a staff user's own erasure leaves the
+  customers pointing at it alone, and owners, assignees and account managers are never touched.
+  Each person is scrubbed exactly once per erasure, cycles terminate, and a failure anywhere rolls
+  back the whole graph. Limits: an erasure can still miss a conversion, link or credential committed
+  concurrently (#183); graphs erased before this change are not repaired automatically, and fully
+  soft-deleted ones have no supported path yet (`docs/DEVELOPMENT.md` lists finder queries for the
+  rest); business free text, legacy `bulk_operation_items` payloads and unlinked form submissions
+  are retained by design.
+- **Only an admin can delete a converted lead.** Erasing a converted lead erases the customer it
+  became (and now that customer's login), and deleting a customer is admin-only, but the owning
+  sales user could do it through `DELETE /leads/{id}`. The sales owner now gets 403 for a
+  converted lead, decided inside the erasure transaction before anything is written; deleting an
+  unconverted lead is unchanged. `LeadService.Delete` takes the caller's role, and the lead
+  repository gains `DeleteUnconverted`.
+- **An erasure joined to a caller's transaction is all-or-nothing.** Repositories obtained through
+  `WithTx` now bracket the erasure in a checked `SAVEPOINT`, released on success and rolled back on
+  an error or a panic; a caller that handled a failed erasure (or recovered its panic) and
+  committed used to keep its partial writes (some rows scrubbed, some credentials purged). A failed
+  `ROLLBACK TO SAVEPOINT` rolls the caller's transaction back and is reported with
+  `ErrRollbackFailed` and `ErrTransactionPoisoned`. The savepoint statements go to the underlying
+  transaction, so they also work with GORM's `PrepareStmt` on MySQL, which cannot prepare them.
+- **Soft-deleted ticket comments are redacted on user erasure.** The redaction skipped comments
+  that had been soft-deleted earlier, which kept their bodies.
 - **An automation rule update no longer undoes a concurrent disable.** `PUT
   /automation/rules/{id}` without `enabled` now keeps the switch as read under the rule's row lock
   inside the update transaction; before, the handler read the rule first and wrote that value

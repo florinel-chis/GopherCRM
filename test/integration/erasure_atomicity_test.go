@@ -30,9 +30,8 @@ import (
 //
 // The tests below do exactly that: they make the final soft delete fail, and
 // then assert that the row is still there, still live, and still holding the
-// person's ORIGINAL data. Delete the transaction from eraseRecord (or from
-// eraseLeadWithConversionLink / eraseCustomerWithConversionLink) and every one
-// of them goes red, because the half-erasure the transaction prevents becomes
+// person's ORIGINAL data. Delete the transaction from runErasureUnit (which
+// eraseGraph runs every erasure in) and every one of them goes red, because the half-erasure the transaction prevents becomes
 // visible: an anonymised, still-live, still-listed account whose credentials
 // were purged and whose data is gone, with nothing to say the deletion failed.
 
@@ -285,7 +284,7 @@ func TestConvertedPairErasureRollsBackWhenTheSecondHalfFails(t *testing.T) {
 // The same cascade entered from the customer end, failing on the lead half.
 func TestCustomerFirstCascadeRollsBackWhenTheLeadHalfFails(t *testing.T) {
 	db := setupLeadErasureDB(t)
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(db)
+	customerRepo := repository.NewCustomerRepository(db)
 
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "atomic-cascade-2@example.com")

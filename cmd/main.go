@@ -182,12 +182,11 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
-	// Erasing a customer must also erase the lead it was converted from: the
-	// conversion copied the person's name, email, phone and company into the
-	// customer and left the originals in the lead. This constructor is the plain
-	// customer repository plus that cascade, and it is the one the application
-	// must be wired with.
-	customerRepo := repository.NewCustomerRepositoryWithLeadErasure(models.DB)
+	// The user, customer and lead repositories erase a whole person on Delete
+	// (the lead it was converted from, the customer it became, the customer's
+	// own login): the cascade lives in the plain repositories, so there is no
+	// special constructor to remember. See repository/erasure_cascade.go.
+	customerRepo := repository.NewCustomerRepository(models.DB)
 	ticketRepo := repository.NewTicketRepository(models.DB)
 	taskRepo := repository.NewTaskRepository(models.DB)
 	labelRepo := repository.NewLabelRepository(models.DB)

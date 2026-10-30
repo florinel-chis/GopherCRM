@@ -294,13 +294,20 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 // GDPR Article 17 erasure and it is IRREVERSIBLE: the email becomes a
 // non-routable placeholder and the names, phone, company, position, external id
 // and free-text notes are cleared. If the lead had been converted, the customer
-// it became is erased in the same transaction — the conversion copied the
-// person's data into that customer, so erasing one half alone erases nobody.
-// See leadRepository.Delete and repository/erasure_cascade.go.
+// it became — and that customer's own login and other converted leads — are
+// erased in the same unit: the conversion copied the person's data into that
+// customer, so erasing one half alone erases nobody. See leadRepository.Delete
+// and repository/erasure_cascade.go.
+//
+// actorRole decides how far the erasure may reach. Erasing a customer is an
+// admin action, so only an admin may erase a converted lead; any other caller
+// (an owning sales user) gets leadRepository.DeleteUnconverted, which refuses a
+// converted lead with an apperrors.ErrForbidden inside the erasure unit, before
+// anything is written. Ownership of the lead stays the handler's check.
 //
 // Note the logging below deliberately records only the lead ID: an erasure
 // audit trail that quotes the erased email would defeat the erasure.
-func (s *leadService) Delete(id uint) error {
+func (s *leadService) Delete(id uint, actorRole models.UserRole) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Delete")
 
 	// An erasure that matched no row must never report success: the scrub and
@@ -316,7 +323,15 @@ func (s *leadService) Delete(id uint) error {
 		return err
 	}
 
-	if err := s.leadRepo.Delete(id); err != nil {
+	erase := s.leadRepo.DeleteUnconverted
+	if actorRole == models.RoleAdmin {
+		erase = s.leadRepo.Delete
+	}
+	if err := erase(id); err != nil {
+		if errors.Is(err, apperrors.ErrForbidden) {
+			logger.Warn("Erasure of a converted lead refused for a non-admin caller")
+			return err
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to erase lead")
 		return err
 	}

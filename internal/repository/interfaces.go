@@ -40,7 +40,13 @@ type LeadRepository interface {
 	GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error)
 	Update(lead *models.Lead) error
+	// Delete erases the lead and everything that is the same person: the
+	// customer it was converted into and that customer's login and leads.
 	Delete(id uint) error
+	// DeleteUnconverted erases an unconverted lead and refuses a converted
+	// one (ErrConvertedLeadNeedsAdmin, an apperrors.ErrForbidden) without
+	// changing anything.
+	DeleteUnconverted(id uint) error
 	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)

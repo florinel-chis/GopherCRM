@@ -722,8 +722,9 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Expected:** `DELETE /api/v1/customers/:id` returns **200** for admin (`routes.go:44`), the
   snackbar "Customer deleted successfully" appears, the row is gone, and the re-creation returns
   **201** rather than the **409** a live duplicate would produce. If the customer came from a
-  converted lead, the originating lead is erased too (`repository.NewCustomerRepositoryWithLeadErasure`,
-  wired for `customerRepo` in `setupDependencies`) and disappears from `/leads`.
+  converted lead, the originating lead is erased too (the identity cascade in the plain customer
+  repository, `repository/erasure_cascade.go`) and disappears from `/leads`; a customer-role login
+  linked through `user_id` is erased with it (#108).
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can
   delete a customer"; email reuse and the lead cascade are planned for the same file.
 

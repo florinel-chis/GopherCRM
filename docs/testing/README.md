@@ -17,11 +17,11 @@ that the test was executed as part of writing this catalog.
 |---|---|---|---|---|---|---|---|---|
 | [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 26 | 19 | 3 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 42 | 11 | 18 | 13 | 2 | 31 | 9 |
-| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 64 | 14 | 34 | 16 | 24 | 31 | 9 |
-| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 41 | 14 | 15 | 12 | 10 | 21 | 10 |
+| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 65 | 15 | 34 | 16 | 24 | 32 | 9 |
+| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 42 | 15 | 15 | 12 | 10 | 22 | 10 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 48 | 21 | 19 | 8 | 3 | 42 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 46 | 11 | 19 | 16 | 8 | 28 | 10 |
-| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 39 | 14 | 18 | 7 | 12 | 26 | 1 |
+| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 12 | 27 | 1 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 2 | 17 | 15 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
@@ -30,7 +30,7 @@ that the test was executed as part of writing this catalog.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **615** | **194** | **274** | **147** | **204** | **327** | **84** |
+| **Total** | | **618** | **197** | **274** | **147** | **204** | **330** | **84** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

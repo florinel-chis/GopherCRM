@@ -478,7 +478,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a lead
-// @Description Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row; a converted lead's customer record is erased in the same transaction.
+// @Description Delete a lead by ID (admin or owning sales user only). Deletion irreversibly erases the lead's personal data before soft-deleting the row. A converted lead is the same person as the customer it became, so erasing it also erases that customer, the customer's own customer-role login (credentials included) and every other lead converted into it, in one transaction; staff accounts, owners and assignees are never erased. Only an admin may delete a converted lead: an owning sales user gets 403 and nothing changes.
 // @Tags leads
 // @Accept json
 // @Produce json
@@ -488,7 +488,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 // @Success 204 "No Content"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid lead ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only delete their own leads"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only delete their own leads, and only leads that were never converted"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Lead not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
@@ -519,7 +519,11 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.leadService.Delete(uint(id)); err != nil {
+	if err := h.leadService.Delete(uint(id), models.UserRole(currentUserRole)); err != nil {
+		if errors.Is(err, apperrors.ErrForbidden) {
+			utils.RespondForbidden(c, "Only an admin can delete a converted lead: it also erases the customer it became")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to delete lead")
 		utils.RespondInternalError(c)
 		return

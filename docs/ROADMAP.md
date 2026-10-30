@@ -109,6 +109,11 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 
 - **Access-token blocklist** — logout/rotation revoke refresh tokens only; an issued JWT stays
   valid until expiry.
+- **Erasure vs conversion/authentication concurrency: tracked in #183.** The identity erasure
+  (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
+  customer/login linking, login, refresh rotation, password reset or API-key creation: a
+  conversion or credential committed while an erasure is in flight can be missed, and opposite
+  entry points can deadlock (an error, never a partial commit).
 - **Concurrent-refresh stampede** — several simultaneous 401s can race the refresh interceptor;
   with strict rotation the losers get logged out. The backend side is settled (#103): competing
   refreshes of one token commit exactly one successor and the others get the generic 401, so the
