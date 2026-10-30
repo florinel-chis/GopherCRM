@@ -410,18 +410,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   administrator allowed. The provider now loads the list once a session is established (never on
   the sign-in or registration pages, so it cannot start a refresh or redirect there), keyed by the
   signed-in user: signing in loads it, signing out clears it, and switching accounts loads the new
-  account's values without ever showing the previous ones. While it loads, or when the load fails,
-  the built-in defaults apply (allowed statuses `qualified`, notes optional, no owner-assignment
-  hint) and the error is exposed to consumers; the server enforces the real rules either way. A
-  save or reset on the Settings > Configuration page refreshes it. The lead list menu and the lead
-  page offer Convert to Customer on the configured statuses (an empty list hides it). The
+  account's values without ever showing the previous ones (the session now drops cached queries
+  before the new account renders, so its first requests are not discarded). The provider, the deal
+  form and the default-currency hook share this one authenticated query. Display values (company
+  name, primary colour) fall back to built-in defaults; the conversion rules never do: while they
+  load, after a failed load, or when the server leaves out the allowed statuses or the notes rule
+  (it omits a setting it could not read), the lead page shows Convert to Customer disabled with
+  "Loading conversion settings…" or "Could not load conversion settings" and a Retry, the lead list
+  shows the row action disabled on every unconverted lead plus a warning with Retry, and the
+  dialog claims no rule and does not convert. A save or reset on the Settings > Configuration page
+  refreshes the list. Once known, the lead list menu and the lead page offer Convert to Customer on
+  the configured statuses (an empty list hides it). The
   conversion dialog requires notes when `leads.conversion.require_notes` is on (blank notes are
   refused before the request, with the server's wording), says that the lead's owner becomes the
   customer's assigned user when `leads.conversion.auto_assign_owner` is on, and stays open on a
   refusal: a notes refusal is shown on the notes field, any other (status not allowed, lead already
   converted, no email) above the form with the server's message, in place of the earlier toast. A
   refusal re-reads the settings (status or notes) or the lead (any other), so a stale page catches
-  up.
+  up, and a re-read keeps what the user typed. Moving from one lead to another closes the dialog and
+  drops the previous lead's refusal; a conversion that answers after the user moved on no longer
+  opens that customer.
 - **Erasure follows the customer login (#108).** A customer record and its own login
   (`customers.user_id` pointing at a `customer`-role account) are now erased together, from either
   end and through a converted lead, with every lead converted into those customers, in one

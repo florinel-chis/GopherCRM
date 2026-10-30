@@ -638,15 +638,18 @@ blocked until the page is built.
   sign-in. The action is **present** for the `contacted` lead in step 2 and absent after step 3:
   the save refreshes the app-wide configuration (no reload needed). Signing out drops the values;
   the next account's sign-in requests them again and never sees the previous account's copy
-  (`ConfigurationProvider` keys its TanStack Query cache entry by user id). While the request is
-  in flight, or if it fails, the getters return their defaults: `['qualified']` for conversion
-  statuses, notes optional, no owner hint, `'GopherCRM'` for the company name, `'#1976d2'` for the
-  primary colour; the error is exposed as `error`. Before #117 the provider's mount effect was a
+  (one shared TanStack Query entry keyed by user id; the session drops cached queries before the
+  new account renders). While the request is in flight, or if it fails, the display getters
+  return their defaults, `'GopherCRM'` for the company name and `'#1976d2'` for the primary
+  colour, and the error is exposed as `error`; the lead-conversion rules are reported as loading
+  or unavailable, never defaulted, and the lead pages show the action disabled with a Retry. Before #117 the provider's mount effect was a
   TODO that never loaded anything, so editing these keys had no visible effect.
 - **Automation:** automated — Vitest `src/contexts/ConfigurationContext.test.tsx` (no request
   without a session or while it is restored, configured values, sign-in loads, sign-out clears,
-  account switch refetches without showing the previous values, failed fetch, malformed entry,
-  empty status list, explicit refresh, and sign-in/sign-out through the real `AuthProvider`);
+  account switch refetches without showing the previous values, failed fetch, malformed or missing
+  rule entry, empty status list, one shared request, explicit refresh, and sign-in, sign-out,
+  account switch and session reload through the real `AuthProvider`);
+  `src/pages/leads/LeadConversionSettings.test.tsx` (the lead pages while the rules load or failed);
   `src/pages/settings/ConfigurationSettings.test.tsx` (refresh after save and reset); the browser
   path in `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` "a contacted lead converts only with notes
   when the settings say so" (settings saved through the API, then a fresh sign-in)

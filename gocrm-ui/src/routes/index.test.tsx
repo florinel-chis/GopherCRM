@@ -127,11 +127,9 @@ vi.mock('@/api/endpoints/customers', async (importOriginal) => {
 // provider, which the real app mounts above the router.
 vi.mock('@/hooks/useConfiguration', () => ({
   useConfiguration: () => ({
-    getLeadConversionStatuses: () => ['qualified'],
-    getLeadConversionSettings: () => ({
-      allowedStatuses: ['qualified'],
-      requireNotes: false,
-      autoAssignOwner: false,
+    getLeadConversion: () => ({
+      status: 'ready',
+      settings: { allowedStatuses: ['qualified'], requireNotes: false, autoAssignOwner: false },
     }),
     refreshConfigurations: async () => {},
   }),

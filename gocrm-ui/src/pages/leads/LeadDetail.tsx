@@ -1,5 +1,5 @@
 import { getAPIError } from '@/utils/apiError';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -85,12 +85,22 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { getLeadConversionSettings, refreshConfigurations } = useConfiguration();
-  const conversionSettings = getLeadConversionSettings();
-  
+  const { getLeadConversion, refreshConfigurations } = useConfiguration();
+  const conversion = getLeadConversion();
+  const conversionSettings = conversion.status === 'ready' ? conversion.settings : null;
+
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
-  const [convertDialog, setConvertDialog] = useState(false);
+  // The lead the conversion dialog was opened for: moving to another lead
+  // (same page, new route id) closes it.
+  const [convertDialogFor, setConvertDialogFor] = useState<string | undefined>(undefined);
+  const convertDialogOpen = convertDialogFor !== undefined && convertDialogFor === id;
+
+  // The lead shown now, for a conversion that answers after the user moved on.
+  const currentIdRef = useRef(id);
+  useEffect(() => {
+    currentIdRef.current = id;
+  }, [id]);
 
   const { data: lead, isLoading } = useQuery({
     queryKey: ['lead', id],
@@ -111,13 +121,18 @@ export const Component: React.FC = () => {
   });
 
   const convertMutation = useMutation({
-    mutationFn: (data: ConvertLeadData) => leadsApi.convertLead(Number(id), data),
-    onSuccess: (data) => {
+    mutationFn: ({ leadId, data }: { leadId: string; data: ConvertLeadData }) =>
+      leadsApi.convertLead(Number(leadId), data),
+    onSuccess: (data, { leadId }) => {
       showSuccess('Lead converted to customer successfully');
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      navigate(`/customers/${data.customer_id}`);
+      queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
+      // Only open the customer if the user is still on the converted lead.
+      if (currentIdRef.current === leadId) {
+        navigate(`/customers/${data.customer_id}`);
+      }
     },
-    onError: (error: unknown) => {
+    onError: (error: unknown, { leadId }) => {
       // The dialog stays open and shows the server's reason (on the notes
       // field when the notes were refused). A settings refusal means this
       // page followed stale settings; any other refusal (already converted,
@@ -127,17 +142,28 @@ export const Component: React.FC = () => {
         void refreshConfigurations();
       }
       if (apiError?.details?.field !== 'notes') {
-        queryClient.invalidateQueries({ queryKey: ['lead', id] });
+        queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
       }
     },
   });
 
+  // A conversion attempt belongs to the lead it was made for; another lead's
+  // page never shows its progress or its refusal.
+  const convertAttemptIsThisLead = convertMutation.variables?.leadId === id;
+  const convertError = convertAttemptIsThisLead ? convertMutation.error : null;
+  const convertPending = convertAttemptIsThisLead && convertMutation.isPending;
+
   const handleConvert = (data: ConvertLeadData) => {
-    convertMutation.mutate(data);
+    if (id) convertMutation.mutate({ leadId: id, data });
+  };
+
+  const openConvertDialog = () => {
+    convertMutation.reset();
+    setConvertDialogFor(id);
   };
 
   const closeConvertDialog = () => {
-    setConvertDialog(false);
+    setConvertDialogFor(undefined);
     convertMutation.reset();
   };
 
@@ -173,17 +199,37 @@ export const Component: React.FC = () => {
           />
         </Box>
         <Box display="flex" gap={1}>
-          {conversionSettings.allowedStatuses.includes(lead.status) && (
-            <Button
-              variant="contained"
-              color="success"
-              startIcon={<ConvertIcon />}
-              onClick={() => setConvertDialog(true)}
-              sx={{ mr: 1 }}
-            >
-              Convert to Customer
-            </Button>
-          )}
+          {conversionSettings
+            ? conversionSettings.allowedStatuses.includes(lead.status) && (
+                <Button
+                  variant="contained"
+                  color="success"
+                  startIcon={<ConvertIcon />}
+                  onClick={openConvertDialog}
+                  sx={{ mr: 1 }}
+                >
+                  Convert to Customer
+                </Button>
+              )
+            : lead.status !== 'converted' && (
+                // The rules are not known yet (or failed to load): no
+                // guess either way, a disabled action that says why.
+                <Box display="flex" alignItems="center" gap={1} mr={1} data-testid="convert-settings-pending">
+                  <Typography variant="body2" color="text.secondary">
+                    {conversion.status === 'loading'
+                      ? 'Loading conversion settings…'
+                      : 'Could not load conversion settings'}
+                  </Typography>
+                  {conversion.status === 'unavailable' && (
+                    <Button size="small" onClick={() => void refreshConfigurations()}>
+                      Retry
+                    </Button>
+                  )}
+                  <Button variant="contained" color="success" startIcon={<ConvertIcon />} disabled>
+                    Convert to Customer
+                  </Button>
+                </Box>
+              )}
           <Button
             variant="outlined"
             startIcon={<EditIcon />}
@@ -381,14 +427,16 @@ export const Component: React.FC = () => {
       />
 
       <ConvertLeadDialog
-        open={convertDialog}
+        open={convertDialogOpen}
         lead={lead}
         onClose={closeConvertDialog}
         onConfirm={handleConvert}
-        isLoading={convertMutation.isPending}
-        requireNotes={conversionSettings.requireNotes}
-        autoAssignOwner={conversionSettings.autoAssignOwner}
-        error={convertMutation.error}
+        isLoading={convertPending}
+        requireNotes={conversionSettings?.requireNotes}
+        autoAssignOwner={conversionSettings?.autoAssignOwner}
+        settingsStatus={conversion.status}
+        onRetrySettings={() => void refreshConfigurations()}
+        error={convertError}
       />
     </Box>
   );

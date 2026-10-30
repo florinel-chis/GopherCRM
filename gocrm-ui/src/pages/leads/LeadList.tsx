@@ -6,6 +6,7 @@ import {
   Box,
   Paper,
   Typography,
+  Alert,
   Button,
   Chip,
   MenuItem,
@@ -86,8 +87,9 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { getLeadConversionSettings, refreshConfigurations } = useConfiguration();
-  const conversionSettings = getLeadConversionSettings();
+  const { getLeadConversion, refreshConfigurations } = useConfiguration();
+  const conversion = getLeadConversion();
+  const conversionSettings = conversion.status === 'ready' ? conversion.settings : null;
   
   const [filters, setFilters] = useState<LeadFilters>({
     page: 1,
@@ -156,6 +158,8 @@ export const Component: React.FC = () => {
     },
   });
 
+  const { reset: resetConvertMutation } = convertMutation;
+
   const columns: Column<Lead>[] = useMemo(() => [
     {
       id: 'company_name',
@@ -218,21 +222,41 @@ export const Component: React.FC = () => {
   // View, edit and delete are the row's own icon buttons; the overflow menu
   // carries only what they do not, conversion, and only on leads whose status
   // allows it. Each menu closes over its own row.
-  const conversionStatuses = conversionSettings.allowedStatuses;
+  // While the conversion rules are unknown (loading, or failed to load) no
+  // status is guessed: every unconverted lead shows the action disabled.
+  const conversionActions = (lead: Lead) => {
+    if (conversionSettings) {
+      return conversionSettings.allowedStatuses.includes(lead.status)
+        ? [
+            {
+              label: 'Convert to Customer',
+              icon: <ConvertIcon fontSize="small" />,
+              onClick: () => {
+                resetConvertMutation();
+                setConvertDialog({ open: true, lead });
+              },
+            },
+          ]
+        : [];
+    }
+    return lead.status === 'converted'
+      ? []
+      : [
+          {
+            label:
+              conversion.status === 'loading'
+                ? 'Convert to Customer (loading settings…)'
+                : 'Convert to Customer (settings unavailable)',
+            icon: <ConvertIcon fontSize="small" />,
+            onClick: () => {},
+            disabled: true,
+          },
+        ];
+  };
   const renderRowActions = (lead: Lead) => (
     <RowActionsMenu
       label={`More actions for ${lead.company_name || lead.contact_name}`}
-      actions={
-        conversionStatuses.includes(lead.status)
-          ? [
-              {
-                label: 'Convert to Customer',
-                icon: <ConvertIcon fontSize="small" />,
-                onClick: () => setConvertDialog({ open: true, lead }),
-              },
-            ]
-          : []
-      }
+      actions={conversionActions(lead)}
     />
   );
 
@@ -242,7 +266,6 @@ export const Component: React.FC = () => {
     }
   }, [convertDialog.lead, convertMutation]);
 
-  const { reset: resetConvertMutation } = convertMutation;
   const closeConvertDialog = useCallback(() => {
     setConvertDialog({ open: false });
     resetConvertMutation();
@@ -301,6 +324,21 @@ export const Component: React.FC = () => {
           Add Lead
         </Button>
       </Box>
+
+      {conversion.status === 'unavailable' && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          data-testid="conversion-settings-unavailable"
+          action={
+            <Button color="inherit" size="small" onClick={() => void refreshConfigurations()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the lead conversion settings, so leads cannot be converted from here yet.
+        </Alert>
+      )}
 
       <Paper sx={{ mb: 2, p: 2 }}>
         <Box display="flex" gap={2} alignItems="center">
@@ -389,8 +427,10 @@ export const Component: React.FC = () => {
         onClose={closeConvertDialog}
         onConfirm={handleConvertConfirm}
         isLoading={convertMutation.isPending}
-        requireNotes={conversionSettings.requireNotes}
-        autoAssignOwner={conversionSettings.autoAssignOwner}
+        requireNotes={conversionSettings?.requireNotes}
+        autoAssignOwner={conversionSettings?.autoAssignOwner}
+        settingsStatus={conversion.status}
+        onRetrySettings={() => void refreshConfigurations()}
         error={convertMutation.error}
       />
     </Box>

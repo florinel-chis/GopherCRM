@@ -154,3 +154,62 @@ describe('ConvertLeadDialog conversion settings', () => {
     expect(screen.queryByText(/lead's owner becomes the customer's assigned user/i)).not.toBeInTheDocument();
   });
 });
+
+describe('ConvertLeadDialog without known settings', () => {
+  it.each([
+    ['loading', 'Loading the conversion settings'],
+    ['unavailable', 'Could not load the conversion settings'],
+  ] as const)('claims no rule and does not convert while settings are %s', async (status, message) => {
+    const onConfirm = vi.fn();
+    render(
+      <ConvertLeadDialog
+        open
+        lead={createMockLead()}
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+        settingsStatus={status}
+        requireNotes={false}
+        autoAssignOwner
+      />,
+    );
+    expect(screen.getByTestId('convert-lead-settings')).toHaveTextContent(message);
+    expect(screen.getByRole('button', { name: 'Convert to Customer' })).toBeDisabled();
+    // Neither "optional" notes nor an owner rule is claimed.
+    expect(screen.queryByText('Additional Customer Information (Optional)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/lead's owner becomes/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Conversion Notes/)).not.toBeRequired();
+  });
+
+  it('retries loading the settings', () => {
+    const onRetrySettings = vi.fn();
+    render(
+      <ConvertLeadDialog
+        open
+        lead={createMockLead()}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+        settingsStatus="unavailable"
+        onRetrySettings={onRetrySettings}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetrySettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts from a fresh form for another lead', () => {
+    const { rerender } = render(
+      <ConvertLeadDialog open lead={createMockLead({ id: 1 })} onClose={vi.fn()} onConfirm={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/Conversion Notes/), { target: { value: 'For lead one' } });
+    rerender(
+      <ConvertLeadDialog
+        open
+        lead={createMockLead({ id: 2, company_name: 'Other Co' })}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/Conversion Notes/)).toHaveValue('');
+    expect(screen.getByLabelText('Company Name')).toHaveValue('Other Co');
+  });
+});

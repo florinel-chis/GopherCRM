@@ -72,9 +72,24 @@ interface ConvertLeadDialogProps {
   autoAssignOwner?: boolean;
   /** The last failed conversion attempt, shown in the dialog; null once retried. */
   error?: unknown;
+  /**
+   * Whether the conversion settings are known. While they are not, the
+   * dialog claims no rule and does not convert; `onRetrySettings` reloads
+   * them.
+   */
+  settingsStatus?: 'ready' | 'loading' | 'unavailable';
+  onRetrySettings?: () => void;
 }
 
-export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
+/**
+ * The form lives in a body keyed by the lead id: another lead starts from a
+ * fresh form, while a re-read of the same lead (after a refusal, say) keeps
+ * what the user typed.
+ */
+export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({ lead, ...props }) =>
+  lead ? <ConvertLeadDialogBody key={lead.id} lead={lead} {...props} /> : null;
+
+const ConvertLeadDialogBody: React.FC<ConvertLeadDialogProps & { lead: Lead }> = ({
   open,
   lead,
   onClose,
@@ -83,28 +98,19 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
   requireNotes = false,
   autoAssignOwner = false,
   error = null,
+  settingsStatus = 'ready',
+  onRetrySettings,
 }) => {
+  const settingsKnown = settingsStatus === 'ready';
   const methods = useForm<ConvertLeadFormData>({
     resolver: zodResolver(requireNotes ? notesRequiredSchema : baseSchema),
     defaultValues: {
-      company_name: lead?.company_name || '',
+      company_name: lead.company_name || '',
       website: '',
       address: '',
       notes: '',
     },
   });
-
-  // Reset form when lead changes
-  React.useEffect(() => {
-    if (lead) {
-      methods.reset({
-        company_name: lead.company_name || '',
-        website: '',
-        address: '',
-        notes: '',
-      });
-    }
-  }, [lead, methods]);
 
   const refusal = error ? readRefusal(error) : null;
 
@@ -120,6 +126,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
   }, [error, setError]);
 
   const handleSubmit = (data: ConvertLeadFormData) => {
+    if (!settingsKnown) return;
     // Filter out empty strings
     const filteredData: ConvertLeadData = {};
     if (data.company_name?.trim()) filteredData.company_name = data.company_name.trim();
@@ -135,8 +142,6 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
     onClose();
   };
 
-  if (!lead) return null;
-
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
       <DialogTitle>Convert Lead to Customer</DialogTitle>
@@ -146,13 +151,32 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
           <Alert severity="info" sx={{ mb: 2 }}>
             Converting this lead will create a new customer record. The lead will be marked as
             "converted" and linked to the new customer.
-            {autoAssignOwner && (
+            {settingsKnown && autoAssignOwner && (
               <>
                 {' '}
                 The lead's owner becomes the customer's assigned user.
               </>
             )}
           </Alert>
+
+          {!settingsKnown && (
+            <Alert
+              severity="warning"
+              sx={{ mb: 2 }}
+              data-testid="convert-lead-settings"
+              action={
+                settingsStatus === 'unavailable' && onRetrySettings ? (
+                  <Button color="inherit" size="small" onClick={onRetrySettings}>
+                    Retry
+                  </Button>
+                ) : undefined
+              }
+            >
+              {settingsStatus === 'loading'
+                ? 'Loading the conversion settings…'
+                : 'Could not load the conversion settings, so the lead cannot be converted yet.'}
+            </Alert>
+          )}
 
           {refusal && !refusal.field && (
             <Alert severity="error" sx={{ mb: 2 }} data-testid="convert-lead-error">
@@ -177,11 +201,13 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
         <FormProvider {...methods}>
           <Box component="form" onSubmit={methods.handleSubmit(handleSubmit)}>
             <Typography variant="h6" gutterBottom>
-              {requireNotes ? 'Additional Customer Information' : 'Additional Customer Information (Optional)'}
+              {settingsKnown && !requireNotes
+                ? 'Additional Customer Information (Optional)'
+                : 'Additional Customer Information'}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               You can update or add additional information for the new customer record.
-              {requireNotes && ' Conversion notes are required.'}
+              {settingsKnown && requireNotes && ' Conversion notes are required.'}
             </Typography>
 
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -215,7 +241,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
                 multiline
                 rows={3}
                 fullWidth
-                required={requireNotes}
+                required={settingsKnown && requireNotes}
               />
             </Box>
           </Box>
@@ -230,7 +256,7 @@ export const ConvertLeadDialog: React.FC<ConvertLeadDialogProps> = ({
           onClick={methods.handleSubmit(handleSubmit)}
           variant="contained"
           color="primary"
-          disabled={isLoading}
+          disabled={isLoading || !settingsKnown}
         >
           {isLoading ? 'Converting...' : 'Convert to Customer'}
         </Button>

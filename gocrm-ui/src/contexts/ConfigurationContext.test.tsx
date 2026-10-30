@@ -7,6 +7,7 @@ import { AuthContext, type AuthContextType } from './auth-context';
 import { AuthProvider } from './AuthContext';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { useAuth } from '@/hooks/useAuth';
+import { useUIConfigurationsQuery } from '@/hooks/useUIConfigurations';
 import { configurationsApi, type Configuration } from '@/api/endpoints/configurations';
 import { authApi } from '@/api/endpoints';
 import { createMockUser } from '@/test/factories';
@@ -22,14 +23,19 @@ vi.mock('@/api/endpoints/configurations', async () => {
   };
 });
 
-vi.mock('@/api/endpoints', () => ({
-  authApi: {
-    getCurrentUser: vi.fn(),
-    login: vi.fn(),
-    register: vi.fn(),
-    logout: vi.fn(),
-  },
-}));
+vi.mock('@/api/endpoints', async () => {
+  // The barrel hands out the mocked configurations module above.
+  const configurations = await import('@/api/endpoints/configurations');
+  return {
+    configurationsApi: configurations.configurationsApi,
+    authApi: {
+      getCurrentUser: vi.fn(),
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+    },
+  };
+});
 
 const session = vi.hoisted(() => ({ generation: 0, token: null as string | null }));
 
@@ -81,16 +87,18 @@ const accountB = [entry('general.company_name', 'Bravo CRM')];
 // Renders what the provider currently exposes.
 const Probe: React.FC = () => {
   const config = useConfiguration();
-  const conversion = config.getLeadConversionSettings();
+  const conversion = config.getLeadConversion();
+  const settings = conversion.status === 'ready' ? conversion.settings : null;
   return (
     <div>
       <span data-testid="loading">{String(config.isLoading)}</span>
       <span data-testid="error">{config.error ?? ''}</span>
       <span data-testid="company">{config.getCompanyName()}</span>
       <span data-testid="color">{config.getPrimaryColor()}</span>
-      <span data-testid="statuses">{config.getLeadConversionStatuses().join(',')}</span>
-      <span data-testid="require-notes">{String(conversion.requireNotes)}</span>
-      <span data-testid="auto-assign">{String(conversion.autoAssignOwner)}</span>
+      <span data-testid="conversion">{conversion.status}</span>
+      <span data-testid="statuses">{settings ? settings.allowedStatuses.join(',') : '-'}</span>
+      <span data-testid="require-notes">{settings ? String(settings.requireNotes) : '-'}</span>
+      <span data-testid="auto-assign">{settings ? String(settings.autoAssignOwner) : '-'}</span>
       <button onClick={() => void config.refreshConfigurations()}>refresh</button>
     </div>
   );
@@ -139,9 +147,10 @@ describe('ConfigurationProvider', () => {
     expect(text('loading')).toBe('false');
     expect(text('company')).toBe('GopherCRM');
     expect(text('color')).toBe('#1976d2');
-    expect(text('statuses')).toBe('qualified');
-    expect(text('require-notes')).toBe('false');
-    expect(text('auto-assign')).toBe('false');
+    // No rules are invented without a session.
+    expect(text('conversion')).toBe('unavailable');
+    expect(text('statuses')).toBe('-');
+    expect(text('require-notes')).toBe('-');
     // Give any stray effect a chance to fire.
     await act(async () => {});
     expect(configurationsApi.getUIConfigurations).not.toHaveBeenCalled();
@@ -150,6 +159,7 @@ describe('ConfigurationProvider', () => {
   it('makes no request while the session is still being restored', async () => {
     renderWithAuth(authValue(null, true));
     expect(text('loading')).toBe('true');
+    expect(text('conversion')).toBe('loading');
     await act(async () => {});
     expect(configurationsApi.getUIConfigurations).not.toHaveBeenCalled();
   });
@@ -159,8 +169,11 @@ describe('ConfigurationProvider', () => {
     renderWithAuth(authValue(createMockUser({ id: 1 })));
 
     expect(text('loading')).toBe('true');
+    expect(text('conversion')).toBe('loading');
+    expect(text('require-notes')).toBe('-');
     await waitFor(() => expect(text('company')).toBe('Acme CRM'));
     expect(text('loading')).toBe('false');
+    expect(text('conversion')).toBe('ready');
     expect(text('color')).toBe('#ff5722');
     expect(text('statuses')).toBe('contacted,qualified');
     expect(text('require-notes')).toBe('true');
@@ -179,8 +192,8 @@ describe('ConfigurationProvider', () => {
 
     setAuth(authValue(null));
     expect(text('company')).toBe('GopherCRM');
-    expect(text('statuses')).toBe('qualified');
-    expect(text('require-notes')).toBe('false');
+    expect(text('conversion')).toBe('unavailable');
+    expect(text('require-notes')).toBe('-');
     expect(text('loading')).toBe('false');
   });
 
@@ -195,45 +208,111 @@ describe('ConfigurationProvider', () => {
     setAuth(authValue(createMockUser({ id: 2, email: 'b@example.com' })));
     // While B's values load, A's are gone: defaults and a loading flag.
     expect(text('company')).toBe('GopherCRM');
-    expect(text('require-notes')).toBe('false');
+    expect(text('conversion')).toBe('loading');
+    expect(text('require-notes')).toBe('-');
     expect(text('loading')).toBe('true');
 
     await act(async () => resolveB(accountB));
     await waitFor(() => expect(text('company')).toBe('Bravo CRM'));
-    expect(text('statuses')).toBe('qualified');
+    // Account B's list carries no conversion entries.
+    expect(text('conversion')).toBe('unavailable');
     expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(2);
   });
 
-  it('falls back to the defaults and reports the error when the fetch fails', async () => {
+  it('reports a failed fetch: display defaults, conversion rules unavailable', async () => {
     vi.mocked(configurationsApi.getUIConfigurations).mockRejectedValue(new Error('Server unavailable'));
     renderWithAuth(authValue(createMockUser({ id: 1 })));
 
     await waitFor(() => expect(text('error')).toBe('Server unavailable'));
     expect(text('loading')).toBe('false');
     expect(text('company')).toBe('GopherCRM');
-    expect(text('statuses')).toBe('qualified');
+    expect(text('conversion')).toBe('unavailable');
+    expect(text('statuses')).toBe('-');
   });
 
-  it('falls back per entry when a value is malformed', async () => {
+  it('keeps display fallbacks per entry but never invents a malformed rule', async () => {
     vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue([
       entry('leads.conversion.allowed_statuses', 'not json', 'array'),
+      entry('leads.conversion.require_notes', 'false', 'boolean'),
       entry('ui.theme.primary_color', '#00ff00'),
     ]);
     renderWithAuth(authValue(createMockUser({ id: 1 })));
 
     await waitFor(() => expect(text('color')).toBe('#00ff00'));
-    expect(text('statuses')).toBe('qualified');
+    expect(text('conversion')).toBe('unavailable');
+  });
+
+  it.each([
+    ['allowed statuses', 'leads.conversion.allowed_statuses'],
+    ['notes rule', 'leads.conversion.require_notes'],
+  ])('treats the rules as unavailable when the server left out the %s', async (_name, key) => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue(
+      accountA.filter((config) => config.key !== key),
+    );
+    renderWithAuth(authValue(createMockUser({ id: 1 })));
+
+    await waitFor(() => expect(text('company')).toBe('Acme CRM'));
+    expect(text('conversion')).toBe('unavailable');
+    expect(text('require-notes')).toBe('-');
+  });
+
+  it('claims no owner assignment when that entry is missing', async () => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue(
+      accountA.filter((config) => config.key !== 'leads.conversion.auto_assign_owner'),
+    );
+    renderWithAuth(authValue(createMockUser({ id: 1 })));
+
+    await waitFor(() => expect(text('conversion')).toBe('ready'));
+    expect(text('auto-assign')).toBe('false');
+    expect(text('require-notes')).toBe('true');
+  });
+
+  it('treats a failed refresh over loaded values as unavailable', async () => {
+    vi.mocked(configurationsApi.getUIConfigurations)
+      .mockResolvedValueOnce(accountA)
+      .mockRejectedValueOnce(new Error('Server unavailable'));
+    renderWithAuth(authValue(createMockUser({ id: 1 })));
+    await waitFor(() => expect(text('conversion')).toBe('ready'));
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'refresh' }).click();
+    });
+    await waitFor(() => expect(text('conversion')).toBe('unavailable'));
   });
 
   it('honours an empty allowed-status list: nothing is convertible', async () => {
     vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue([
       entry('leads.conversion.allowed_statuses', '[]', 'array'),
+      entry('leads.conversion.require_notes', 'false', 'boolean'),
       entry('general.company_name', 'Acme CRM'),
     ]);
     renderWithAuth(authValue(createMockUser({ id: 1 })));
 
     await waitFor(() => expect(text('company')).toBe('Acme CRM'));
+    expect(text('conversion')).toBe('ready');
     expect(text('statuses')).toBe('');
+  });
+
+  it('shares one request with the other readers of the list', async () => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue(accountA);
+    const CurrencyReader: React.FC = () => {
+      const { data } = useUIConfigurationsQuery();
+      return <span data-testid="shared">{data ? 'loaded' : 'pending'}</span>;
+    };
+    const queryClient = newQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={authValue(createMockUser({ id: 1 }))}>
+          <ConfigurationProvider>
+            <Probe />
+            <CurrencyReader />
+          </ConfigurationProvider>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(text('shared')).toBe('loaded'));
+    expect(text('company')).toBe('Acme CRM');
+    expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(1);
   });
 
   it('refetches on an explicit refresh, even inside the cache lifetime', async () => {
@@ -261,14 +340,77 @@ describe('ConfigurationProvider under AuthProvider', () => {
   });
 
   const Controls: React.FC = () => {
-    const { login, logout } = useAuth();
+    const { login, logout, refreshUser } = useAuth();
     return (
       <>
         <button onClick={() => void login({ email: 'a@example.com', password: 'x' })}>sign in</button>
+        <button onClick={() => void login({ email: 'b@example.com', password: 'x' })}>sign in as b</button>
         <button onClick={() => void logout()}>sign out</button>
+        <button onClick={() => void refreshUser()}>reload user</button>
       </>
     );
   };
+
+  const renderApp = () =>
+    render(
+      <QueryClientProvider client={newQueryClient()}>
+        <AuthProvider>
+          <ConfigurationProvider>
+            <Controls />
+            <Probe />
+          </ConfigurationProvider>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+  const loginAnswer = (id: number) =>
+    ({
+      token: `access-${id}`,
+      refresh_token: `refresh-${id}`,
+      user: createMockUser({ id, email: `user${id}@example.com` }),
+    }) as Awaited<ReturnType<typeof authApi.login>>;
+
+  const click = async (name: string) => {
+    await act(async () => {
+      screen.getByRole('button', { name }).click();
+    });
+  };
+
+  it("loads the next account's values when another account signs in without signing out", async () => {
+    vi.mocked(authApi.login).mockImplementation(async (data) =>
+      loginAnswer(data.email === 'b@example.com' ? 2 : 1),
+    );
+    vi.mocked(configurationsApi.getUIConfigurations).mockImplementation(async () =>
+      session.token === 'access-2' ? accountB : accountA,
+    );
+    renderApp();
+
+    await click('sign in');
+    await waitFor(() => expect(text('company')).toBe('Acme CRM'));
+
+    await click('sign in as b');
+    await waitFor(() => expect(text('company')).toBe('Bravo CRM'));
+    expect(text('loading')).toBe('false');
+    expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads the values of the account a session reload reports', async () => {
+    vi.mocked(authApi.login).mockResolvedValue(loginAnswer(1));
+    vi.mocked(configurationsApi.getUIConfigurations)
+      .mockResolvedValueOnce(accountA)
+      .mockResolvedValueOnce(accountB);
+    renderApp();
+
+    await click('sign in');
+    await waitFor(() => expect(text('company')).toBe('Acme CRM'));
+
+    // Another tab replaced the stored session with another account.
+    session.token = 'access-2';
+    vi.mocked(authApi.getCurrentUser).mockResolvedValue(createMockUser({ id: 2, email: 'b@example.com' }));
+    await click('reload user');
+    await waitFor(() => expect(text('company')).toBe('Bravo CRM'));
+    expect(text('loading')).toBe('false');
+  });
 
   it('loads after sign-in and clears after sign-out, with no request before', async () => {
     vi.mocked(authApi.login).mockResolvedValue({
@@ -303,7 +445,7 @@ describe('ConfigurationProvider under AuthProvider', () => {
       screen.getByRole('button', { name: 'sign out' }).click();
     });
     await waitFor(() => expect(text('company')).toBe('GopherCRM'));
-    expect(text('require-notes')).toBe('false');
+    expect(text('conversion')).toBe('unavailable');
     expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(1);
   });
 });

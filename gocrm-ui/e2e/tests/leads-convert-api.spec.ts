@@ -147,13 +147,22 @@ test.describe('Leads UI - conversion follows the configured rules', () => {
       await dialog.getByRole('button', { name: 'Convert to Customer' }).click();
       await page.waitForURL(/\/customers\/\d+$/);
     } finally {
+      // Every restoration is attempted, whichever fails; the failures are
+      // reported together afterwards.
+      const failedRestorations: string[] = [];
       for (const [key, value] of Object.entries(previous)) {
-        await request.put(`${API_BASE_URL}/configurations/${key}`, { headers, data: { value } });
+        try {
+          const restored = await request.put(`${API_BASE_URL}/configurations/${key}`, { headers, data: { value } });
+          if (!restored.ok()) failedRestorations.push(`${key}: ${restored.status()}`);
+        } catch (error) {
+          failedRestorations.push(`${key}: ${String(error)}`);
+        }
       }
       // Deleting the converted lead erases the customer it became as well.
       if (leadId !== undefined) {
         await request.delete(`${API_BASE_URL}/leads/${leadId}`, { headers });
       }
+      expect(failedRestorations, 'conversion settings restored').toEqual([]);
     }
   });
 });

@@ -709,8 +709,8 @@ the frontend gating.
 - **Type:** functional
 - **Preconditions:** Admin logged in; a lead created by the test with status **Qualified** (a
   status in the seeded `leads.conversion.allowed_statuses`, `["qualified", "contacted"]`; the UI
-  reads it from `GET /configurations/ui` since #117 and falls back to `['qualified']` until it has
-  loaded).
+  reads it from `GET /configurations/ui` since #117; until it has loaded the button is shown
+  disabled with "Loading conversion settings…").
 - **Steps:**
   1. Open `/leads/{id}`.
   2. Click the green "Convert to Customer" button.
@@ -744,13 +744,17 @@ the frontend gating.
   3. Set the setting to `["new"]` on the Configuration page and repeat on `/leads` (row menus).
 - **Expected:** Absent for "New", present for "Contacted" and "Qualified"; after step 3 only the
   "New" lead offers it. The button and the row menu follow the allowed statuses the server
-  reports on `GET /configurations/ui` (`getLeadConversionSettings().allowedStatuses`); an empty
-  list hides them everywhere, and only while the list is loading, or when it failed to load, the
-  built-in `['qualified']` applies. Before #117 the configuration was never loaded and only
-  "Qualified" ever showed the button. A save on the Configuration page refreshes the list.
+  reports on `GET /configurations/ui` (`getLeadConversion()`); an empty list hides them
+  everywhere. No status is guessed while the rules are unknown: while they load, after a failed
+  load, or when the server left out the allowed statuses or the notes rule, the lead page shows the
+  button disabled with "Loading conversion settings…" or "Could not load conversion settings" and a
+  Retry, and the list shows the row action disabled on every unconverted lead with a warning and
+  Retry above the table. Before #117 the configuration was never loaded and only "Qualified" ever
+  showed the button. A save on the Configuration page refreshes the list.
 - **Automation:** automated (Vitest) — `src/pages/leads/LeadDetail.test.tsx` "offers conversion on
   the statuses the server allows, not a built-in list", `src/pages/leads/LeadList.conversion.test.tsx`
-  "offers conversion on the statuses the server allows"; the `contacted` case runs in the browser in
+  "offers conversion on the statuses the server allows", `src/pages/leads/LeadConversionSettings.test.tsx`
+  (loading, failed load with Retry, incomplete list, under the real provider); the `contacted` case runs in the browser in
   `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` (TC-LEAD-066)
 
 ### TC-LEAD-044 — Convert a lead from its row menu on the list

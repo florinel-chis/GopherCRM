@@ -29,11 +29,13 @@ const conversion = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useConfiguration', () => ({
   useConfiguration: () => ({
-    getLeadConversionStatuses: () => conversion.allowedStatuses,
-    getLeadConversionSettings: () => ({
-      allowedStatuses: conversion.allowedStatuses,
-      requireNotes: conversion.requireNotes,
-      autoAssignOwner: conversion.autoAssignOwner,
+    getLeadConversion: () => ({
+      status: 'ready',
+      settings: {
+        allowedStatuses: conversion.allowedStatuses,
+        requireNotes: conversion.requireNotes,
+        autoAssignOwner: conversion.autoAssignOwner,
+      },
     }),
     refreshConfigurations: conversion.refresh,
   }),
