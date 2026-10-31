@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 10
+POLICY_VERSION = 11
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 # The API reference gate is cheap and profile-independent: bounded and runner
 # profiles run it next to hygiene, the full profile through make verify.
@@ -626,7 +626,10 @@ def core_commands(configured, selected, *, explicit_full=False):
                            and tuple(c) not in commands]
     commands = [('make', 'verify')]
     if explicit_full:
+        # Mirror full CI: these checkers run the transaction and auth MySQL roots
+        # uncached and reject skips, which make verify alone does not (#230).
         commands.append(('python3', 'scripts/ci/check-go.py', 'transaction'))
+        commands.append(('python3', 'scripts/ci/check-auth.py', '--persistence'))
     return commands + [tuple(c) for c in configured if tuple(c) not in commands]
 
 

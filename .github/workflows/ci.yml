@@ -159,6 +159,9 @@ jobs:
         run: |
           if [ "$VALIDATION_PROFILE" = full ]; then
             python3 scripts/ci/check-go.py transaction
+            # make verify-backend runs without TEST_MYSQL_DSN, so the auth MySQL
+            # roots would otherwise skip on every general PR (#230).
+            python3 scripts/ci/check-auth.py --persistence
           else
             python3 scripts/ci/check-go.py transaction --storage-only
           fi

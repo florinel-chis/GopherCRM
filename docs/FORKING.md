@@ -201,12 +201,11 @@ caveats:
   local run without that variable proves only the SQLite half. CI rejects skips only for the roots
   a named gate selects: the migration roots in `.github/workflows/migrations.yml` (through
   `scripts/release/check-sql-tests.py --migrations-only`), the roots `scripts/ci/check-auth.py`
-  and `scripts/ci/check-go.py` pick for the auth, transaction and AEO profiles, and, in the
-  Release workflow, `./cmd/migrate` and the `internal/integration` MySQL roots
-  (`.github/workflows/release.yml:94-98`). `make verify-backend` itself runs without
-  `TEST_MYSQL_DSN` (`.github/workflows/ci.yml:124-126`), so on a `full` run any other MySQL root,
-  for example `internal/service/auth_password_reset_regression_test.go`, skips
-  (#230; the products/quotes and automation migration roots are #228).
+  and `scripts/ci/check-go.py` pick for the auth, transaction and AEO profiles (a `full` run also
+  executes `check-go.py transaction` and `check-auth.py --persistence`), and, in the Release
+  workflow, `./cmd/migrate` and the `internal/integration` MySQL roots. `make verify-backend`
+  itself runs without `TEST_MYSQL_DSN`, so on a `full` run any MySQL root outside those checkers
+  skips.
 - `make e2e` runs the Playwright suite against a disposable backend and database
   (`scripts/e2e/run.sh`). `make e2e E2E_DB_DRIVER=sqlite` needs no database server.
 

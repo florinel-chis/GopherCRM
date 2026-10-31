@@ -51,7 +51,8 @@ AEO_SOURCES = {
     'internal/utils': ('transaction*_test.go',),
 }
 MIGRATION_SOURCES = {
-    'cmd/migrate': ('main_test.go', 'customer_website_test.go', 'lookup_indexes_migration_test.go'),
+    'cmd/migrate': ('main_test.go', 'customer_website_test.go', 'lookup_indexes_migration_test.go',
+                    'products_quotes_migration_test.go', 'automation_migration_test.go'),
     'internal/models': ('database_sqlite_upgrade_test.go', 'customer_website_upgrade_test.go'),
     'internal/repository': ('lookup_index_plan_test.go', 'pagination_determinism_test.go',
                             'company_domain_normalization_test.go'),
@@ -91,7 +92,8 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
         required_by_package = {
             'cmd/migrate': {'TestMigrationFresh_FullUpAndDown',
                             'TestMigrationUpgrade_FromMainAutoMigratedSchema', 'TestCustomerWebsiteMigration',
-                            'TestLookupIndexesMigration'},
+                            'TestLookupIndexesMigration', 'TestProductsAndQuotesMigration',
+                            'TestMigrationAutomationSchema'},
             'internal/models': {'TestMigrateDatabase_SQLiteUpgradeFromV120',
                                 'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120',
                                 'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',

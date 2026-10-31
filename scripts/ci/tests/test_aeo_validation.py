@@ -111,7 +111,8 @@ class AEOSelectionTests(unittest.TestCase):
         self.assertEqual(selected['profile'], 'full')
         self.assertEqual(selected['specs'], [])
         checks = v.core_commands([], selected, explicit_full=True)
-        self.assertEqual(checks, [('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction')])
+        self.assertEqual(checks, [('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction'),
+                                  ('python3', 'scripts/ci/check-auth.py', '--persistence')])
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertEqual(workflow.count('if [ "$VALIDATION_PROFILE" = full ]; then'), 2)
         self.assertEqual(workflow.count('            python3 scripts/ci/check-go.py transaction\n'), 2)

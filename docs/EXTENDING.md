@@ -501,10 +501,10 @@ Points that catch people out:
   verify-backend` step sets no `TEST_MYSQL_DSN`, so MySQL roots skip there. The migrations workflow
   runs a fixed list of roots (`migrations.yml`, the `-run` expression at lines 64-65). Add a new
   migration root to that list, to the `--migrations-only` set in `check-sql-tests.py` and to
-  `MIGRATION_SOURCES` in `scripts/ci/check-go.py:53`, or it first runs against MySQL at release
-  time. On 4dfe404, `TestProductsAndQuotesMigration` and `TestMigrationAutomationSchema` are in none
-  of the three (`command grep -rn "ProductsAndQuotes\|MigrationAutomation" .github scripts` prints
-  nothing); tracked in #228.
+  `MIGRATION_SOURCES` (and the required set) in `scripts/ci/check-go.py`, or it first runs against
+  MySQL at release time. A new auth MySQL root in a file `check-auth.py` already selects runs on
+  `full` through `check-auth.py --persistence` (#230); a MySQL root anywhere else needs a checker
+  that selects it.
 - **Run browsers the way CI does.** `make e2e` builds a disposable backend with the `gophercrm_e2e`
   tag, resets a `*_e2e` database and pins the environment. `make e2e E2E_DB_DRIVER=sqlite` needs no
   database server; `make e2e SPECS="e2e/tests/<spec>.ts"` narrows the run.
