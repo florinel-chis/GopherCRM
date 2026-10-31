@@ -370,6 +370,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Changes to standalone operator scripts no longer run the whole browser suite.** The CI and
+  runner validation planner treated every path under `scripts/` as shared code, so the #226 fix to
+  `scripts/create_database.sql` ran all Playwright specs on three databases. Five tools that the
+  server, the CI gates and `make e2e` never execute are now listed by exact path and, like
+  documentation, add no browser specs beyond the health smoke; the database and cleanup scripts'
+  tests run in `make verify-hygiene`. Validation policy version 12.
 - **`make create-db` creates the database the server connects to.** `scripts/create_database.sql`
   created `gophercrm`, while the default `DB_NAME` is `gocrm`, so the documented MySQL path failed
   to connect on the first start. The script now creates `gocrm`, `gocrm-ui/cleanup-test-users.sh`

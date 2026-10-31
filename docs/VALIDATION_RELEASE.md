@@ -44,7 +44,13 @@ checks, and SQLite health smoke. CI runs API/frontend build health checks, the a
 probe checks, runner tests and health smoke on its three existing database jobs. It does
 not run unrelated application unit/race suites or the full feature-browser matrix for
 this profile. Mixed runner/application changes retain the application's core and relevant
-feature coverage. Release/deployment scripts, Makefile, unmapped security/shared code
+feature coverage. Operator and developer tools that the server, the CI gates and
+`make e2e` never execute are listed by exact path in `TOOLING_FILES`
+(`scripts/create_database.sql`, `scripts/seed_e2e_data.sh`, the two `scripts/*_live_smoke.sh`
+helpers and `gocrm-ui/cleanup-test-users.sh`). Like documentation, they add no browser specs
+beyond the health smoke. The database script and the cleanup script have behaviour tests in
+`make verify-hygiene`, which every profile includes; the seed and live-smoke helpers have none. A new
+script is not on that list and stays unmapped. Release/deployment scripts, Makefile, unmapped security/shared code
 and unknown paths still select full coverage. A deleted selected
 spec or unavailable trusted base also forces full coverage. Renames include both paths.
 The plan records changed paths, selected specs, policy version and fallback reasons; CI
