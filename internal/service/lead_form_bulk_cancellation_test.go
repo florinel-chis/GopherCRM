@@ -604,6 +604,17 @@ func runRequestRootRequired(t *testing.T, db *gorm.DB) {
 	assert.Len(t, f.leads(t), 2, "the seeded lead and the one the unnested confirmation created")
 }
 
+// The statements each request-bound call issues against the row the MySQL
+// lock-wait test locks. MySQL 8 shows a prepared statement's INFO with its
+// parameters filled in; MariaDB 10.11 can keep the `?` placeholders, so a
+// pattern never depends on a parameter's value.
+var (
+	leadLockingRead = regexp.MustCompile("^SELECT \\* FROM `leads` WHERE `leads`\\.`id` = (\\d+|\\?) .*FOR UPDATE$")
+	leadStatusWrite = regexp.MustCompile("^UPDATE `leads` SET `status`=")
+	leadNotesWrite  = regexp.MustCompile("^UPDATE `leads` SET .*`notes`=")
+	tokenClaim      = regexp.MustCompile("^UPDATE `form_confirmation_tokens` SET `used_at`=")
+)
+
 // TestRequestCancellationMySQLLockWait covers the wait MySQL deployments
 // actually see: a request queued behind another transaction's row lock.
 // Cancelling it must abandon the statement long before innodb_lock_wait_timeout
@@ -629,13 +640,6 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 			return probe.observe(rows)
 		}
 	}
-	// The statements each call issues against the row the test locks.
-	var (
-		leadLockingRead = regexp.MustCompile("^SELECT \\* FROM `leads` WHERE `leads`\\.`id` = \\d+ .*FOR UPDATE$")
-		leadStatusWrite = regexp.MustCompile("^UPDATE `leads` SET `status`=")
-		leadNotesWrite  = regexp.MustCompile("^UPDATE `leads` SET .*`notes`=")
-		tokenClaim      = regexp.MustCompile("^UPDATE `form_confirmation_tokens` SET `used_at`=")
-	)
 	// lockRow takes an exclusive lock on one row in a separate transaction.
 	lockRow := func(t *testing.T, db *gorm.DB, model interface{}, id uint) (release func()) {
 		holder := db.Begin()
@@ -820,6 +824,11 @@ func TestLockWaitProbe(t *testing.T) {
 		assert.False(t, p.observe([]executingStatement{write}))
 		assert.False(t, p.observe([]executingStatement{{ID: 9, Info: write.Info}}))
 		assert.False(t, p.observe([]executingStatement{{ID: 9, Info: write.Info + " "}}))
+	})
+	t.Run("the conversion pattern matches filled-in and placeholder parameters", func(t *testing.T) {
+		assert.True(t, leadLockingRead.MatchString("SELECT * FROM `leads` WHERE `leads`.`id` = 42 AND `leads`.`deleted_at` IS NULL ORDER BY `leads`.`id` LIMIT 1 FOR UPDATE"), "MySQL 8")
+		assert.True(t, leadLockingRead.MatchString("SELECT * FROM `leads` WHERE `leads`.`id` = ? AND `leads`.`deleted_at` IS NULL ORDER BY `leads`.`id` LIMIT ? FOR UPDATE"), "MariaDB 10.11")
+		assert.False(t, leadLockingRead.MatchString("SELECT * FROM `leads` WHERE `leads`.`id` = ? AND `leads`.`deleted_at` IS NULL"), "not a locking read")
 	})
 }
 
