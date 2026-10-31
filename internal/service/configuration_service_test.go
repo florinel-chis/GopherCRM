@@ -116,15 +116,15 @@ func (suite *ConfigurationServiceTestSuite) TestSet_ReadOnlyIsReadOnlySentinel()
 
 func (suite *ConfigurationServiceTestSuite) TestSet_InvalidValueIsInvalidValueSentinel() {
 	config := &models.Configuration{
-		Key:         "security.session_timeout_hours",
+		Key:         "test.choice.integer",
 		Value:       "24",
 		Type:        models.ConfigTypeInteger,
-		Category:    models.CategorySecurity,
+		Category:    models.CategoryGeneral,
 		ValidValues: `[1, 8, 24, 48, 72, 168]`,
 	}
-	suite.mockRepo.On("GetByKey", "security.session_timeout_hours").Return(config, nil)
+	suite.mockRepo.On("GetByKey", "test.choice.integer").Return(config, nil)
 
-	err := suite.service.Set("security.session_timeout_hours", float64(999))
+	err := suite.service.Set("test.choice.integer", float64(999))
 
 	suite.Error(err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrConfigurationInvalidValue), "expected ErrConfigurationInvalidValue, got %v", err)
@@ -134,18 +134,18 @@ func (suite *ConfigurationServiceTestSuite) TestSet_InvalidValueIsInvalidValueSe
 // falsy values: the rejection was purely the handler's binding tag.
 func (suite *ConfigurationServiceTestSuite) TestSet_FalseOnBooleanConfig() {
 	config := &models.Configuration{
-		Key:          "tickets.auto_assign_support",
+		Key:          "leads.conversion.require_notes",
 		Value:        "true",
 		Type:         models.ConfigTypeBoolean,
-		Category:     models.CategoryTickets,
+		Category:     models.CategoryLeads,
 		DefaultValue: "false",
 	}
-	suite.mockRepo.On("GetByKey", "tickets.auto_assign_support").Return(config, nil)
+	suite.mockRepo.On("GetByKey", "leads.conversion.require_notes").Return(config, nil)
 	suite.mockRepo.On("Update", mock.MatchedBy(func(c *models.Configuration) bool {
 		return c.Value == "false"
 	})).Return(nil)
 
-	suite.NoError(suite.service.Set("tickets.auto_assign_support", false))
+	suite.NoError(suite.service.Set("leads.conversion.require_notes", false))
 }
 
 // TestSet_ZeroOnIntegerConfig covers the json.Unmarshal representation: a JSON
@@ -189,10 +189,10 @@ func (suite *ConfigurationServiceTestSuite) TestSet_TypeMismatchIsInvalidValueSe
 		{
 			name: "string on boolean entry",
 			config: &models.Configuration{
-				Key:      "tickets.auto_assign_support",
+				Key:      "leads.conversion.require_notes",
 				Value:    "true",
 				Type:     models.ConfigTypeBoolean,
-				Category: models.CategoryTickets,
+				Category: models.CategoryLeads,
 			},
 			value: "yes",
 		},

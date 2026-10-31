@@ -338,7 +338,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 	ver, dirty, err = m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261029140000), ver)
+	assert.Equal(t, uint(latestMigrationVersion), ver)
 
 	// 5. Verify models.MigrateDatabase() on top continues to succeed without error
 	models.DB = gormDB
@@ -393,7 +393,14 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	ver, dirty, err := m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
-	assert.Equal(t, uint(20261029140000), ver)
+	assert.Equal(t, uint(latestMigrationVersion), ver)
+	assertRetiredConfigurations(t, appDB, 0)
+
+	// The retirement steps back to the two rows the 2025 seed wrote.
+	require.NoError(t, m.Steps(-1))
+	assertRetiredConfigurations(t, appDB, len(models.RetiredConfigurationKeys))
+	require.NoError(t, m.Up())
+	assertRetiredConfigurations(t, appDB, 0)
 
 	// Full rollback to 0
 	err = m.Down()
