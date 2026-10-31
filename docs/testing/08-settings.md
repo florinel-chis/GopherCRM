@@ -341,11 +341,12 @@ blocked until the page is built.
 - **Preconditions:** Seeded admin logged in, default configuration set.
 - **Steps:**
   1. Open `/settings/configuration`.
-  2. Select the "Customers", "Tasks" and "Integration" tabs in turn.
+  2. Select the "Customers", "Tickets" and "Tasks" tabs in turn.
 - **Expected:** Each shows `No configurations found for <label>` and no table. The tab labels read
-  `Customers (0)`, `Tasks (0)`, `Integration (0)` — the counts come from the client-side filter
-  `getConfigurationsByCategory`, not from a server query, so all eight category tabs exist
-  regardless of what is stored.
+  `Customers (0)`, `Tickets (0)`, `Tasks (0)` — the counts come from the client-side filter
+  `getConfigurationsByCategory`, not from a server query, so all nine category tabs exist
+  regardless of what is stored (Tickets has been empty since #224 retired
+  `tickets.auto_assign_support`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (new; closes G14)
 
 ### TC-SET-018 — Render each value according to its declared type
@@ -354,10 +355,11 @@ blocked until the page is built.
 - **Preconditions:** Seeded admin logged in, default configuration set.
 - **Steps:**
   1. Open `/settings/configuration`.
-  2. Inspect the Current Value cell on the Leads and Tickets tabs.
+  2. Inspect the Current Value cell on the Leads and General tabs.
 - **Expected:** `boolean` renders as a chip labelled `True` (green) or `False`; `array` renders one
   chip per element, so `leads.conversion.allowed_statuses` shows `qualified` and `contacted`;
-  `string` and `integer` render as plain text; `json` renders monospaced. The Key cell is monospaced,
+  `string` renders as plain text. No seeded entry is `integer` (since #224) or `json`, so their
+  rendering (plain text, monospaced) needs a test-only fixture inserted directly. The Key cell is monospaced,
   `is_system` rows carry a blue "System" chip, and `is_read_only` rows would carry a warning
   "Read-Only" chip — no seeded row sets that flag, so the chip is never seen with default data.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
