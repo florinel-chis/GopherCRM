@@ -451,7 +451,7 @@ depend on that are flagged.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; may need to live in a
   cross-entity spec alongside `admin-entity-suite.spec.ts`)
 
-### TC-CUST-042 — Deleting a customer erases its customer login
+### TC-CUST-043 — Deleting a customer erases its customer login
 - **Priority:** P0
 - **Type:** functional
 - **Preconditions:** Admin logged in; a customer whose `user_id` names a `customer`-role account

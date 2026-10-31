@@ -11,37 +11,47 @@ Each document was fact-checked against the source after writing; the corrections
 are folded in. "Automated" means the cited spec file contains an exactly-matching test title, not
 that the test was executed as part of writing this catalog.
 
+The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
+**Automation** line (re-summed 2026-10-31). *Automated (partial)*, *automated (backend)*, an
+Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
+while its browser half is still planned all count as automated; *blocked in the browser* counts as
+blocked.
+
 ## Documents
 
 | Document | Area | Cases | P0 | P1 | P2 | Automated | Planned | Blocked |
 |---|---|---|---|---|---|---|---|---|
-| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 27 | 19 | 2 |
-| [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 42 | 11 | 18 | 13 | 2 | 31 | 9 |
+| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 53 | 17 | 21 | 15 | 32 | 19 | 2 |
+| [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 66 | 15 | 36 | 15 | 30 | 28 | 8 |
-| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 42 | 15 | 15 | 12 | 10 | 22 | 10 |
-| [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 48 | 21 | 19 | 8 | 3 | 42 | 3 |
-| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 46 | 11 | 19 | 16 | 8 | 28 | 10 |
-| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 12 | 27 | 1 |
+| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 45 | 16 | 16 | 13 | 17 | 19 | 9 |
+| [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 49 | 21 | 19 | 9 | 6 | 40 | 3 |
+| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 48 | 13 | 19 | 16 | 10 | 28 | 10 |
+| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 14 | 25 | 1 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 3 | 16 | 15 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
-| [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 42 | 5 | 24 | 13 | 3 | 36 | 3 |
+| [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
-| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 33 | 17 | 13 | 3 | 16 | 9 | 8 |
+| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 34 | 18 | 13 | 3 | 16 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **619** | **197** | **276** | **146** | **212** | **325** | **82** |
+| **Total** | | **639** | **211** | **280** | **148** | **239** | **318** | **82** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
 detail the case lists. They are counted as automated above.
 
-[11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. It is the first section with no
-Playwright spec behind it at all: three cases are automated at the Go level (the route-coexistence
-smoke test and the two column-length cases, TC-AEO-041 and TC-AEO-042) and the remaining 39 are
-planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist yet, or blocked. Where a Go
+[11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. No case in it is automated by a
+Playwright spec: ten cases are automated below the browser (the route-coexistence smoke test, the two
+column-length cases TC-AEO-041 and TC-AEO-042, and TC-AEO-043 to 049 of section 11.7 — provider
+configuration, egress policy, failure sanitization and the run runtime, added 2026-10 with #86,
+#134 and #154), 36 are planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist
+yet, and three are blocked. `gocrm-ui/e2e/tests/aeo-providers.spec.ts` exercises the provider
+connections in the browser; TC-AEO-049 mentions it for runtime credentials, but it automates no
+case's own steps. Where a Go
 or Vitest test already pins a case's behaviour the Automation line names it, so the E2E spec can be
-written against a verified contract. Seven cases are marked *regression*. Six pin defects found
+written against a verified contract. Of the original 42 cases, seven are marked *regression*. Six pin defects found
 and fixed during the module's adversarial review: 500-instead-of-400 on whitespace input
 (TC-AEO-003, TC-AEO-012), a run stranded by a restart bricking the module (TC-AEO-026), a
 non-atomic run-overlap guard (TC-AEO-027), `ORDER BY trigger` failing on MySQL only (TC-AEO-028)
@@ -49,7 +59,8 @@ and the `/prompts/generate` vs `/prompts/:id` route clash (TC-AEO-039). TC-AEO-0
 over-long citation URL rolling back its whole answer on MySQL only.
 
 [13-companies.md](13-companies.md) was added 2026-09-29 with the companies feature (`12-forms.md`
-is the forms catalog and is not in this table). Its cases are written against the backend contract
+is the forms catalog and is not in this table: its 34 cases are one-line entries without
+priorities, 31 automated, 2 planned and 1 blocked). Its cases are written against the backend contract
 that ships with the feature and the frontend pages the same change introduces. Eight cases are
 automated by `gocrm-ui/e2e/tests/admin-companies.spec.ts` (six of them *automated (partial)*, as
 in 10-labels: the spec asserts the core outcome, the rest is pinned in Go) and TC-COMP-024 by the
@@ -63,7 +74,8 @@ introduces. Thirteen cases are automated by the eight tests of
 `gocrm-ui/e2e/tests/admin-deals.spec.ts` (twelve of them *automated (partial)*, as in 10-labels
 and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or Vitest); the same
 spec is named on every planned case, and every case names the Go test that already pins its API
-behaviour. The six blocked cases are the sales role cases (lesson 8).
+behaviour. The six blocked cases are the sales role cases (lesson 8). TC-DEAL-034 (2026-10-19,
+#124: a deal cannot link or reveal another rep's lead) is blocked for the same reason.
 
 The pipeline board and the dashboard deal widgets (2026-09-30) added TC-DEAL-027 to 033 (section
 14.7) and TC-DASH-038 to 042. `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`, written with the
@@ -199,16 +211,18 @@ documents as **Known issue** lines. The most consequential:
 - Registration stores the token in `localStorage` unconditionally and receives no refresh token, so
   a newly registered session cannot refresh and is hard-redirected to `/login` on its first 401
   (01-authentication.md).
-- The `/leads` and `/tickets` list routes have no route-level role guard in the SPA — the backend
-  403s, but the SPA renders a broken page rather than redirecting to `/unauthorized`
-  (03-leads.md, 05-tickets.md).
+- The `/tickets` list route has no route-level role guard in the SPA — the backend 403s, but the
+  SPA renders a broken page rather than redirecting to `/unauthorized` (05-tickets.md). The
+  `/leads` half of this finding is fixed: since #120 every lead route carries the admin+sales
+  guard and redirects other roles to `/unauthorized` (03-leads.md).
 - Ticket sentinel errors are surfaced doubled ("cannot reopen closed ticket: cannot reopen closed
   ticket") because the handler returns `err.Error()` of a wrapped sentinel with identical text
   (05-tickets.md).
 - The users list reports `meta.total` as the length of the returned page, so pagination totals are
   wrong beyond page one (07-users.md).
-- The Profile and API Keys settings pages are heading-only stubs while their backends are complete
-  and integration-tested (07-users.md, 08-settings.md).
+- ~~The Profile and API Keys settings pages are heading-only stubs~~ Fixed: both pages are built
+  (`gocrm-ui/src/pages/settings/Profile.tsx`, `APIKeys.tsx`) with unit tests (`Profile.test.tsx`,
+  `APIKeys.test.tsx`); the cases in 07-users.md and 08-settings.md still record their browser coverage.
 - A task-list request carrying both `label_id` and `search` silently drops the search: the two
   filters cannot be combined server-side. The UI no longer contradicts that — applying a label
   filter clears and disables the search box — but the server-side limitation stands (10-labels.md).

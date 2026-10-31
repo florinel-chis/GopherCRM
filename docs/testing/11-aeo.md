@@ -485,22 +485,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 
 ---
 
-## Coverage summary
-
-| Section | Cases | P0 | P1 | P2 |
-|---|---|---|---|---|
-| 11.1 Settings and brand profile | 9 | 2 | 5 | 2 |
-| 11.2 Prompts | 14 | 1 | 9 | 4 |
-| 11.3 Runs | 8 | 1 | 5 | 2 |
-| 11.4 Dashboard | 4 | 0 | 2 | 2 |
-| 11.5 Citations | 3 | 0 | 2 | 1 |
-| 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
-| **Total** | **42** | **5** | **24** | **13** |
-
-Automation status: 3 automated at the Go level (the route smoke test and the two column-length
-cases), 36 planned, 3 blocked (two on the missing sales/support login helper, one on a live
-Anthropic call).
-
+## 11.7 Provider configuration, egress and runtime
 
 ### TC-AEO-043 — Models and endpoints can be changed without a restart
 - **Priority:** P1
@@ -566,3 +551,22 @@ Anthropic call).
   4. Repeat from a fresh database with no profile; then repeat with `AEO_SCHEDULE_ENABLED=false`.
 - **Expected:** Step 1: `AEO providers loaded` with an empty roster **and** `AEO scheduler started` — the empty roster no longer disables the schedule. Step 3: a `scheduled` run executes against the engine whose key was stored after boot; the provider request carries that key; the run completes and the scheduler re-arms for the next day. Step 4 (unconfigured): the tick logs one info line `AEO scheduled run skipped: the module is not fully configured` naming the reason, no error-level line, no run row, and the loop re-arms — there is no retry inside the day. Step 4 (disabled): `AEO scheduler not started`, no timer is ever armed, and shutdown is immediate.
 - **Automation:** automated (backend) — `cmd/aeo_runtime_test.go` "TestAEORuntimeStartup", `internal/aeo/runtime_test.go` (`TestSchedulerFiresWhenDueAndRearms`, `TestSchedulerWaitJoinsAStartInProgress`, `TestTriggerScheduledRunIsQuietOnIncompleteConfiguration`). The `aeo-providers` browser spec covers runtime credentials on the settings page but not the scheduled start.
+
+---
+
+## Coverage summary
+
+| Section | Cases | P0 | P1 | P2 |
+|---|---|---|---|---|
+| 11.1 Settings and brand profile | 9 | 2 | 5 | 2 |
+| 11.2 Prompts | 14 | 1 | 9 | 4 |
+| 11.3 Runs | 8 | 1 | 5 | 2 |
+| 11.4 Dashboard | 4 | 0 | 2 | 2 |
+| 11.5 Citations | 3 | 0 | 2 | 1 |
+| 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
+| 11.7 Provider configuration, egress and runtime | 7 | 4 | 3 | 0 |
+| **Total** | **49** | **9** | **27** | **13** |
+
+Automation status: 10 automated below the browser (the route smoke test, the two column-length
+cases and TC-AEO-043 to 049, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
+the missing sales/support login helper, one on a live Anthropic call).

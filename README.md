@@ -937,9 +937,6 @@ gophercrm/
   code. Other raw diagnostics, request IDs, client IPs, Origin/User-Agent headers and mailer
   recipient metadata can still carry personal data. Older logs and issued JWTs that embed email
   also remain outside database erasure, so log and token retention need their own policy.
-- **The frontend still carries ESLint warnings.** Errors are at zero and `npm run lint` is a
-  blocking CI step, but about 230 warnings remain, mostly `no-explicit-any` and
-  `no-non-null-assertion`. `tsc` is clean.
 
 ## Contributing
 
