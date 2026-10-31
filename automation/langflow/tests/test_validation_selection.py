@@ -53,7 +53,7 @@ class ValidationSelectionTests(fixtures.EngineTests):
         with patch.dict(os.environ, {}, clear=True):
             checks = await pr.validation_checks(record, paths)
         self.assertEqual([c[1] for c in checks], [
-            ('make', 'verify-hygiene'), ('make', 'verify-runner'),
+            ('make', 'verify-hygiene'), ('make', 'verify-api-docs'), ('make', 'verify-runner'),
             ('npm', 'ci', '--prefix', 'gocrm-ui'),
             ('make', 'e2e', 'E2E_DB_DRIVER=sqlite', 'SPECS=' + SMOKE)])
         # Direct check assembly still retains every frozen acceptance root.

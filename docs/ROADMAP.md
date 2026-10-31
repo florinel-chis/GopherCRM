@@ -45,8 +45,9 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 ## Backend and delivery
 
-- **Serve the OpenAPI spec** — the spec is now generated from handler annotations into `api/`
-  (`make swagger`); serving it (e.g. gin-swagger with a Swagger UI route) remains unimplemented
+- **Serve the OpenAPI spec** — the spec and a static HTML reference are generated into `api/`
+  (`make swagger`) and gated in CI (`make verify-api-docs`); serving them from the backend (e.g. a
+  Swagger UI route) is deliberately not done
 - **Cross-process AEO coordination** — the AEO runtime now owns, cancels and joins its runs at
   shutdown within one process (#111), but the overlap guard and the daily scheduler are still
   process-local: two API replicas would each arm a scheduler and each admit a run. Horizontal
@@ -133,6 +134,37 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   TLS (and optionally implicit TLS on port 465) is a known gap.
 - **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
   hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
+
+## Defects found while documenting the API (2026-10)
+
+Recorded while writing the API reference; the spec documents the current behaviour, warts
+included. Found by reading the code path unless noted.
+
+- **Ticket reassignment is ignored** — `PUT /tickets/{id}` with a new `assigned_to_id` on a ticket
+  that already has an assignee validates the new user, answers 200 and keeps the old assignee
+  (reproduced with a probe test). The update saves the ticket read with its `AssignedTo`
+  association preloaded, and GORM writes the preloaded association's id back over the foreign
+  key. The task service already avoids this; the ticket service needs the same targeted update.
+- **`PUT /users/me` changes the password without the current one** and revokes no refresh token,
+  while `POST /auth/change-password` requires the current password and revokes them.
+- **`PUT /users/{id}` lets an admin deactivate or demote itself**, which
+  `POST /users/{id}/deactivate` refuses.
+- **Registration and `POST /users` answer 400 with the raw service error text** for any failure,
+  database errors included. A password over bcrypt's 72-byte limit is a 400 there but a 500 on
+  change-password, reset confirm and `PUT /users/me`; no endpoint checks the byte length first.
+- **Database failures reported as 404** — `GET /users/{id}`, `GET /users/me` and the user lookup of
+  `POST /customers/{id}/assign` map every lookup error to not found.
+- **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
+  replaced; errors that must reach the client use 503 elsewhere.
+- **Lead `owner_id` is not checked** on create (admin) or update: an unknown id fails on the
+  foreign key as a 500, and an erased user's id is accepted.
+- **Customer update writes the whole row (`Save`)** — a request racing an erasure can write the
+  stale personal data back; the user repository moved to targeted updates for the same reason.
+- **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON
+  name for service-level field errors; Gin's validator has no tag-name function registered.
+- **Zero-valued nested objects** — `Lead.owner`, `Ticket.customer` and `Task.assigned_to` are
+  non-pointer structs tagged `omitempty`, which Go ignores, so responses that do not load them
+  carry an object with id 0 instead of omitting the field.
 
 ## Forms module — deliberate v1 cuts
 

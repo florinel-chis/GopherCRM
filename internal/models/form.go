@@ -135,14 +135,33 @@ var (
 // serialized `fields` column of forms, never in a table of its own, and its
 // order in the slice is the order it renders in.
 type FormFieldDef struct {
-	Name        string   `json:"name"`
-	Label       string   `json:"label"`
-	Type        string   `json:"type"`
-	Required    bool     `json:"required"`
-	Placeholder string   `json:"placeholder,omitempty"`
-	HelpText    string   `json:"help_text,omitempty"`
-	Options     []string `json:"options,omitempty"`
-	MaxLength   int      `json:"max_length,omitempty"`
+	// Machine name: the input name, the key of the submitted value and, for
+	// first_name, last_name, name, email, phone, company and position, the lead
+	// column it fills. Must match ^[a-z][a-z0-9_]{0,49}$ (trimmed first) and be
+	// unique within the form. The one email field must be named "email".
+	Name string `json:"name" example:"email"`
+	// Label shown to the visitor and used in validation messages and lead
+	// notes; the name is used when it is empty.
+	Label string `json:"label" example:"Work email"`
+	// Input type. A form has exactly one field of type email. Only select may
+	// have options; hidden carries a prefilled value and cannot be required.
+	Type string `json:"type" enums:"text,email,phone,textarea,select,checkbox,hidden" example:"email"`
+	// Whether a value must be submitted; for a checkbox, that it is ticked.
+	Required bool `json:"required" example:"true"`
+	// Placeholder text for the input; omitted when empty.
+	Placeholder string `json:"placeholder,omitempty" example:"you@company.example"`
+	// Help text rendered under the input; omitted when empty.
+	HelpText string `json:"help_text,omitempty" example:"We only use this to reply to you."`
+	// Choices of a select field (1 to 50, none blank); the submitted value must
+	// equal one of them exactly. Omitted for other types, which may not have
+	// options.
+	Options []string `json:"options,omitempty" example:"1-10,11-50,51+" maxItems:"50"`
+	// Longest accepted value in characters. On save, 0 or absent becomes 1000
+	// (5000 for textarea), anything above 10000 becomes 10000, and lead-mapped
+	// fields are narrowed to their column: email 255, first_name and last_name
+	// 100, phone 50, company 200, position 100. Stored definitions therefore
+	// always carry the enforced limit.
+	MaxLength int `json:"max_length,omitempty" example:"255"`
 }
 
 // Form is a lead-capture form definition plus everything that happens after a
@@ -150,32 +169,79 @@ type FormFieldDef struct {
 // follow-up, spam protection and lead creation.
 type Form struct {
 	BaseModel
-	Name        string `gorm:"not null;type:varchar(255)" json:"name"`
-	Description string `gorm:"type:text" json:"description"`
+	// Form name, trimmed; at most 255 characters. Shown to visitors, used as
+	// the source of the leads the form creates (cut to 100 characters) and in
+	// notification subjects.
+	Name string `gorm:"not null;type:varchar(255)" json:"name" example:"Website contact form" maxLength:"255"`
+	// Internal description for staff; never exposed by the public endpoints.
+	Description string `gorm:"type:text" json:"description" example:"Contact form on the pricing page."`
 
 	// PublicID is the only identifier ever exposed publicly. It is random
 	// rather than the primary key so the public endpoints cannot be enumerated.
-	PublicID string     `gorm:"not null;type:varchar(32);uniqueIndex" json:"public_id"`
-	Status   FormStatus `gorm:"not null;type:varchar(20);default:'draft'" json:"status"`
 
+	// Public identifier used in every public URL (/forms/public/{key}): 22
+	// random URL-safe base64 characters assigned at creation and never changed,
+	// so embeds keep working across edits.
+	PublicID string `gorm:"not null;type:varchar(32);uniqueIndex" json:"public_id" example:"q3VZr0n8TjK1bWcY5xL2aQ" readonly:"true"`
+	// Publication state; only a published form is served by the public
+	// endpoints. Defaults to draft.
+	Status FormStatus `gorm:"not null;type:varchar(20);default:'draft'" json:"status" example:"published"`
+
+	// Ordered field definitions (1 to 50), normalised on save (names trimmed,
+	// max_length defaulted and clamped).
 	Fields     []FormFieldDef `gorm:"-" json:"fields"`
 	FieldsJSON string         `gorm:"column:fields;type:text" json:"-"`
 
-	SubmitAction    string `gorm:"not null;type:varchar(20);default:'message'" json:"submit_action"`
-	ThankYouMessage string `gorm:"type:text" json:"thank_you_message"`
-	RedirectURL     string `gorm:"type:varchar(512)" json:"redirect_url"`
-	ConsentText     string `gorm:"type:text" json:"consent_text"`
+	// What the visitor sees after submitting: message shows thank_you_message
+	// in place, redirect sends the browser to redirect_url. Defaults to
+	// message.
+	SubmitAction string `gorm:"not null;type:varchar(20);default:'message'" json:"submit_action" enums:"message,redirect" example:"message"`
+	// Message shown after a submission when submit_action is message. When
+	// empty a default text is shown (a "check your inbox" text for double
+	// opt-in forms).
+	ThankYouMessage string `gorm:"type:text" json:"thank_you_message" example:"Thanks, we will be in touch within one business day."`
+	// Page the visitor is sent to when submit_action is redirect: required
+	// then, and must start with http:// or https://. At most 512 characters;
+	// stored unchecked for message forms.
+	RedirectURL string `gorm:"type:varchar(512)" json:"redirect_url" example:"https://www.example.com/thank-you" maxLength:"512"`
+	// Consent statement shown with the form. When non-empty, a submission must
+	// carry consent=true or it is rejected with a field error on "consent".
+	ConsentText string `gorm:"type:text" json:"consent_text" example:"I agree to be contacted about my enquiry."`
 
-	NotifyEmails     []string `gorm:"-" json:"notify_emails"`
+	// Staff addresses that receive one notification mail per accepted
+	// submission (on arrival, or on confirmation for double opt-in forms). At
+	// most 20, each at most 255 characters and shaped like an address; trimmed.
+	// Reads return [] when there are none; the POST /forms and PUT /forms/{id}
+	// responses echo the request and carry null when the list was omitted or
+	// sent as null.
+	NotifyEmails     []string `gorm:"-" json:"notify_emails" example:"sales@example.com" extensions:"x-nullable"`
 	NotifyEmailsJSON string   `gorm:"column:notify_emails;type:text" json:"-"`
 
-	DoubleOptIn         bool   `gorm:"not null;default:false" json:"double_opt_in"`
-	ConfirmationSubject string `gorm:"type:varchar(255)" json:"confirmation_subject"`
-	ConfirmationBody    string `gorm:"type:text" json:"confirmation_body"`
-	FollowUpSubject     string `gorm:"type:varchar(255)" json:"follow_up_subject"`
-	FollowUpBody        string `gorm:"type:text" json:"follow_up_body"`
-	ContentURL          string `gorm:"type:varchar(512)" json:"content_url"`
-	CaptchaEnabled      bool   `gorm:"not null;default:false" json:"captcha_enabled"`
+	// Double opt-in: a submission is stored as pending and a confirmation
+	// mail with a single-use link valid for 48 hours goes to the submitted
+	// address; the lead, the notification and the follow-up mail wait until
+	// the link is confirmed.
+	DoubleOptIn bool `gorm:"not null;default:false" json:"double_opt_in" example:"false"`
+	// Subject of the confirmation mail, at most 255 characters; empty means
+	// "Confirm your email address".
+	ConfirmationSubject string `gorm:"type:varchar(255)" json:"confirmation_subject" example:"Please confirm your email address" maxLength:"255"`
+	// Plain-text body of the confirmation mail. The {confirmation_link}
+	// placeholder is replaced by the link, which is appended when the
+	// placeholder is missing; empty means a built-in text.
+	ConfirmationBody string `gorm:"type:text" json:"confirmation_body" example:"Hello, please confirm your address: {confirmation_link}"`
+	// Subject of the follow-up mail sent to the submitter once the submission
+	// is accepted; empty means no follow-up mail is sent. At most 255
+	// characters.
+	FollowUpSubject string `gorm:"type:varchar(255)" json:"follow_up_subject" example:"Your download link" maxLength:"255"`
+	// Plain-text body of the follow-up mail; {content_link} is replaced by
+	// content_url. Empty means a built-in text containing the link.
+	FollowUpBody string `gorm:"type:text" json:"follow_up_body" example:"Thanks for your interest. Download the guide here: {content_link}"`
+	// Link inserted for {content_link} in the follow-up mail (for gated
+	// content). At most 512 characters; not checked for a scheme.
+	ContentURL string `gorm:"type:varchar(512)" json:"content_url" example:"https://www.example.com/files/guide.pdf" maxLength:"512"`
+	// Require a reCAPTCHA v3 token with each submission. Takes effect only
+	// when the server has both reCAPTCHA keys; otherwise it is ignored.
+	CaptchaEnabled bool `gorm:"not null;default:false" json:"captcha_enabled" example:"false"`
 
 	// CreateLead deliberately carries NO `default:true` column tag. GORM
 	// substitutes a literal column default whenever the Go field holds its zero
@@ -183,13 +249,28 @@ type Form struct {
 	// not to create leads would be persisted with create_lead = true. The
 	// "new forms create leads" default therefore belongs to the API layer,
 	// which knows whether the client sent the flag at all.
-	CreateLead     bool `gorm:"not null" json:"create_lead"`
-	DefaultOwnerID uint `gorm:"index" json:"default_owner_id"`
 
-	AllowedDomains     []string `gorm:"-" json:"allowed_domains"`
+	// Whether an accepted submission feeds a lead: the newest live lead with
+	// the same address gains a note, otherwise a new lead (status new, owner
+	// default_owner_id, source the form name) is created.
+	CreateLead bool `gorm:"not null" json:"create_lead" example:"true"`
+	// Owner of the leads the form creates; 0 means none. Required when
+	// create_lead is true; any non-zero value names an active admin or sales
+	// user (checked on save only).
+	DefaultOwnerID uint `gorm:"index" json:"default_owner_id" example:"2"`
+
+	// Origin allowlist: bare host names with an optional port, lower-cased,
+	// matched exactly (subdomains must be listed one by one). Empty allows
+	// every origin. A definition requested from another origin is a 404; a
+	// submission from another origin is stored as spam (reason domain). At
+	// most 20, each at most 255 characters. Reads return [] when there are
+	// none; the POST /forms and PUT /forms/{id} responses echo the request and
+	// carry null when the list was omitted or sent as null.
+	AllowedDomains     []string `gorm:"-" json:"allowed_domains" example:"www.example.com,localhost:5173" extensions:"x-nullable"`
 	AllowedDomainsJSON string   `gorm:"column:allowed_domains;type:text" json:"-"`
 
-	CreatedByID uint `gorm:"index" json:"created_by_id"`
+	// ID of the user who created the form; server-assigned and immutable.
+	CreatedByID uint `gorm:"index" json:"created_by_id" example:"1" readonly:"true"`
 }
 
 // BeforeSave serializes the decoded twins into their TEXT columns.
@@ -381,19 +462,43 @@ func formDefinitionError(format string, args ...any) error {
 // to "true"/"false" by the writer.
 type FormSubmission struct {
 	BaseModel
-	FormID uint `gorm:"not null;index" json:"form_id"`
+	// ID of the form that was submitted.
+	FormID uint `gorm:"not null;index" json:"form_id" example:"4" readonly:"true"`
 
-	Data     map[string]string `gorm:"-" json:"data"`
+	// Submitted values keyed by field name: every field of the definition is
+	// present, values are trimmed, checkboxes are "true" or "false" and the
+	// email is lower-cased. Emptied ({}) when the linked lead is erased.
+	Data     map[string]string `gorm:"-" json:"data" readonly:"true"`
 	DataJSON string            `gorm:"column:data;type:mediumtext" json:"-"`
 
-	Email       string               `gorm:"type:varchar(255);index" json:"email"`
-	Status      FormSubmissionStatus `gorm:"not null;type:varchar(20);index" json:"status"`
-	SpamReason  string               `gorm:"type:varchar(100)" json:"spam_reason"`
-	LeadID      *uint                `gorm:"index" json:"lead_id"`
-	IPAddress   string               `gorm:"type:varchar(45)" json:"ip_address"`
-	UserAgent   string               `gorm:"type:varchar(255)" json:"user_agent"`
-	Referrer    string               `gorm:"type:varchar(512)" json:"referrer"`
-	ConfirmedAt *time.Time           `json:"confirmed_at"`
+	// Submitted address, lower-cased. After erasure of the linked lead it is
+	// that lead's placeholder address.
+	Email string `gorm:"type:varchar(255);index" json:"email" example:"jane@company.example" readonly:"true"`
+	// Lifecycle state: received (final on arrival), pending (double opt-in
+	// confirmation outstanding), confirmed (link confirmed) or spam (caught by
+	// a protection layer).
+	Status FormSubmissionStatus `gorm:"not null;type:varchar(20);index" json:"status" example:"received" readonly:"true"`
+	// Protection layer that caught a spam submission: time_trap (submitted
+	// under 3 seconds or over 24 hours after the definition was served),
+	// domain (origin not in allowed_domains), honeypot (decoy input filled) or
+	// captcha (token missing, rejected or unverifiable). Empty string for every
+	// other status.
+	SpamReason string `gorm:"type:varchar(100)" json:"spam_reason" enums:",honeypot,time_trap,captcha,domain" example:""`
+	// Lead the submission created or added a note to; null for spam and
+	// pending submissions and for forms with create_lead off.
+	LeadID *uint `gorm:"index" json:"lead_id" example:"57" extensions:"x-nullable" readonly:"true"`
+	// Client IP as resolved through the trusted proxies (TRUSTED_PROXIES).
+	// Emptied when the linked lead is erased.
+	IPAddress string `gorm:"type:varchar(45)" json:"ip_address" example:"203.0.113.24" readonly:"true"`
+	// Browser User-Agent header, cut to 255 characters. Emptied when the
+	// linked lead is erased.
+	UserAgent string `gorm:"type:varchar(255)" json:"user_agent" example:"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)" readonly:"true"`
+	// Page the form was submitted from, as reported by the embed script
+	// (page_url; client-supplied, not verified), cut to 512 characters.
+	// Emptied when the linked lead is erased.
+	Referrer string `gorm:"type:varchar(512)" json:"referrer" example:"https://www.example.com/pricing" readonly:"true"`
+	// When the double opt-in link was confirmed (RFC 3339); null otherwise.
+	ConfirmedAt *time.Time `json:"confirmed_at" example:"2026-10-30T09:15:00Z" extensions:"x-nullable" readonly:"true"`
 }
 
 // BeforeSave serializes the submitted values into their TEXT column.

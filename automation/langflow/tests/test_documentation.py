@@ -193,6 +193,25 @@ class DocumentationTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
 
+    def test_api_annotation_sources_suggest_the_whole_generated_reference(self):
+        reference = {'api/swagger.json', 'api/swagger.yaml', 'api/index.html'}
+        for path in ('internal/handler/lead_handler.go', 'internal/models/quote.go', 'cmd/main.go',
+                     'internal/service/form_service.go', 'internal/utils/response.go',
+                     'scripts/docs/render_api_reference.py', 'scripts/docs/swag-overrides',
+                     'internal/handler/form*.go'):
+            with self.subTest(path=path):
+                selected = {d['path'] for d in docs.suggestions([path])}
+                self.assertTrue(reference.issubset(selected))
+                self.assertNotIn('api/docs.go', selected)
+        for path in ('internal/handler/lead_handler_test.go', 'gocrm-ui/src/pages/leads/LeadList.tsx',
+                     'internal/repository/lead_repository.go', 'migrations/new.up.sql'):
+            with self.subTest(path=path):
+                self.assertFalse(reference & {d['path'] for d in docs.suggestions([path])})
+        # A regenerated artifact is itself documentation to assess.
+        self.assertEqual({d['path'] for d in docs.suggestions(['api/index.html'])}, {'api/index.html'})
+        self.assertTrue(docs.is_document('api/index.html'))
+        self.assertFalse(docs.is_document('api/docs.go'))
+
     def test_changed_fork_documents_are_always_assessed(self):
         selected = {d['path'] for d in docs.suggestions(
             ['docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'])}

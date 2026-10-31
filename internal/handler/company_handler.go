@@ -28,19 +28,42 @@ func NewCompanyHandler(companyService service.CompanyService) *CompanyHandler {
 // stored empty, which is how a domain or a note gets cleared. owner_id is the
 // exception: nil leaves the owner alone, 0 clears it, any other value sets it.
 type CompanyRequest struct {
-	Name          string `json:"name" binding:"required"`
-	Domain        string `json:"domain,omitempty"`
-	Website       string `json:"website,omitempty"`
-	Industry      string `json:"industry,omitempty"`
-	EmployeeRange string `json:"employee_range,omitempty" binding:"omitempty,oneof=1-10 11-50 51-200 201-500 501-1000 1000+"`
-	Phone         string `json:"phone,omitempty"`
-	Address       string `json:"address,omitempty"`
-	City          string `json:"city,omitempty"`
-	State         string `json:"state,omitempty"`
-	Country       string `json:"country,omitempty"`
-	PostalCode    string `json:"postal_code,omitempty"`
-	Notes         string `json:"notes,omitempty"`
-	OwnerID       *uint  `json:"owner_id,omitempty"`
+	// Company name, required; trimmed, it must not be empty. At most 200
+	// characters.
+	Name string `json:"name" binding:"required" maxLength:"200" example:"Acme Corporation"`
+	// Domain or URL; stored normalised (lower case, scheme, path, query,
+	// fragment, a leading "www." and a trailing dot removed). What remains
+	// may hold only letters, digits, dots and hyphens (400 otherwise) and
+	// must not be used by another live company (409). At most 255
+	// characters as sent. Absent or empty clears it on update.
+	Domain string `json:"domain,omitempty" maxLength:"255" example:"https://www.acme.com/about"`
+	// Website: an http or https URL with a host, trimmed (400 otherwise). At
+	// most 255 characters. Absent or empty clears it on update.
+	Website string `json:"website,omitempty" maxLength:"255" example:"https://www.acme.com"`
+	// Industry, at most 100 characters.
+	Industry string `json:"industry,omitempty" maxLength:"100" example:"Manufacturing"`
+	// Head-count band; absent or empty stores no band.
+	EmployeeRange string `json:"employee_range,omitempty" binding:"omitempty,oneof=1-10 11-50 51-200 201-500 501-1000 1000+" example:"51-200"`
+	// Phone number, at most 50 characters.
+	Phone string `json:"phone,omitempty" maxLength:"50" example:"+1 555 0100"`
+	// Street address, at most 255 characters.
+	Address string `json:"address,omitempty" maxLength:"255" example:"1 Industrial Way"`
+	// City, at most 100 characters.
+	City string `json:"city,omitempty" maxLength:"100" example:"Springfield"`
+	// State or region, at most 100 characters.
+	State string `json:"state,omitempty" maxLength:"100" example:"IL"`
+	// Country, at most 100 characters.
+	Country string `json:"country,omitempty" maxLength:"100" example:"USA"`
+	// Postal code, at most 20 characters.
+	PostalCode string `json:"postal_code,omitempty" maxLength:"20" example:"62701"`
+	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
+	Notes string `json:"notes,omitempty" example:"Key account; renewal in Q3."`
+	// Account manager. Create: a sales user may send only its own id and
+	// gets itself when it is absent or 0; an admin may name any user, or
+	// leave the company unowned. Update: absent keeps the owner, 0 clears it
+	// (admin only), another id sets it (sales: its own id only). An id that
+	// names no live user is 400 INVALID_REFERENCE.
+	OwnerID *uint `json:"owner_id,omitempty" example:"7"`
 }
 
 // companyNotesTooLongMessage answers notes that would not fit companies.notes.
@@ -96,20 +119,23 @@ func (req *CompanyRequest) apply(company *models.Company) {
 
 // Create godoc
 // @Summary Create a company
-// @Description Create a company (admin and sales roles only). The name is trimmed and required, 1 to 200 characters. The domain is optional and normalised before it is stored — lower case, scheme, path and a leading "www." stripped — and must not be in use by another live company (409). The website, when present, must be an http or https URL. employee_range, when present, is one of 1-10, 11-50, 51-200, 201-500, 501-1000, 1000+. Every text field is bounded by its column width and notes by 65535 bytes; a longer value is a 400. owner_id names the account manager: sales users may only set it to themselves (403 otherwise) and get themselves when it is omitted; admins may set any live user, or omit it to leave the company unowned. An owner_id that matches no user is 400 INVALID_REFERENCE.
+// @Description Create a company. Roles: admin and sales.
+// @Description Validation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.
+// @Description Owner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.
+// @Description The response is the stored company re-read with its owner and counts (all 0 for a new company).
 // @Tags companies
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CompanyRequest true "Company"
-// @Success 201 {object} utils.APIResponse{data=models.Company} "Company created; owner is preloaded and customer_count/lead_count are 0"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, a value longer than its column, an invalid domain or website, or an unknown owner_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required; sales may only own companies themselves"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A company with this domain already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CompanyRequest true "The company to create"
+// @Success 201 {object} utils.APIResponse{data=models.Company} "Company created"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: a value longer than its column ('<field> is too long (at most N characters)' or the notes byte limit), a blank name, a domain that is not a host, or a website that is not an http(s) URL. INVALID_REFERENCE: owner_id names no live user"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or a sales user named another owner ('You can only assign companies to yourself')"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another live company already uses the normalised domain"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies [post]
 func (h *CompanyHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.Create")
@@ -157,23 +183,25 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List companies
-// @Description One page of companies (admin, sales and support roles). data is the array of companies, each with its owner and its live customer_count and lead_count; meta carries the pagination. search matches name, domain, industry and city (substring, case-insensitive on MySQL and MariaDB, case-sensitive on SQLite). sort_by must be one of the listed columns — any other value is a 400, never interpolated — and defaults to created_at; sort_order defaults to desc. page (1-based) overrides offset when supplied, as on the other lists.
+// @Description One page of live companies, each with its owner and its customer_count, lead_count and deal_count (counted over all live records, whoever owns them). Roles: admin, sales and support.
+// @Description search is a substring match on name, domain, industry and city (case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only). sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc (case-insensitive) becomes desc.
+// @Description data is the array of companies; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param search query string false "Substring search across name, domain, industry and city"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Param search query string false "Substring searched in name, domain, industry and city"
 // @Param sort_by query string false "Sort column" Enums(id, name, domain, industry, created_at, updated_at) default(created_at)
-// @Param sort_order query string false "Sort direction; anything else falls back to desc" Enums(asc, desc) default(desc)
-// @Success 200 {object} utils.APIResponse{data=[]models.Company,meta=utils.APIMeta} "Companies retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "sort_by is not an allowed column"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
+// @Success 200 {object} utils.APIResponse{data=[]models.Company,meta=utils.APIMeta} "One page of companies"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies [get]
 func (h *CompanyHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.List")
@@ -202,19 +230,19 @@ func (h *CompanyHandler) List(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a company
-// @Description One company (admin, sales and support roles) with its owner preloaded and its live customer_count and lead_count.
+// @Description One live company with its owner and its customer_count, lead_count and deal_count. Roles: admin, sales and support (every company is visible to all three).
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Success 200 {object} utils.APIResponse{data=models.Company} "Company retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin, sales or support role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Company} "The company"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id} [get]
 func (h *CompanyHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.Get")
@@ -235,23 +263,24 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary Update a company
-// @Description Replace a company's fields (admin and sales roles only). The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The same validation as on create applies, and the company may keep its own domain without being reported as a duplicate. owner_id: absent leaves the owner unchanged, 0 clears it (admin only), another value sets it — sales users may only name themselves, admins any live user; an unknown user is 400 INVALID_REFERENCE.
+// @Summary Replace a company
+// @Description Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.
+// @Description The response is the company re-read with its owner and counts.
 // @Tags companies
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Param request body CompanyRequest true "Company"
-// @Success 200 {object} utils.APIResponse{data=models.Company} "Company updated; owner and counts refreshed"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID or request data, a value longer than its column, an invalid domain or website, or an unknown owner_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required; only admins may reassign or clear the owner"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A company with this domain already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CompanyRequest true "The new state of the company"
+// @Success 200 {object} utils.APIResponse{data=models.Company} "The updated company"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID'), a value longer than its column, a blank name, a domain that is not a host, or a website that is not an http(s) URL. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). INVALID_REFERENCE: the owner (sent or kept) names no live user"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; a sales user named another owner ('You can only assign companies to yourself') or sent owner_id 0 ('Only administrators can clear a company's owner')"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another live company already uses the normalised domain"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id} [put]
 func (h *CompanyHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.Update")
@@ -314,19 +343,19 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a company
-// @Description Soft-delete a company (admin role only). In the same transaction, company_id is set to NULL on every lead and customer that pointed at it, so nothing keeps a link to a company that is gone; the leads and customers themselves, and their free-text company field, are untouched. Companies hold no personal data, so this is not an erasure.
+// @Description Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company.
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Deleted; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id} [delete]
 func (h *CompanyHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.Delete")
@@ -347,22 +376,23 @@ func (h *CompanyHandler) Delete(c *gin.Context) {
 
 // ListCustomers godoc
 // @Summary List a company's customers
-// @Description One page of the live customers linked to the company, newest first (admin, sales and support roles). data is the array of customers, meta the pagination.
+// @Description One page of the live customers linked to the company, newest first (created_at descending, then id). Roles: admin, sales and support; every role sees every linked customer.
+// @Description data is the array of customers; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=[]models.Customer,meta=utils.APIMeta} "Customers retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin, sales or support role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=[]models.Customer,meta=utils.APIMeta} "One page of customers"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id}/customers [get]
 func (h *CompanyHandler) ListCustomers(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.ListCustomers")
@@ -388,22 +418,23 @@ func (h *CompanyHandler) ListCustomers(c *gin.Context) {
 
 // ListLeads godoc
 // @Summary List a company's leads
-// @Description One page of the live leads linked to the company, newest first, with their owners (admin and sales roles only; support is refused as on the leads endpoints). Sales users see only the leads they own; admins see every lead of the company. data is the array of leads, meta the pagination.
+// @Description One page of the live leads linked to the company, newest first (created_at descending, then id), each with its owner loaded. Roles: admin (every lead of the company) and sales (only the leads it owns; the filter is applied in the query, so meta.total counts only those). Support is refused, as on the leads endpoints.
+// @Description data is the array of leads; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=[]models.Lead,meta=utils.APIMeta} "Leads retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=[]models.Lead,meta=utils.APIMeta} "One page of leads"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id}/leads [get]
 func (h *CompanyHandler) ListLeads(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CompanyHandler.ListLeads")

@@ -1,0 +1,6 @@
+// Global type replacements for swag (make swagger passes this file with
+// --overridesFile). One "replace <type as written> <replacement>" per line.
+//
+// json.RawMessage holds any JSON value, but swag would document it as an
+// array of integers ([]byte). interface{} leaves the schema type open.
+replace json.RawMessage interface{}

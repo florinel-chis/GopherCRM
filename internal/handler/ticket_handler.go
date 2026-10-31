@@ -26,28 +26,61 @@ func NewTicketHandler(ticketService service.TicketService, customerService ...se
 	return h
 }
 
+// @Description Body of POST /tickets.
 type CreateTicketRequest struct {
-	Title        string                `json:"title" binding:"required"`
-	Description  string                `json:"description" binding:"required"`
-	Priority     models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
-	CustomerID   uint                  `json:"customer_id" binding:"required"`
-	AssignedToID *uint                 `json:"assigned_to_id,omitempty"`
+	// Short summary. Required (non-empty). Not length-checked by the API; the column is 255 characters wide.
+	Title string `json:"title" binding:"required" example:"Printer offline after firmware update"`
+	// Full description of the problem. Required (non-empty).
+	Description string `json:"description" binding:"required" example:"Since this morning the office printer no longer appears on the network."`
+	// Priority; medium when omitted or empty.
+	Priority models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent" example:"high"`
+	// ID of the customer the ticket is for. Required (non-zero); an unknown customer is 404.
+	CustomerID uint `json:"customer_id" binding:"required" example:"3"`
+	// ID of the support or admin user to assign. Omitted or null assigns the caller. An unknown user or a user of another role is 400.
+	AssignedToID *uint `json:"assigned_to_id,omitempty" example:"5"`
 }
 
+// @Description Body of PUT /tickets/{id}. Every field is optional; absent or empty fields are left unchanged.
 type UpdateTicketRequest struct {
-	Title        string                `json:"title,omitempty"`
-	Description  string                `json:"description,omitempty"`
-	Status       models.TicketStatus   `json:"status,omitempty" binding:"omitempty,oneof=open in_progress resolved closed"`
-	Priority     models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent"`
-	AssignedToID *uint                 `json:"assigned_to_id,omitempty"`
-	Resolution   string                `json:"resolution,omitempty"`
+	// New title; absent or empty leaves it unchanged.
+	Title string `json:"title,omitempty" example:"Printer offline after firmware update"`
+	// New description; absent or empty leaves it unchanged.
+	Description string `json:"description,omitempty" example:"The printer is visible again but prints blank pages."`
+	// New status; absent or empty leaves it unchanged. A closed ticket cannot be moved to any other status (400); every other change is allowed.
+	Status models.TicketStatus `json:"status,omitempty" binding:"omitempty,oneof=open in_progress resolved closed" example:"resolved"`
+	// New priority; absent or empty leaves it unchanged.
+	Priority models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent" example:"urgent"`
+	// New assignee, which must exist and hold the support or admin role (400 otherwise). Absent or null leaves it unchanged; the assignee cannot be removed. On a ticket that already has an assignee the new value is currently not stored (see the operation description).
+	AssignedToID *uint `json:"assigned_to_id,omitempty" example:"5"`
+	// Resolution text; absent or empty leaves it unchanged (it cannot be cleared).
+	Resolution string `json:"resolution,omitempty" example:"Rolled the printer back to the previous firmware."`
 }
 
+// CreateTicketCommentRequest is the body of POST /tickets/:id/comments. The
+// text may come in body, comment or content; the first one that is not blank
+// after trimming wins.
+//
+// @Description Body of POST /tickets/{id}/comments. The text may come in body, comment or content.
 type CreateTicketCommentRequest struct {
-	Body       string `json:"body"`
-	Comment    string `json:"comment"`
-	Content    string `json:"content"`
-	IsInternal bool   `json:"is_internal"`
+	// The comment text. The first of body, comment and content that is not blank after trimming is stored (trimmed); all three blank is 400.
+	Body string `json:"body" example:"Rolled back the firmware; waiting for the customer to confirm."`
+	// Alias of body, used only when body is blank.
+	Comment string `json:"comment" example:""`
+	// Alias of body, used only when body and comment are blank.
+	Content string `json:"content" example:""`
+	// True for an internal note, visible to staff only and never returned to customer callers. Defaults to false.
+	IsInternal bool `json:"is_internal" example:"false"`
+}
+
+// TicketListData is the data payload of the ticket list endpoints. It is a
+// documentation-only type: the handlers build the same shape inline.
+//
+// @Description Data payload of the ticket list endpoints: one page of tickets and the total before pagination.
+type TicketListData struct {
+	// The page of tickets. Unsorted pages come in ascending id order; a sorted page is ordered by the sort column, then id in the same direction.
+	Tickets []models.Ticket `json:"tickets"`
+	// Number of tickets in the caller's scope matching the filters, before pagination; the same value as meta.total.
+	Total int64 `json:"total" example:"17"`
 }
 
 func (r CreateTicketCommentRequest) GetBody() string {
@@ -62,20 +95,20 @@ func (r CreateTicketCommentRequest) GetBody() string {
 
 // Create godoc
 // @Summary Create a new ticket
-// @Description Create a support ticket. Only support and admin users may create tickets; sales and customer users are rejected. When assigned_to_id is omitted the ticket is assigned to the caller. The assignee, if given, must exist and hold the support or admin role.
+// @Description Create a support ticket. Roles: support and admin (sales and customers get 403 before the body is read). The ticket always starts in status open, whatever the body says, and priority defaults to medium. When assigned_to_id is omitted the ticket is assigned to the caller; a given assignee must exist and hold the support or admin role. The customer must exist. No notification or email is sent.
 // @Tags tickets
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CreateTicketRequest true "Ticket creation request"
-// @Success 201 {object} utils.APIResponse{data=models.Ticket} "Ticket created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, unknown assignee, or assignee is not a support/admin user"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Support or Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CreateTicketRequest true "Ticket to create"
+// @Success 201 {object} utils.APIResponse{data=models.Ticket} "Ticket created; customer is a zero-valued object and assigned_to is omitted in this response"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the assignee does not exist or is not a support or admin user"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - support or admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the customer does not exist"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets [post]
 func (h *TicketHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Create")
@@ -127,22 +160,22 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List tickets
-// @Description List tickets with pagination, optional free-text search and sorting. Admin and sales users see every ticket; support users see only tickets assigned to them, so unassigned tickets and tickets assigned to anyone else are never listed; customer users are rejected. The support scope is applied in the query before offset and limit, so the "tickets" array, the "total" count and the pagination metadata all reflect it, and no search, sort or pagination parameter can widen it. Soft-deleted tickets are never listed. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Description One page of tickets with their customer and assignee. Roles: admin and sales see every ticket; support sees only tickets assigned to them (unassigned tickets and other people's are never listed), a scope applied in the query before offset and limit so the tickets, total and meta all reflect it and no parameter can widen it; customers get 403. Precedence: for support, the assignee scope with optional search and sort; otherwise search (with optional sort), then sort_by, then the plain list. search is a substring match (SQL LIKE) on title, description and resolution. An unknown sort_by is ignored (ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100. Soft-deleted tickets are never listed; comments are not included.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, title, status, priority)
+// @Param page query int false "Page number (1-based); overrides offset when greater than 0"
+// @Param offset query int false "Number of tickets to skip" default(0)
+// @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
+// @Param sort_by query string false "Sort column; unknown values are ignored" Enums(created_at, updated_at, title, status, priority)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search matching title, description or resolution; takes precedence over the plain sorted listing and, for support users, only narrows their assigned tickets"
-// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot list all tickets"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param search query string false "Substring matched against title, description and resolution; for support it only narrows the assigned tickets"
+// @Success 200 {object} utils.APIResponse{data=TicketListData,meta=utils.APIMeta} "One page of tickets; meta carries page, per_page, total and total_pages"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - customers cannot list tickets"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets [get]
 func (h *TicketHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.List")
@@ -223,20 +256,20 @@ func (h *TicketHandler) List(c *gin.Context) {
 
 // ListByCustomer godoc
 // @Summary List tickets for a customer
-// @Description List the tickets belonging to one customer. Admin and sales users may query any customer and get all of its tickets; support users may query any customer but get only that customer's tickets assigned to them, an intersection applied in the query before offset and limit, so the "tickets" array, the "total" count and the pagination metadata all reflect it; a customer user may only query the customer record linked to their own account. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Description One page of one customer's tickets, in ascending id order. Roles: admin and sales get all of the customer's tickets; support may query any customer but gets only that customer's tickets assigned to them (applied in the query before offset and limit, so tickets, total and meta reflect it); a customer user may only query the customer record linked to their own account (403 otherwise). An unknown customer id simply yields an empty page. No page parameter, sorting or search; customer is a zero-valued object and assigned_to is omitted on this endpoint (neither is loaded).
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Param offset query int false "Result offset" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers can only view their own tickets"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param offset query int false "Number of tickets to skip" default(0)
+// @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=TicketListData,meta=utils.APIMeta} "One page of the customer's tickets"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST (Invalid customer ID) - the id is not an unsigned integer; 0 is not rejected and, for staff, lists nothing"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - a customer user asked for another customer's tickets, or has no linked customer record"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /customers/{id}/tickets [get]
 func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListByCustomer")
@@ -293,18 +326,18 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 
 // ListMyTickets godoc
 // @Summary List tickets assigned to the current user
-// @Description List the tickets assigned to the authenticated user. Customer users are rejected because tickets are never assigned to them; sales users are allowed through but will always get an empty list, since only support and admin users can be assignees. The response data is an object with a "tickets" array and a "total" count, alongside pagination metadata.
+// @Description One page of the tickets assigned to the caller, in ascending id order. Roles: admin, sales and support (customers get 403). A sales user normally gets an empty page, since only support and admin users can be made assignees; tickets assigned to the account before its role was changed to sales still appear, because a role change does not clear assignments. No page parameter, sorting or search; customer is a zero-valued object and assigned_to is omitted on this endpoint (neither is loaded).
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param offset query int false "Result offset" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=object,meta=utils.APIMeta} "Tickets retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers cannot have tickets assigned to them"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param offset query int false "Number of tickets to skip" default(0)
+// @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=TicketListData,meta=utils.APIMeta} "One page of the caller's tickets"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - customers cannot have tickets assigned to them"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/my [get]
 func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListMyTickets")
@@ -342,19 +375,19 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a ticket by ID
-// @Description Retrieve a single ticket. Admin and sales users may read any ticket; support users may only read tickets assigned to them; customer users may only read tickets belonging to the customer record linked to their account.
+// @Description One ticket with its customer, assignee and comments (oldest first, each with its author). Roles: admin and sales may read any ticket; support only tickets assigned to them; a customer user only tickets of the customer record linked to their account, and internal notes are removed from comments for them. Access is checked after the lookup, so a missing id is 404 for every role.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
-// @Success 200 {object} utils.APIResponse{data=models.Ticket} "Ticket retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the ticket is outside the caller's scope"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Ticket} "The ticket"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the ticket is outside the caller's scope (support: not assigned to them; customer: not their customer's ticket or no linked customer record)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/{id} [get]
 func (h *TicketHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Get")
@@ -425,21 +458,21 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a ticket
-// @Description Update a ticket. Customer and sales users are rejected outright — the sales role is read-only on tickets; support users may only update tickets assigned to them; admin users may update any ticket. Only non-empty fields are applied. A closed ticket cannot be moved back to another status, and a new assignee must exist and hold the support or admin role.
+// @Description Partially update a ticket: absent or empty fields are left unchanged, and nothing can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. Known limitation: on a ticket that already has an assignee, a different assigned_to_id is validated but not stored; the previous assignee is kept and returned (a ticket without an assignee can be assigned). customer_id cannot be changed. The response carries the customer, assignee and comments (including internal notes).
 // @Tags tickets
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
-// @Param request body UpdateTicketRequest true "Ticket update request"
-// @Success 200 {object} utils.APIResponse{data=models.Ticket} "Ticket updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID, invalid request data, attempt to reopen a closed ticket, unknown assignee, or assignee is not a support/admin user"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - customers and sales users cannot update tickets (sales is read-only) and support users only their own assignments"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateTicketRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.Ticket} "The updated ticket"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), a closed ticket would change status, or the new assignee does not exist or is not a support or admin user; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - customers and sales cannot update tickets; support only tickets assigned to them"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/{id} [put]
 func (h *TicketHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Update")
@@ -529,19 +562,19 @@ func (h *TicketHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a ticket
-// @Description Delete a ticket (admin role only).
+// @Description Soft-delete a ticket. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. Its comments are left in place but are no longer reachable through the API.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Ticket deleted; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/{id} [delete]
 func (h *TicketHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Delete")
@@ -577,19 +610,19 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 
 // ListComments godoc
 // @Summary List comments for a ticket
-// @Description Retrieve comments for a ticket. Admin and sales users can view comments on any ticket; support users can only view comments on tickets assigned to them; customer users can only view non-internal comments on tickets belonging to their customer record.
+// @Description Every comment of a ticket, oldest first, each with its author, as a bare array (no pagination). Roles: admin and sales on any ticket; support only on tickets assigned to them; a customer user only on tickets of their own customer record, and then without internal notes. A missing ticket is 404 for every role (checked before access).
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
-// @Success 200 {object} utils.APIResponse{data=[]models.TicketComment} "Comments retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - the ticket is outside the caller's scope"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=[]models.TicketComment} "The comments; an empty array when none"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the ticket is outside the caller's scope"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/{id}/comments [get]
 func (h *TicketHandler) ListComments(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListComments")
@@ -647,21 +680,21 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 
 // CreateComment godoc
 // @Summary Create a comment on a ticket
-// @Description Add a new comment or internal note to a ticket. Admin users can comment on any ticket; support users can only comment on tickets assigned to them. Customers and sales users are forbidden.
+// @Description Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. No notification or email is sent.
 // @Tags tickets
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
-// @Param request body CreateTicketCommentRequest true "Ticket comment creation request"
-// @Success 201 {object} utils.APIResponse{data=models.TicketComment} "Comment created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid ticket ID, request data or empty comment body"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - only admin and assigned support can comment"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Ticket not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CreateTicketCommentRequest true "Comment to add"
+// @Success 201 {object} utils.APIResponse{data=models.TicketComment} "The new comment with its author"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the body is not valid JSON, or body, comment and content are all blank"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - only admin and the assigned support user can comment"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tickets/{id}/comments [post]
 func (h *TicketHandler) CreateComment(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.CreateComment")

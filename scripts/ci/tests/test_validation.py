@@ -68,7 +68,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(selected['profile'], 'runner')
         self.assertEqual(selected['specs'], [SMOKE])
         self.assertEqual(core_commands([('make', 'verify'), ('make', 'verify-runner')], selected),
-                         [('make', 'verify-hygiene'), ('make', 'verify-runner'),
+                         [('make', 'verify-hygiene'), ('make', 'verify-api-docs'), ('make', 'verify-runner'),
                           ('npm', 'ci', '--prefix', 'gocrm-ui')])
         mixed = plan(paths + ['internal/repository/ticket_repository.go'])
         self.assertEqual(mixed['profile'], 'contextual')
@@ -88,7 +88,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(set(selected['specs']), {SMOKE, 'e2e/tests/login.spec.ts', 'e2e/tests/registration.spec.ts'})
         custom = ('go', 'test', './extra')
         self.assertEqual(core_commands([('make', 'verify'), custom], selected), [
-            ('make', 'verify-hygiene'), ('python3', 'scripts/ci/check-auth.py'),
+            ('make', 'verify-hygiene'), ('make', 'verify-api-docs'), ('python3', 'scripts/ci/check-auth.py'),
             ('npm', 'ci', '--prefix', 'gocrm-ui'), custom])
         mixed = plan(paths + ['automation/langflow/gophercrm_runner/validation.py'])
         self.assertEqual(mixed['profile'], 'auth')
@@ -99,6 +99,25 @@ class ValidationSelectionTests(unittest.TestCase):
                 self.assertEqual(plan(paths + [path])['profile'], 'full')
         self.assertEqual(plan(paths, full=True)['profile'], 'full')
         self.assertEqual(plan(['scripts/ci/check-auth.py'])['profile'], 'auth')
+
+    def test_api_docs_gate_runs_in_every_profile_and_api_changes_stay_full(self):
+        gate = ('make', 'verify-api-docs')
+        for profile in ('runner', 'auth', 'auth-persistence', 'transaction', 'migration', 'aeo', 'mailer'):
+            with self.subTest(profile=profile):
+                commands = core_commands([('make', 'verify')], {'profile': profile, 'changed_paths': []})
+                self.assertEqual(commands.count(gate), 1)
+                self.assertEqual(commands.index(gate), 1)
+        # The full and contextual profiles run it through make verify.
+        for profile in ('full', 'contextual'):
+            self.assertEqual(core_commands([], {'profile': profile, 'changed_paths': []}), [('make', 'verify')])
+        for path in ('api/swagger.json', 'api/swagger.yaml', 'api/index.html'):
+            with self.subTest(path=path):
+                self.assertEqual(plan([path])['profile'], 'full')
+                self.assertEqual(plan([path])['reasons'], [f'API contract: {path}'])
+                self.assertEqual(plan(['internal/service/auth_service.go', path])['profile'], 'full')
+        # The generator and the gate are shared tooling: a change to either is full.
+        for path in ('scripts/docs/render_api_reference.py', 'Makefile'):
+            self.assertEqual(plan([path])['profile'], 'full')
 
     def test_paths_cannot_inject_commands_or_github_outputs(self):
         for path in ["../secret", "/tmp/file", "docs/x\nspecs=evil.md", r"..\file", "x\0y"]:

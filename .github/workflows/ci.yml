@@ -119,6 +119,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # Every profile: api/ must match a fresh `make swagger` and document
+      # every route (scripts/ci/check-api-docs.py).
+      - name: API reference is current and complete
+        run: make verify-api-docs
       # The Makefile and shared profile checkers own the commands used both
       # locally and in CI.
       - name: Build, vet, test

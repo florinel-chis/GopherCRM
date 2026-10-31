@@ -7,6 +7,10 @@ import (
 	"strconv"
 )
 
+// ConfigurationType is the declared type of a configuration entry. It decides
+// which JSON values PUT /configurations/{key} accepts and how value is encoded.
+//
+// @Description Declared type of a configuration entry: it decides which JSON values PUT /configurations/{key} accepts (string: a JSON string; boolean: true/false; integer: a whole number; float, json, array: any JSON value, stored as JSON text) and how value is encoded.
 type ConfigurationType string
 
 const (
@@ -18,6 +22,10 @@ const (
 	ConfigTypeArray   ConfigurationType = "array"
 )
 
+// ConfigurationCategory groups configuration entries for listing
+// (GET /configurations/category/{category}).
+//
+// @Description Category a configuration entry is listed under.
 type ConfigurationCategory string
 
 const (
@@ -44,19 +52,38 @@ const ConfigKeyAllowPublicRegistration = "security.allow_public_registration"
 // Configuration represents a system configuration setting
 type Configuration struct {
 	BaseModel
-	Key          string                `gorm:"uniqueIndex;not null;type:varchar(255);column:config_key" json:"key"`
-	Value        string                `gorm:"type:text" json:"value"`
-	Type         ConfigurationType     `gorm:"not null;type:varchar(20)" json:"type"`
-	Category     ConfigurationCategory `gorm:"not null;type:varchar(50)" json:"category"`
-	Description  string                `gorm:"type:varchar(500)" json:"description"`
-	DefaultValue string                `gorm:"type:text" json:"default_value"`
-	IsSystem     bool                  `gorm:"default:false" json:"is_system"`    // System configs cannot be deleted
-	IsReadOnly   bool                  `gorm:"default:false" json:"is_read_only"` // Read-only configs cannot be modified via API
-	ValidValues  string                `gorm:"type:text" json:"valid_values"`     // JSON array of valid values for validation
-	// IsSensitive marks a secret: the value is encrypted at rest, is read
-	// back only through the service's GetSecret, and is never included in an
-	// API response — reads report whether it is set, not what it is.
-	IsSensitive bool `gorm:"default:false" json:"is_sensitive"`
+	// Unique dotted key, "<category>.<name>". Seeded by the server; the API
+	// cannot create, rename or delete entries. Read-only.
+	Key string `gorm:"uniqueIndex;not null;type:varchar(255);column:config_key" json:"key" example:"security.allow_public_registration" readonly:"true"`
+	// Current value in its stored text form: "true"/"false" for boolean, a
+	// decimal for integer, JSON text for float, json and array, the raw text for
+	// string. Always "" for a sensitive entry in API responses (see is_set).
+	Value string `gorm:"type:text" json:"value" example:"false"`
+	// Declared type of the value. Seeded, read-only.
+	Type ConfigurationType `gorm:"not null;type:varchar(20)" json:"type" example:"boolean"`
+	// Category the entry is listed under. Seeded, read-only.
+	Category ConfigurationCategory `gorm:"not null;type:varchar(50)" json:"category" example:"security"`
+	// Human-readable explanation of the setting. Seeded, read-only.
+	Description string `gorm:"type:varchar(500)" json:"description" example:"Whether the public /auth/register endpoint accepts new sign-ups"`
+	// Value that POST /configurations/{key}/reset restores, in the same text
+	// form as value. Empty for sensitive entries. Seeded, read-only.
+	DefaultValue string `gorm:"type:text" json:"default_value" example:"false"`
+	// Marks an entry the application itself seeds and relies on.
+	// Informational: the API has no delete operation. Seeded, read-only.
+	IsSystem bool `gorm:"default:false" json:"is_system" example:"true"` // System configs cannot be deleted
+	// True when the entry cannot be changed through the API: PUT and reset
+	// answer 400. The synthetic entries of GET /configurations/ui carry true.
+	// Seeded, read-only.
+	IsReadOnly bool `gorm:"default:false" json:"is_read_only" example:"false"` // Read-only configs cannot be modified via API
+	// JSON array text listing the allowed values, or "" for no constraint. For
+	// an array entry every element must be listed. A list that does not parse
+	// as JSON imposes no constraint. Seeded, read-only.
+	ValidValues string `gorm:"type:text" json:"valid_values" example:"[1, 8, 24, 48, 72, 168]"` // JSON array of valid values for validation
+	// True for a secret (the AEO provider API keys). The value is encrypted at
+	// rest, read back only through the service's GetSecret and never included
+	// in an API response: reads report whether it is set (is_set), not what it
+	// is. Seeded, read-only.
+	IsSensitive bool `gorm:"default:false" json:"is_sensitive" example:"false"`
 }
 
 // GetValueAs returns the configuration value parsed as the specified type

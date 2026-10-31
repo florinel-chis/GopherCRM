@@ -39,26 +39,34 @@ func NewDashboardHandler(
 	}
 }
 
+// @Description System-wide counters of the dashboard; never narrowed to the caller.
 type DashboardStats struct {
-	TotalLeads     int64   `json:"total_leads"`
-	TotalCustomers int64   `json:"total_customers"`
-	OpenTickets    int64   `json:"open_tickets"`
-	PendingTasks   int64   `json:"pending_tasks"`
-	ConversionRate float64 `json:"conversion_rate"`
+	// Number of live leads, every status included.
+	TotalLeads int64 `json:"total_leads" example:"120"`
+	// Number of live customers.
+	TotalCustomers int64 `json:"total_customers" example:"45"`
+	// Number of tickets whose status is open or in_progress.
+	OpenTickets int64 `json:"open_tickets" example:"8"`
+	// Number of tasks whose status is pending or in_progress.
+	PendingTasks int64 `json:"pending_tasks" example:"17"`
+	// total_customers / total_leads * 100 as an unrounded percentage, 0 when
+	// there are no leads. Customers created directly count too, so it can
+	// exceed 100.
+	ConversionRate float64 `json:"conversion_rate" example:"37.5"`
 }
 
 // GetStats godoc
-// @Summary Get dashboard statistics
-// @Description Aggregate counts for the dashboard: total leads, total customers, open tickets and pending tasks, plus a conversion rate computed as customers / leads * 100 (0 when there are no leads). Restricted to the admin, sales and support roles; customer-role callers receive 403. The totals returned to permitted roles are unscoped and system-wide; nothing is filtered to the caller's own records.
+// @Summary Dashboard counters
+// @Description Admin, sales and support (route guard; customer gets 403). Returns system-wide counts: live leads, live customers, tickets in open or in_progress, tasks in pending or in_progress, and conversion_rate = customers / leads * 100 (0 without leads). Deliberately not narrowed to the caller: a sales or support user sees the same totals as an admin.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=DashboardStats} "Dashboard statistics retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=DashboardStats} "The counters"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: a count could not be read"
 // @Router /dashboard/stats [get]
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetStats")
@@ -115,17 +123,25 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 
 // ChartDataset is one series of a chart. The shape is fixed by the frontend
 // chart component, which expects Chart.js-style datasets.
+//
+// @Description One series of a chart: a label and one count per chart label.
 type ChartDataset struct {
-	Label string  `json:"label"`
-	Data  []int64 `json:"data"`
+	// Series name, fixed per endpoint: Leads, Tickets, Tasks or Conversions.
+	Label string `json:"label" example:"Leads"`
+	// Counts, index-aligned with the chart's labels; never null.
+	Data []int64 `json:"data" example:"12,30,9,4,20"`
 }
 
 // ChartData is the payload every distribution and time-series endpoint returns:
 // a label per category and one dataset holding the matching counts. Both
 // slices are always non-nil, so an empty database renders an empty chart rather
 // than crashing the client on a JSON null.
+//
+// @Description Chart payload of the distribution and time-series widgets: category labels and a single dataset of counts.
 type ChartData struct {
-	Labels   []string       `json:"labels"`
+	// Category labels (statuses, priorities or time buckets) in display order; never null.
+	Labels []string `json:"labels" example:"new,contacted,qualified,unqualified,converted"`
+	// Exactly one dataset whose data is index-aligned with labels; never null.
 	Datasets []ChartDataset `json:"datasets"`
 }
 
@@ -136,23 +152,37 @@ type ChartData struct {
 // struct is always emitted, zero-valued when the underlying record has no
 // resolvable owner or assignee (an unassigned ticket, say), so the client never
 // has to guard against a missing object.
+//
+// @Description Account shown against an activity entry: the lead's owner or the ticket's or task's assignee. Always present; every field is zero-valued (id 0, empty strings) when the record has no such account.
 type ActivityUser struct {
-	ID        uint   `json:"id"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
+	// User id; 0 when there is no account.
+	ID uint `json:"id" example:"7"`
+	// The account's email address (there is no username column); "" when there is no account.
+	Username string `json:"username" example:"sam.sales@example.com"`
+	// Given name; "" when there is no account.
+	FirstName string `json:"first_name" example:"Sam"`
+	// Family name; "" when there is no account.
+	LastName string `json:"last_name" example:"Seller"`
 }
 
 // Activity is one entry of the recent-activity feed. There is no activity or
 // audit table in this schema, so entries are synthesised from the timestamps
 // already carried by leads, tickets and tasks.
+//
+// @Description One entry of the recent-activity feed, synthesised from lead, ticket and task rows (there is no activity table).
 type Activity struct {
-	ID          string       `json:"id"`
-	Type        string       `json:"type"`
-	Title       string       `json:"title"`
-	Description string       `json:"description"`
-	User        ActivityUser `json:"user"`
-	CreatedAt   time.Time    `json:"created_at"`
+	// Stable id {entity}-{record id}-{event}, e.g. lead-42-created.
+	ID string `json:"id" example:"lead-42-created"`
+	// Event kind.
+	Type string `json:"type" enums:"lead_created,lead_converted,ticket_created,ticket_resolved,task_completed" example:"lead_created"`
+	// Fixed title per type: New lead, Lead converted, New ticket, Ticket resolved, Task completed.
+	Title string `json:"title" example:"New lead"`
+	// For lead events "First Last (Company) was added as a lead" or "... was converted to a customer" (Unnamed lead when the names are empty); for ticket and task events the record's title.
+	Description string `json:"description" example:"Ana Popescu (Acme SRL) was added as a lead"`
+	// The lead's owner or the ticket's or task's assignee.
+	User ActivityUser `json:"user"`
+	// Event time (RFC 3339): created_at for lead_created and ticket_created, otherwise the record's updated_at, so a later edit moves the entry.
+	CreatedAt time.Time `json:"created_at" example:"2026-10-30T09:12:00Z"`
 
 	// sourceID is the numeric id of the underlying record, kept for the merge
 	// tie-break only and never serialised.
@@ -328,16 +358,16 @@ func bucketTimestamps(buckets []timeBucket, timestamps []time.Time) []int64 {
 
 // GetLeadsByStatus godoc
 // @Summary Lead count by status
-// @Description Distribution of leads across the lead statuses, as chart data with a single "Leads" dataset. Every status the model defines is always present, in the canonical order new, contacted, qualified, unqualified, converted, with a zero count when no lead holds it; a status found in the data but unknown to the model is appended afterwards rather than dropped. The counts are system-wide and are not narrowed to the caller's own records. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live leads across statuses as chart data with one dataset labelled Leads. Every status is always present, in the order new, contacted, qualified, unqualified, converted, with 0 when no lead holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order rather than dropped. System-wide: not narrowed to the caller's own leads (support, which cannot read leads elsewhere, sees these counts too).
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=ChartData} "Lead status distribution retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=ChartData} "Lead status distribution"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the counts could not be read"
 // @Router /dashboard/leads-by-status [get]
 func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetLeadsByStatus")
@@ -356,16 +386,16 @@ func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 
 // GetTicketsByPriority godoc
 // @Summary Ticket count by priority
-// @Description Distribution of tickets across the ticket priorities, as chart data with a single "Tickets" dataset. Every priority the model defines is always present, in the canonical order low, medium, high, urgent, with a zero count when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards rather than dropped. The counts are system-wide and are not narrowed to the caller's own records. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tickets across priorities as chart data with one dataset labelled Tickets. Every priority is always present, in the order low, medium, high, urgent, with 0 when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=ChartData} "Ticket priority distribution retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=ChartData} "Ticket priority distribution"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the counts could not be read"
 // @Router /dashboard/tickets-by-priority [get]
 func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetTicketsByPriority")
@@ -384,16 +414,16 @@ func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 
 // GetTasksByStatus godoc
 // @Summary Task count by status
-// @Description Distribution of tasks across the task statuses, as chart data with a single "Tasks" dataset. Every status the model defines is always present, in the canonical order pending, in_progress, completed, cancelled, with a zero count when no task holds it; a status found in the data but unknown to the model is appended afterwards rather than dropped. The counts are system-wide and are not narrowed to the caller's own assignments. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tasks across statuses as chart data with one dataset labelled Tasks. Every status is always present, in the order pending, in_progress, completed, cancelled, with 0 when no task holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=ChartData} "Task status distribution retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=ChartData} "Task status distribution"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the counts could not be read"
 // @Router /dashboard/tasks-by-status [get]
 func (h *DashboardHandler) GetTasksByStatus(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetTasksByStatus")
@@ -412,17 +442,17 @@ func (h *DashboardHandler) GetTasksByStatus(c *gin.Context) {
 
 // GetSalesPerformance godoc
 // @Summary Lead conversions over time
-// @Description Lead CONVERSIONS over time, as chart data with a single "Conversions" dataset: the number of leads that reached the converted status in each bucket of the chosen window. It is a count of conversions, not revenue or pipeline value, of which this CRM tracks neither. A lead carries no dedicated converted_at column, so its updated_at stands in for the conversion time — a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned and end with the one containing the current instant: week gives the last 12 ISO weeks labelled by their Monday (2026-08-03), month the last 12 months (2026-08), quarter the last 8 quarters (2026-Q3), year the last 5 years (2026). An unrecognised period falls back to month. The counts are system-wide and are not narrowed to the caller's own leads. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Lead conversions over time as chart data with one dataset labelled Conversions: the number of leads in the converted status whose updated_at falls in each bucket. It counts conversions, not revenue. A lead has no converted_at column, so updated_at stands in for the conversion time and a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned in the server's time zone and end with the one containing now: week gives the last 12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the last 5 years (2026). Any other period falls back to month. System-wide: not narrowed to the caller's leads.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param period query string false "Bucket size and window length" Enums(week, month, quarter, year) default(month)
-// @Success 200 {object} utils.APIResponse{data=ChartData} "Conversion time series retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param period query string false "Bucket size and window; any other value gives month" Enums(week, month, quarter, year) default(month)
+// @Success 200 {object} utils.APIResponse{data=ChartData} "Conversions per bucket, oldest first"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the conversions could not be read"
 // @Router /dashboard/sales-performance [get]
 func (h *DashboardHandler) GetSalesPerformance(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetSalesPerformance")
@@ -453,17 +483,18 @@ func (h *DashboardHandler) GetSalesPerformance(c *gin.Context) {
 
 // GetActivities godoc
 // @Summary Recent activity feed
-// @Description Recent activity the caller may see, newest first, as a bare array. There is no activity or audit table in this schema, so entries are synthesised from the rows themselves: leads created (lead_created) and converted (lead_converted), tickets created (ticket_created) and resolved or closed (ticket_resolved), and tasks completed (task_completed). Each source is narrowed to the caller's visibility inside its query, before its limit: lead events cover every lead for admin, only the caller's own leads for sales and no lead at all for support; ticket events cover every ticket for admin and sales and only the tickets assigned to the caller for support; task events cover every task for admin and only the tasks assigned to the caller for every other role. Hidden records therefore never appear and never crowd out permitted ones. Each source contributes at most `limit` candidates; they are merged, sorted by event time descending (ties broken by type, then by record id descending) and truncated to `limit`. Events with no dedicated timestamp column use updated_at as the event time, so a later edit moves the entry. Each id is stable and of the form "lead-42-created". The user is the lead's owner or the ticket's or task's assignee, with username carrying the account's email address because there is no username column; when the record has no assignee the user object is present but zero-valued. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Recent events the caller may see, newest first, as a bare array. There is no activity table: entries are synthesised from leads created (lead_created) and converted (lead_converted), tickets created (ticket_created) and resolved or closed (ticket_resolved), and tasks completed (task_completed).
+// @Description Each source is narrowed to the caller inside its query, before its limit: lead events cover every lead for admin, the caller's own leads for sales and none for support; ticket events cover every ticket for admin and sales and the tickets assigned to the caller for support; task events cover every task for admin and the tasks assigned to the caller for sales and support. Hidden records never appear and never crowd out visible ones. Each source contributes at most limit entries; they are merged, sorted by event time descending (ties by type, then record id descending) and cut to limit. Events without a dedicated timestamp use updated_at, so a later edit moves the entry.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param limit query int false "Maximum entries to return, capped at 50" minimum(1) maximum(50) default(10)
-// @Success 200 {object} utils.APIResponse{data=[]Activity} "Activity feed retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param limit query int false "Maximum entries; values above 50 are capped at 50, missing, invalid or non-positive values give 10" default(10)
+// @Success 200 {object} utils.APIResponse{data=[]Activity} "The feed (possibly empty)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: a source could not be read"
 // @Router /dashboard/activities [get]
 func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetActivities")
@@ -672,17 +703,17 @@ func activityUserFrom(user *models.User) ActivityUser {
 
 // GetUpcomingTasks godoc
 // @Summary Tasks due soonest
-// @Description The open tasks with the nearest due dates, as a bare array ordered by due date ascending. Completed and cancelled tasks are excluded, as are tasks with no due date; overdue tasks are deliberately included, since they are the ones that most need attention. Admins see every assignee's tasks; every other role sees only the tasks assigned to them. A task carries its lead (lead_id and lead) only when the caller may see that lead, as on GET /tasks/{id}. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). Open tasks with the nearest due dates, as a bare array ordered by due date ascending, ties by id. Completed and cancelled tasks and tasks without a due date are excluded; overdue tasks are included. Admin sees every assignee's tasks; sales and support only the tasks assigned to them. A task carries its lead (lead_id and lead) only when the caller may see that lead (admin: any; sales: own leads; support: none), as on GET /tasks/{id}.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param limit query int false "Maximum tasks to return, capped at 50" minimum(1) maximum(50) default(5)
-// @Success 200 {object} utils.APIResponse{data=[]models.Task} "Upcoming tasks retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param limit query int false "Maximum tasks; values above 50 are capped at 50, missing, invalid or non-positive values give 5" default(5)
+// @Success 200 {object} utils.APIResponse{data=[]models.Task} "Upcoming tasks (possibly empty)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the tasks could not be read"
 // @Router /dashboard/upcoming-tasks [get]
 func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetUpcomingTasks")
@@ -712,17 +743,17 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 
 // GetRecentTickets godoc
 // @Summary Newest tickets
-// @Description The most recently created tickets the caller may see, as a bare array ordered by creation time descending, ties broken by id descending. Admin and sales see every ticket; support sees only the tickets assigned to it, so tickets assigned to someone else and unassigned tickets are excluded. The narrowing is part of the query and applies before the limit, so hidden tickets never crowd out permitted ones; a caller with no visible ticket gets an empty array. Restricted to the admin, sales and support roles; customer-role callers receive 403.
+// @Description Admin, sales and support (route guard; customer gets 403). The most recently created tickets the caller may see, as a bare array ordered by creation time descending, ties by id descending. Admin and sales see every ticket; support only the tickets assigned to it (unassigned tickets excluded). The narrowing is part of the query and applies before the limit.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param limit query int false "Maximum tickets to return, capped at 50" minimum(1) maximum(50) default(5)
-// @Success 200 {object} utils.APIResponse{data=[]models.Ticket} "Recent tickets retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param limit query int false "Maximum tickets; values above 50 are capped at 50, missing, invalid or non-positive values give 5" default(5)
+// @Success 200 {object} utils.APIResponse{data=[]models.Ticket} "Recent tickets (possibly empty)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the tickets could not be read"
 // @Router /dashboard/recent-tickets [get]
 func (h *DashboardHandler) GetRecentTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetRecentTickets")
@@ -751,17 +782,17 @@ func (h *DashboardHandler) GetRecentTickets(c *gin.Context) {
 
 // GetNewLeads godoc
 // @Summary Newest leads
-// @Description The most recently created leads, as a bare array ordered by creation time descending. Visibility mirrors the lead list: admins see every lead, and sales users see only the leads they own. Support users cannot list leads anywhere in this API — the lead routes are admin and sales only — so they receive an empty array here rather than a 403, which would otherwise break the dashboard page they are entitled to load. Customer-role callers receive 403 from the role guard.
+// @Description Admin, sales and support (route guard; customer gets 403). The most recently created leads, as a bare array ordered by creation time descending. Admin sees every lead, sales only the leads it owns. Support, which cannot read leads anywhere in this API, gets an empty array rather than a 403 so its dashboard still loads.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param limit query int false "Maximum leads to return, capped at 50" minimum(1) maximum(50) default(5)
-// @Success 200 {object} utils.APIResponse{data=[]models.Lead} "New leads retrieved successfully; empty for support users"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param limit query int false "Maximum leads; values above 50 are capped at 50, missing, invalid or non-positive values give 5" default(5)
+// @Success 200 {object} utils.APIResponse{data=[]models.Lead} "New leads; always empty for support"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the leads could not be read"
 // @Router /dashboard/new-leads [get]
 func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetNewLeads")
@@ -803,16 +834,16 @@ var dashboardDealRoles = map[models.UserRole]bool{models.RoleAdmin: true, models
 
 // GetPipeline godoc
 // @Summary Deal pipeline and won-this-month widgets
-// @Description The pipeline widget and the won-this-month tile of the dashboard. Admin sees every live deal, sales only its own. Support passes the dashboard guard but has no access to deals and gets 403, as does the customer role. data.stages is the same payload as GET /deals/pipeline without filters: all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty, with count and per-currency totals of amount_cents and weighted_cents = round_half_up(sum of amount_cents × probability / 100), rounded once per stage-and-currency total. data.won_this_month counts the deals in the won stage whose closed_at falls in the current calendar month in UTC (from the first instant of the month, inclusive, to the first instant of the next, exclusive), with the amounts per currency. Amounts in different currencies are never added together; totals are sorted by currency code and empty lists are [], never null.
+// @Description Admin and sales. Support passes the dashboard route guard but is refused by the handler with 403, as the customer role is by the guard. Admin sees every live deal, sales only its own. data.stages is the payload of GET /deals/pipeline without filters: all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty, with count and per-currency totals of amount_cents and weighted_cents = round_half_up(sum of amount_cents x probability / 100), rounded once per stage-and-currency total. data.won_this_month counts the deals in the won stage whose closed_at falls in the current calendar month in UTC (first instant of the month inclusive to first instant of the next exclusive), with the amounts per currency. Amounts in different currencies are never added together; totals are sorted by currency code and empty lists are [], never null.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=models.DealDashboardPipeline} "Pipeline widgets retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required (support has no access to deals)"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.DealDashboardPipeline} "Pipeline widgets"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is support (Deals are available to the admin and sales roles only) or a customer (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the deals could not be read"
 // @Router /dashboard/pipeline [get]
 func (h *DashboardHandler) GetPipeline(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetPipeline")

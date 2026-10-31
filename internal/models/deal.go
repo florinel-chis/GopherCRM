@@ -81,37 +81,74 @@ const DealDefaultCurrency = "EUR"
 // leaves the deal and its history untouched.
 type Deal struct {
 	BaseModel
-	Title       string    `gorm:"not null;type:varchar(200)" json:"title"`
-	Stage       DealStage `gorm:"not null;default:'qualification';type:varchar(20)" json:"stage"`
-	AmountCents int64     `gorm:"not null;default:0" json:"amount_cents"`
-	Currency    string    `gorm:"not null;type:char(3)" json:"currency"`
+	// Deal title, trimmed, 1 to 200 characters. Required.
+	Title string `gorm:"not null;type:varchar(200)" json:"title" example:"Acme rollout 2027"`
+	// Pipeline stage. Defaults to qualification on create. Every change is
+	// recorded in the stage history (GET /deals/{id}/history).
+	Stage DealStage `gorm:"not null;default:'qualification';type:varchar(20)" json:"stage" example:"proposal"`
+	// Deal value in minor units of currency (cents for EUR), an integer from
+	// 0 to 1000000000000 (10^12). Sums are meaningful per currency only.
+	AmountCents int64 `gorm:"not null;default:0" json:"amount_cents" minimum:"0" maximum:"1000000000000" example:"1250000"`
+	// ISO 4217 code: exactly three upper-case ASCII letters. Defaults to the
+	// deals.default_currency setting (EUR as shipped) on create.
+	Currency string `gorm:"not null;type:char(3)" json:"currency" minLength:"3" maxLength:"3" example:"EUR"`
+
 	// Probability carries no column default on purpose: a GORM default would
 	// replace an explicit 0 on create, and a lost deal is stored at 0.
-	Probability int `gorm:"not null" json:"probability"`
+
+	// Win probability in percent, 0 to 100. Takes the stage's default when a
+	// stage is entered without an explicit value (qualification 10, proposal
+	// 40, negotiation 70); won is always 100 and lost always 0.
+	Probability int `gorm:"not null" json:"probability" minimum:"0" maximum:"100" example:"40"`
+
 	// ExpectedCloseDate is a calendar date. It is stored in a DATE column as
 	// midnight in the process's local zone (the MySQL DSN uses loc=Local, so
 	// that is the value that round-trips exactly on every engine) and exposed
 	// as YYYY-MM-DD; see MarshalJSON.
-	ExpectedCloseDate *time.Time `gorm:"type:date" json:"expected_close_date,omitempty" swaggertype:"string" format:"date" example:"2026-12-31"`
-	// ClosedAt is set when the stage becomes won or lost and cleared when it
-	// leaves them.
-	ClosedAt *time.Time `json:"closed_at,omitempty"`
-	// LostReason is kept only while the stage is lost.
-	LostReason string `gorm:"type:varchar(255)" json:"lost_reason"`
-	Source     string `gorm:"type:varchar(100)" json:"source"`
-	Notes      string `gorm:"type:text" json:"notes"`
 
-	CompanyID  *uint     `gorm:"index" json:"company_id,omitempty"`
-	Company    *Company  `gorm:"foreignKey:CompanyID" json:"company,omitempty"`
-	CustomerID *uint     `gorm:"index" json:"customer_id,omitempty"`
-	Customer   *Customer `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
-	LeadID     *uint     `gorm:"index" json:"lead_id,omitempty"`
-	Lead       *Lead     `gorm:"foreignKey:LeadID" json:"lead,omitempty"`
+	// Expected close date as a calendar date, YYYY-MM-DD (no time, no zone).
+	// Omitted when not set.
+	ExpectedCloseDate *time.Time `gorm:"type:date" json:"expected_close_date,omitempty" swaggertype:"string" format:"date" example:"2026-12-31"`
+	// When the deal entered won or lost (UTC, RFC 3339). Set by the server on
+	// entering a closed stage, cleared on returning to an open one; omitted
+	// while the deal is open. Read-only.
+	ClosedAt *time.Time `json:"closed_at,omitempty" readonly:"true" example:"2026-10-15T09:30:00Z"`
+	// Why the deal was lost, at most 255 characters. Kept only while the
+	// stage is lost; empty otherwise.
+	LostReason string `gorm:"type:varchar(255)" json:"lost_reason" example:""`
+	// Where the deal came from, free text, at most 100 characters.
+	Source string `gorm:"type:varchar(100)" json:"source" example:"referral"`
+	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
+	Notes string `gorm:"type:text" json:"notes" example:"Decision expected after the board meeting."`
+
+	// Linked company. Omitted when there is none; cleared when the company
+	// is deleted.
+	CompanyID *uint `gorm:"index" json:"company_id,omitempty" example:"12"`
+	// The linked company, loaded by the deal endpoints (its customer_count,
+	// lead_count and deal_count are 0 here, not computed). Omitted when there
+	// is no link or the company no longer exists.
+	Company *Company `gorm:"foreignKey:CompanyID" json:"company,omitempty"`
+	// Linked customer. Omitted when there is none. Erasing the customer
+	// keeps the link.
+	CustomerID *uint `gorm:"index" json:"customer_id,omitempty" example:"31"`
+	// The linked customer, loaded by the deal endpoints; omitted when there
+	// is no link or the customer was erased (soft-deleted).
+	Customer *Customer `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+	// Linked lead. Omitted when there is none AND whenever the caller may not
+	// see that lead (admins see every lead, sales users only the leads they
+	// own); decided on every read.
+	LeadID *uint `gorm:"index" json:"lead_id,omitempty" example:"55"`
+	// The linked lead, under the same visibility rule as lead_id.
+	Lead *Lead `gorm:"foreignKey:LeadID" json:"lead,omitempty"`
 
 	// OwnerID is the staff account working the deal. Never null: it defaults
 	// to the caller, and only an admin may name somebody else.
-	OwnerID uint  `gorm:"not null;index" json:"owner_id"`
-	Owner   *User `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
+
+	// Staff user working the deal. Never null: defaults to the caller; only
+	// an admin may name somebody else. Sales users see only their own deals.
+	OwnerID uint `gorm:"not null;index" json:"owner_id" example:"7"`
+	// The owner's user record, loaded by the deal endpoints.
+	Owner *User `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 }
 
 // MarshalJSON renders expected_close_date as YYYY-MM-DD instead of the RFC 3339
@@ -152,13 +189,22 @@ func ParseDealDate(s string) (time.Time, error) {
 // The column names are from_stage and to_stage because `from` and `to` are
 // reserved words; `stage` is not, on any of the three engines.
 type DealStageChange struct {
-	ID          uint       `gorm:"primarykey" json:"id"`
-	DealID      uint       `gorm:"not null;index" json:"deal_id"`
-	FromStage   *DealStage `gorm:"type:varchar(20)" json:"from_stage"`
-	ToStage     DealStage  `gorm:"not null;type:varchar(20)" json:"to_stage"`
-	ChangedByID uint       `gorm:"not null" json:"changed_by_id"`
-	ChangedBy   *User      `gorm:"foreignKey:ChangedByID" json:"changed_by,omitempty"`
-	ChangedAt   time.Time  `gorm:"not null" json:"changed_at"`
+	// History row id, increasing in write order.
+	ID uint `gorm:"primarykey" json:"id" example:"301"`
+	// The deal this row belongs to.
+	DealID uint `gorm:"not null;index" json:"deal_id" example:"88"`
+	// Stage before the change; null on the first row, written when the deal
+	// was created.
+	FromStage *DealStage `gorm:"type:varchar(20)" json:"from_stage" extensions:"x-nullable" example:"qualification"`
+	// Stage after the change.
+	ToStage DealStage `gorm:"not null;type:varchar(20)" json:"to_stage" example:"proposal"`
+	// User who made the change.
+	ChangedByID uint `gorm:"not null" json:"changed_by_id" example:"7"`
+	// The acting user's full record (including email), loaded by GET
+	// /deals/{id}/history; omitted when that account no longer exists.
+	ChangedBy *User `gorm:"foreignKey:ChangedByID" json:"changed_by,omitempty"`
+	// When the change was written (UTC, RFC 3339).
+	ChangedAt time.Time `gorm:"not null" json:"changed_at" example:"2026-10-01T08:00:00Z"`
 }
 
 // Column widths of the deals table. The handler rejects a value that would not

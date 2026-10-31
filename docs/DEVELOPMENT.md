@@ -948,12 +948,92 @@ does not clear these logs or the email embedded in already-issued JWTs.
 
 ## API Reference
 
-The REST surface is enumerated in the [README](../README.md#api-documentation). A generated
-Swagger 2.0 spec is checked in under `api/swagger.json` and `api/swagger.yaml`, built from the swag
-annotations on the handlers and the general block in `cmd/main.go`. Regenerate it with
-`make swagger` (runs the pinned swag CLI via `go run`) after changing a handler or a route; the spec
-is not served by the application, and the router in `internal/handler/` remains the source of truth
-when the two disagree.
+The REST surface is enumerated in the [README](../README.md#api-documentation). The complete
+reference is generated and checked in under `api/`:
+
+- `api/swagger.json` and `api/swagger.yaml`: the Swagger 2.0 spec, built by swag v1.16.6 from the
+  annotations on the routed handlers, the request/response types in `internal/handler/` and
+  `internal/models/` (plus four types from `internal/service/`), and the general block in `cmd/main.go`.
+- `api/index.html`: a static, self-contained HTML rendering of the spec
+  (`scripts/docs/render_api_reference.py`, standard-library Python). It has no scripts, fonts or
+  network references, so opening the file from disk works.
+
+`make swagger` regenerates all three; run it after changing a handler annotation, a documented
+type or a route, and commit the result. The application serves none of it (deliberate), and the
+router in `internal/handler/` remains the source of truth when the two disagree.
+
+### OpenAPI spec
+
+The annotations document what the code does, including its warts. A defect found while
+documenting goes to [ROADMAP.md](ROADMAP.md), never into the spec as intended behaviour.
+
+- **General block** (`cmd/main.go`): authentication (`Authorization: Bearer <jwt>` and
+  `Authorization: ApiKey <key>`, refresh rotation, access tokens valid until expiry), the response
+  envelope, the shared error codes, pagination, rate limits, CORS and `X-Request-ID`, the two
+  security schemes (both the `Authorization` header) and one `@tag.name`/`@tag.description` pair
+  per tag. A new tag needs a declaration there.
+- **Operations**: summary, a description that names the roles admitted, the visibility narrowing,
+  side effects (mail, automation events, erasure) and the rate-limit tier, exactly one tag, a
+  described parameter for every input, and a `@Failure` line per status the handler can return
+  with its `error.code` values and conditions. List operations document their defaults,
+  clamping and allowed `sort_by` columns; bodyless 204s stay schema-free; the public form pages
+  declare their real media types.
+- **Types**: every field carries a comment (meaning, unit, format, nullability, who sets it),
+  plus struct tags where the code enforces something: `enums` for closed sets, `minimum`,
+  `maximum` and `maxLength` only for character limits the code checks (byte limits stay in
+  prose), `example`, `format`, `x-nullable`, `readonly`. Use `swaggertype` where the Go type
+  serialises differently (for example `gorm.DeletedAt` as a nullable timestamp). A value whose
+  JSON type varies stays untyped: `interface{}` fields need no tag, and `json.RawMessage` is
+  replaced by `interface{}` through `scripts/docs/swag-overrides` (passed by `make swagger`).
+  A field the service, not the binder, requires (or an array whose length it bounds) gets a
+  `validate:"required"` / `validate:"min=1,max=20"` tag: swag turns it into `required` /
+  `minItems`/`maxItems`, while gin validates only `binding` tags, so it changes nothing at
+  runtime (say so in the type's comment). Where the JSON
+  differs from the struct (a `MarshalJSON`, a `gin.H` payload, a list wrapper) a
+  documentation-only type describes it (`models.QuoteJSON`, `handler.LeadListData`, ...); such a
+  type is never bound or encoded. No JSON tag, binding or validation changes for documentation's
+  sake.
+- **Known swag behaviours**: binding failures report `error.details` keyed by Go field name, and
+  swag keeps comment line breaks in descriptions (the HTML renderer joins them). An escaped quote
+  (`\"`) inside a `@Failure` description reaches the spec verbatim; plain double quotes work.
+
+### API docs gate
+
+`make verify-api-docs` (part of `make verify`, an unconditional CI step, and in every bounded
+validation profile) fails when the reference is stale or incomplete. It regenerates the three
+artifacts into a temporary directory and compares them byte for byte; matches routes and
+operations in both directions (the route list comes from `scripts/ci/apiroutes`, a go/ast reader
+that follows `setupRouter`, the `Setup*Routes` calls, group prefixes and aliases, and refuses
+registration forms it cannot resolve, such as `Any`, `Handle` or a non-literal path; `GET /health`
+outside the base path is the one exclusion); requires descriptions on every operation,
+parameter, response, tag and property (inline schemas included; an override of a property its
+base definition describes, such as the envelope's `data`, is exempt); requires one declared tag
+per operation, at least one 2xx/3xx and one 4xx/5xx response, resolvable `$ref`s, matching path
+parameters, `basePath` equal to the `API_PREFIX` default in `internal/config`, and exactly the
+`BearerAuth` and `ApiKeyAuth` schemes on the `Authorization` header, each description showing its
+`Authorization: <scheme> <credential>` form; requires the security of each operation to match its
+route (behind `middleware.Auth` exactly the two alternatives `[{BearerAuth: []}, {ApiKeyAuth: []}]`,
+with no anonymous `{}` alternative or combined requirement; none on a public route; no global
+`security`; the extractor tracks `Use`, `Group` and per-route middleware, also through variables
+such as `guard := middleware.RequireRole(...)`); requires every status the route middleware can
+answer with to be a documented response (401 for `middleware.Auth`, 403 for `RequireRole` and
+`RequireRegistrationEnabled`, 429 for the three rate limiters); identifies the handler each route
+registers (a method value on a typed handler variable, a function, or a factory call such as
+`handler.RegistrationStatus(...)`), requires that handler to carry the route's `@Router` line and
+refuses an `@Router` line for a routed path on any other function; compares the inputs of that
+handler (query parameters, form fields and a bound body, found by the same tool through the
+helpers it hands the `*gin.Context` to, `utils.ParseOffsetLimit` included) with the documented
+parameters in both directions, and for a bound body requires exactly one body parameter whose
+schema is a `$ref` to the bound Go type, `required` exactly when the handler refuses a missing body
+(its own top-level `if err := c.ShouldBindJSON(&req); err != nil`), and a documented 400; it
+refuses readers it does not model (`QueryMap`, `ShouldBindQuery`, ...), a bound value whose type it
+cannot read, and a context or router group (a variable or an inline `Group(...)` call) handed to a
+function it cannot follow; and checks the known closed sets (roles, statuses, stages, automation and
+form enums) against their Go constants in `internal/models`, so a new constant without the
+matching `enums` tag fails. The closed-set table lives in `scripts/ci/check-api-docs.py`; extend it
+when a new closed set reaches the API. Mutation tests for every rule are in
+`scripts/ci/tests/test_api_docs.py`, the renderer's tests in `test_api_reference.py`.
+Semantic accuracy (does the prose match the code?) remains a review responsibility.
 
 ### AEO background work and shutdown
 

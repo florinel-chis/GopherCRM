@@ -26,7 +26,7 @@ class MailerValidationTests(unittest.TestCase):
         self.assertEqual(selected['profile'], 'mailer')
         self.assertEqual(selected['specs'], [v.SMOKE])
         self.assertEqual(v.core_commands([('make', 'verify'), ('custom',)], selected), [
-            ('make', 'verify-hygiene'), ('python3', 'scripts/ci/check-go.py', 'mailer'),
+            ('make', 'verify-hygiene'), ('make', 'verify-api-docs'), ('python3', 'scripts/ci/check-go.py', 'mailer'),
             ('npm', 'ci', '--prefix', 'gocrm-ui'), ('custom',)])
         for name in v.MAILER_FILES:
             self.assertEqual(v.plan([name], mailer_roots=True)['profile'], 'mailer')

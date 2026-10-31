@@ -31,26 +31,67 @@ func NewDealHandler(dealService service.DealService) *DealHandler {
 // excepted, which cannot be cleared), another value sets. currency absent
 // keeps the stored code on update and takes the configured default on create.
 type DealRequest struct {
-	Title             string           `json:"title" binding:"required"`
-	Stage             models.DealStage `json:"stage,omitempty" binding:"omitempty,oneof=qualification proposal negotiation won lost"`
-	AmountCents       int64            `json:"amount_cents" binding:"min=0,max=1000000000000"`
-	Currency          string           `json:"currency,omitempty" binding:"omitempty,len=3,alpha,uppercase"`
-	Probability       *int             `json:"probability,omitempty" binding:"omitempty,min=0,max=100"`
-	ExpectedCloseDate string           `json:"expected_close_date,omitempty"`
-	LostReason        string           `json:"lost_reason,omitempty"`
-	Source            string           `json:"source,omitempty"`
-	Notes             string           `json:"notes,omitempty"`
-	CompanyID         *uint            `json:"company_id,omitempty"`
-	CustomerID        *uint            `json:"customer_id,omitempty"`
-	LeadID            *uint            `json:"lead_id,omitempty"`
-	OwnerID           *uint            `json:"owner_id,omitempty" binding:"omitempty,min=1"`
+	// Deal title, required; trimmed, it must not be empty. At most 200
+	// characters.
+	Title string `json:"title" binding:"required" maxLength:"200" example:"Acme rollout 2027"`
+	// Stage. Create: qualification when absent. Update: absent keeps the
+	// stored stage; a different stage is a stage change with the rules of
+	// POST /deals/{id}/stage.
+	Stage models.DealStage `json:"stage,omitempty" binding:"omitempty,oneof=qualification proposal negotiation won lost" example:"proposal"`
+	// Value in minor units (cents for EUR), 0 to 1000000000000. Absent means
+	// 0, on update as well.
+	AmountCents int64 `json:"amount_cents" binding:"min=0,max=1000000000000" example:"1250000"`
+	// ISO 4217 code, exactly three upper-case ASCII letters. Create: the
+	// deals.default_currency setting (EUR as shipped) when absent. Update:
+	// absent keeps the stored code.
+	Currency string `json:"currency,omitempty" binding:"omitempty,len=3,alpha,uppercase" minLength:"3" maxLength:"3" example:"EUR"`
+	// Win probability in percent, 0 to 100. When the deal enters a stage and
+	// this is absent, the stage's default applies (10, 40, 70); won is
+	// always 100 and lost always 0 whatever is sent. On an update that keeps
+	// the stage, absent keeps the stored probability.
+	Probability *int `json:"probability,omitempty" binding:"omitempty,min=0,max=100" example:"40"`
+	// Calendar date YYYY-MM-DD (400 BAD_REQUEST for any other form). Absent
+	// or empty clears it, on update as well.
+	ExpectedCloseDate string `json:"expected_close_date,omitempty" format:"date" example:"2026-12-31"`
+	// Reason for losing, at most 255 characters (trimmed when the stage
+	// changes); stored only when the resulting stage is lost and cleared
+	// otherwise. Absent on update clears it.
+	LostReason string `json:"lost_reason,omitempty" maxLength:"255" example:"Budget cut"`
+	// Where the deal came from, at most 100 characters. Absent on update
+	// clears it.
+	Source string `json:"source,omitempty" maxLength:"100" example:"referral"`
+	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
+	// Absent on update clears them.
+	Notes string `json:"notes,omitempty" example:"Decision expected after the board meeting."`
+	// Company link: absent keeps it (none on create), 0 clears it, another
+	// id must name a live company (400 INVALID_REFERENCE).
+	CompanyID *uint `json:"company_id,omitempty" example:"12"`
+	// Customer link: absent keeps it (none on create), 0 clears it, another
+	// id must name a live customer (400 INVALID_REFERENCE).
+	CustomerID *uint `json:"customer_id,omitempty" example:"31"`
+	// Lead link: absent keeps it (none on create), 0 clears it, another id
+	// must name a live lead the caller may see (admins any lead, sales users
+	// the leads they own); a hidden lead is the same 400 INVALID_REFERENCE as
+	// a missing one. A sent id is always checked, even when it equals the
+	// stored link.
+	LeadID *uint `json:"lead_id,omitempty" example:"55"`
+	// Owner, at least 1. Create: the caller when absent. Update: absent keeps
+	// the owner. A sales user may only send its own id (403 otherwise); an
+	// admin may name any live user (400 INVALID_REFERENCE otherwise).
+	OwnerID *uint `json:"owner_id,omitempty" binding:"omitempty,min=1" example:"7"`
 }
 
 // DealStageRequest is the body of POST /deals/:id/stage.
 type DealStageRequest struct {
-	Stage       models.DealStage `json:"stage" binding:"required,oneof=qualification proposal negotiation won lost"`
-	Probability *int             `json:"probability,omitempty" binding:"omitempty,min=0,max=100"`
-	LostReason  *string          `json:"lost_reason,omitempty"`
+	// Target stage. Required.
+	Stage models.DealStage `json:"stage" binding:"required,oneof=qualification proposal negotiation won lost" example:"won"`
+	// Win probability in percent, 0 to 100; absent takes the new stage's
+	// default (10, 40, 70). Ignored for won (always 100) and lost (always 0).
+	Probability *int `json:"probability,omitempty" binding:"omitempty,min=0,max=100" example:"70"`
+	// Reason for losing, at most 255 characters, trimmed. Used only when the
+	// target stage is lost; absent keeps the reason already stored. Any other
+	// target stage clears the reason.
+	LostReason *string `json:"lost_reason,omitempty" maxLength:"255" example:"Chose a competitor"`
 }
 
 // dealNotesTooLongMessage answers notes that would not fit deals.notes.
@@ -123,19 +164,23 @@ func optionalID(id *uint) *uint {
 
 // Create godoc
 // @Summary Create a deal
-// @Description Create a deal (admin and sales roles only). title is trimmed and required, 1 to 200 characters. stage defaults to qualification. amount_cents is an integer in minor units, 0 to 1000000000000 (10^12 cents; a larger value is a 400); currency is three upper-case letters and defaults to the deals.default_currency configuration (EUR as shipped) when omitted. probability is 0 to 100 and defaults per stage (qualification 10, proposal 40, negotiation 70); won is always 100 and lost always 0. expected_close_date is YYYY-MM-DD. lost_reason is stored only when the stage is lost. company_id, customer_id and lead_id are optional and must name live rows (400 INVALID_REFERENCE otherwise; 0 means none); lead_id must moreover name a lead the caller may see — admins any lead, sales users only the leads they own — and a lead the caller may not see is the same 400 INVALID_REFERENCE as a missing one. owner_id defaults to the caller; sales users may only name themselves (403 otherwise), admins any live user. A first history row (from_stage null) is written in the same transaction; when the stage is won or lost, closed_at is set.
+// @Description Create a deal. Roles: admin and sales.
+// @Description Validation, in order: binding (title required, stage from its set, amount_cents 0 to 10^12, currency three upper-case letters, probability 0 to 100, owner_id at least 1); title 200, lost_reason 255 and source 100 characters and notes 65535 bytes; expected_close_date YYYY-MM-DD; then the service (blank title after trimming) and the links: owner_id, company_id, customer_id and lead_id must name live rows, and lead_id a lead the caller may see (a hidden lead is reported like a missing one).
+// @Description Defaults and stage rules: stage qualification; currency from the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR); probability from the stage (qualification 10, proposal 40, negotiation 70), won always 100 and lost always 0; closed_at set when the stage is won or lost; lost_reason kept only when lost. owner_id defaults to the caller; a sales user may only name itself.
+// @Description Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage) and the deal_created automation event.
+// @Description The response is the deal re-read with owner, company, customer and lead loaded; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body DealRequest true "Deal"
-// @Success 201 {object} utils.APIResponse{data=models.Deal} "Deal created, with owner, company, customer and lead preloaded"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, a value longer than its column, a bad currency, probability or date, or an unknown company_id, customer_id, lead_id or owner_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required; sales may only own deals themselves"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body DealRequest true "The deal to create"
+// @Success 201 {object} utils.APIResponse{data=models.Deal} "Deal created"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: a value longer than its column, a malformed expected_close_date, or a blank title. INVALID_REFERENCE: owner_id, company_id, customer_id or lead_id names no live row, or lead_id names a lead the caller may not see"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or a sales user named another owner ('You can only assign deals to yourself')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals [post]
 func (h *DealHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Create")
@@ -188,28 +233,30 @@ func (h *DealHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List deals
-// @Description One page of deals (admin and sales roles; sales users see only the deals they own, whatever owner_id says). data is the array of deals, each with its owner, company, customer and lead (lead_id and lead only when the caller may see that lead, as on GET /deals/{id}); meta carries the pagination. search matches title and notes (substring; case-insensitive on MySQL and MariaDB, case-sensitive on SQLite). Filters combine: stage, company_id, customer_id, owner_id (admin only) and open=true, which selects every stage but won and lost. sort_by must be one of the listed columns — any other value is a 400, never interpolated — and defaults to created_at; sort_order defaults to desc. page (1-based) overrides offset when supplied.
+// @Description One page of live deals with owner, company, customer and lead loaded. Roles: admin (every deal) and sales (only the deals it owns, whatever owner_id says; the filter is applied in the query, so meta.total counts only those). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description Filters combine (AND): search (substring of title or notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), stage, open=true (every stage but won and lost; open=false applies no filter), company_id, customer_id and owner_id. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc.
+// @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param search query string false "Substring search across title and notes"
-// @Param stage query string false "Only deals in this stage" Enums(qualification, proposal, negotiation, won, lost)
-// @Param open query bool false "true: only deals whose stage is neither won nor lost"
-// @Param company_id query int false "Only deals linked to this company"
-// @Param customer_id query int false "Only deals linked to this customer"
-// @Param owner_id query int false "Only deals owned by this user (admin; sales is always narrowed to itself)"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Param search query string false "Substring searched in title and notes"
+// @Param stage query string false "Only deals in this stage; an unknown value is 400" Enums(qualification, proposal, negotiation, won, lost)
+// @Param open query bool false "true: only deals whose stage is neither won nor lost; false: no filter. Anything strconv.ParseBool rejects is 400"
+// @Param company_id query int false "Only deals linked to this company; must be a positive integer" minimum(1)
+// @Param customer_id query int false "Only deals linked to this customer; must be a positive integer" minimum(1)
+// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured for admins; a sales caller is always narrowed to itself" minimum(1)
 // @Param sort_by query string false "Sort column" Enums(id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at, updated_at) default(created_at)
-// @Param sort_order query string false "Sort direction; anything else falls back to desc" Enums(asc, desc) default(desc)
-// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "Deals retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "sort_by is not an allowed column, or stage, open or an id filter is malformed"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
+// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), stage is unknown ('Invalid stage'), open is not a boolean, or company_id, customer_id or owner_id is not a positive integer ('<name> must be a positive integer')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals [get]
 func (h *DealHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.List")
@@ -272,19 +319,20 @@ func (h *DealHandler) List(c *gin.Context) {
 
 // Pipeline godoc
 // @Summary Deal pipeline by stage
-// @Description The live deals aggregated per stage (admin and sales roles; sales users always get their own deals only, whatever owner_id says, as on GET /deals). data.stages lists all five stages in pipeline order — qualification, proposal, negotiation, won, lost — each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code, and amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents × probability / 100), computed with integer arithmetic and rounded once on each stage-and-currency total, not per deal. Soft-deleted deals are not counted. owner_id (admin only) and company_id narrow the aggregate; a malformed or zero id is a 400, as on the list, and an id that matches nothing yields empty stages.
+// @Description The live deals aggregated per stage and currency. Roles: admin and sales; a sales user always gets its own deals only, whatever owner_id says.
+// @Description data.stages lists all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code; amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents x probability / 100), integer arithmetic, rounded once on each stage-and-currency total. Soft-deleted deals are not counted. owner_id (admin) and company_id narrow the aggregate; an id that matches nothing yields empty stages.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param owner_id query int false "Only deals owned by this user (admin; sales is always narrowed to itself)"
-// @Param company_id query int false "Only deals linked to this company"
-// @Success 200 {object} utils.APIResponse{data=models.DealPipeline} "Pipeline retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "owner_id or company_id is not a positive integer"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured for admins; a sales caller is always narrowed to itself" minimum(1)
+// @Param company_id query int false "Only deals linked to this company; must be a positive integer" minimum(1)
+// @Success 200 {object} utils.APIResponse{data=models.DealPipeline} "The pipeline"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: owner_id or company_id is not a positive integer ('<name> must be a positive integer')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/pipeline [get]
 func (h *DealHandler) Pipeline(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Pipeline")
@@ -311,19 +359,19 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a deal
-// @Description One deal (admin and sales roles) with its owner, company, customer and lead preloaded. Sales users can only view their own deals (403 otherwise). lead_id and lead are omitted when the caller may not see the linked lead (a sales user sees only the leads it owns); this is decided on every read, so it follows lead ownership changes and links an admin made. The same applies to every deal this API returns.
+// @Description One live deal with owner, company, customer and lead loaded. Roles: admin (any deal) and sales (only the deals it owns; another owner's deal is 403, not 404). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read. The same rule applies to every deal this API returns.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Deal ID"
-// @Success 200 {object} utils.APIResponse{data=models.Deal} "Deal retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid deal ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required; sales users can only view their own deals"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Deal not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Deal} "The deal"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/{id} [get]
 func (h *DealHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Get")
@@ -339,22 +387,26 @@ func (h *DealHandler) Get(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary Update a deal
-// @Description Replace a deal's fields (admin and sales roles; sales users only their own deals). The body is the new state of the text fields, amount, stage and expected_close_date: one left out is stored empty or cleared. The links follow the rule of company_id on leads: company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another value sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when the request sets them; a deal keeps links to erased records and stays editable. A lead_id that is sent is always checked, even when it equals the stored link, and must name a lead the caller may see, as on create, so sending lead ids cannot reveal a hidden link; a stored lead link the caller may not see is kept unchecked when lead_id is absent and omitted from the response. owner_id absent keeps the owner (sales may only name themselves, admins any live user); currency absent keeps the stored code. amount_cents is 0 to 1000000000000 (10^12 cents), as on create. A stage different from the stored one goes through the same rules as POST /deals/{id}/stage — probability defaults to the new stage's unless sent, won is 100 and lost 0, closed_at set or cleared, lost_reason kept only on lost — and writes a history row in the same transaction. The same stage writes no history row; probability is then applied only when sent.
+// @Summary Replace a deal
+// @Description Replace a deal's fields. Roles: admin (any deal) and sales (only the deals it owns).
+// @Description The body is the new state of title, amount_cents (absent means 0), expected_close_date, lost_reason, source and notes: a field left out is stored empty, 0 or cleared. stage, currency, owner_id absent keep the stored value. company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another id sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when they change, so a deal keeps links to erased records and stays editable; a lead_id that is sent is always checked, even when unchanged, and must name a lead the caller may see; a stored lead link the caller may not see is kept unchecked when lead_id is absent. owner_id: a sales user may only send its own id; an admin any live user (checked only when it changes).
+// @Description A stage different from the stored one follows the rules of POST /deals/{id}/stage (probability defaults to the new stage's unless sent, won 100, lost 0, closed_at set or cleared, lost_reason kept only on lost) and writes a stage-history row. The same stage writes no history row: closed_at stays, probability changes only when sent (still pinned for won and lost), and lost_reason survives only on a lost deal.
+// @Description Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes.
+// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Deal ID"
-// @Param request body DealRequest true "Deal"
-// @Success 200 {object} utils.APIResponse{data=models.Deal} "Deal updated; associations refreshed"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid deal ID or request data, a value longer than its column, a bad currency, probability or date, or an unknown company_id, customer_id, lead_id or owner_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only update their own deals and may not reassign them"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Deal not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body DealRequest true "The new state of the deal"
+// @Success 200 {object} utils.APIResponse{data=models.Deal} "The updated deal"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: id is not an unsigned integer, a value longer than its column, a malformed expected_close_date, or a blank title. INVALID_REFERENCE: a changed owner_id, company_id or customer_id, or a sent lead_id, names no live row (or a lead the caller may not see)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own; or a sales user named another owner ('You can only assign deals to yourself')"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/{id} [put]
 func (h *DealHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Update")
@@ -408,7 +460,9 @@ func (h *DealHandler) Update(c *gin.Context) {
 
 // ChangeStage godoc
 // @Summary Move a deal to another stage
-// @Description Move a deal to a stage (admin and sales roles; sales users only their own deals). The move is recorded as a history row in the same transaction. probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at; entering an open stage clears it. lost_reason is stored when the new stage is lost (absent keeps the previous reason, if any) and cleared otherwise. Asking for the stage the deal is already in is a 200 that changes nothing and writes no history row.
+// @Description Move a deal to a stage. Roles: admin (any deal) and sales (only the deals it owns). probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at to now (also on won to lost); entering an open stage clears it. lost_reason is stored (trimmed) when the new stage is lost, absent keeping the reason already stored, and cleared otherwise. Asking for the stage the deal is already in is a 200 that writes nothing (no history row, no event) and ignores probability and lost_reason.
+// @Description Side effects, in one transaction: one stage-history row and the deal_stage_changed automation event (no deal_updated event).
+// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -416,13 +470,13 @@ func (h *DealHandler) Update(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param id path int true "Deal ID"
 // @Param request body DealStageRequest true "Target stage"
-// @Success 200 {object} utils.APIResponse{data=models.Deal} "Deal after the move"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid deal ID, unknown stage, probability outside 0-100 or lost_reason over 255 characters"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only move their own deals"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Deal not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Deal} "The deal after the move"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: id is not an unsigned integer, or lost_reason over 255 characters (sent, or the stored one when moving to lost)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/{id}/stage [post]
 func (h *DealHandler) ChangeStage(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.ChangeStage")
@@ -455,19 +509,19 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 
 // History godoc
 // @Summary A deal's stage history
-// @Description The deal's stage changes oldest first (admin and sales roles; sales users only their own deals). The first row has from_stage null and to_stage the stage the deal was created in. Each row carries changed_by (the acting user's id, name and email) and changed_at. data is the array.
+// @Description The deal's stage changes, oldest first (changed_at, then id). Roles: admin (any deal) and sales (only the deals it owns). The first row has from_stage null and to_stage the stage the deal was created in. changed_by is the acting user's full record (including email), omitted when that account no longer exists. data is the array; there is no pagination.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Deal ID"
-// @Success 200 {object} utils.APIResponse{data=[]models.DealStageChange} "History retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid deal ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - sales users can only view their own deals"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Deal not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=[]models.DealStageChange} "The stage history"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/{id}/history [get]
 func (h *DealHandler) History(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.History")
@@ -489,19 +543,19 @@ func (h *DealHandler) History(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a deal
-// @Description Soft-delete a deal (admin role only). The stage history rows stay. Deals hold no personal data, so this is not an erasure.
+// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes keep their deal_id (their deal summary is then omitted). Deals hold no personal data, so this is not an erasure. No automation event is recorded.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Deal ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid deal ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Deal not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Deleted; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/{id} [delete]
 func (h *DealHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Delete")
@@ -522,22 +576,23 @@ func (h *DealHandler) Delete(c *gin.Context) {
 
 // ListByCompany godoc
 // @Summary List a company's deals
-// @Description One page of the live deals linked to the company, newest first, with their associations (admin and sales roles; sales users see only the deals they own). data is the array of deals, meta the pagination.
+// @Description One page of the live deals linked to the company, newest first (created_at descending, then id), with their associations. Roles: admin (every deal) and sales (only the deals it owns; filtered in the query, so meta.total counts only those). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Company ID"
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "Deals retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid company ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Company not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies/{id}/deals [get]
 func (h *DealHandler) ListByCompany(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.ListByCompany")
@@ -569,22 +624,23 @@ func (h *DealHandler) ListByCompany(c *gin.Context) {
 
 // ListByCustomer godoc
 // @Summary List a customer's deals
-// @Description One page of the live deals linked to the customer, newest first, with their associations (admin and sales roles; sales users see only the deals they own). data is the array of deals, meta the pagination.
+// @Description One page of the live deals linked to the customer, newest first (created_at descending, then id), with their associations. Roles: admin (every deal) and sales (only the deals it owns; filtered in the query, so meta.total counts only those). Support and customer roles are refused. lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "Deals retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - admin or sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid customer ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live (not erased) customer has this id ('Customer not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /customers/{id}/deals [get]
 func (h *DealHandler) ListByCustomer(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.ListByCustomer")
