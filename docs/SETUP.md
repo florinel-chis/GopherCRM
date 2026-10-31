@@ -24,7 +24,7 @@ mysql -u root -p < scripts/create_database.sql
 `make create-db` runs `mysql -u root` without a password prompt (`Makefile`, target `create-db`).
 `scripts/create_database.sql` creates a database named **`gophercrm`**, while the default `DB_NAME` is
 **`gocrm`** (`internal/config/config.go:248`, `.env.example`). Either set `DB_NAME=gophercrm` in `.env`, or
-create a `gocrm` database yourself.
+create a `gocrm` database yourself (#226).
 
 Skip this step with SQLite: the file is created on first start.
 
