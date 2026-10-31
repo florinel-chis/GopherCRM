@@ -19,6 +19,17 @@ vi.mock('@/api/endpoints', () => ({
   },
 }));
 
+// The configured conversion rules: qualified leads convert.
+vi.mock('@/hooks/useConfiguration', () => ({
+  useConfiguration: () => ({
+    getLeadConversion: () => ({
+      status: 'ready',
+      settings: { allowedStatuses: ['qualified'], requireNotes: false, autoAssignOwner: false },
+    }),
+    refreshConfigurations: async () => {},
+  }),
+}));
+
 // The button a user presses: the one inside the row that shows this text. It
 // must also be named for that row, so a menu bound to another row's record
 // (for instance through a stale index) fails here.

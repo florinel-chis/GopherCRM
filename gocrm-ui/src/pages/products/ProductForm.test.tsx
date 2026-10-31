@@ -24,6 +24,24 @@ vi.mock('@/api/endpoints', () => ({
 
 const showError = vi.fn();
 const showSuccess = vi.fn();
+// A signed-in admin: the UI configuration (and so the default currency) is
+// only loaded for an established session.
+vi.mock('@/hooks/useAuth', async () => {
+  const { createMockUser } = await import('@/test/factories');
+  const user = createMockUser({ id: 1, role: 'admin' });
+  return {
+    useAuth: () => ({
+      user,
+      isLoading: false,
+      isAuthenticated: true,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+    }),
+  };
+});
+
 vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({ showSuccess, showError }),
 }));

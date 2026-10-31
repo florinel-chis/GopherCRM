@@ -21,6 +21,13 @@ vi.mock('@/api/endpoints/configurations', () => ({
   },
 }));
 
+// The app-wide copy of GET /configurations/ui that pages such as the lead
+// conversion dialog follow; a save or reset here must refresh it.
+const refreshConfigurations = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('@/hooks/useConfiguration', () => ({
+  useConfiguration: () => ({ refreshConfigurations }),
+}));
+
 const baseConfig = (overrides: Partial<Configuration>): Configuration => ({
   id: 1,
   key: 'general.company_name',
@@ -138,6 +145,39 @@ describe('ConfigurationSettings', () => {
     await waitFor(() => {
       expect(configurationsApi.set).toHaveBeenCalledWith('deals.default_currency', { value: 'USD' });
     });
+  });
+
+  it('refreshes the app-wide configuration after a save', async () => {
+    vi.mocked(configurationsApi.set).mockResolvedValue(baseConfig({ value: 'Acme CRM' }));
+    render(<ConfigurationSettings />);
+
+    fireEvent.click(await screen.findByTitle('Edit configuration'));
+    fireEvent.change(await screen.findByDisplayValue('GopherCRM'), { target: { value: 'Acme CRM' } });
+    expect(refreshConfigurations).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(refreshConfigurations).toHaveBeenCalledTimes(1));
+    expect(showSuccess).toHaveBeenCalledWith('Configuration updated successfully');
+  });
+
+  it('refreshes the app-wide configuration after a reset', async () => {
+    vi.mocked(configurationsApi.reset).mockResolvedValue(baseConfig({}));
+    render(<ConfigurationSettings />);
+
+    fireEvent.click(await screen.findByTitle('Reset to default'));
+
+    await waitFor(() => expect(refreshConfigurations).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not refresh when the save fails', async () => {
+    vi.mocked(configurationsApi.set).mockRejectedValue(new Error('nope'));
+    render(<ConfigurationSettings />);
+
+    fireEvent.click(await screen.findByTitle('Edit configuration'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to update configuration'));
+    expect(refreshConfigurations).not.toHaveBeenCalled();
   });
 
   it('keeps the plain editor for a non-sensitive row', async () => {

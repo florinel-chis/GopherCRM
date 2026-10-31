@@ -126,7 +126,13 @@ vi.mock('@/api/endpoints/customers', async (importOriginal) => {
 // The lead list reads the conversion statuses from the configuration
 // provider, which the real app mounts above the router.
 vi.mock('@/hooks/useConfiguration', () => ({
-  useConfiguration: () => ({ getLeadConversionStatuses: () => ['qualified'] }),
+  useConfiguration: () => ({
+    getLeadConversion: () => ({
+      status: 'ready',
+      settings: { allowedStatuses: ['qualified'], requireNotes: false, autoAssignOwner: false },
+    }),
+    refreshConfigurations: async () => {},
+  }),
 }));
 
 vi.mock('@/api/endpoints/leads', async (importOriginal) => {
