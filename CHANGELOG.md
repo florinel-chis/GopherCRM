@@ -355,6 +355,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Two settings that did nothing.** `security.session_timeout_hours` and
+  `tickets.auto_assign_support` were seeded and never read: session length comes from
+  `JWT_EXPIRY_HOURS` and `REFRESH_TOKEN_EXPIRY_DAYS`, and tickets are not distributed among support
+  users (a ticket created without `assigned_to_id` goes to its creator). Startup now deletes both
+  rows on every driver, and `migrations/20261031120000_retire_inert_configurations` does the same
+  on MySQL and MariaDB; its down migration restores them as first seeded. The Settings page no
+  longer lists them (#224).
 - **`repository.NewCustomerRepositoryWithLeadErasure` (#108).** The identity cascade now lives in
   the plain user, customer and lead repositories, so no constructor can erase half a person;
   `cmd/main.go` uses `NewCustomerRepository`.
