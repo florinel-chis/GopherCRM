@@ -144,6 +144,23 @@ func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
 	return s.leadRepo.GetByExternalID(externalID)
 }
 
+// LeadExternalIDMaxLength is the width of leads.external_id (varchar(255)),
+// in characters: MySQL counts varchar in characters, not bytes. The
+// GET /leads?external_id= lookup refuses a longer value, which no stored row
+// can hold. TestLeadExternalIDMaxLengthMatchesTheColumn fails if the two drift.
+const LeadExternalIDMaxLength = 255
+
+// LeadExternalIDLookupLimit caps the rows ListByExternalID reads.
+const LeadExternalIDLookupLimit = 100
+
+// ListByExternalID returns the live leads whose external_id equals
+// externalID, lowest id first, at most LeadExternalIDLookupLimit of them, with
+// the owner loaded the way the admin list paths load it (the linked company
+// is not). Visibility is the caller's job (CanViewLead on each row).
+func (s *leadService) ListByExternalID(externalID string) ([]models.Lead, error) {
+	return s.leadRepo.ListByExternalID(externalID, LeadExternalIDLookupLimit)
+}
+
 func (s *leadService) GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error) {
 	// For owner-filtered lists, no need to preload Owner since we already know it
 	leads, err := s.leadRepo.GetByOwnerID(ownerID, offset, limit)

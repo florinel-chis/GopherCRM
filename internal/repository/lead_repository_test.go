@@ -87,3 +87,41 @@ func TestLeadRepository_GetLatestByEmail_UsesTheTransaction(t *testing.T) {
 		return nil
 	}))
 }
+
+// external_id is not unique: the lookup returns every live lead carrying the
+// value, lowest id first, capped at limit, with the owner loaded.
+func TestLeadRepository_ListByExternalID(t *testing.T) {
+	db := setupAnalyticsTestDB(t)
+	repo := NewLeadRepository(db)
+	owner := makeUser(t, db, "owner@example.com")
+
+	var ids []uint
+	for _, name := range []string{"First", "Second", "Third"} {
+		lead := makeLead(t, db, name, name+"@example.com", owner.ID)
+		require.NoError(t, db.Model(&lead).Update("external_id", "crm-dup").Error)
+		ids = append(ids, lead.ID)
+	}
+	erased := makeLead(t, db, "Erased", "erased@example.com", owner.ID)
+	require.NoError(t, db.Model(&erased).Update("external_id", "crm-dup").Error)
+	require.NoError(t, db.Delete(&erased).Error)
+	other := makeLead(t, db, "Other", "other@example.com", owner.ID)
+	require.NoError(t, db.Model(&other).Update("external_id", "crm-other").Error)
+
+	leads, err := repo.ListByExternalID("crm-dup", 100)
+	require.NoError(t, err)
+	got := make([]uint, 0, len(leads))
+	for _, lead := range leads {
+		got = append(got, lead.ID)
+		assert.Equal(t, owner.ID, lead.Owner.ID, "owner preloaded")
+	}
+	assert.Equal(t, ids, got, "live leads only, ascending id")
+
+	capped, err := repo.ListByExternalID("crm-dup", 2)
+	require.NoError(t, err)
+	require.Len(t, capped, 2)
+	assert.Equal(t, ids[:2], []uint{capped[0].ID, capped[1].ID})
+
+	none, err := repo.ListByExternalID("crm-unknown", 100)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}

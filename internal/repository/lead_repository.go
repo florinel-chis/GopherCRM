@@ -90,6 +90,17 @@ func (r *leadRepository) GetByExternalID(externalID string) (*models.Lead, error
 	return &lead, nil
 }
 
+// ListByExternalID returns the live leads whose external_id equals
+// externalID, in ascending id order, at most limit rows, with the owner
+// preloaded. external_id is not unique, so this is the lookup that sees every
+// lead carrying a value; GetByExternalID returns only the first.
+func (r *leadRepository) ListByExternalID(externalID string, limit int) ([]models.Lead, error) {
+	var leads []models.Lead
+	query := r.db.Preload("Owner").Where("external_id = ?", externalID)
+	err := orderByID(query, "leads").Limit(limit).Find(&leads).Error
+	return leads, err
+}
+
 func (r *leadRepository) GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error) {
 	var leads []models.Lead
 	err := orderByID(r.db.Where("owner_id = ?", ownerID), "leads").Offset(offset).Limit(limit).Find(&leads).Error

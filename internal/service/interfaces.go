@@ -65,6 +65,9 @@ type LeadService interface {
 	// request stops waiting for a connection and returns the context's error.
 	GetByIDContext(ctx context.Context, id uint) (*models.Lead, error)
 	GetByExternalID(externalID string) (*models.Lead, error)
+	// ListByExternalID returns up to LeadExternalIDLookupLimit live leads
+	// whose external_id equals externalID, lowest id first, owner preloaded.
+	ListByExternalID(externalID string) ([]models.Lead, error)
 	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)
 	Update(id uint, updates map[string]interface{}) (*models.Lead, error)

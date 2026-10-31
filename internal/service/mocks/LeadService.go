@@ -166,6 +166,21 @@ func (_m *LeadService) GetByClassification(classification models.LeadClassificat
 	return r0, r1, r2
 }
 
+// ListByExternalID provides a mock function with given fields: externalID
+func (_m *LeadService) ListByExternalID(externalID string) ([]models.Lead, error) {
+	ret := _m.Called(externalID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListByExternalID")
+	}
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
 // GetByExternalID provides a mock function with given fields: externalID
 func (_m *LeadService) GetByExternalID(externalID string) (*models.Lead, error) {
 	ret := _m.Called(externalID)

@@ -14690,7 +14690,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of leads. Roles: admin and sales.\nA sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).\nFor an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.\ndata is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).",
+                "description": "One page of leads. Roles: admin and sales.\nWithout external_id, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).\nWithout external_id, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.\nexternal_id, when present and not empty, takes precedence over everything above for every role, including search, classification, sort_by, sort_order, page, offset and limit: the lookup is an SQL equality on the column, byte-exact on SQLite, while on MySQL/MariaDB the column collation decides (utf8mb4_unicode_ci in the migrations: case-insensitive, trailing spaces ignored); the value is not trimmed. external_id is not unique: the result holds every matching live lead the caller may view (admin any lead, sales only the leads it owns, every other role none), in ascending id order, and total is their number (meta.page 1, meta.per_page the parsed limit, which does not cut the list). A lead the caller may not see is left out, never 403 or 404, so a hidden lead reads like an unknown value. At most the first 100 matching leads by id are read before the visibility filter, so with more than 100 leads sharing one value later ones (including a sales user's own) are not returned. The owner is loaded on that path, company_record is not.\ndata is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).",
                 "produces": [
                     "application/json"
                 ],
@@ -14765,6 +14765,13 @@
                         "description": "Sort direction for sort_by; any other value becomes asc",
                         "name": "sort_order",
                         "in": "query"
+                    },
+                    {
+                        "maxLength": 255,
+                        "type": "string",
+                        "description": "Exact external_id to look up (at most 255 characters); when present and not empty it overrides every other parameter and returns the matching leads the caller may view",
+                        "name": "external_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -14783,6 +14790,24 @@
                                         },
                                         "meta": {
                                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR: external_id is longer than 255 characters ('external_id is too long (at most 255 characters)', error.details {'field': 'external_id'})",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
                                         }
                                     }
                                 }
@@ -25757,7 +25782,7 @@
                     "example": "Met at the trade fair; wants a demo."
                 },
                 "owner": {
-                    "description": "The owner's account. Always present in the JSON. GET /leads/{id}, the\nadmin GET /leads (except with the classification filter),\nGET /companies/{id}/leads and the dashboard fill it in with the User\nobject (see the User schema); elsewhere (create and update responses, a\nsales user's list) it is a zero-valued placeholder (id 0, every string\nempty, role \"\" included), which is not a valid User, so this property is\ndocumented as a plain object. Use owner_id.",
+                    "description": "The owner's account. Always present in the JSON. GET /leads/{id}, the\nadmin GET /leads (except with the classification filter),\nGET /leads?external_id= for admin and sales, GET /companies/{id}/leads and the dashboard fill it in with the User\nobject (see the User schema); elsewhere (create and update responses, a\nsales user's list) it is a zero-valued placeholder (id 0, every string\nempty, role \"\" included), which is not a valid User, so this property is\ndocumented as a plain object. Use owner_id.",
                     "type": "object"
                 },
                 "owner_id": {

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -274,8 +275,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // List godoc
 // @Summary List leads
 // @Description One page of leads. Roles: admin and sales.
-// @Description A sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
-// @Description For an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
+// @Description Without external_id, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
+// @Description Without external_id, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
+// @Description external_id, when present and not empty, takes precedence over everything above for every role, including search, classification, sort_by, sort_order, page, offset and limit: the lookup is an SQL equality on the column, byte-exact on SQLite, while on MySQL/MariaDB the column collation decides (utf8mb4_unicode_ci in the migrations: case-insensitive, trailing spaces ignored); the value is not trimmed. external_id is not unique: the result holds every matching live lead the caller may view (admin any lead, sales only the leads it owns, every other role none), in ascending id order, and total is their number (meta.page 1, meta.per_page the parsed limit, which does not cut the list). A lead the caller may not see is left out, never 403 or 404, so a hidden lead reads like an unknown value. At most the first 100 matching leads by id are read before the visibility filter, so with more than 100 leads sharing one value later ones (including a sales user's own) are not returned. The owner is loaded on that path, company_record is not.
 // @Description data is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags leads
 // @Produce json
@@ -288,7 +290,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // @Param classification query string false "Admin only, ignored when search is present: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
 // @Param sort_by query string false "Admin only, ignored when classification wins: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
 // @Param sort_order query string false "Sort direction for sort_by; any other value becomes asc" Enums(asc, desc) default(asc)
+// @Param external_id query string false "Exact external_id to look up (at most 255 characters); when present and not empty it overrides every other parameter and returns the matching leads the caller may view" maxlength(255)
 // @Success 200 {object} utils.APIResponse{data=LeadListData,meta=utils.APIMeta} "One page of leads and the total"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: external_id is longer than 255 characters ('external_id is too long (at most 255 characters)', error.details {'field': 'external_id'})"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -300,6 +304,13 @@ func (h *LeadHandler) List(c *gin.Context) {
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
 	offset, limit := utils.ParseOffsetLimit(c)
+
+	// An exact external_id lookup replaces every other filter, the sort and
+	// the paging.
+	if externalID := c.Query("external_id"); externalID != "" {
+		h.listByExternalID(c, externalID, limit)
+		return
+	}
 	classification := c.Query("classification")
 
 	// Convert page to offset if page is provided
@@ -377,6 +388,47 @@ func (h *LeadHandler) List(c *gin.Context) {
 		TotalPages: (total + int64(limit) - 1) / int64(limit),
 	}
 
+	responseData := gin.H{"leads": leads, "total": total}
+	utils.LogHandlerResponse(logger, http.StatusOK, responseData)
+	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)
+}
+
+// listByExternalID answers GET /leads?external_id= with the usual list shape
+// holding the live leads whose external_id matches that the caller may see.
+// Visibility follows service.CanViewLead row by row; a lead the caller may not
+// see is simply left out (never 403 or 404), so external ids cannot be probed.
+func (h *LeadHandler) listByExternalID(c *gin.Context, externalID string, limit int) {
+	logger := utils.LogHandlerStart(c, "LeadHandler.listByExternalID")
+
+	if utf8.RuneCountInString(externalID) > service.LeadExternalIDMaxLength {
+		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation,
+			fmt.Sprintf("external_id is too long (at most %d characters)", service.LeadExternalIDMaxLength),
+			gin.H{"field": "external_id"})
+		return
+	}
+
+	matches, err := h.leadService.ListByExternalID(externalID)
+	if err != nil && !apperrors.IsNotFound(err) {
+		logger.WithError(utils.LogError(err)).Error("Failed to look up leads by external id")
+		utils.RespondInternalError(c)
+		return
+	}
+	viewer := leadViewer(c)
+	leads := []models.Lead{}
+	for i := range matches {
+		if service.CanViewLead(viewer, &matches[i]) {
+			leads = append(leads, matches[i])
+		}
+	}
+
+	total := int64(len(leads))
+	meta := &utils.APIMeta{
+		RequestID:  c.GetString("request_id"),
+		Page:       1,
+		PerPage:    limit,
+		Total:      total,
+		TotalPages: (total + int64(limit) - 1) / int64(limit),
+	}
 	responseData := gin.H{"leads": leads, "total": total}
 	utils.LogHandlerResponse(logger, http.StatusOK, responseData)
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, meta)

@@ -144,6 +144,20 @@ func (suite *LeadServiceTestSuite) TestGetByID_NotFound() {
 	assert.Nil(suite.T(), lead)
 }
 
+func (suite *LeadServiceTestSuite) TestListByExternalID_ReadsUpToTheLookupLimit() {
+	shared := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 3}, ExternalID: "crm-dup"},
+		{BaseModel: models.BaseModel{ID: 8}, ExternalID: "crm-dup"},
+	}
+	suite.mockLeadRepo.On("ListByExternalID", "crm-dup", LeadExternalIDLookupLimit).Return(shared, nil).Once()
+
+	leads, err := suite.leadService.ListByExternalID("crm-dup")
+	suite.Require().NoError(err)
+	assert.Equal(suite.T(), shared, leads)
+	assert.Equal(suite.T(), 100, LeadExternalIDLookupLimit)
+	suite.mockLeadRepo.AssertExpectations(suite.T())
+}
+
 func (suite *LeadServiceTestSuite) TestUpdate_Success() {
 	existingLead := &models.Lead{
 		BaseModel: models.BaseModel{ID: 1},

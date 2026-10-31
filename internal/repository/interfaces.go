@@ -42,6 +42,9 @@ type LeadRepository interface {
 	GetByID(id uint) (*models.Lead, error)
 	GetByIDWithPreloads(id uint, preloads ...string) (*models.Lead, error)
 	GetByExternalID(externalID string) (*models.Lead, error)
+	// ListByExternalID returns the live leads whose external_id equals
+	// externalID, lowest id first, at most limit rows, owner preloaded.
+	ListByExternalID(externalID string, limit int) ([]models.Lead, error)
 	GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error)
 	Update(lead *models.Lead) error

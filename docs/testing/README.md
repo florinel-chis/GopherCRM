@@ -23,7 +23,7 @@ blocked.
 |---|---|---|---|---|---|---|---|---|
 | [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 53 | 17 | 21 | 15 | 32 | 19 | 2 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
-| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 66 | 15 | 36 | 15 | 30 | 28 | 8 |
+| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, conversion, bulk status | 67 | 15 | 37 | 15 | 31 | 28 | 8 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 45 | 16 | 16 | 13 | 17 | 19 | 9 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 49 | 21 | 19 | 9 | 6 | 40 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 48 | 13 | 19 | 16 | 10 | 28 | 10 |
@@ -36,7 +36,7 @@ blocked.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 34 | 18 | 13 | 3 | 16 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **639** | **211** | **280** | **148** | **239** | **318** | **82** |
+| **Total** | | **640** | **211** | **281** | **148** | **240** | **318** | **82** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -952,4 +953,205 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheRespo
 			suite.Equal(tc.level, failure.Level, "log level for %d", tc.code)
 		}
 	}
+}
+
+// externalIDList is the decoded body of GET /leads?external_id=.
+type externalIDList struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Leads []models.Lead `json:"leads"`
+		Total int64         `json:"total"`
+	} `json:"data"`
+	Error *struct {
+		Code    string                 `json:"code"`
+		Message string                 `json:"message"`
+		Details map[string]interface{} `json:"details"`
+	} `json:"error"`
+	Meta *utils.APIMeta `json:"meta"`
+}
+
+// getLeadsAs serves one GET /leads request as the given caller.
+func (suite *LeadHandlerTestSuite) getLeadsAs(role string, userID uint, target string) (*httptest.ResponseRecorder, externalIDList) {
+	suite.router.Use(func(c *gin.Context) {
+		c.Set("user_role", role)
+		c.Set("user_id", userID)
+	})
+	suite.router.GET("/leads", suite.handler.List)
+
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+
+	var body externalIDList
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	return rec, body
+}
+
+func leadIDs(leads []models.Lead) []uint {
+	ids := make([]uint, 0, len(leads))
+	for _, lead := range leads {
+		ids = append(ids, lead.ID)
+	}
+	return ids
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_AdminFindsTheLead() {
+	lead := models.Lead{BaseModel: models.BaseModel{ID: 7}, FirstName: "Ext", ExternalID: "crm-1042", OwnerID: 9,
+		Owner: models.User{BaseModel: models.BaseModel{ID: 9}, FirstName: "Owner"}}
+	suite.mockService.On("ListByExternalID", "crm-1042").Return([]models.Lead{lead}, nil).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id=crm-1042")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.True(body.Success)
+	suite.Require().Len(body.Data.Leads, 1)
+	suite.Equal(uint(7), body.Data.Leads[0].ID)
+	suite.Equal("crm-1042", body.Data.Leads[0].ExternalID)
+	suite.Equal("Owner", body.Data.Leads[0].Owner.FirstName)
+	suite.Equal(int64(1), body.Data.Total)
+	suite.Require().NotNil(body.Meta)
+	suite.Equal(int64(1), body.Meta.Total)
+	suite.Equal(int64(1), body.Meta.TotalPages)
+	suite.Equal(1, body.Meta.Page)
+	suite.Equal(20, body.Meta.PerPage)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_SharedValueAdminSeesEveryLead() {
+	shared := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 3}, ExternalID: "crm-dup", OwnerID: 4},
+		{BaseModel: models.BaseModel{ID: 8}, ExternalID: "crm-dup", OwnerID: 2},
+	}
+	suite.mockService.On("ListByExternalID", "crm-dup").Return(shared, nil).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id=crm-dup")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.Equal([]uint{3, 8}, leadIDs(body.Data.Leads))
+	suite.Equal(int64(2), body.Data.Total)
+	suite.Equal(int64(2), body.Meta.Total)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_SharedValueSalesSeesOnlyItsLaterLead() {
+	shared := []models.Lead{
+		{BaseModel: models.BaseModel{ID: 3}, FirstName: "Hidden", ExternalID: "crm-dup", OwnerID: 4},
+		{BaseModel: models.BaseModel{ID: 8}, FirstName: "Mine", ExternalID: "crm-dup", OwnerID: 2},
+	}
+	suite.mockService.On("ListByExternalID", "crm-dup").Return(shared, nil).Once()
+
+	rec, body := suite.getLeadsAs("sales", 2, "/leads?external_id=crm-dup")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.Equal([]uint{8}, leadIDs(body.Data.Leads))
+	suite.Equal(int64(1), body.Data.Total)
+	suite.NotContains(rec.Body.String(), "Hidden")
+	suite.mockService.AssertNotCalled(suite.T(), "GetByOwner", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_SalesGetsNothingForAnotherOwnersLead() {
+	lead := models.Lead{BaseModel: models.BaseModel{ID: 9}, FirstName: "Hidden", ExternalID: "crm-other", OwnerID: 3}
+	suite.mockService.On("ListByExternalID", "crm-other").Return([]models.Lead{lead}, nil).Once()
+
+	rec, body := suite.getLeadsAs("sales", 2, "/leads?external_id=crm-other")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.True(body.Success)
+	suite.NotNil(body.Data.Leads, "leads is an empty array, not null")
+	suite.Empty(body.Data.Leads)
+	suite.Equal(int64(0), body.Data.Total)
+	suite.NotContains(rec.Body.String(), "Hidden")
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_OtherRolesGetNothing() {
+	for _, role := range []string{"support", "customer"} {
+		suite.Run(role, func() {
+			suite.SetupTest()
+			lead := models.Lead{BaseModel: models.BaseModel{ID: 10}, FirstName: "Hidden", ExternalID: "crm-x", OwnerID: 5}
+			suite.mockService.On("ListByExternalID", "crm-x").Return([]models.Lead{lead}, nil).Once()
+
+			rec, body := suite.getLeadsAs(role, 5, "/leads?external_id=crm-x")
+
+			suite.Equal(http.StatusOK, rec.Code)
+			suite.Empty(body.Data.Leads)
+			suite.Equal(int64(0), body.Data.Total)
+			suite.NotContains(rec.Body.String(), "Hidden")
+			suite.mockService.AssertExpectations(suite.T())
+		})
+	}
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_UnknownValueIsAnEmptyList() {
+	suite.mockService.On("ListByExternalID", "nope").Return([]models.Lead{}, nil).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id=nope")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.True(body.Success)
+	suite.NotNil(body.Data.Leads)
+	suite.Empty(body.Data.Leads)
+	suite.Equal(int64(0), body.Data.Total)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_NotFoundErrorIsAnEmptyList() {
+	suite.mockService.On("ListByExternalID", "gone").Return(nil, gorm.ErrRecordNotFound).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id=gone")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.NotNil(body.Data.Leads)
+	suite.Empty(body.Data.Leads)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_LookupFailureIsAnInternalError() {
+	suite.mockService.On("ListByExternalID", "boom").Return(nil, errors.New("connection reset")).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id=boom")
+
+	suite.Equal(http.StatusInternalServerError, rec.Code)
+	suite.False(body.Success)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_OverlongValueIsAValidationError() {
+	tooLong := strings.Repeat("é", service.LeadExternalIDMaxLength+1)
+
+	rec, body := suite.getLeadsAs("admin", 1, "/leads?external_id="+url.QueryEscape(tooLong))
+
+	suite.Equal(http.StatusBadRequest, rec.Code)
+	suite.Require().NotNil(body.Error)
+	suite.Equal(utils.ErrCodeValidation, body.Error.Code)
+	suite.Equal(map[string]interface{}{"field": "external_id"}, body.Error.Details)
+	suite.mockService.AssertNotCalled(suite.T(), "ListByExternalID", mock.Anything)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_ColumnWidthInCharactersIsAccepted() {
+	// 255 two-byte characters fit varchar(255): the limit counts characters.
+	atLimit := strings.Repeat("é", service.LeadExternalIDMaxLength)
+	suite.mockService.On("ListByExternalID", atLimit).Return([]models.Lead{}, nil).Once()
+
+	rec, _ := suite.getLeadsAs("admin", 1, "/leads?external_id="+url.QueryEscape(atLimit))
+
+	suite.Equal(http.StatusOK, rec.Code)
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_WinsOverSearchSortAndPaging() {
+	lead := models.Lead{BaseModel: models.BaseModel{ID: 11}, ExternalID: "crm-win", OwnerID: 1}
+	suite.mockService.On("ListByExternalID", "crm-win").Return([]models.Lead{lead}, nil).Once()
+
+	rec, body := suite.getLeadsAs("admin", 1,
+		"/leads?external_id=crm-win&search=anything&classification=spam&sort_by=email&sort_order=desc&offset=40&limit=10")
+
+	suite.Equal(http.StatusOK, rec.Code)
+	suite.Require().Len(body.Data.Leads, 1)
+	suite.Equal(uint(11), body.Data.Leads[0].ID)
+	suite.Equal(1, body.Meta.Page)
+	suite.Equal(10, body.Meta.PerPage)
+	// Only ListByExternalID was expected; the mock fails on Search, List and
+	// the rest, and AssertExpectations runs in TearDownTest.
+}
+
+func (suite *LeadHandlerTestSuite) TestList_ExternalID_EmptyValueKeepsTheNormalList() {
+	suite.mockService.On("List", 0, 20).Return([]models.Lead{}, int64(0), nil).Once()
+
+	rec, _ := suite.getLeadsAs("admin", 1, "/leads?external_id=")
+
+	suite.Equal(http.StatusOK, rec.Code)
 }
