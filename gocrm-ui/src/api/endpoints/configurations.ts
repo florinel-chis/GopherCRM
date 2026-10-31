@@ -38,6 +38,22 @@ export interface LeadConversionSettings {
   autoAssignOwner: boolean;
 }
 
+/**
+ * Why these settings refuse to convert a lead with this status, or null when
+ * they allow it. The one place the UI applies the allowed-statuses rule: the
+ * pages use it to offer the action and to stop an open dialog whose lead the
+ * (re-read) settings no longer allow.
+ */
+export const leadConversionRefusal = (
+  settings: LeadConversionSettings,
+  status: Lead['status'],
+): string | null => {
+  if (settings.allowedStatuses.includes(status)) return null;
+  return status === 'converted'
+    ? 'This lead has already been converted.'
+    : `The conversion settings do not allow converting a lead with status "${status}".`;
+};
+
 export interface ConfigurationFilters {
   category?: string;
 }

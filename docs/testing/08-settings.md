@@ -623,26 +623,33 @@ blocked until the page is built.
   `tests/configuration_integration_test.go` `TestGetUIConfigurations` and, for the lead-conversion
   entries, `configuration_handler_test.go` `TestGetUIConfigurations_CarriesTheLeadConversionContract`
 
-### TC-SET-034 — Confirm configuration changes do not reach the leads pages
+### TC-SET-034 — Confirm configuration changes reach the leads pages
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** Seeded admin logged in; a lead in status `contacted` created with
-  `generateLeadData()`; `leads.conversion.allowed_statuses` at its seeded value
-  `["qualified", "contacted"]`.
+- **Preconditions:** Seeded admin; a lead in status `contacted` created with `generateLeadData()`;
+  `leads.conversion.allowed_statuses` at its seeded value `["qualified", "contacted"]`.
 - **Steps:**
-  1. Record the network requests made after login.
+  1. Open `/login` and record the network requests; sign in.
   2. Open the lead's detail page and look for the "Convert to Customer" action.
-  3. Change `leads.conversion.allowed_statuses` in the Configuration page, then revisit the lead.
-- **Expected:** No `GET /configurations/ui` request is ever issued, and the "Convert to Customer"
-  action is **absent** for a `contacted` lead even though the stored configuration allows that
-  status. `LeadDetail.tsx` and `LeadList.tsx` gate the action on
-  `useConfiguration().getLeadConversionStatuses()`, but `ConfigurationProvider`'s `useEffect` never
-  calls `loadConfigurations()` — it carries a TODO ("Re-enable once backend configuration endpoint is
-  stable") and only clears the loading flag, so `configurations` stays `[]` and every getter falls
-  back to its hardcoded default: `['qualified']` for conversion statuses, `'GopherCRM'` for the
-  company name, `'#1976d2'` for the primary colour. Editing any of those three keys therefore has no
-  observable effect anywhere in the application.
-- **Known issue:** `gocrm-ui/src/contexts/ConfigurationContext.tsx` — the provider is mounted in
-  `App.tsx` but never loads; the Configuration page writes values that nothing reads. Not listed in
-  the FEATURES.md Gap Summary; the closest entry is G14 (no E2E coverage for configuration settings).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
+  3. Change `leads.conversion.allowed_statuses` to `["qualified"]` on the Configuration page, then
+     revisit the lead.
+  4. Sign out, sign in as another user, and record the requests again.
+- **Expected:** No `GET /configurations/ui` is issued on the login page; one is issued after the
+  sign-in. The action is **present** for the `contacted` lead in step 2 and absent after step 3:
+  the save refreshes the app-wide configuration (no reload needed). Signing out drops the values;
+  the next account's sign-in requests them again and never sees the previous account's copy
+  (one shared TanStack Query entry keyed by user id; the session drops cached queries before the
+  new account renders). While the request is in flight, or if it fails, the display getters
+  return their defaults, `'GopherCRM'` for the company name and `'#1976d2'` for the primary
+  colour, and the error is exposed as `error`; the lead-conversion rules are reported as loading
+  or unavailable, never defaulted, and the lead pages show the action disabled with a Retry. Before #117 the provider's mount effect was a
+  TODO that never loaded anything, so editing these keys had no visible effect.
+- **Automation:** automated — Vitest `src/contexts/ConfigurationContext.test.tsx` (no request
+  without a session or while it is restored, configured values, sign-in loads, sign-out clears,
+  account switch refetches without showing the previous values, failed fetch, malformed or missing
+  rule entry, empty status list, one shared request, explicit refresh, and sign-in, sign-out,
+  account switch and session reload through the real `AuthProvider`);
+  `src/pages/leads/LeadConversionSettings.test.tsx` (the lead pages while the rules load or failed);
+  `src/pages/settings/ConfigurationSettings.test.tsx` (refresh after save and reset); the browser
+  path in `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` "a contacted lead converts only with notes
+  when the settings say so" (settings saved through the API, then a fresh sign-in)

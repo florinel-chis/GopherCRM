@@ -15,7 +15,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const queryClient = useContext(QueryClientContext);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const prevUserIdRef = useRef<number | undefined>(undefined);
+  const userIdRef = useRef<number | undefined>(undefined);
+
+  // Publishes the signed-in user. A different account (or none) drops every
+  // cached query first, before anything renders for the new user: clearing
+  // afterwards, from an effect, removed the queries the new account's
+  // screens had already started and left them waiting forever.
+  const publishUser = useCallback(
+    (next: User | null) => {
+      if (userIdRef.current !== undefined && userIdRef.current !== next?.id) {
+        queryClient?.clear();
+      }
+      userIdRef.current = next?.id;
+      setUser(next);
+    },
+    [queryClient],
+  );
 
   // Sign-in attempts are ordered: only the most recently started one may
   // install its session, whatever order the responses arrive in.
@@ -38,7 +53,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (!apiClient.isCurrentSession(session)) {
         return;
       }
-      setUser(userData);
+      publishUser(userData);
     } catch (error) {
       // Only clear tokens on auth errors (401). Other errors (429 rate limit,
       // network issues) should not log the user out. A late failure of an
@@ -51,18 +66,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [queryClient]);
+  }, [queryClient, publishUser]);
 
   useEffect(() => {
     loadUser();
   }, [loadUser]);
-
-  useEffect(() => {
-    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== user?.id) {
-      queryClient?.clear();
-    }
-    prevUserIdRef.current = user?.id;
-  }, [user?.id, queryClient]);
 
   const login = useCallback(async (data: LoginRequest) => {
     const attempt = ++signInAttemptRef.current;
@@ -73,12 +81,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       apiClient.startSession(response.token, response.refresh_token, Boolean(data.remember_me));
       queryClient?.clear();
-      setUser(response.user);
+      publishUser(response.user);
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
     }
-  }, [queryClient]);
+  }, [queryClient, publishUser]);
 
   const register = useCallback(async (data: RegisterRequest) => {
     const attempt = ++signInAttemptRef.current;
@@ -90,12 +98,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Registration returns token and user, so set them directly
       apiClient.startSession(response.token, response.refresh_token, true);
       queryClient?.clear();
-      setUser(response.user);
+      publishUser(response.user);
     } catch (error) {
       console.error('Registration failed:', error);
       throw error;
     }
-  }, [queryClient]);
+  }, [queryClient, publishUser]);
 
   const logout = useCallback(async () => {
     // The stored session ends at once — no refresh or replay can use or
@@ -106,13 +114,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signInAttemptRef.current += 1;
     const revoked = apiClient.endSession((accessToken) => authApi.logout(accessToken));
     queryClient?.clear();
-    setUser(null);
+    publishUser(null);
     try {
       await revoked;
     } catch (error) {
       console.error('Logout error:', error);
     }
-  }, [queryClient]);
+  }, [queryClient, publishUser]);
 
   const refreshUser = useCallback(async () => {
     await loadUser();

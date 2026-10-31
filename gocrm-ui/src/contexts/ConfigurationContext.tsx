@@ -1,78 +1,101 @@
-import React, { useEffect, useState } from 'react';
-import { configurationsApi, type Configuration } from '@/api/endpoints/configurations';
-import { ConfigurationContext, type ConfigurationContextType } from './configuration-context';
+import React, { useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  configurationsApi,
+  type Configuration,
+  type LeadConversionSettings,
+} from '@/api/endpoints/configurations';
+import {
+  ConfigurationContext,
+  UI_CONFIGURATIONS_KEY,
+  type ConfigurationContextType,
+  type LeadConversionState,
+} from './configuration-context';
+import { useAuth } from '@/hooks/useAuth';
+import { useUIConfigurationsQuery } from '@/hooks/useUIConfigurations';
 import { getErrorMessage } from '@/utils/apiError';
 
 interface ConfigurationProviderProps {
   children: React.ReactNode;
 }
 
+// Display values fall back to built-in defaults while nothing is loaded,
+// without a session, after a failed load, or when an entry is absent or
+// malformed. Policy (the lead-conversion rules) never does: see
+// LeadConversionState.
+const DEFAULT_COMPANY_NAME = 'GopherCRM';
+const DEFAULT_PRIMARY_COLOR = '#1976d2';
+
+const NO_CONFIGURATIONS: Configuration[] = [];
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
 export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ children }) => {
-  const [configurations, setConfigurations] = useState<Configuration[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { user, isLoading: authLoading } = useAuth();
+  const queryClient = useQueryClient();
+  const signedIn = user !== null && user !== undefined;
+  const query = useUIConfigurationsQuery();
 
-  const loadConfigurations = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const configs = await configurationsApi.getUIConfigurations();
-      setConfigurations(configs);
-    } catch (err) {
-      console.error('Failed to load configurations:', err);
-      setError(getErrorMessage(err, 'Failed to load configurations'));
-      // Set empty array as fallback
-      setConfigurations([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const configurations = signedIn && query.data ? query.data : NO_CONFIGURATIONS;
+  const isLoading = authLoading || (signedIn && query.isPending);
+  const failed = signedIn && query.isError;
+  const error = failed ? getErrorMessage(query.error, 'Failed to load configurations') : null;
 
-  useEffect(() => {
-    // TODO: Re-enable once backend configuration endpoint is stable
-    setIsLoading(false);
-  }, []);
+  const value = useMemo<ConfigurationContextType>(() => {
+    const find = (key: string) => configurations.find((config) => config.key === key);
 
-  const getConfigValue = <T,>(key: string, defaultValue: T): T => {
-    const config = configurations.find(c => c.key === key);
-    if (!config) return defaultValue;
+    const getString = (key: string, fallback: string): string => {
+      const config = find(key);
+      const parsed = config ? configurationsApi.getValue(config) : undefined;
+      return typeof parsed === 'string' && parsed.trim() !== '' ? parsed : fallback;
+    };
 
-    try {
-      return configurationsApi.getValue(config) as T;
-    } catch {
-      return defaultValue;
-    }
-  };
+    // A boolean entry, or undefined when it is absent or not a boolean.
+    const readBoolean = (key: string): boolean | undefined => {
+      const config = find(key);
+      if (!config || config.type !== 'boolean' || (config.value !== 'true' && config.value !== 'false')) {
+        return undefined;
+      }
+      return config.value === 'true';
+    };
 
-  const getLeadConversionStatuses = (): string[] => {
-    return getConfigValue('leads.conversion.allowed_statuses', ['qualified']);
-  };
+    const getLeadConversion = (): LeadConversionState => {
+      if (isLoading) return { status: 'loading' };
+      // A failed load (also a failed refresh over older values) is not
+      // trusted: the rules may have changed since.
+      if (!signedIn || failed) return { status: 'unavailable' };
 
-  const getCompanyName = (): string => {
-    return getConfigValue('general.company_name', 'GopherCRM');
-  };
+      const statusesEntry = find('leads.conversion.allowed_statuses');
+      const statuses = statusesEntry ? configurationsApi.getValue(statusesEntry) : undefined;
+      const requireNotes = readBoolean('leads.conversion.require_notes');
+      if (!isStringArray(statuses) || requireNotes === undefined) {
+        return { status: 'unavailable' };
+      }
+      return {
+        status: 'ready',
+        settings: {
+          // An empty list is a deliberate choice: nothing is convertible.
+          allowedStatuses: statuses as LeadConversionSettings['allowedStatuses'],
+          requireNotes,
+          // Only drives a hint in the conversion dialog; unknown says nothing.
+          autoAssignOwner: readBoolean('leads.conversion.auto_assign_owner') ?? false,
+        },
+      };
+    };
 
-  const getPrimaryColor = (): string => {
-    return getConfigValue('ui.theme.primary_color', '#1976d2');
-  };
+    return {
+      configurations,
+      isLoading,
+      error,
+      getLeadConversion,
+      getCompanyName: () => getString('general.company_name', DEFAULT_COMPANY_NAME),
+      getPrimaryColor: () => getString('ui.theme.primary_color', DEFAULT_PRIMARY_COLOR),
+      refreshConfigurations: async () => {
+        await queryClient.invalidateQueries({ queryKey: UI_CONFIGURATIONS_KEY });
+      },
+    };
+  }, [configurations, isLoading, error, failed, signedIn, queryClient]);
 
-  const refreshConfigurations = async () => {
-    await loadConfigurations();
-  };
-
-  const value: ConfigurationContextType = {
-    configurations,
-    isLoading,
-    error,
-    getLeadConversionStatuses,
-    getCompanyName,
-    getPrimaryColor,
-    refreshConfigurations,
-  };
-
-  return (
-    <ConfigurationContext.Provider value={value}>
-      {children}
-    </ConfigurationContext.Provider>
-  );
+  return <ConfigurationContext.Provider value={value}>{children}</ConfigurationContext.Provider>;
 };

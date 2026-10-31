@@ -206,7 +206,7 @@ go mod download
 make run
 
 # Or directly with Go
-go run cmd/main.go
+go run ./cmd
 ```
 
 The backend server will start on `http://localhost:8080`. Schema auto-migration runs at startup.
@@ -312,7 +312,9 @@ to `qualified` only, the entry's default value, rather than the seeded `qualifie
 next start re-seeds the row. A lead reaches `converted` only through the convert endpoint: lead
 create/update and the bulk status endpoint refuse it. The lead's company link is carried over to
 the customer as well. `GET /configurations/ui` exposes
-the three settings read-only, so the conversion dialog can follow them.
+the three settings read-only, and the web UI follows them: Convert to Customer is offered on the
+allowed statuses, the conversion dialog requires notes when they are required and says when the
+lead's owner becomes the customer's assigned user.
 
 ### Answer Engine Optimization (AEO)
 

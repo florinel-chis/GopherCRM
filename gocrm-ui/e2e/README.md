@@ -110,7 +110,7 @@ precedence. Playwright does not read that file: without the export, its API help
 ```bash
 # Terminal 1 — backend (port must match VITE_API_BASE_URL)
 cd /path/to/gophercrm
-DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run cmd/main.go
+DISABLE_RATE_LIMIT=true SERVER_PORT=8080 go run ./cmd
 
 # Terminal 2 — from gocrm-ui/
 cd /path/to/gophercrm/gocrm-ui

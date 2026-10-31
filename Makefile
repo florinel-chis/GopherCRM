@@ -28,11 +28,11 @@ create-db:
 
 .PHONY: run
 run:
-	go run cmd/main.go
+	go run ./cmd
 
 .PHONY: build
 build:
-	go build -o bin/gophercrm cmd/main.go
+	go build -o bin/gophercrm ./cmd
 
 .PHONY: test
 test:

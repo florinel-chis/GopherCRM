@@ -16,7 +16,7 @@ support, customer).
 
 ```bash
 make build          # Build binary to bin/gophercrm
-make run            # Run the app (go run cmd/main.go)
+make run            # Run the app (go run ./cmd)
 make test           # Run all tests (go test ./...)
 make create-db      # Create MySQL database from scripts/create_database.sql
 make deps           # Download and tidy Go modules

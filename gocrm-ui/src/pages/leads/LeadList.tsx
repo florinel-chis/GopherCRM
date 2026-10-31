@@ -6,6 +6,7 @@ import {
   Box,
   Paper,
   Typography,
+  Alert,
   Button,
   Chip,
   MenuItem,
@@ -28,6 +29,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi, type LeadFilters } from '@/api/endpoints';
+import { leadConversionRefusal } from '@/api/endpoints/configurations';
 import type { Lead } from '@/types';
 import { formatDate } from '@/utils/date';
 
@@ -86,7 +88,9 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { getLeadConversionStatuses } = useConfiguration();
+  const { getLeadConversion, refreshConfigurations } = useConfiguration();
+  const conversion = getLeadConversion();
+  const conversionSettings = conversion.status === 'ready' ? conversion.settings : null;
   
   const [filters, setFilters] = useState<LeadFilters>({
     page: 1,
@@ -141,10 +145,21 @@ export const Component: React.FC = () => {
       navigate(`/customers/${data.customer_id}`);
     },
     onError: (error: unknown) => {
-      // The server explains refusals such as a lead without an email address.
-      showError(getAPIError(error)?.message || 'Failed to convert lead');
+      // The dialog stays open and shows the server's reason (on the notes
+      // field when the notes were refused). A settings refusal means this
+      // page followed stale settings; any other refusal (already converted,
+      // no email) may mean a stale row.
+      const apiError = getAPIError(error);
+      if (apiError?.code === 'VALIDATION_ERROR') {
+        void refreshConfigurations();
+      }
+      if (apiError?.details?.field !== 'notes') {
+        queryClient.invalidateQueries({ queryKey: ['leads'] });
+      }
     },
   });
+
+  const { reset: resetConvertMutation } = convertMutation;
 
   const columns: Column<Lead>[] = useMemo(() => [
     {
@@ -208,21 +223,47 @@ export const Component: React.FC = () => {
   // View, edit and delete are the row's own icon buttons; the overflow menu
   // carries only what they do not, conversion, and only on leads whose status
   // allows it. Each menu closes over its own row.
-  const conversionStatuses = getLeadConversionStatuses();
+  // While the conversion rules are unknown (loading, or failed to load) no
+  // status is guessed: every unconverted lead shows the action disabled.
+  const conversionActions = (lead: Lead) => {
+    if (conversionSettings) {
+      return !leadConversionRefusal(conversionSettings, lead.status)
+        ? [
+            {
+              label: 'Convert to Customer',
+              icon: <ConvertIcon fontSize="small" />,
+              onClick: () => {
+                resetConvertMutation();
+                setConvertDialog({ open: true, lead });
+              },
+            },
+          ]
+        : [];
+    }
+    return lead.status === 'converted'
+      ? []
+      : [
+          {
+            label:
+              conversion.status === 'loading'
+                ? 'Convert to Customer (loading settings…)'
+                : 'Convert to Customer (settings unavailable)',
+            icon: <ConvertIcon fontSize="small" />,
+            onClick: () => {},
+            disabled: true,
+          },
+        ];
+  };
+  // The dialog's lead as the list reads it now (a refusal re-reads the list),
+  // so its eligibility follows the current settings and the current status.
+  const convertLead = convertDialog.lead
+    ? (data?.data.find((row) => row.id === convertDialog.lead?.id) ?? convertDialog.lead)
+    : null;
+
   const renderRowActions = (lead: Lead) => (
     <RowActionsMenu
       label={`More actions for ${lead.company_name || lead.contact_name}`}
-      actions={
-        conversionStatuses.includes(lead.status)
-          ? [
-              {
-                label: 'Convert to Customer',
-                icon: <ConvertIcon fontSize="small" />,
-                onClick: () => setConvertDialog({ open: true, lead }),
-              },
-            ]
-          : []
-      }
+      actions={conversionActions(lead)}
     />
   );
 
@@ -231,6 +272,11 @@ export const Component: React.FC = () => {
       convertMutation.mutate({ id: convertDialog.lead.id, data });
     }
   }, [convertDialog.lead, convertMutation]);
+
+  const closeConvertDialog = useCallback(() => {
+    setConvertDialog({ open: false });
+    resetConvertMutation();
+  }, [resetConvertMutation]);
 
   const handleSearch = useCallback((value: string) => {
     setFilters(prev => ({ ...prev, search: value, page: 1 }));
@@ -285,6 +331,21 @@ export const Component: React.FC = () => {
           Add Lead
         </Button>
       </Box>
+
+      {conversion.status === 'unavailable' && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          data-testid="conversion-settings-unavailable"
+          action={
+            <Button color="inherit" size="small" onClick={() => void refreshConfigurations()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the lead conversion settings, so leads cannot be converted from here yet.
+        </Alert>
+      )}
 
       <Paper sx={{ mb: 2, p: 2 }}>
         <Box display="flex" gap={2} alignItems="center">
@@ -369,10 +430,18 @@ export const Component: React.FC = () => {
 
       <ConvertLeadDialog
         open={convertDialog.open}
-        lead={convertDialog.lead || null}
-        onClose={() => setConvertDialog({ open: false })}
+        lead={convertLead}
+        onClose={closeConvertDialog}
         onConfirm={handleConvertConfirm}
         isLoading={convertMutation.isPending}
+        requireNotes={conversionSettings?.requireNotes}
+        autoAssignOwner={conversionSettings?.autoAssignOwner}
+        settingsStatus={conversion.status}
+        onRetrySettings={() => void refreshConfigurations()}
+        ineligibleReason={
+          convertLead && conversionSettings ? leadConversionRefusal(conversionSettings, convertLead.status) : null
+        }
+        error={convertMutation.error}
       />
     </Box>
   );

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import { act, render, screen, waitFor, fireEvent } from '@/test/test-utils';
 import { Component as DealForm } from './DealForm';
 import { companiesApi, configurationsApi, customersApi, dealsApi, leadsApi, usersApi } from '@/api/endpoints';
 import type { Configuration } from '@/api/endpoints';
@@ -450,6 +450,9 @@ describe('DealForm', () => {
     });
 
     it('loads the deal into the form without touching the configured currency', async () => {
+      // The app loads the configuration for every signed-in user; an edit
+      // keeps the deal's own currency whatever the default says.
+      vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue([currencyConfig('eur')]);
       render(<DealForm />);
 
       expect(await screen.findByRole('heading', { name: 'Edit Deal' })).toBeInTheDocument();
@@ -461,7 +464,9 @@ describe('DealForm', () => {
       expect(stageSelect()).toHaveTextContent('Proposal');
       expect(screen.getByLabelText('Company')).toHaveValue('Acme Widgets (acme.example)');
       expect(screen.getByLabelText(/^Owner/)).toHaveValue('Ion Ionescu');
-      expect(configurationsApi.getUIConfigurations).not.toHaveBeenCalled();
+      await waitFor(() => expect(configurationsApi.getUIConfigurations).toHaveBeenCalled());
+      await act(async () => {});
+      expect(currency()).toHaveValue('USD');
     });
 
     it('PUTs the full body, keeps the company and omits an untouched owner', async () => {

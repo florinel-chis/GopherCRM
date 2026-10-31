@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import React from 'react';
+import { act, render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as LeadDetail } from './LeadDetail';
 import { leadsApi } from '@/api/endpoints';
 import { createMockLead, createMockCompany } from '@/test/factories';
@@ -28,38 +29,62 @@ vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({ showSuccess, showError }),
 }));
 
-vi.mock('@/hooks/useConfiguration', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>('@/hooks/useConfiguration');
-  return {
-    ...actual,
-    useConfiguration: () => ({ getLeadConversionStatuses: () => ['qualified'] }),
-  };
-});
+// The lead-conversion settings the page reads from the configuration
+// provider (GET /configurations/ui); each test sets its own.
+const conversion = vi.hoisted(() => ({
+  allowedStatuses: ['qualified'] as string[],
+  requireNotes: false,
+  autoAssignOwner: false,
+  refresh: vi.fn(async () => {}),
+}));
+
+vi.mock('@/hooks/useConfiguration', () => ({
+  useConfiguration: () => ({
+    getLeadConversion: () => ({
+      status: 'ready',
+      settings: {
+        allowedStatuses: conversion.allowedStatuses,
+        requireNotes: conversion.requireNotes,
+        autoAssignOwner: conversion.autoAssignOwner,
+      },
+    }),
+    refreshConfigurations: conversion.refresh,
+  }),
+}));
 
 describe('LeadDetail conversion', () => {
   const mockNavigate = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    conversion.allowedStatuses = ['qualified'];
+    conversion.requireNotes = false;
+    conversion.autoAssignOwner = false;
     vi.mocked(useNavigate).mockReturnValue(mockNavigate);
     vi.mocked(useParams).mockReturnValue({ id: '1' });
     vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ status: 'qualified', email: '' }));
   });
 
-  const convertThroughDialog = async () => {
+  const openDialog = async () => {
     fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    return screen.findByRole('dialog');
   };
 
-  it("shows the server's reason when a conversion is refused", async () => {
+  const convertThroughDialog = async () => {
+    const dialog = await openDialog();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    return dialog;
+  };
+
+  it("shows the server's reason in the dialog when a conversion is refused", async () => {
     const reason = 'This lead has no email address. Add one before converting it: every customer needs an email.';
     vi.mocked(leadsApi.convertLead).mockRejectedValue({ response: { status: 400, data: { message: reason } } });
 
     render(<LeadDetail />);
-    await convertThroughDialog();
+    const dialog = await convertThroughDialog();
 
-    await waitFor(() => expect(showError).toHaveBeenCalledWith(reason));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toHaveTextContent(reason);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -67,9 +92,218 @@ describe('LeadDetail conversion', () => {
     vi.mocked(leadsApi.convertLead).mockRejectedValue(new Error('Network Error'));
 
     render(<LeadDetail />);
-    await convertThroughDialog();
+    const dialog = await convertThroughDialog();
 
-    await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to convert lead'));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toHaveTextContent('Failed to convert lead');
+  });
+
+  it('shows the server message for an already converted lead', async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } },
+    });
+
+    render(<LeadDetail />);
+    const dialog = await convertThroughDialog();
+
+    expect(await within(dialog).findByTestId('convert-lead-error')).toHaveTextContent('lead already converted');
+    // The page re-reads the lead, whose status has moved on.
+    await waitFor(() => expect(leadsApi.getLead).toHaveBeenCalledTimes(2));
+  });
+
+  it("offers conversion on the statuses the server allows, not a built-in list", async () => {
+    conversion.allowedStatuses = ['contacted'];
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ status: 'contacted' }));
+    const { unmount } = render(<LeadDetail />);
+    expect(await screen.findByRole('button', { name: /Convert to Customer/i })).toBeInTheDocument();
+    unmount();
+
+    vi.mocked(leadsApi.getLead).mockResolvedValue(createMockLead({ status: 'qualified' }));
+    render(<LeadDetail />);
+    await screen.findByRole('button', { name: /Edit/i });
+    expect(screen.queryByRole('button', { name: /Convert to Customer/i })).not.toBeInTheDocument();
+  });
+
+  it('requires notes when the setting is on and sends them', async () => {
+    conversion.requireNotes = true;
+    vi.mocked(leadsApi.convertLead).mockResolvedValue({ customer_id: 9 });
+
+    render(<LeadDetail />);
+    const dialog = await convertThroughDialog();
+
+    expect(await within(dialog).findByText('Conversion notes are required.')).toBeInTheDocument();
+    expect(leadsApi.convertLead).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText(/Conversion Notes/), { target: { value: 'Signed' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    await waitFor(() =>
+      expect(leadsApi.convertLead).toHaveBeenCalledWith(1, expect.objectContaining({ notes: 'Signed' })),
+    );
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/customers/9'));
+  });
+
+  it("puts the server's notes refusal on the field and re-reads the settings", async () => {
+    // The page still believed notes were optional.
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: {
+        status: 400,
+        data: { code: 'VALIDATION_ERROR', message: 'Conversion notes are required.', details: { field: 'notes' } },
+      },
+    });
+
+    render(<LeadDetail />);
+    const dialog = await convertThroughDialog();
+
+    const notes = within(dialog).getByLabelText(/Conversion Notes/);
+    await waitFor(() => expect(notes).toHaveAttribute('aria-invalid', 'true'));
+    expect(within(dialog).getByText('Conversion notes are required.')).toBeInTheDocument();
+    expect(conversion.refresh).toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('stops an open dialog from converting once the refreshed settings no longer allow the status', async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: {
+        status: 400,
+        data: {
+          code: 'VALIDATION_ERROR',
+          message: 'Leads with status "qualified" cannot be converted.',
+          details: { field: 'status', status: 'qualified', allowed_statuses: [] },
+        },
+      },
+    });
+    // The re-read settings allow no status at all.
+    conversion.refresh.mockImplementationOnce(async () => {
+      conversion.allowedStatuses = [];
+    });
+
+    render(<LeadDetail />);
+    const dialog = await convertThroughDialog();
+
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: /Convert to Customer/i })).toBeDisabled(),
+    );
+    expect(within(dialog).getByTestId('convert-lead-ineligible')).toHaveTextContent(
+      'The conversion settings do not allow converting a lead with status "qualified".',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    await act(async () => {});
+    expect(leadsApi.convertLead).toHaveBeenCalledTimes(1);
+  });
+
+  it('mentions owner assignment when the setting is on', async () => {
+    conversion.autoAssignOwner = true;
+    render(<LeadDetail />);
+    const dialog = await openDialog();
+    expect(within(dialog).getByText(/lead's owner becomes the customer's assigned user/i)).toBeInTheDocument();
+  });
+});
+
+// The page stays mounted when the route moves from one lead to another.
+describe('LeadDetail conversion across leads', () => {
+  const mockNavigate = vi.fn();
+  const leadA = createMockLead({ id: 1, company_name: 'Alpha Leads', contact_name: 'Ann Alpha', status: 'qualified' });
+  const leadB = createMockLead({ id: 2, company_name: 'Bravo Leads', contact_name: 'Ben Bravo', status: 'qualified' });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    conversion.allowedStatuses = ['qualified'];
+    conversion.requireNotes = false;
+    conversion.autoAssignOwner = false;
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '1' });
+    // A fresh object per read, as from the network.
+    vi.mocked(leadsApi.getLead).mockImplementation(async (id: number) => ({ ...(id === 2 ? leadB : leadA) }));
+  });
+
+  const goTo = (rerender: (ui: React.ReactElement) => void, id: string) => {
+    vi.mocked(useParams).mockReturnValue({ id });
+    rerender(<LeadDetail />);
+  };
+
+  it("does not carry one lead's open dialog or refusal to the next lead", async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } },
+    });
+    const { rerender } = render(<LeadDetail />);
+    fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+
+    goTo(rerender, '2');
+    expect(await screen.findByRole('heading', { name: 'Bravo Leads' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Convert to Customer/i }));
+    const next = await screen.findByRole('dialog');
+    expect(next).toHaveTextContent('Ben Bravo');
+    expect(within(next).queryByTestId('convert-lead-error')).not.toBeInTheDocument();
+  });
+
+  it("does not bring back a lead's dialog or old refusal when the user returns to it", async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } },
+    });
+    const { rerender } = render(<LeadDetail />);
+    fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+
+    goTo(rerender, '2');
+    expect(await screen.findByRole('heading', { name: 'Bravo Leads' })).toBeInTheDocument();
+    goTo(rerender, '1');
+    // hidden: an open dialog would hide the page from the accessibility tree.
+    expect(await screen.findByRole('heading', { name: 'Alpha Leads', hidden: true })).toBeInTheDocument();
+    await act(async () => {});
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Convert to Customer/i }));
+    const again = await screen.findByRole('dialog');
+    expect(within(again).queryByTestId('convert-lead-error')).not.toBeInTheDocument();
+  });
+
+  it('keeps what the user typed when a refusal re-reads the same lead', async () => {
+    // The re-read answers a changed record (it moved on meanwhile).
+    let reads = 0;
+    vi.mocked(leadsApi.getLead).mockImplementation(async () => {
+      reads += 1;
+      return { ...leadA, updated_at: reads === 1 ? leadA.updated_at : '2026-10-30T12:00:00Z' };
+    });
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } },
+    });
+    render(<LeadDetail />);
+    fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/Conversion Notes/), { target: { value: 'Typed note' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+    // The refusal re-read the lead (a new object for the same id).
+    await waitFor(() => expect(leadsApi.getLead).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(within(screen.getByRole('dialog')).getByLabelText(/Conversion Notes/)).toHaveValue('Typed note');
+  });
+
+  it('does not open the customer when the conversion answers after the user moved to another lead', async () => {
+    let answer: (value: { customer_id: number }) => void = () => {};
+    vi.mocked(leadsApi.convertLead).mockImplementation(
+      () => new Promise((resolve) => { answer = resolve; }),
+    );
+    const { rerender } = render(<LeadDetail />);
+    fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    await waitFor(() => expect(leadsApi.convertLead).toHaveBeenCalledWith(1, expect.anything()));
+
+    goTo(rerender, '2');
+    expect(await screen.findByRole('heading', { name: 'Bravo Leads' })).toBeInTheDocument();
+    await act(async () => answer({ customer_id: 9 }));
+
+    await waitFor(() => expect(showSuccess).toHaveBeenCalled());
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
 

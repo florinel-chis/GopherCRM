@@ -26,9 +26,10 @@ import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { CustomerAutocomplete } from '@/components/CustomerAutocomplete';
 import { LeadAutocomplete } from '@/components/LeadAutocomplete';
 import { Loading } from '@/components/Loading';
+import { useUIConfigurationsQuery } from '@/hooks/useUIConfigurations';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { configurationsApi, dealsApi, usersApi, type CreateDealData } from '@/api/endpoints';
+import { dealsApi, usersApi, type CreateDealData } from '@/api/endpoints';
 import {
   DEAL_STAGES,
   DEAL_STAGE_VALUES,
@@ -212,11 +213,7 @@ export const Component: React.FC = () => {
 
   // `deals.default_currency` is read from the UI-safe configuration list the
   // app already loads for every authenticated user; EUR when absent.
-  const { data: uiConfigurations } = useQuery({
-    queryKey: ['configurations', 'ui'],
-    queryFn: () => configurationsApi.getUIConfigurations(),
-    enabled: !isEditMode,
-  });
+  const { data: uiConfigurations } = useUIConfigurationsQuery(!isEditMode);
 
   useEffect(() => {
     if (isEditMode || currencyTouched || !uiConfigurations) {
