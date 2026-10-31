@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -611,31 +612,30 @@ func runRequestRootRequired(t *testing.T, db *gorm.DB) {
 func TestRequestCancellationMySQLLockWait(t *testing.T) {
 	open := func(t *testing.T) *gorm.DB { return openCancellationMySQL(t, 4) }
 
-	// lockWaiter reports when the call is blocked on the held row lock. The
-	// lock holder is idle between statements, so the only statement of this
-	// schema that can be executing on another connection is the call's (COMMAND
-	// is Execute for the driver's server-side prepared statements); an
-	// uncontended statement finishes in microseconds, so seeing one on two
-	// consecutive polls means it is waiting for the lock. INNODB_TRX is not
-	// usable here: MySQL 8 reports a lock wait taken during the optimizer's
-	// const-table read of a primary key as RUNNING in state "statistics", and
-	// it serves that view from a cache. Other tests may share the server,
-	// hence the schema filter.
-	lockWaiter := func(t *testing.T, db *gorm.DB) func() bool {
-		seen := 0
+	// lockWaiter reports when the call is blocked on the held row lock: the
+	// statement matching target (the one that touches the locked row) has been
+	// seen executing on the same connection on two consecutive polls. See
+	// lockWaitProbe for why that identifies a lock wait.
+	lockWaiter := func(t *testing.T, db *gorm.DB, target *regexp.Regexp) func() bool {
+		probe := &lockWaitProbe{target: target}
 		return func() bool {
-			var n int64
-			err := db.Raw(`SELECT COUNT(*) FROM information_schema.PROCESSLIST
+			var rows []executingStatement
+			err := db.Raw(`SELECT ID AS id, INFO AS info FROM information_schema.PROCESSLIST
 				WHERE DB = DATABASE() AND ID <> CONNECTION_ID() AND COMMAND IN ('Query', 'Execute')
-				AND INFO IS NOT NULL`).Scan(&n).Error
-			if err != nil || n == 0 {
-				seen = 0
-				return false
+				AND INFO IS NOT NULL`).Scan(&rows).Error
+			if err != nil {
+				rows = nil
 			}
-			seen++
-			return seen >= 2
+			return probe.observe(rows)
 		}
 	}
+	// The statements each call issues against the row the test locks.
+	var (
+		leadLockingRead = regexp.MustCompile("^SELECT \\* FROM `leads` WHERE `leads`\\.`id` = \\d+ .*FOR UPDATE$")
+		leadStatusWrite = regexp.MustCompile("^UPDATE `leads` SET `status`=")
+		leadNotesWrite  = regexp.MustCompile("^UPDATE `leads` SET .*`notes`=")
+		tokenClaim      = regexp.MustCompile("^UPDATE `form_confirmation_tokens` SET `used_at`=")
+	)
 	// lockRow takes an exclusive lock on one row in a separate transaction.
 	lockRow := func(t *testing.T, db *gorm.DB, model interface{}, id uint) (release func()) {
 		holder := db.Begin()
@@ -657,7 +657,7 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		lead := env.leads.bind(t).newLead(models.LeadStatusQualified, nil)
 
 		release := lockRow(t, env.db, &models.Lead{}, lead.ID)
-		err := cancelWhileWaiting(t, lockWaiter(t, env.db), release, func(ctx context.Context) error {
+		err := cancelWhileWaiting(t, lockWaiter(t, env.db, leadLockingRead), release, func(ctx context.Context) error {
 			_, err := env.leads.svc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 			return err
 		})
@@ -675,7 +675,9 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		lead := env.leads.bind(t).newLead(models.LeadStatusNew, nil)
 
 		release := lockRow(t, env.db, &models.Lead{}, lead.ID)
-		err := cancelWhileWaiting(t, lockWaiter(t, env.db), release, func(ctx context.Context) error {
+		// The history row is written before the transaction opens, so it
+		// exists once the status write is seen waiting.
+		err := cancelWhileWaiting(t, lockWaiter(t, env.db, leadStatusWrite), release, func(ctx context.Context) error {
 			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
 			return err
 		})
@@ -702,7 +704,7 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		require.NoError(t, env.db.Create(&existing).Error)
 
 		release := lockRow(t, env.db, &models.Lead{}, existing.ID)
-		err := cancelWhileWaiting(t, lockWaiter(t, env.db), release, func(ctx context.Context) error {
+		err := cancelWhileWaiting(t, lockWaiter(t, env.db, leadNotesWrite), release, func(ctx context.Context) error {
 			_, err := f.service.SubmitPublic(ctx, form.PublicID, validSubmission(), submissionMeta())
 			return err
 		})
@@ -727,7 +729,7 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		require.NoError(t, env.db.First(&stored).Error)
 
 		release := lockRow(t, env.db, &models.FormConfirmationToken{}, stored.ID)
-		err = cancelWhileWaiting(t, lockWaiter(t, env.db), release, func(ctx context.Context) error {
+		err = cancelWhileWaiting(t, lockWaiter(t, env.db, tokenClaim), release, func(ctx context.Context) error {
 			return f.service.ConfirmSubmission(ctx, token)
 		})
 
@@ -735,6 +737,89 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		assert.Empty(t, f.leads(t))
 		require.NoError(t, f.service.ConfirmSubmission(context.Background(), token), "the link stays usable")
 		assert.Len(t, f.leads(t), 1)
+	})
+}
+
+// executingStatement is one row of information_schema.PROCESSLIST.
+type executingStatement struct {
+	ID   int64
+	Info string
+}
+
+// lockWaitProbe decides, from successive PROCESSLIST snapshots, whether the
+// call under test is blocked on a row lock. Only a statement matching target
+// counts, and it must be the same statement on the same connection on two
+// consecutive polls: an uncontended statement finishes in microseconds, so one
+// still executing a poll interval later is waiting for the lock. Requiring the
+// target statement keeps the call's earlier statements (published-form read,
+// history insert, submission insert) from passing for the wait even on a slow
+// server, so cancellation always lands inside the transaction at the intended
+// write. The lock holder is idle between statements and never matches.
+//
+// INNODB_TRX is not usable as the signal: MySQL 8 reports a lock wait taken
+// during the optimizer's const-table read of a primary key as RUNNING in state
+// "statistics", and it serves that view from a cache. Other tests may share
+// the server, hence the schema filter in the query.
+type lockWaitProbe struct {
+	target   *regexp.Regexp
+	lastID   int64
+	lastInfo string
+	seen     int
+}
+
+func (p *lockWaitProbe) observe(rows []executingStatement) bool {
+	var match *executingStatement
+	for i := range rows {
+		if !p.target.MatchString(rows[i].Info) {
+			continue
+		}
+		if match == nil || (rows[i].ID == p.lastID && rows[i].Info == p.lastInfo) {
+			match = &rows[i]
+		}
+	}
+	if match == nil {
+		p.seen, p.lastID, p.lastInfo = 0, 0, ""
+		return false
+	}
+	if p.seen > 0 && match.ID == p.lastID && match.Info == p.lastInfo {
+		p.seen++
+	} else {
+		p.seen, p.lastID, p.lastInfo = 1, match.ID, match.Info
+	}
+	return p.seen >= 2
+}
+
+// TestLockWaitProbe pins the probe's rule without a server: only the target
+// statement, seen twice in a row on one connection, reports a wait.
+func TestLockWaitProbe(t *testing.T) {
+	target := regexp.MustCompile("^UPDATE `leads` SET `status`=")
+	write := executingStatement{ID: 7, Info: "UPDATE `leads` SET `status`='contacted' WHERE id IN (1)"}
+	insert := executingStatement{ID: 7, Info: "INSERT INTO `bulk_operations` (`status`) VALUES ('pending')"}
+	other := executingStatement{ID: 8, Info: "SELECT * FROM `forms` WHERE `public_id` = 'x'"}
+
+	t.Run("a non-target statement never counts, however long it runs", func(t *testing.T) {
+		p := &lockWaitProbe{target: target}
+		for i := 0; i < 5; i++ {
+			assert.False(t, p.observe([]executingStatement{insert, other}))
+		}
+	})
+	t.Run("the target statement on two consecutive polls counts", func(t *testing.T) {
+		p := &lockWaitProbe{target: target}
+		assert.False(t, p.observe([]executingStatement{other, write}))
+		assert.True(t, p.observe([]executingStatement{write, other}))
+	})
+	t.Run("a different statement in between restarts the count", func(t *testing.T) {
+		p := &lockWaitProbe{target: target}
+		assert.False(t, p.observe([]executingStatement{write}))
+		assert.False(t, p.observe([]executingStatement{insert}))
+		assert.False(t, p.observe([]executingStatement{write}))
+		assert.True(t, p.observe([]executingStatement{write}))
+	})
+	t.Run("the same text on another connection or a re-issued statement does not count", func(t *testing.T) {
+		p := &lockWaitProbe{target: target}
+		assert.False(t, p.observe([]executingStatement{write}))
+		assert.False(t, p.observe([]executingStatement{{ID: 9, Info: write.Info}}))
+		assert.False(t, p.observe([]executingStatement{{ID: 9, Info: write.Info + " "}}))
 	})
 }
 
