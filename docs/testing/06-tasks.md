@@ -632,9 +632,13 @@ regression anchors, not endorsements.
 
 
 ### TC-TASK-048 — Customer replacement cannot disclose a hidden lead link
-
-- **Type:** API / integration regression
-- **Setup:** Admin, sales A (owns a lead), sales B and support. For each role, assign one task with no link, one with A's lead, and one with an existing customer. Create another customer as the replacement.
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** Admin, sales A (owns a lead), sales B and support. For each role, assign one task with no link, one with A's lead, and one with an existing customer. Create another customer as the replacement.
 - **Steps:** As each assignee, PUT only `customer_id` naming the replacement. Repeat on a hidden-lead task with a nonexistent customer. As A, separately send both A's `lead_id` and a valid `customer_id`.
 - **Expected:** A valid customer-only request returns **200** for every starting association, clears any lead link, persists the replacement customer, and emits no old lead/customer data. The result does not disclose whether a hidden lead used to be linked. An invalid customer returns **404** without changing either the stored lead or any other task field. Explicitly sending both a visible lead and a customer remains **400** without a write.
-- **Coverage:** `TestLeadVisibilityIntegrationTestSuite/TestTaskUpdate_CustomerReplacementDoesNotRevealALead`, `TestTaskUpdate_InvalidCustomerPreservesHiddenLead`, and `TestTaskUpdate_ExplicitLeadAndCustomerStillConflict` exercise the real HTTP/service/repository path.
+- **Automation:** automated (backend) — `internal/integration/lead_visibility_integration_test.go`
+  `TestLeadVisibilityIntegrationTestSuite/TestTaskUpdate_CustomerReplacementDoesNotRevealALead`,
+  `TestTaskUpdate_InvalidCustomerPreservesHiddenLead` and
+  `TestTaskUpdate_ExplicitLeadAndCustomerStillConflict` exercise the real HTTP/service/repository
+  path; the browser case needs a non-admin role-login helper.
