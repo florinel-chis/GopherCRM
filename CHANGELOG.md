@@ -373,6 +373,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The API key security scheme names the header the server reads.** The spec described a
   separate `ApiKey` header, which is never read; it now documents `Authorization: ApiKey <key>`
   (#227).
+- **Pull-request CI runs the products/quotes and automation migration roots and the auth MySQL
+  roots.** The migrations job now runs `TestProductsAndQuotesMigration` and
+  `TestMigrationAutomationSchema` on MySQL 8 and MariaDB 10.11 and rejects their skips (#228).
+  A `full` run also executes `check-auth.py --persistence` against MySQL; before, those roots
+  skipped on every general change because `make verify-backend` has no `TEST_MYSQL_DSN` (#230).
 - **`make build` and `make run` work again.** They compiled only `cmd/main.go`, but the `cmd`
   package now spans several files, so both failed with `undefined: drainAEO`. They build the
   package (`./cmd`) now, and the documented run commands use `go run ./cmd`.

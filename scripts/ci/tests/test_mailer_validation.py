@@ -46,7 +46,8 @@ class MailerValidationTests(unittest.TestCase):
         self.assertEqual(full['profile'], 'full')
         self.assertEqual(full['specs'], [])
         self.assertEqual(v.core_commands([], full, explicit_full=True), [
-            ('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction')])
+            ('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction'),
+            ('python3', 'scripts/ci/check-auth.py', '--persistence')])
 
     def test_real_candidate_with_documentation_comments_and_active_setting_rejection(self):
         # Frozen minimal fixtures describe the intended edit shape without

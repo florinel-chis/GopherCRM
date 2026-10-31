@@ -108,6 +108,9 @@ class ValidationSelectionTests(fixtures.EngineTests):
                                  list(DATABASE_CHECKS))
                 ids = [c[0] for c in checks]
                 self.assertLess(ids.index('acceptance-regression'), ids.index('database-0'))
+                commands = [c[1] for c in checks]
+                self.assertIn(('python3', 'scripts/ci/check-go.py', 'transaction'), commands)
+                self.assertIn(('python3', 'scripts/ci/check-auth.py', '--persistence'), commands)
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
             await runner.validation_checks(record, ['README.md'])
 

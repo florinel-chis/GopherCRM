@@ -62,7 +62,7 @@ jobs:
           set -o pipefail
           git rev-parse HEAD > migration-revision.txt
           go test -json -race -count=1 -timeout 10m ./cmd/migrate ./internal/models ./internal/repository \
-            -run '^(TestMigrationFresh_FullUpAndDown|TestMigrationUpgrade_FromMainAutoMigratedSchema|TestCustomerWebsiteMigration|TestLookupIndexesMigration|TestMigrateDatabase_SQLiteUpgradeFromV120|TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120|TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade|TestCustomerWebsiteUpgradeFromSQLiteFixture|TestLookupIndexesServeLookupsSQLite|TestPaginationDeterminismSQLite|TestPaginationDeterminismMySQL|TestCompanyDomainNormalizationSQLite|TestCompanyDomainNormalizationMySQL)$' \
+            -run '^(TestMigrationFresh_FullUpAndDown|TestMigrationUpgrade_FromMainAutoMigratedSchema|TestCustomerWebsiteMigration|TestLookupIndexesMigration|TestProductsAndQuotesMigration|TestMigrationAutomationSchema|TestMigrateDatabase_SQLiteUpgradeFromV120|TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120|TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade|TestCustomerWebsiteUpgradeFromSQLiteFixture|TestLookupIndexesServeLookupsSQLite|TestPaginationDeterminismSQLite|TestPaginationDeterminismMySQL|TestCompanyDomainNormalizationSQLite|TestCompanyDomainNormalizationMySQL)$' \
             | tee migration-tests.jsonl
       - name: Require every migration and SQLite upgrade root without skips
         if: ${{ !cancelled() }}

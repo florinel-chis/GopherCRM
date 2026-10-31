@@ -12,7 +12,10 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationUpgrade_FromMainAutoMigratedSchema'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestCustomerWebsiteMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestLookupIndexesMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestProductsAndQuotesMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationAutomationSchema'),
     }
+    migration_roots = len(required)
     if migrations_only:
         required.update(('github.com/florinel-chis/gophercrm/internal/models', name) for name in (
             'TestMigrateDatabase_SQLiteUpgradeFromV120',
@@ -31,7 +34,7 @@ def check(output, root, *, migrations_only=False):
         for path in (root / 'internal/integration').glob('*_test.go'):
             required.update(('github.com/florinel-chis/gophercrm/internal/integration', name)
                             for name in re.findall(r'^func (Test\w+MySQL)\(t \*testing.T\)', path.read_text(), re.M))
-        if len(required) <= 4:
+        if len(required) <= migration_roots:
             raise ValueError('No real SQL integration roots found')
     events = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
     passes = [(event.get('Package'), event.get('Test')) for event in events if event.get('Action') == 'pass']

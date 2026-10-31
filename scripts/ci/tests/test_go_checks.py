@@ -74,6 +74,8 @@ elif sys.argv[1] == 'test':
             self.assertIn('TestCustomerWebsiteMigration', selected['cmd/migrate'])
             self.assertIn('TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade', selected['internal/models'])
             self.assertIn('TestLookupIndexesMigration', selected['cmd/migrate'])
+            self.assertIn('TestProductsAndQuotesMigration', selected['cmd/migrate'])
+            self.assertIn('TestMigrationAutomationSchema', selected['cmd/migrate'])
             for name in ('TestLookupIndexesServeLookupsSQLite', 'TestPaginationDeterminismSQLite',
                          'TestPaginationDeterminismMySQL', 'TestCompanyDomainNormalizationSQLite',
                          'TestCompanyDomainNormalizationMySQL'):

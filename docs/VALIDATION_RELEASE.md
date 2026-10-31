@@ -186,7 +186,10 @@ MariaDB, frontend build health, and health smoke on all three engines. The confi
 migration checks remain required. There are no full frontend unit or unrelated feature-browser
 runs in this profile. Other application changes in the same diff retain full fallback;
 explicit full and release runs retain the complete matrix and execute these transaction
-boundaries on both SQL engines even though ordinary Go suites may skip without SQL. New transaction callers
+boundaries on both SQL engines even though ordinary Go suites may skip without SQL. Every `full`
+run in CI and explicit full local validation also run `python3 scripts/ci/check-auth.py
+--persistence` against MySQL, so the auth and refresh-rotation MySQL roots, which
+`make verify-backend` skips without `TEST_MYSQL_DSN`, cannot skip on a general change (#230). New transaction callers
 or test locations require updating the maintained source map.
 
 This profile corrects the #106 run that selected all 159 SQLite browser cases merely because
@@ -281,13 +284,14 @@ feature-browser run. Tests create uniquely named schemas in the service and temp
 SQLite files; never run these commands against an application database.
 
 The shared `scripts/release/check-sql-tests.py --migrations-only` checker requires all
-thirteen named roots and successful package completion. Missing, duplicate, failed or
+fifteen named roots and successful package completion. Missing, duplicate, failed or
 skipped evidence fails, including skipped descendants under a passing parent. Thus a
 test suite that skips because no SQL server is reachable cannot turn the migration job
 green. The default release mode continues to require real SQL integration coverage and
-also explicitly requires the populated website and lookup-index migration roots. The release
+also explicitly requires the populated website, lookup-index, products/quotes and automation
+migration roots. The release
 workflow needs no repository roots of its own: it calls the CI workflow, whose Database
-migrations jobs run and check the thirteen roots on both engines for the release commit.
+migrations jobs run and check the fifteen roots on both engines for the release commit.
 
 Changes confined to this workflow and the SQL evidence checker/tests select the bounded
 `migration` profile. Local validation runs hygiene (including checker failure-path tests),
