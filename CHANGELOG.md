@@ -370,6 +370,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`make create-db` creates the database the server connects to.** `scripts/create_database.sql`
+  created `gophercrm`, while the default `DB_NAME` is `gocrm`, so the documented MySQL path failed
+  to connect on the first start. The script now creates `gocrm`, `gocrm-ui/cleanup-test-users.sh`
+  reads `DB_NAME` (default `gocrm`) instead of naming `gophercrm`, the backup step in
+  `scripts/anonymize_legacy_deleted_pii.sql` dumps the schema the file runs against, and a hygiene
+  test keeps the script, the config default, `.env.example` and both Compose settings on one name
+  (#226).
 - **The API key security scheme names the header the server reads.** The spec described a
   separate `ApiKey` header, which is never read; it now documents `Authorization: ApiKey <key>`
   (#227).
