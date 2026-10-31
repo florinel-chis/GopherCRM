@@ -436,8 +436,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal: a notes refusal is shown on the notes field, any other (status not allowed, lead already
   converted, no email) above the form with the server's message, in place of the earlier toast. A
   refusal re-reads the settings (status or notes) or the lead (any other), so a stale page catches
-  up, and a re-read keeps what the user typed. Moving from one lead to another closes the dialog and
-  drops the previous lead's refusal; a conversion that answers after the user moved on no longer
+  up, and a re-read keeps what the user typed; when the re-read settings or lead no longer allow the
+  conversion, the open dialog says why and disables Convert. Moving from one lead to another closes
+  the dialog and drops the previous lead's refusal, also when the user returns to it; a conversion that answers after the user moved on no longer
   opens that customer.
 - **Erasure follows the customer login (#108).** A customer record and its own login
   (`customers.user_id` pointing at a `customer`-role account) are now erased together, from either

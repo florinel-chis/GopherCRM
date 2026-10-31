@@ -38,6 +38,7 @@ import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLea
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi } from '@/api/endpoints';
+import { leadConversionRefusal } from '@/api/endpoints/configurations';
 import { AutomationRunsSection } from '@/pages/automation/AutomationRunsSection';
 import type { Lead } from '@/types';
 import { formatDate } from '@/utils/date';
@@ -92,9 +93,14 @@ export const Component: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
   // The lead the conversion dialog was opened for: moving to another lead
-  // (same page, new route id) closes it.
+  // (same page, new route id) closes it, and coming back does not reopen it.
   const [convertDialogFor, setConvertDialogFor] = useState<string | undefined>(undefined);
   const convertDialogOpen = convertDialogFor !== undefined && convertDialogFor === id;
+  const [routeId, setRouteId] = useState(id);
+  if (routeId !== id) {
+    setRouteId(id);
+    setConvertDialogFor(undefined);
+  }
 
   // The lead shown now, for a conversion that answers after the user moved on.
   const currentIdRef = useRef(id);
@@ -149,6 +155,12 @@ export const Component: React.FC = () => {
 
   // A conversion attempt belongs to the lead it was made for; another lead's
   // page never shows its progress or its refusal.
+  // A route change also forgets the last attempt, so returning to its lead
+  // does not bring its refusal back.
+  const { reset: resetConvertMutation } = convertMutation;
+  useEffect(() => {
+    resetConvertMutation();
+  }, [id, resetConvertMutation]);
   const convertAttemptIsThisLead = convertMutation.variables?.leadId === id;
   const convertError = convertAttemptIsThisLead ? convertMutation.error : null;
   const convertPending = convertAttemptIsThisLead && convertMutation.isPending;
@@ -170,6 +182,10 @@ export const Component: React.FC = () => {
   if (isLoading || !lead) {
     return <Loading />;
   }
+
+  // Whether the current settings allow converting this lead as it reads now;
+  // it also stops a dialog left open after the settings or the lead changed.
+  const convertRefusal = conversionSettings ? leadConversionRefusal(conversionSettings, lead.status) : null;
 
   const activities = [
     {
@@ -200,7 +216,7 @@ export const Component: React.FC = () => {
         </Box>
         <Box display="flex" gap={1}>
           {conversionSettings
-            ? conversionSettings.allowedStatuses.includes(lead.status) && (
+            ? !convertRefusal && (
                 <Button
                   variant="contained"
                   color="success"
@@ -436,6 +452,7 @@ export const Component: React.FC = () => {
         autoAssignOwner={conversionSettings?.autoAssignOwner}
         settingsStatus={conversion.status}
         onRetrySettings={() => void refreshConfigurations()}
+        ineligibleReason={convertRefusal}
         error={convertError}
       />
     </Box>

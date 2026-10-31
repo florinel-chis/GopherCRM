@@ -79,6 +79,12 @@ interface ConvertLeadDialogProps {
    */
   settingsStatus?: 'ready' | 'loading' | 'unavailable';
   onRetrySettings?: () => void;
+  /**
+   * Why the current settings refuse this lead (its status is not, or no
+   * longer, allowed); null when they allow it. The dialog then says so and
+   * does not convert.
+   */
+  ineligibleReason?: string | null;
 }
 
 /**
@@ -100,8 +106,10 @@ const ConvertLeadDialogBody: React.FC<ConvertLeadDialogProps & { lead: Lead }> =
   error = null,
   settingsStatus = 'ready',
   onRetrySettings,
+  ineligibleReason = null,
 }) => {
   const settingsKnown = settingsStatus === 'ready';
+  const canConvert = settingsKnown && !ineligibleReason;
   const methods = useForm<ConvertLeadFormData>({
     resolver: zodResolver(requireNotes ? notesRequiredSchema : baseSchema),
     defaultValues: {
@@ -126,7 +134,7 @@ const ConvertLeadDialogBody: React.FC<ConvertLeadDialogProps & { lead: Lead }> =
   }, [error, setError]);
 
   const handleSubmit = (data: ConvertLeadFormData) => {
-    if (!settingsKnown) return;
+    if (!canConvert) return;
     // Filter out empty strings
     const filteredData: ConvertLeadData = {};
     if (data.company_name?.trim()) filteredData.company_name = data.company_name.trim();
@@ -175,6 +183,12 @@ const ConvertLeadDialogBody: React.FC<ConvertLeadDialogProps & { lead: Lead }> =
               {settingsStatus === 'loading'
                 ? 'Loading the conversion settings…'
                 : 'Could not load the conversion settings, so the lead cannot be converted yet.'}
+            </Alert>
+          )}
+
+          {settingsKnown && ineligibleReason && (
+            <Alert severity="warning" sx={{ mb: 2 }} data-testid="convert-lead-ineligible">
+              {ineligibleReason}
             </Alert>
           )}
 
@@ -256,7 +270,7 @@ const ConvertLeadDialogBody: React.FC<ConvertLeadDialogProps & { lead: Lead }> =
           onClick={methods.handleSubmit(handleSubmit)}
           variant="contained"
           color="primary"
-          disabled={isLoading || !settingsKnown}
+          disabled={isLoading || !canConvert}
         >
           {isLoading ? 'Converting...' : 'Convert to Customer'}
         </Button>

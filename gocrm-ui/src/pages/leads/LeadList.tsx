@@ -29,6 +29,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi, type LeadFilters } from '@/api/endpoints';
+import { leadConversionRefusal } from '@/api/endpoints/configurations';
 import type { Lead } from '@/types';
 import { formatDate } from '@/utils/date';
 
@@ -226,7 +227,7 @@ export const Component: React.FC = () => {
   // status is guessed: every unconverted lead shows the action disabled.
   const conversionActions = (lead: Lead) => {
     if (conversionSettings) {
-      return conversionSettings.allowedStatuses.includes(lead.status)
+      return !leadConversionRefusal(conversionSettings, lead.status)
         ? [
             {
               label: 'Convert to Customer',
@@ -253,6 +254,12 @@ export const Component: React.FC = () => {
           },
         ];
   };
+  // The dialog's lead as the list reads it now (a refusal re-reads the list),
+  // so its eligibility follows the current settings and the current status.
+  const convertLead = convertDialog.lead
+    ? (data?.data.find((row) => row.id === convertDialog.lead?.id) ?? convertDialog.lead)
+    : null;
+
   const renderRowActions = (lead: Lead) => (
     <RowActionsMenu
       label={`More actions for ${lead.company_name || lead.contact_name}`}
@@ -423,7 +430,7 @@ export const Component: React.FC = () => {
 
       <ConvertLeadDialog
         open={convertDialog.open}
-        lead={convertDialog.lead || null}
+        lead={convertLead}
         onClose={closeConvertDialog}
         onConfirm={handleConvertConfirm}
         isLoading={convertMutation.isPending}
@@ -431,6 +438,9 @@ export const Component: React.FC = () => {
         autoAssignOwner={conversionSettings?.autoAssignOwner}
         settingsStatus={conversion.status}
         onRetrySettings={() => void refreshConfigurations()}
+        ineligibleReason={
+          convertLead && conversionSettings ? leadConversionRefusal(conversionSettings, convertLead.status) : null
+        }
         error={convertMutation.error}
       />
     </Box>

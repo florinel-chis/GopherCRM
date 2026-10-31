@@ -1069,7 +1069,9 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   (`details.field` `notes`) is shown on the notes field, the dialog stays open and the page re-reads
   the configuration. Step 4: the dialog says the lead's owner becomes the customer's assigned user;
   with the setting off it says nothing about it. A status refusal or "lead already converted" shows
-  the server's message above the form. Before #117 the dialog ignored all three settings and a
+  the server's message above the form; when the re-read settings no longer allow the lead's status
+  (or the re-read lead is already converted), the open dialog says why and its Convert button is
+  disabled. Before #117 the dialog ignored all three settings and a
   refusal closed it, leaving only a snackbar.
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` "a contacted lead
   converts only with notes when the settings say so" (steps 1–2); Vitest

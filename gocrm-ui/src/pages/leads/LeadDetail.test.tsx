@@ -160,6 +160,37 @@ describe('LeadDetail conversion', () => {
     expect(showError).not.toHaveBeenCalled();
   });
 
+  it('stops an open dialog from converting once the refreshed settings no longer allow the status', async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: {
+        status: 400,
+        data: {
+          code: 'VALIDATION_ERROR',
+          message: 'Leads with status "qualified" cannot be converted.',
+          details: { field: 'status', status: 'qualified', allowed_statuses: [] },
+        },
+      },
+    });
+    // The re-read settings allow no status at all.
+    conversion.refresh.mockImplementationOnce(async () => {
+      conversion.allowedStatuses = [];
+    });
+
+    render(<LeadDetail />);
+    const dialog = await convertThroughDialog();
+
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: /Convert to Customer/i })).toBeDisabled(),
+    );
+    expect(within(dialog).getByTestId('convert-lead-ineligible')).toHaveTextContent(
+      'The conversion settings do not allow converting a lead with status "qualified".',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    await act(async () => {});
+    expect(leadsApi.convertLead).toHaveBeenCalledTimes(1);
+  });
+
   it('mentions owner assignment when the setting is on', async () => {
     conversion.autoAssignOwner = true;
     render(<LeadDetail />);
@@ -208,6 +239,29 @@ describe('LeadDetail conversion across leads', () => {
     const next = await screen.findByRole('dialog');
     expect(next).toHaveTextContent('Ben Bravo');
     expect(within(next).queryByTestId('convert-lead-error')).not.toBeInTheDocument();
+  });
+
+  it("does not bring back a lead's dialog or old refusal when the user returns to it", async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: { status: 400, data: { code: 'BAD_REQUEST', message: 'lead already converted' } },
+    });
+    const { rerender } = render(<LeadDetail />);
+    fireEvent.click(await screen.findByRole('button', { name: /Convert to Customer/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Convert to Customer/i }));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+
+    goTo(rerender, '2');
+    expect(await screen.findByRole('heading', { name: 'Bravo Leads' })).toBeInTheDocument();
+    goTo(rerender, '1');
+    // hidden: an open dialog would hide the page from the accessibility tree.
+    expect(await screen.findByRole('heading', { name: 'Alpha Leads', hidden: true })).toBeInTheDocument();
+    await act(async () => {});
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Convert to Customer/i }));
+    const again = await screen.findByRole('dialog');
+    expect(within(again).queryByTestId('convert-lead-error')).not.toBeInTheDocument();
   });
 
   it('keeps what the user typed when a refusal re-reads the same lead', async () => {

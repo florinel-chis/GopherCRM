@@ -126,4 +126,31 @@ describe('LeadList conversion settings', () => {
     );
     expect(conversion.refresh).toHaveBeenCalled();
   });
+  it('stops an open dialog from converting once the refreshed settings no longer allow the status', async () => {
+    vi.mocked(leadsApi.convertLead).mockRejectedValue({
+      response: {
+        status: 400,
+        data: {
+          code: 'VALIDATION_ERROR',
+          message: 'Leads with status "qualified" cannot be converted.',
+          details: { field: 'status', status: 'qualified', allowed_statuses: [] },
+        },
+      },
+    });
+    conversion.refresh.mockImplementationOnce(async () => {
+      conversion.allowedStatuses = [];
+    });
+    render(<LeadList />);
+    const dialog = await openConvertDialog('Bravo Leads');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Convert to Customer' }));
+    expect(await within(dialog).findByTestId('convert-lead-error')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Convert to Customer' })).toBeDisabled(),
+    );
+    expect(within(dialog).getByTestId('convert-lead-ineligible')).toHaveTextContent(
+      'The conversion settings do not allow converting a lead with status "qualified".',
+    );
+    expect(leadsApi.convertLead).toHaveBeenCalledTimes(1);
+  });
 });
