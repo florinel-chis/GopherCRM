@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,6 +45,7 @@ type formPublicServiceStub struct {
 	lastRequest  *service.PublicSubmissionRequest
 	lastMeta     service.SubmissionMeta
 	lastToken    string
+	lastCtx      context.Context
 }
 
 var _ service.FormService = (*formPublicServiceStub)(nil)
@@ -74,16 +76,18 @@ func (s *formPublicServiceStub) PublicDefinition(publicID, origin string) (*serv
 	return s.definition, s.definitionErr
 }
 
-func (s *formPublicServiceStub) SubmitPublic(publicID string, req *service.PublicSubmissionRequest, meta service.SubmissionMeta) (*service.SubmitOutcome, error) {
+func (s *formPublicServiceStub) SubmitPublic(ctx context.Context, publicID string, req *service.PublicSubmissionRequest, meta service.SubmissionMeta) (*service.SubmitOutcome, error) {
 	s.submitCalls++
+	s.lastCtx = ctx
 	s.lastPublicID = publicID
 	s.lastRequest = req
 	s.lastMeta = meta
 	return s.outcome, s.submitErr
 }
 
-func (s *formPublicServiceStub) ConfirmSubmission(rawToken string) error {
+func (s *formPublicServiceStub) ConfirmSubmission(ctx context.Context, rawToken string) error {
 	s.confirmCalls++
+	s.lastCtx = ctx
 	s.lastToken = rawToken
 	return s.confirmErr
 }
@@ -483,4 +487,30 @@ func TestFormEmbedScriptContract(t *testing.T) {
 			t.Errorf("embed script honeypot is missing %q", needle)
 		}
 	}
+}
+
+// requestMarker tags a request context so a test can tell that the service
+// received the request's own context rather than a fresh one (issue #107).
+type requestMarker struct{}
+
+func (suite *FormPublicHandlerTestSuite) TestSubmitAndConfirmRunOnTheRequestContext() {
+	ctx := context.WithValue(context.Background(), requestMarker{}, "submit")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/forms/public/pub-key/submissions",
+		bytes.NewBufferString(`{"values":{"email":"visitor@example.com"},"challenge":"MTIz.abcdef"}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	suite.router.ServeHTTP(httptest.NewRecorder(), req)
+
+	suite.Require().Equal(1, suite.stub.submitCalls)
+	suite.Require().NotNil(suite.stub.lastCtx)
+	suite.Equal("submit", suite.stub.lastCtx.Value(requestMarker{}))
+
+	ctx = context.WithValue(context.Background(), requestMarker{}, "confirm")
+	form := url.Values{"token": {"raw-token"}}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/forms/public/confirm",
+		strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	suite.router.ServeHTTP(httptest.NewRecorder(), req)
+
+	suite.Require().Equal(1, suite.stub.confirmCalls)
+	suite.Equal("confirm", suite.stub.lastCtx.Value(requestMarker{}))
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -477,8 +478,15 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 		Notes:       "Converted from qualified lead",
 	}
 
-	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("ConvertToCustomer", uint(1), mock.MatchedBy(func(c *models.Customer) bool {
+	// The service must receive the request's own context (issue #107), so a
+	// client that goes away stops the conversion.
+	type marker struct{}
+	requestCtx := context.WithValue(context.Background(), marker{}, "convert")
+
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(existingLead, nil)
+	suite.mockService.On("ConvertToCustomer", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx.Value(marker{}) == "convert"
+	}), uint(1), mock.MatchedBy(func(c *models.Customer) bool {
 		return c.FirstName == "John" &&
 			c.LastName == "Doe" &&
 			c.Email == "john@example.com" &&
@@ -487,7 +495,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_Success() {
 	})).Return(expectedCustomer, nil)
 
 	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))
+	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body)).WithContext(requestCtx)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -515,8 +523,8 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 		CompanyName: "Acme Corp",
 	}
 
-	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(existingLead, nil)
+	suite.mockService.On("ConvertToCustomer", mock.Anything, uint(1), mock.Anything).
 		Return(nil, fmt.Errorf("lead already converted: %w", apperrors.ErrLeadConverted))
 
 	body, _ := json.Marshal(payload)
@@ -535,7 +543,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_AlreadyConverted() {
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_ConversionRuleRefusals() {
 	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
 	existingLead := &models.Lead{BaseModel: models.BaseModel{ID: 1}, Status: models.LeadStatusNew, OwnerID: 1}
-	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(existingLead, nil)
 
 	cases := []struct {
 		name    string
@@ -558,7 +566,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_ConversionRuleRefusals(
 	}
 	for _, tc := range cases {
 		suite.Run(tc.name, func() {
-			call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+			call := suite.mockService.On("ConvertToCustomer", mock.Anything, uint(1), mock.Anything).Return(nil, tc.err).Once()
 			defer call.Unset()
 
 			req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
@@ -594,8 +602,8 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LeavesDerivedLinksToThe
 		BaseModel: models.BaseModel{ID: 1}, Email: "lead@example.com", Status: models.LeadStatusQualified,
 		OwnerID: 1, CompanyID: &companyID,
 	}
-	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("ConvertToCustomer", uint(1), mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(existingLead, nil)
+	suite.mockService.On("ConvertToCustomer", mock.Anything, uint(1), mock.MatchedBy(func(c *models.Customer) bool {
 		return c.UserID == nil && c.AssignedToID == nil && c.CompanyID == nil && c.Notes == "Pilot signed"
 	})).Return(&models.Customer{BaseModel: models.BaseModel{ID: 3}}, nil)
 
@@ -624,7 +632,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_SalesUserForbidden() {
 		CompanyName: "Acme Corp",
 	}
 
-	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(existingLead, nil)
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBuffer(body))
@@ -909,7 +917,7 @@ func (suite *LeadHandlerTestSuite) TestUpdate_ConvertedStatusIsAValidationError(
 // doing and log at Warn; only a failure the server owns (500) logs at Error.
 func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheResponse() {
 	suite.router.POST("/leads/:id/convert", suite.handler.ConvertToCustomer)
-	suite.mockService.On("GetByID", uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1}, nil)
+	suite.mockService.On("GetByIDContext", mock.Anything, uint(1)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 1}, OwnerID: 1}, nil)
 	hook := logtest.NewLocal(utils.Logger)
 
 	cases := []struct {
@@ -926,7 +934,7 @@ func (suite *LeadHandlerTestSuite) TestConvertToCustomer_LogLevelFollowsTheRespo
 	}
 	for _, tc := range cases {
 		hook.Reset()
-		call := suite.mockService.On("ConvertToCustomer", uint(1), mock.Anything).Return(nil, tc.err).Once()
+		call := suite.mockService.On("ConvertToCustomer", mock.Anything, uint(1), mock.Anything).Return(nil, tc.err).Once()
 		req := httptest.NewRequest(http.MethodPost, "/leads/1/convert", bytes.NewBufferString(`{}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()

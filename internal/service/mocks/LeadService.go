@@ -3,6 +3,7 @@
 package mocks
 
 import (
+	"context"
 	"time"
 
 	models "github.com/florinel-chis/gophercrm/internal/models"
@@ -80,9 +81,9 @@ func (_m *LeadService) GetConversionTimestamps(since time.Time) ([]time.Time, er
 	return r0, ret.Error(1)
 }
 
-// ConvertToCustomer provides a mock function with given fields: leadID, customerData
-func (_m *LeadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
-	ret := _m.Called(leadID, customerData)
+// ConvertToCustomer provides a mock function with given fields: ctx, leadID, customerData
+func (_m *LeadService) ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error) {
+	ret := _m.Called(ctx, leadID, customerData)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ConvertToCustomer")
@@ -90,19 +91,19 @@ func (_m *LeadService) ConvertToCustomer(leadID uint, customerData *models.Custo
 
 	var r0 *models.Customer
 	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, *models.Customer) (*models.Customer, error)); ok {
-		return rf(leadID, customerData)
+	if rf, ok := ret.Get(0).(func(context.Context, uint, *models.Customer) (*models.Customer, error)); ok {
+		return rf(ctx, leadID, customerData)
 	}
-	if rf, ok := ret.Get(0).(func(uint, *models.Customer) *models.Customer); ok {
-		r0 = rf(leadID, customerData)
+	if rf, ok := ret.Get(0).(func(context.Context, uint, *models.Customer) *models.Customer); ok {
+		r0 = rf(ctx, leadID, customerData)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*models.Customer)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(uint, *models.Customer) error); ok {
-		r1 = rf(leadID, customerData)
+	if rf, ok := ret.Get(1).(func(context.Context, uint, *models.Customer) error); ok {
+		r1 = rf(ctx, leadID, customerData)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -264,6 +265,36 @@ func (_m *LeadService) GetByID(id uint) (*models.Lead, error) {
 
 	if rf, ok := ret.Get(1).(func(uint) error); ok {
 		r1 = rf(id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetByIDContext provides a mock function with given fields: ctx, id
+func (_m *LeadService) GetByIDContext(ctx context.Context, id uint) (*models.Lead, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByIDContext")
+	}
+
+	var r0 *models.Lead
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uint) (*models.Lead, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uint) *models.Lead); ok {
+		r0 = rf(ctx, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.Lead)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uint) error); ok {
+		r1 = rf(ctx, id)
 	} else {
 		r1 = ret.Error(1)
 	}

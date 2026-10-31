@@ -161,8 +161,46 @@ every wait bounded by a context; the MySQL roots create and drop a uniquely name
 injects begin/commit/rollback/savepoint failures deterministically, including poisoned commits
 across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCommitFailedRollback`
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
-be committed). Services still call the manager with `context.Background()`; request-context
-propagation is tracked in #107.
+be committed).
+
+**Request context (#107)** — lead conversion (including the handler's ownership read), the public
+form submission and confirmation, and the three routed bulk status updates run on the HTTP
+request's context: the handler passes `c.Request.Context()` to the service, the service hands it
+to `WithTransaction` / `WithTransactionAndRetry`, and the reads and writes it issues outside the
+managed callback are bound to it as well — the lead and published-form reads that precede the
+transaction and the spam row go through `txManager.DB(ctx)` (a handle bound to the context that
+reuses the active transaction when the context carries one), and the bulk history row is written
+with `BulkOperationRepository.Create(ctx, ...)`. The reCAPTCHA call uses the same context. A request
+that is cancelled or times out therefore stops waiting for a pooled connection or a row lock,
+rolls back and writes nothing: a confirmation token stays unspent, and a captcha check abandoned
+by the request returns the context's error instead of a spam verdict. A bulk batch cancelled after
+its history row exists records `failed` through `UpdateStatus` on `context.WithoutCancel(ctx)`
+bounded by 5 s; if the connection or the row is still held elsewhere when that bound expires,
+the write is abandoned, a warning is logged and the history row stays `pending`. Mail and
+notifications still go out only after the commit and are not tied to the request. The
+cancellation surfaces as the generic failure answer (500, or the invalid-link page for a
+confirmation) to a client that is already gone, and is logged like any other failure of the route.
+
+These entry points (`LeadService.ConvertToCustomer`, `FormService.SubmitPublic` and
+`ConfirmSubmission`, `BulkStatusService.BulkSet*Status`) are transaction roots. Called with a
+context that already carries a transaction they return `utils.ErrTransactionRootRequired` before
+reading or writing anything: they send mail or commit an audit row after their own commit, and
+the conversion settings are read on the root handle, so running inside an enclosing transaction
+would either announce work that transaction could still roll back or need a second connection
+(which deadlocks SQLite's single-connection pool). No production caller nests them; the handlers
+are their only callers.
+
+Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every other
+service, which still passes `context.Background()`. AEO runs deliberately keep the service-owned
+lifecycle context and never take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
+(one-connection pool; cancelled while the first read, the transaction or the spam write waits,
+cancelled before the call, and the bulk outcome recorded `failed` or left `pending` when its own
+bounded write cannot get the connection), `TestRequestCancellationMySQLLockWait` (queued behind
+another transaction's row lock, observed as the same statement still executing in
+`information_schema.PROCESSLIST` on two consecutive polls, which works on MySQL 8 and MariaDB
+10.11), `TestRequestCancellationCaptchaVerifier` (a stalled verification server),
+`TestRequestRootRequired{SQLite,MySQL}`, `TestTransactionManagerDB{SQLite,MySQL}` and, in the
+handler package, `TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits`.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use

@@ -12,6 +12,7 @@ package service
 // create the history row refuses the batch before anything is written.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -72,18 +73,18 @@ type faultyOperationRepo struct {
 	failCreate, failUpdate bool
 }
 
-func (r faultyOperationRepo) Create(operation *models.BulkOperation) error {
+func (r faultyOperationRepo) Create(ctx context.Context, operation *models.BulkOperation) error {
 	if r.failCreate {
 		return errors.New("injected history create fault")
 	}
-	return r.BulkOperationRepository.Create(operation)
+	return r.BulkOperationRepository.Create(ctx, operation)
 }
 
-func (r faultyOperationRepo) UpdateStatus(id uint, status models.BulkOperationStatus) error {
+func (r faultyOperationRepo) UpdateStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error {
 	if r.failUpdate {
 		return errors.New("injected history update fault")
 	}
-	return r.BulkOperationRepository.UpdateStatus(id, status)
+	return r.BulkOperationRepository.UpdateStatus(ctx, id, status)
 }
 
 // eventFaultRepo lets the first `allow` automation events through the
@@ -151,11 +152,11 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 			writeThenFailStatusRepo{repository.NewBulkStatusRepository(db)}, f.env.txManager, quiet,
 			WithBulkAutomationEvents(f.env.repo))
 
-		_, err := svc.BulkSetLeadStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID}, models.LeadStatusQualified)
+		_, err := svc.BulkSetLeadStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID}, models.LeadStatusQualified)
 		require.ErrorIs(t, err, errStatusWriteFault)
-		_, err = svc.BulkSetTicketStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.ticket.ID}, models.TicketStatusResolved)
+		_, err = svc.BulkSetTicketStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.ticket.ID}, models.TicketStatusResolved)
 		require.ErrorIs(t, err, errStatusWriteFault)
-		_, err = svc.BulkSetTaskStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusCompleted)
+		_, err = svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusCompleted)
 		require.ErrorIs(t, err, errStatusWriteFault)
 
 		var lead models.Lead
@@ -193,7 +194,7 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		svc := NewBulkStatusService(repository.NewBulkOperationRepository(db),
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(events))
 
-		_, err := svc.BulkSetLeadStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID, second.ID}, models.LeadStatusQualified)
+		_, err := svc.BulkSetLeadStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID, second.ID}, models.LeadStatusQualified)
 		require.ErrorIs(t, err, errEventWriteFault)
 		require.Equal(t, 2, recorded, "the fault must come after events were written inside the transaction")
 
@@ -218,7 +219,7 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		svc := NewBulkStatusService(repository.NewBulkOperationRepository(db),
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(f.env.repo))
 
-		result, err := svc.BulkSetLeadStatus(f.env.sales.ID, models.RoleSales, []uint{f.lead.ID, f.lead.ID}, models.LeadStatusQualified)
+		result, err := svc.BulkSetLeadStatus(context.Background(), f.env.sales.ID, models.RoleSales, []uint{f.lead.ID, f.lead.ID}, models.LeadStatusQualified)
 		require.NoError(t, err)
 		assert.Equal(t, &models.BulkStatusUpdateResult{Updated: 1}, result)
 
@@ -243,9 +244,9 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		svc := NewBulkStatusService(repository.NewBulkOperationRepository(db),
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(f.env.repo))
 
-		_, err := svc.BulkSetTicketStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.ticket.ID}, models.TicketStatusResolved)
+		_, err := svc.BulkSetTicketStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.ticket.ID}, models.TicketStatusResolved)
 		require.NoError(t, err)
-		_, err = svc.BulkSetTaskStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusCompleted)
+		_, err = svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusCompleted)
 		require.NoError(t, err)
 		assert.Empty(t, f.env.events())
 	})
@@ -256,14 +257,14 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		svc := NewBulkStatusService(faultyOperationRepo{BulkOperationRepository: repository.NewBulkOperationRepository(db), failUpdate: true},
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet)
 
-		result, err := svc.BulkSetTaskStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusInProgress)
+		result, err := svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusInProgress)
 		require.NoError(t, err)
 		assert.Equal(t, 1, result.Updated)
 		var task models.Task
 		reload(t, db, &task, f.task.ID)
 		assert.Equal(t, models.TaskStatusInProgress, task.Status)
 
-		_, err = svc.BulkSetTaskStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID, 999999}, models.TaskStatusPending)
+		_, err = svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID, 999999}, models.TaskStatusPending)
 		require.ErrorIs(t, err, apperrors.ErrNotFound, "the refusal is reported as itself, not as the history fault")
 
 		rows := operations(t, db)
@@ -279,7 +280,7 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		svc := NewBulkStatusService(faultyOperationRepo{BulkOperationRepository: repository.NewBulkOperationRepository(db), failCreate: true},
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(f.env.repo))
 
-		_, err := svc.BulkSetLeadStatus(f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID}, models.LeadStatusContacted)
+		_, err := svc.BulkSetLeadStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.lead.ID}, models.LeadStatusContacted)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create bulk operation")
 
@@ -297,7 +298,7 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 			repository.NewBulkStatusRepository(db), f.env.txManager, quiet, WithBulkAutomationEvents(f.env.repo))
 		mine := f.env.createLead(f.env.other, models.LeadStatusNew)
 
-		_, err := svc.BulkSetLeadStatus(f.env.other.ID, models.RoleSales, []uint{mine.ID, f.lead.ID}, models.LeadStatusContacted)
+		_, err := svc.BulkSetLeadStatus(context.Background(), f.env.other.ID, models.RoleSales, []uint{mine.ID, f.lead.ID}, models.LeadStatusContacted)
 		require.ErrorIs(t, err, apperrors.ErrForbidden)
 		appErr, ok := apperrors.AsAppError(err)
 		require.True(t, ok)
@@ -312,7 +313,7 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		for i := range tooMany {
 			tooMany[i] = uint(i + 1)
 		}
-		_, err = svc.BulkSetTaskStatus(f.env.admin.ID, models.RoleAdmin, tooMany, models.TaskStatusPending)
+		_, err = svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, tooMany, models.TaskStatusPending)
 		appErr, ok = apperrors.AsAppError(err)
 		require.True(t, ok, fmt.Sprintf("got %T", err))
 		assert.Equal(t, models.MaxBulkStatusItems, appErr.Details["max"])

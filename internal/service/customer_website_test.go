@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestCustomerWebsiteValidation(t *testing.T) {
 			assert.ErrorIs(t, s.Create(customer), apperrors.ErrValidation)
 			assert.ErrorIs(t, s.Update(customer), apperrors.ErrValidation)
 			leadService := NewLeadService(nil, nil, nil, nil)
-			_, err := leadService.ConvertToCustomer(1, customer)
+			_, err := leadService.ConvertToCustomer(context.Background(), 1, customer)
 			assert.ErrorIs(t, err, apperrors.ErrValidation)
 		})
 	}

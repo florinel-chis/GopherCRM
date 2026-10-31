@@ -143,7 +143,7 @@ func (h *FormPublicHandler) Submit(c *gin.Context) {
 		return
 	}
 
-	outcome, err := h.formService.SubmitPublic(c.Param("key"), &req, service.SubmissionMeta{
+	outcome, err := h.formService.SubmitPublic(c.Request.Context(), c.Param("key"), &req, service.SubmissionMeta{
 		IP:        c.ClientIP(),
 		UserAgent: clipRunes(c.GetHeader("User-Agent"), formUserAgentMaxLength),
 		Origin:    requestOrigin(c),
@@ -208,7 +208,7 @@ func (h *FormPublicHandler) Confirm(c *gin.Context) {
 		return
 	}
 
-	if err := h.formService.ConfirmSubmission(token); err != nil {
+	if err := h.formService.ConfirmSubmission(c.Request.Context(), token); err != nil {
 		if errors.Is(err, service.ErrInvalidConfirmationToken) {
 			logger.WithError(utils.LogError(err)).Warn("Form confirmation token rejected")
 		} else {

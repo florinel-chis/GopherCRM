@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -110,7 +111,7 @@ func convertLead(t *testing.T, db *gorm.DB, lead *models.Lead) *models.Customer 
 		repository.NewCompanyRepository(db),
 		utils.NewTransactionManager(db),
 	)
-	customer, err := leadService.ConvertToCustomer(lead.ID, &models.Customer{})
+	customer, err := leadService.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 	require.NoError(t, err)
 
 	// The link the erasure depends on. If this ever stops being set, the

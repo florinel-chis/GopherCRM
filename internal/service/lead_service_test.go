@@ -356,7 +356,7 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_Success() {
 	})
 	suite.mockLeadRepo.On("ConvertToCustomer", uint(1), uint(1)).Return(nil)
 
-	customer, err := suite.leadService.ConvertToCustomer(1, customerData)
+	customer, err := suite.leadService.ConvertToCustomer(context.Background(), 1, customerData)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "John", customer.FirstName)
 	assert.Equal(suite.T(), "+1234567890", customer.Phone)
@@ -372,7 +372,7 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_LeadNotFound() {
 
 	suite.mockLeadRepo.On("GetByID", uint(999)).Return(nil, errors.New("record not found"))
 
-	customer, err := suite.leadService.ConvertToCustomer(999, customerData)
+	customer, err := suite.leadService.ConvertToCustomer(context.Background(), 999, customerData)
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), customer)
 }
@@ -394,7 +394,7 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_AlreadyConverted() {
 
 	suite.mockLeadRepo.On("GetByID", uint(1)).Return(lead, nil)
 
-	customer, err := suite.leadService.ConvertToCustomer(1, customerData)
+	customer, err := suite.leadService.ConvertToCustomer(context.Background(), 1, customerData)
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadConverted))
 	assert.Nil(suite.T(), customer)
@@ -420,7 +420,7 @@ func (suite *LeadServiceTestSuite) TestConvertToCustomer_CustomerCreationFails()
 	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo)
 	suite.mockCustomerRepo.On("Create", mock.Anything).Return(errors.New("email already exists"))
 
-	customer, err := suite.leadService.ConvertToCustomer(1, customerData)
+	customer, err := suite.leadService.ConvertToCustomer(context.Background(), 1, customerData)
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "email already exists")
 	assert.Nil(suite.T(), customer)

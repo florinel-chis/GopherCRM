@@ -569,9 +569,17 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		return
 	}
 
-	// Check if lead exists and user has permission
-	lead, err := h.leadService.GetByID(uint(id))
+	// Check if lead exists and user has permission. The read is bound to the
+	// request, so a client that has gone away stops waiting for a connection.
+	lead, err := h.leadService.GetByIDContext(c.Request.Context(), uint(id))
 	if err != nil {
+		if ctxErr := c.Request.Context().Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			// The client went away while the read waited; nobody reads
+			// this answer, and the lead's existence was never checked.
+			logger.WithError(utils.LogError(err)).Warn("Lead conversion abandoned by the request")
+			utils.RespondInternalError(c)
+			return
+		}
 		logger.WithError(utils.LogError(err)).Warn("Lead not found")
 		utils.RespondNotFound(c, "Lead not found")
 		return
@@ -598,7 +606,7 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		Notes:     req.Notes,
 	}
 
-	customer, err := h.leadService.ConvertToCustomer(uint(id), customerData)
+	customer, err := h.leadService.ConvertToCustomer(c.Request.Context(), uint(id), customerData)
 	if err != nil {
 		// A refusal the caller can act on (4xx) is a warning; only a
 		// failure the server owns (500) is logged as an error.
