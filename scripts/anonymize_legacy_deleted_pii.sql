@@ -62,7 +62,9 @@
 -- HOW TO RUN
 -- ----------
 --   1. TAKE A BACKUP. There is no undo, and the data is gone once committed.
---        mysqldump --single-transaction gophercrm > gophercrm-before-erasure.sql
+--        mysqldump --single-transaction <database> > before-erasure.sql
+--      <database> is the same schema you run this file against below (DB_NAME;
+--      the shipped default is gocrm).
 --   2. Run the DRY RUN section and read the counts. If they are not what you
 --      expect, stop.
 --   3. Run the REMEDIATION section.

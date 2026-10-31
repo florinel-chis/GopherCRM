@@ -139,10 +139,9 @@ The UI calls `http://localhost:8080/api/v1` unless `VITE_API_BASE_URL` says othe
 make create-db                   # mysql -u root < scripts/create_database.sql
 ```
 
-`scripts/create_database.sql` creates a database called `gophercrm`, while the default `DB_NAME` is
-`gocrm` (`internal/config/config.go:248`, `.env.example`). Set `DB_NAME=gophercrm` in `.env`, or
-create `gocrm` yourself; otherwise the first start fails to connect (#226). Then set `DB_DRIVER=mysql` and
-the `DB_*` credentials and run `go run ./cmd`.
+`scripts/create_database.sql` creates `gocrm`, the default `DB_NAME` (`internal/config/config.go`,
+`.env.example`). A fork that renames the database changes both together; a hygiene test fails when
+they differ. Then set `DB_DRIVER=mysql` and the `DB_*` credentials and run `go run ./cmd`.
 
 The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an nginx-served UI. See
 [DOCKER.md](DOCKER.md) and section 5.1 below before using it beyond a laptop.
