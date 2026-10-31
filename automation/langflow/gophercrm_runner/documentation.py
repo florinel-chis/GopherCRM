@@ -24,6 +24,12 @@ FEATURE_DOCS = {
     'user': '07-users', 'configuration': '08-settings', 'label': '10-labels',
     'aeo': '11-aeo', 'form': '12-forms', 'compan': '13-companies', 'deal': '14-deals',
 }
+# Fork and extension guides: routes, schema and configuration change what a fork
+# merges and how it extends the code; forms, automation, tickets and quotes are the
+# modules the use-case recipes build on.
+FORK_GUIDES = ('docs/FORKING.md', 'docs/EXTENDING.md')
+USE_CASES = 'docs/USE_CASES.md'
+USE_CASE_FEATURES = ('form', 'automation', 'ticket', 'quote')
 REVIEW_SCHEMA = {
     'type': 'array', 'items': {
         'type': 'object', 'additionalProperties': False,
@@ -79,6 +85,12 @@ def suggestions(paths):
                     add((f'docs/testing/{name}.md',), 'affected feature guidance')
             if path.startswith(('internal/models/', 'internal/database/', 'cmd/migrate/')):
                 add(('docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+                add(FORK_GUIDES, 'fork upgrade and extension guidance')
+            if (path.startswith('internal/config/') or path == 'cmd/main.go'
+                    or (path.startswith('internal/handler/') and path.endswith('routes.go'))):
+                add(FORK_GUIDES, 'fork upgrade and extension guidance')
+            if any(feature in lower for feature in USE_CASE_FEATURES):
+                add((USE_CASES,), 'use-case recipes')
             if 'aeo' in lower:
                 add(('docs/AEO_SECURITY.md',), 'AEO operations and security')
             if path.startswith('internal/middleware/') or 'auth' in lower:
@@ -89,6 +101,7 @@ def suggestions(paths):
                 add(('docs/SETUP.md', '.env.example'), 'runtime configuration')
         elif path.startswith('migrations/'):
             add((*PRODUCT, 'docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+            add(FORK_GUIDES, 'fork upgrade and extension guidance')
         else:
             add((*PRODUCT, 'docs/DEVELOPMENT.md'), 'unmapped change; assess conservatively')
     return [{'path': p, 'reasons': sorted(reasons)} for p, reasons in sorted(selected.items())]

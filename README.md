@@ -47,6 +47,29 @@ command and open http://localhost:3001 instead.
 
 If it's useful, a star helps others find it.
 
+## Fork it
+
+GopherCRM is meant to be forked and adapted. A fork starts with the modules listed under Features,
+four roles (admin, sales, support, customer), and the machinery that keeps them working: 990
+top-level Go test functions, 22 Playwright specs, 12 MySQL migration pairs checked against
+MySQL 8 and MariaDB 10.11, and 5 CI workflows (measured on `4dfe404`; commands in
+[FORKING.md](docs/FORKING.md#9-why-fork-instead-of-rebuild)).
+
+- [docs/FORKING.md](docs/FORKING.md) — first run, rebranding, configuration, deployment, CI and
+  staying in sync with upstream.
+- [docs/USE_CASES.md](docs/USE_CASES.md) — worked recipes for concrete deployments, with their gaps.
+- [docs/EXTENDING.md](docs/EXTENDING.md) — adding or removing entities, routes, migrations and modules.
+
+Three things catch most first runs from source (`cp .env.example .env`, then `go run ./cmd` or
+`make run`):
+
+- **Replace the example `JWT_SECRET`.** The placeholder is long enough to start the app, so a copied
+  `.env.example` runs with a public secret (`internal/config/config.go:230-240`, #210).
+- **Set `CORS_ALLOWED_ORIGINS`** for any UI origin other than localhost on 5173, 3000 or 8080
+  (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
+- **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
+  admin with `make build-tools && make create-admin`.
+
 ## Features
 
 <details>

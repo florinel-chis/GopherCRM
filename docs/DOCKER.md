@@ -75,9 +75,13 @@ anything shared.
 
 Notes on the wiring:
 
-- The backend runs with `SERVER_MODE=production` (gin release mode). That is
-  safe over plain HTTP because authentication is entirely header-based
-  (Bearer JWT / `ApiKey`); the server never sets cookies.
+- The backend runs with `SERVER_MODE=production` (gin release mode). That does
+  not make plain HTTP safe. Authentication is header-based (Bearer JWT /
+  `ApiKey`, `internal/middleware/auth.go`), but the login request carries the
+  password and every API call carries a token, so over plain HTTP both cross
+  the network in clear text. The stack as shipped is for `localhost`; put a
+  TLS-terminating reverse proxy in front of the UI port before anyone reaches
+  it over a network.
 - `TRUSTED_PROXIES=172.28.0.0/16` matches the fixed compose subnet so the
   rate limiter keys on the real client IP forwarded by the ui nginx, not on
   the proxy container's address. If you change the subnet in
@@ -86,6 +90,14 @@ Notes on the wiring:
   `/api/v1`, i.e. same-origin through the nginx proxy). To point the UI at a
   different API origin, rebuild:
   `docker compose build ui --build-arg VITE_API_BASE_URL=https://api.example.com/api/v1`.
+- `VITE_API_BASE_URL` is the only build argument `gocrm-ui/Dockerfile`
+  accepts, and `gocrm-ui/.dockerignore` keeps `.env` and `.env.*` out of the
+  build context. `VITE_APP_NAME` therefore never reaches the UI image, which
+  always shows the fallback name from the source (`MainLayout.tsx:256` and
+  three other places). To brand the image, add `ARG VITE_APP_NAME` and
+  `ENV VITE_APP_NAME=$VITE_APP_NAME` before `RUN npm run build` in
+  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. A single
+  product-name source is tracked in #221.
 - AEO: configure API keys, models, and base URLs as an admin under **AEO >
   Settings**. Changes take effect on the next run and on prompt generation
   without rebuilding. Keys are encrypted; model and endpoint overrides are
@@ -112,6 +124,68 @@ Notes on the wiring:
   others: those serve the API and record events but neither execute runs nor
   reconcile them at boot. Runs left `running` by a killed worker container
   are recovered when the next worker container boots.
+
+## Running Compose beyond localhost
+
+Both Compose files are built for one developer machine. They set a fixed list
+of backend variables (`docker-compose.yml:41-60`,
+`docker-compose.sqlite.yml:25-43`) and pass nothing else from the host or the
+repo-root `.env`: Compose uses that file only to fill the `${...}`
+placeholders in the YAML. Before exposing a stack, know what it does and does
+not set.
+
+Set by the Compose files:
+
+- `JWT_SECRET`, `API_KEY_SECRET`, `LOG_LEVEL` and, in the MySQL stack,
+  `DB_PASSWORD`, from the shell or `.env`.
+- `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS`, **hard-coded** to
+  `http://localhost:${UI_PORT}` (and `127.0.0.1`). Behind a real host name,
+  password-reset links point at localhost and browsers on the real origin get
+  a bare 403 from the CORS check.
+- `SERVER_MODE=production`, `TRUSTED_PROXIES` for the fixed subnet,
+  `API_PREFIX`, `LOG_FORMAT=json` and the database settings.
+
+Not set, so the backend falls back to its defaults (`internal/config/config.go`):
+
+- `SMTP_*`: mail is logged, not sent (see the outbound email note above).
+- `PUBLIC_BASE_URL` (default `http://localhost:8080`): form confirmation links
+  point at localhost.
+- `RECAPTCHA_*`: the reCAPTCHA spam layer is skipped.
+- `AUTOMATION_ENABLED`, `AUTOMATION_POLL_INTERVAL_SECONDS`: the worker runs
+  with its defaults.
+- `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR`, `AEO_EGRESS_*`, the
+  `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
+  in AEO > Settings).
+- `JWT_ACCESS_TOKEN_MINUTES`, `REFRESH_TOKEN_EXPIRY_DAYS` and the other
+  token lifetimes.
+
+To change any of these, add them to the backend `environment` in a
+`docker-compose.override.yml` (Compose merges it automatically for
+`docker-compose.yml`; pass it with a second `-f` for the SQLite file) rather
+than editing the shipped files. A documented production override is tracked
+in #222. In the SQLite stack the backend also loads `/data/.env` from its
+volume (`Dockerfile:36-38`); variables set in `environment` take precedence
+over it.
+
+### Several installations on one host
+
+Each stack is two (SQLite) or three (MySQL) containers, not one. The host
+ports (`8080` for the backend, `UI_PORT` for the UI), the project name
+(`gophercrm-sqlite` in the SQLite file, the directory name for the MySQL
+file) and the subnet (`172.28.0.0/16` or `172.29.0.0/16`, which
+`TRUSTED_PROXIES` must match) are fixed in the files
+(`docker-compose.sqlite.yml:20,47,73`, `docker-compose.yml:62,85`). A second
+installation from the same file needs, in its override:
+
+- its own project name (`docker compose -p client-b ...`), which also gives it
+  its own volume names;
+- its own backend host port, or no published backend port at all, and its own
+  `UI_PORT`;
+- its own subnet, with `TRUSTED_PROXIES` changed to match: two networks with
+  the same range cannot both be created;
+- its own `JWT_SECRET` and `API_KEY_SECRET`;
+- its own host name routed by the reverse proxy, with `APP_BASE_URL`,
+  `PUBLIC_BASE_URL` and `CORS_ALLOWED_ORIGINS` set to it.
 
 ## SQLite flavor (no database server)
 
