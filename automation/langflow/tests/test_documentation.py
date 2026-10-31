@@ -148,6 +148,56 @@ class DocumentationTests(unittest.TestCase):
             selected = {d['path'] for d in docs.suggestions([path])}
             self.assertTrue({'docs/SETUP.md', 'docs/DOCKER.md'}.issubset(selected))
 
+    def test_route_schema_and_configuration_changes_include_fork_guides(self):
+        for path in ('internal/handler/routes.go', 'internal/handler/aeo_routes.go',
+                     'internal/handler/form_public_routes.go', 'internal/models/lead.go',
+                     'internal/database/migrate.go', 'cmd/migrate/main.go', 'migrations/new.up.sql',
+                     'internal/config/config.go', 'cmd/main.go'):
+            with self.subTest(path=path):
+                selected = {d['path'] for d in docs.suggestions([path])}
+                self.assertTrue({'docs/FORKING.md', 'docs/EXTENDING.md'}.issubset(selected))
+        for path in ('internal/handler/lead_handler.go', 'internal/service/customer_service.go',
+                     'gocrm-ui/src/pages/leads/LeadList.tsx', 'cmd/create-admin/main.go',
+                     'docs/FEATURES.md'):
+            with self.subTest(path=path):
+                selected = {d['path'] for d in docs.suggestions([path])}
+                self.assertFalse({'docs/FORKING.md', 'docs/EXTENDING.md'} & selected)
+
+    def test_forms_automation_ticket_and_quote_changes_include_use_cases(self):
+        for path in ('internal/service/form_service.go', 'internal/service/automation_engine.go',
+                     'internal/handler/ticket_handler.go', 'internal/models/quote.go',
+                     'gocrm-ui/src/pages/automation/DryRunDialog.tsx', 'internal/models/form.go',
+                     'internal/forms/challenge.go', 'internal/handler/assets/form_embed.js',
+                     'gocrm-ui/src/pages/forms/FormBuilder.tsx', 'gocrm-ui/src/api/endpoints/forms.ts',
+                     'gocrm-ui/src/types/automation.ts', 'cmd/automation_runtime.go',
+                     'gocrm-ui/src/pages/quotes/DealQuotesSection.tsx', 'internal/mocks/TicketService.go',
+                     'gocrm-ui/src/pages/tickets/TicketList.tsx', 'internal/service/form_service_test.go'):
+            with self.subTest(path=path):
+                selected = docs.suggestions([path])
+                use_cases = next(d for d in selected if d['path'] == 'docs/USE_CASES.md')
+                self.assertEqual(use_cases['reasons'], ['use-case recipes'])
+        for path in ('internal/service/customer_service.go', 'automation/langflow/README.md',
+                     'automation/langflow/gophercrm_runner/engine.py', 'migrations/new.up.sql',
+                     'gocrm-ui/src/pages/users/UserForm.tsx', 'gocrm-ui/src/pages/companies/CompanyForm.tsx',
+                     'gocrm-ui/src/pages/deals/dealFormat.ts', 'gocrm-ui/src/pages/leads/LeadForm.tsx',
+                     'gocrm-ui/src/components/form/FormSelect.tsx', 'internal/service/platform_info.go'):
+            with self.subTest(path=path):
+                self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([path])})
+
+    def test_frozen_scope_patterns_keep_use_case_guidance(self):
+        for pattern in ('internal/service/form*.go', 'internal/handler/form*.go', 'internal/models/form*',
+                        'internal/service/automation_*.go', 'internal/handler/ticket*.go', 'internal/models/quote*.go'):
+            with self.subTest(pattern=pattern):
+                self.assertIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+        for pattern in ('internal/service/*.go', 'internal/service/user*.go', 'gocrm-ui/src/pages/deals/*.tsx'):
+            with self.subTest(pattern=pattern):
+                self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+
+    def test_changed_fork_documents_are_always_assessed(self):
+        selected = {d['path'] for d in docs.suggestions(
+            ['docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'])}
+        self.assertEqual(selected, {'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'})
+
     def test_legacy_prepared_batch_policy_retains_observed_v050_identity(self):
         from dataclasses import replace
         from gophercrm_runner.batches import policy_hash

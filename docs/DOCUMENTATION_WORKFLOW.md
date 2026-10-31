@@ -83,7 +83,10 @@ never advances the batch. Disposition does not edit GitHub or resume the next ti
 Application changes suggest README, CHANGELOG, FEATURES and ROADMAP, plus relevant feature testing
 guides. Schema changes include the data model and upgrade/setup guidance. Configuration
 changes include setup and example environment settings. Auth/shared middleware and AEO
-changes include their operational/security guidance. Workflow and delivery changes include
+changes include their operational/security guidance. Route, schema and configuration changes
+also suggest the fork guides (FORKING, EXTENDING); changes to the forms, automation, ticket and
+quote modules suggest USE_CASES, matched on their feature directories and file-name prefixes
+(`form_`, `automation`, `ticket`, `quote`), so an unrelated `UserForm.tsx` does not. Workflow and delivery changes include
 the general guides, DEVELOPMENT, VALIDATION_RELEASE, this runbook and the Langflow guides. Changed documentation
 is always included; unmapped changes conservatively suggest general guidance.
 

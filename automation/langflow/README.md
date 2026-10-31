@@ -78,6 +78,49 @@ SMTP transport/header/TLS/privacy regressions and affected mail callers, with he
 Install reviewed main and verify module identity before admitting a fresh mailer task; retain
 every named acceptance check and inspect the committed selection before expensive validation.
 
+## Using the runner on a fork
+
+The runner is optional development tooling. A fork can build, test and release the CRM without it.
+The `gophercrm_runner` Python package is the exception: ordinary CI imports it
+(`scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13`, `scripts/ci/check-go.py:7`,
+`scripts/ci/plan-documentation.py:10`, and `scripts/ci/plan-validation.py`, which reads
+`gophercrm_runner/validation.py` from the base commit). Keep that package even if you drop the Langflow
+graphs in `flows/`, the runner installation and `.github/workflows/remediation-runner.yml`.
+
+To run it against your own repository:
+
+1. Run `gophercrm-runner setup` as in [Install and preview](#install-and-preview). It copies
+   [config.example.json](gophercrm_runner/config.example.json) into a private `config.json` and fills in
+   `checkout` and `state_dir` (`gophercrm_runner/local.py`). Then edit that `config.json`:
+   - `repository`: your `owner/name` (upstream's value is on line 2);
+   - `tracker`: your own tracking issue (upstream's #94, line 5);
+   - `issues`: your own ticket numbers, which must not include the tracker;
+   - `workflow_addition_issues`: empty, or the tickets in your queue that may add a workflow file
+     (it must be a subset of `issues`);
+   - `completion_target`: `"pr"` to stop at a reviewed, green PR, or `"merge"` to let the runner merge it.
+2. Leave `required_checks` (line 45) alone. The policy loader refuses a configuration that drops any of
+   the six upstream check names (`REQUIRED_CHECKS` in `gophercrm_runner/config.py:9-13`, enforced at
+   `:202-203`), and the runner reads the pull request's own check results: it waits until a successful
+   check with each of those exact names is present (`check_state`, `gophercrm_runner/gates.py:44-63`,
+   used by the CI wait in `engine.py:1072` and by `merge_gate` at `gates.py:77`). Branch protection does
+   not change what the runner looks for. A fork that runs the runner must therefore keep emitting those
+   six check names from its CI (the job `name:` values in `.github/workflows/ci.yml:70,93,174,206`), or
+   change `REQUIRED_CHECKS`, its `config.json` and its branch protection together.
+3. Use fresh private state outside the checkout; the loader refuses a `state_dir` inside it
+   (`gophercrm_runner/config.py:213-214`). Never copy another installation's state directory or journals.
+4. Run `gophercrm-runner doctor --config <config.json>` and resolve every finding before the first
+   `run`. `doctor` is read-only and also compares the installed modules with the checkout.
+
+Paths the issue agent may not change are fixed in `validate_paths` (`gophercrm_runner/gates.py:103-125`):
+`automation/langflow/` itself, `.env*` files other than `.env.example`, key and database files, the
+`Makefile`, `.gitignore`, `scripts/ci/`, `scripts/release/`, `scripts/deploy/`, `scripts/e2e/`, existing
+workflow files, `gocrm-ui/package*.json` and the frontend build and lint configuration. Change those by
+hand, outside a runner execution.
+
+The runner drives the `claude` and `gh` command-line tools with their existing logins (see the
+requirements above). Keep [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) with the package if you
+redistribute it.
+
 ## Use the visual workflow
 
 ```sh

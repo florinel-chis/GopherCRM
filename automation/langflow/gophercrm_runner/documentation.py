@@ -24,6 +24,17 @@ FEATURE_DOCS = {
     'user': '07-users', 'configuration': '08-settings', 'label': '10-labels',
     'aeo': '11-aeo', 'form': '12-forms', 'compan': '13-companies', 'deal': '14-deals',
 }
+# Fork and extension guides: routes, schema and configuration change what a fork
+# merges and how it extends the code; forms, automation, tickets and quotes are the
+# modules the use-case recipes build on.
+FORK_GUIDES = ('docs/FORKING.md', 'docs/EXTENDING.md')
+USE_CASES = 'docs/USE_CASES.md'
+# Matched on feature directories and file-name prefixes, never as a substring, so
+# UserForm.tsx, CompanyForm.tsx, dealFormat.ts or the shared components/form/
+# widgets do not count as the forms module.
+USE_CASE_DIRS = ('internal/forms/', 'gocrm-ui/src/pages/forms/', 'gocrm-ui/src/pages/automation/',
+                 'gocrm-ui/src/pages/tickets/', 'gocrm-ui/src/pages/quotes/')
+USE_CASE_FILE_PREFIXES = ('form_', 'form.', 'forms.', 'automation', 'ticket', 'quote')
 REVIEW_SCHEMA = {
     'type': 'array', 'items': {
         'type': 'object', 'additionalProperties': False,
@@ -49,6 +60,21 @@ def safe_path(path):
 def is_document(path):
     return (path.endswith(('.md', '.mdx', '.rst')) or path in {
         '.env.example', 'gocrm-ui/.env.example', 'api/swagger.json', 'api/swagger.yaml', 'api/docs.go'})
+
+
+def is_use_case_path(path):
+    if path.startswith(USE_CASE_DIRS):
+        return True
+    name = PurePosixPath(path).name.lower()
+    if name.startswith(USE_CASE_FILE_PREFIXES):
+        return True
+    # A frozen scope pattern such as internal/service/form*.go: the literal text
+    # before the first wildcard must be able to begin one of the prefixes.
+    if '*' not in name and '?' not in name:
+        return False
+    stem = name.split('*', 1)[0].split('?', 1)[0]
+    return bool(stem) and any(
+        prefix.startswith(stem) or stem.startswith(prefix) for prefix in USE_CASE_FILE_PREFIXES)
 
 
 def suggestions(paths):
@@ -79,6 +105,12 @@ def suggestions(paths):
                     add((f'docs/testing/{name}.md',), 'affected feature guidance')
             if path.startswith(('internal/models/', 'internal/database/', 'cmd/migrate/')):
                 add(('docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+                add(FORK_GUIDES, 'fork upgrade and extension guidance')
+            if (path.startswith('internal/config/') or path == 'cmd/main.go'
+                    or (path.startswith('internal/handler/') and path.endswith('routes.go'))):
+                add(FORK_GUIDES, 'fork upgrade and extension guidance')
+            if is_use_case_path(path):
+                add((USE_CASES,), 'use-case recipes')
             if 'aeo' in lower:
                 add(('docs/AEO_SECURITY.md',), 'AEO operations and security')
             if path.startswith('internal/middleware/') or 'auth' in lower:
@@ -89,6 +121,7 @@ def suggestions(paths):
                 add(('docs/SETUP.md', '.env.example'), 'runtime configuration')
         elif path.startswith('migrations/'):
             add((*PRODUCT, 'docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+            add(FORK_GUIDES, 'fork upgrade and extension guidance')
         else:
             add((*PRODUCT, 'docs/DEVELOPMENT.md'), 'unmapped change; assess conservatively')
     return [{'path': p, 'reasons': sorted(reasons)} for p, reasons in sorted(selected.items())]

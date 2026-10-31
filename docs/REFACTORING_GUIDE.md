@@ -1,5 +1,13 @@
 # Phase 2 Architecture Refactoring Guide
 
+> **Historical document, not current guidance.** This plan to pass `context.Context` through every layer
+> was not carried out as written. Repository interfaces still take no context
+> (`internal/repository/interfaces.go:19`), and the `*_v2.go` reference implementation it pointed to does
+> not exist in the repository. Request context now reaches selected paths through `...Context` methods
+> (for example `GetByIDContext` in `internal/service/interfaces.go:66`, added for lead conversion, form
+> submission and bulk status in #194). For the current conventions read `docs/DEVELOPMENT.md` and
+> `docs/EXTENDING.md`.
+
 ## Overview
 This document guides the refactoring to remove global state and add context.Context throughout the codebase.
 
@@ -276,12 +284,3 @@ For each domain, follow these steps:
 2. Refactor one domain at a time
 3. Run tests after each domain
 4. Commit incrementally
-
-## Reference Files
-
-See the completed User/Auth implementation:
-- `internal/repository/user_repository_v2.go`
-- `internal/service/user_service_v2.go`
-- `internal/service/auth_service_v2.go`
-- `internal/handler/user_handler_v2.go`
-- `internal/handler/auth_handler_v2.go`

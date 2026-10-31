@@ -600,14 +600,14 @@ Represents system configuration settings that control application behavior.
 - `integration` - Third-party integrations
 
 ### Key Configuration Settings
-- `general.company_name` - Company name displayed in the application
-- `ui.theme.primary_color` - Primary theme color
-- `security.session_timeout_hours` - Session timeout duration
+- `general.company_name` - Company name. Stored and served on `GET /configurations/ui`, but no screen or mail uses it yet: the UI shows `VITE_APP_NAME` and mail subjects are fixed in code (#221)
+- `ui.theme.primary_color` - Primary theme color. Stored and served, but the MUI palette is fixed in `gocrm-ui/src/theme/index.ts`, so changing it has no visible effect yet (#221)
+- `security.session_timeout_hours` - Seeded (`internal/models/configuration.go:333`) but not read by the application: session length comes from `JWT_ACCESS_TOKEN_MINUTES` and `REFRESH_TOKEN_EXPIRY_DAYS`. Whether to implement or retire it is #224
 - `leads.conversion.allowed_statuses` - Lead statuses that allow conversion (any of `new`, `contacted`, `qualified`, `unqualified`; enforced by the convert endpoint; also served on `GET /configurations/ui`)
 - `leads.conversion.require_notes` - Whether non-blank conversion notes are required (enforced; also on `GET /configurations/ui`)
 - `leads.conversion.auto_assign_owner` - Make the lead owner the customer's `assigned_to_id` on conversion (enforced; also on `GET /configurations/ui`)
 - `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
-- `tickets.auto_assign_support` - Auto-assign tickets to support users
+- `tickets.auto_assign_support` - Seeded (`internal/models/configuration.go:354`) but not read by the application, so it distributes nothing among support users. Independently of it, `POST /tickets` without `assigned_to_id` assigns the ticket to the user who created it (`internal/handler/ticket_handler.go:107-110`). Whether to implement or retire the setting is #224
 
 ## API Request/Response Format
 
