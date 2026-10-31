@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 12
+POLICY_VERSION = 13
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 # The API reference gate is cheap and profile-independent: bounded and runner
 # profiles run it next to hygiene, the full profile through make verify.
@@ -59,6 +59,11 @@ TOOLING_FILES = {
     "scripts/create_database.sql", "scripts/seed_e2e_data.sh", "scripts/aeo_live_smoke.sh",
     "scripts/forms_live_smoke.sh", "gocrm-ui/cleanup-test-users.sh",
 }
+# make swagger output. Every profile runs make verify-api-docs, which fails unless these
+# bytes equal a fresh generation from the annotated Go sources, the cmd/main.go general
+# block, scripts/docs and the pinned swag in the Makefile. Those inputs are classified on
+# their own, so they, not the artifacts, decide the coverage.
+API_ARTIFACTS = {"api/swagger.json", "api/swagger.yaml", "api/index.html"}
 DOC_FILES = {"README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "AGENTS.md"}
 RUNNER_PREFIXES = ("automation/langflow/", "scripts/ci/")
 RUNNER_FILES = {".github/workflows/ci.yml", ".github/workflows/remediation-runner.yml"}
@@ -522,7 +527,8 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
                 or any(ord(c) < 32 for c in name)):
             raise ValueError("Invalid changed path")
         if (name in DOC_FILES or name.startswith("docs/") and name.endswith(".md")
-                or name == '.env.example' and env_comments or name in TOOLING_FILES):
+                or name == '.env.example' and env_comments or name in TOOLING_FILES
+                or name in API_ARTIFACTS):
             continue
         if name in MAILER_FILES or MAILER_TEST.fullmatch(name):
             mailer_paths = application_paths = True
@@ -558,9 +564,8 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         # corresponding production paths determine browser coverage.
         if name.startswith(("internal/integration/", "test/", "tests/")) and name.endswith("_test.go"):
             continue
-        if name.startswith("api/") and name.endswith((".json", ".yaml", ".html")):
-            # Generated API contracts (and the reference rendered from them)
-            # can describe unrelated endpoints.
+        if name.startswith("api/"):
+            # Anything else under api/ is not make swagger output.
             reasons.append(f"API contract: {name}")
             continue
         if name.startswith("gocrm-ui/e2e/tests/"):

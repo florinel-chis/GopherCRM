@@ -113,13 +113,13 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(mixed['profile'], 'auth')
         self.assertIn(('make', 'verify-runner'), core_commands([], mixed))
         for path in ['internal/service/customer_service.go', 'internal/repository/user_repository.go',
-                     'internal/models/user.go', 'internal/service/auth_new.go', 'unknown.go', 'api/swagger.json']:
+                     'internal/models/user.go', 'internal/service/auth_new.go', 'unknown.go', 'api/docs.go']:
             with self.subTest(path=path):
                 self.assertEqual(plan(paths + [path])['profile'], 'full')
         self.assertEqual(plan(paths, full=True)['profile'], 'full')
         self.assertEqual(plan(['scripts/ci/check-auth.py'])['profile'], 'auth')
 
-    def test_api_docs_gate_runs_in_every_profile_and_api_changes_stay_full(self):
+    def test_api_docs_gate_runs_in_every_profile_and_sources_decide_api_coverage(self):
         gate = ('make', 'verify-api-docs')
         for profile in ('runner', 'auth', 'auth-persistence', 'transaction', 'migration', 'aeo', 'mailer'):
             with self.subTest(profile=profile):
@@ -129,11 +129,23 @@ class ValidationSelectionTests(unittest.TestCase):
         # The full and contextual profiles run it through make verify.
         for profile in ('full', 'contextual'):
             self.assertEqual(core_commands([], {'profile': profile, 'changed_paths': []}), [('make', 'verify')])
-        for path in ('api/swagger.json', 'api/swagger.yaml', 'api/index.html'):
+        artifacts = ['api/swagger.json', 'api/swagger.yaml', 'api/index.html']
+        # The gate proves the artifacts equal a fresh generation, so the annotated
+        # sources select the coverage: a lead handler change keeps the lead suites.
+        lead = plan(['internal/handler/lead_handler.go'] + artifacts)
+        self.assertEqual(lead['profile'], 'contextual')
+        self.assertEqual(lead['specs'], plan(['internal/handler/lead_handler.go'])['specs'])
+        self.assertEqual(plan(['internal/service/auth_service.go'] + artifacts)['profile'], 'auth')
+        self.assertEqual(plan(artifacts)['specs'], [SMOKE])
+        # Generation inputs that are shared stay full with their artifacts.
+        for source in ('cmd/main.go', 'scripts/docs/swag-overrides', 'internal/models/lead.go'):
+            with self.subTest(source=source):
+                self.assertEqual(plan([source] + artifacts)['profile'], 'full')
+        # Only the exact make swagger outputs are exempt.
+        for path in ('api/docs.go', 'api/swagger.json.orig', 'api/v2/swagger.json', 'api/index.htm'):
             with self.subTest(path=path):
                 self.assertEqual(plan([path])['profile'], 'full')
                 self.assertEqual(plan([path])['reasons'], [f'API contract: {path}'])
-                self.assertEqual(plan(['internal/service/auth_service.go', path])['profile'], 'full')
         # The generator and the gate are shared tooling: a change to either is full.
         for path in ('scripts/docs/render_api_reference.py', 'Makefile'):
             self.assertEqual(plan([path])['profile'], 'full')
@@ -160,7 +172,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertNotIn(('make', 'verify'), commands)
         for path in ['internal/repository/user_repository.go', 'internal/service/customer_service.go',
                      'internal/middleware/auth.go', 'internal/models/refresh_token.go',
-                     'migrations/new.sql', 'go.mod', 'api/swagger.json', 'internal/utils/transaction.go']:
+                     'migrations/new.sql', 'go.mod', 'api/docs.go', 'internal/utils/transaction.go']:
             with self.subTest(path=path):
                 self.assertEqual(plan(paths + [path], refresh_interface=True, rotation_roots=True)['profile'], 'full')
         self.assertEqual(plan(paths, refresh_interface=True, rotation_roots=True, full=True)['profile'], 'full')

@@ -36,7 +36,7 @@ or add a separate model call on the successful path.
 
 `automation/langflow/gophercrm_runner/validation.py` owns the deterministic path map.
 Known entity changes select related specs and the read-only health smoke test; mixed
-changes take the union. Unmapped shared infrastructure, schema, dependencies, API contracts,
+changes take the union. Unmapped shared infrastructure, schema, dependencies, hand-written API contracts,
 unknown application paths select the complete browser suite. Runner-only changes under
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
 `runner` profile: local `make verify-hygiene`, `make verify-api-docs`, `make verify-runner`, all frozen acceptance
@@ -269,8 +269,12 @@ Go constants. The checker's rule-by-rule mutation tests and the renderer's tests
 
 The gate is part of `make verify`, runs as an unconditional step of the CI Backend job (after Go
 setup, for every profile, without adding a job), and is the second command of every bounded and
-runner command set in `validation.py`. A change under `api/` still selects the full profile
-(reason `API contract`): a regenerated reference can describe any endpoint.
+runner command set in `validation.py`. Because the gate proves the three generated files
+(`api/swagger.json`, `api/swagger.yaml`, `api/index.html`) equal a fresh `make swagger`, they
+select no coverage of their own: the annotated Go sources, `cmd/main.go`, `scripts/docs/` and
+the Makefile that produce them are classified as usual. A lead handler annotation change runs
+the lead suites, not the full browser matrix. Any other path under `api/` selects the full profile
+(reason `API contract`).
 
 ## Migration CI
 
