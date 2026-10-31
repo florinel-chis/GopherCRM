@@ -370,6 +370,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A documented API change no longer runs the whole browser suite by itself.** The regenerated
+  `api/swagger.json`, `api/swagger.yaml` and `api/index.html` selected the full profile on every
+  annotation change. `make verify-api-docs`, which every profile runs, already fails unless they
+  equal a fresh `make swagger`, so the planner now classifies the Go sources that produce them
+  instead: a lead handler change runs the lead suites. Any other path under `api/` still selects
+  full coverage. Validation policy version 13.
 - **Changes to standalone operator scripts no longer run the whole browser suite.** The CI and
   runner validation planner treated every path under `scripts/` as shared code, so the #226 fix to
   `scripts/create_database.sql` ran all Playwright specs on three databases. Five tools that the
