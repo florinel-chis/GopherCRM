@@ -166,9 +166,11 @@ The two schemes are parsed in `internal/middleware/auth.go`.
    `DB_NAME` matches the database you created (see step 2).
 3. **Port already in use.** Change `SERVER_PORT` in `.env`, or find the process with `lsof -ti:8080`.
 4. **CORS errors, or "Invalid email or password" in the browser while curl works.** Browsers send an
-   `Origin` header and the backend answers 403 for origins it does not list. `http://localhost:5173`,
-   `:3000` and `:8080` are allowed by default (`internal/middleware/cors.go`); add any other origin to
-   `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:258`). Do not edit the source.
+   `Origin` header and the backend answers 403 for origins it does not list, unless the `Origin` is
+   the request's own scheme and `Host` (same-origin; `github.com/gin-contrib/cors` v1.7.5, `go.mod:7`).
+   `http://localhost:5173`, `:3000` and `:8080` are allowed by default (`internal/middleware/cors.go`);
+   add any other origin to `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:258`).
+   Do not edit the source.
 
 ### Frontend
 

@@ -18,7 +18,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 
 | Rule | Where it lives | Long form |
 |---|---|---|
-| Every response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*` | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
+| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:484,537`), and deletes that answer an empty 204 (`customer_handler.go:465`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 374) |
 | Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 534), "Paginated reads walk a total order" (line 498) |
@@ -199,14 +199,21 @@ wrong mock lets a test pass for the wrong reason (`REVIEW.md`, last paragraph).
 
 Decide first whether the new table stores personal data or only refers to people by id.
 
-- **Ids only** (like quotes, which link a customer and copy nothing): erasure leaves the rows in
-  place. Still prove it. Add the table to the list in
+- **Ids only**: erasure leaves the rows in place. Quotes are the nearest example: they copy no
+  field from the customer and read the recipient at send time (`internal/models/quote.go:71-74`).
+  They are not free of personal data, though. The quote title and notes and each line description
+  are text typed by staff (`quote.go:77,92,202`; `QuoteRequest`, `internal/handler/quote_handler.go:36-44`),
+  can name the client, and survive customer erasure, because `customerErasurePlan`
+  (`internal/repository/customer_repository.go:120`) does not reach quote tables. That is a known
+  gap: #245. A new table with free-text columns belongs in the next bullet.
+  For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
   (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
   `TestThePersonalDataSweepCoversQuoteTables` (line 269) that writes the person into the table and
-  asserts the sweep sees it. A sweep that cannot see a table proves nothing.
+  asserts the sweep sees it. A sweep that cannot see a table proves nothing; the quote canary
+  proves the sweep can see quote rows, not that erasure clears them.
 - **Personal fields** (names, email, phone, address, free text typed by or about a person): the
-  erasure must reach them in the same transaction. Either extend a plan in
+  erasure must reach them in the same transaction. Staff-typed text about a person counts. Either extend a plan in
   `internal/repository/erasure_cascade.go` (`leadErasurePlan`; `customerErasurePlan` and
   `userErasurePlan` live in their repositories), using `Scrub` for columns and `AfterScrub` /
   `BeforeScrub` for rows outside the entity's own table (as `scrubLeadFormSubmissions` does), or add
@@ -215,8 +222,9 @@ Decide first whether the new table stores personal data or only refers to people
 - Extend `TestIdentityErasure{SQLite,MySQL}` (`internal/repository/identity_erasure_test.go`) and
   the sweep tests so the person is seeded into the new table before the erasure.
 - Update the matrix in [DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data). Known gaps you
-  inherit: unlinked form submissions and ticket free text (#214), and the missing lock protocol
-  between erasure and conversion or authentication (#183).
+  inherit: unlinked form submissions and ticket free text (#214), quote free text
+  (#245), and the missing lock protocol between erasure and conversion or
+  authentication (#183).
 
 ### 3.11 Tests at every layer
 
@@ -313,20 +321,33 @@ origins (lines 44-50) and six step types (lines 53-60).
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
    never turns into a run. That is the loop guard; keep it.
-4. A new entity type also needs `loadRecord` and `lockRecord` (`automation_engine.go:598,623`), the
-   erasure cancel for that entity, and validation of values in `validateTrigger`/`validAutomationValue`
-   (`automation_validation.go:219,267`).
-5. Tests: copy `TestAutomationLeadEvents{SQLite,MySQL}` (`automation_lead_events_test.go`: one event
-   per write path, the right origin, ids and values only) and `automation_dispatch_test.go`.
+4. Allow the trigger for its entity in `automationTriggerTypes`
+   (`internal/service/automation_validation.go:102`). `validateRule` refuses any trigger missing
+   from that map before `validateTrigger` runs (`automation_validation.go:141-145`), so without
+   this step a rule on the new event cannot be saved.
+5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
+   (`automation_engine.go:598,623`), the erasure cancel for that entity, and validation of values in
+   `validateTrigger`/`validAutomationValue` (`automation_validation.go:219,267`).
+6. Frontend: the trigger unions and `AUTOMATION_TRIGGERS` in `gocrm-ui/src/types/automation.ts:8-26`,
+   `TRIGGER_TYPES` in `gocrm-ui/src/pages/automation/ruleFormSchema.ts:84`, and the label in
+   `TRIGGER_LABELS` (`automationFormat.ts:28`).
+7. Tests: copy `TestAutomationLeadEvents{SQLite,MySQL}` (`automation_lead_events_test.go`: one event
+   per write path, the right origin, ids and values only) and `automation_dispatch_test.go`; add a
+   rule-acceptance case to `automation_validation_test.go` (a rule on the new trigger saves, one on
+   the wrong entity is refused) and to `ruleFormSchema.test.ts`.
 
-Wanted but missing: ticket events, and a form-finalised event with attribution fields (#220).
+Wanted but missing: ticket events (#242), and a form-finalised event with
+attribution fields (#220).
 
 ## 7. Add a form field type
 
-Constant and `validateFieldType` in `internal/models/form.go:52-60,282`; submitted-value handling in
-`internal/service/form_service.go` (`SubmitPublic`, line 642); the embed renderer
-`internal/handler/assets/form_embed.js` (embedded with go:embed, no build step); the hosted page
-`internal/handler/form_public_html.go`; the builder `gocrm-ui/src/pages/forms/FormBuilder.tsx`.
+Constant and `validateFieldType` in `internal/models/form.go:52-60,282`; submitted-value validation
+in `validateValues` (`internal/service/form_service.go:711`, called from `SubmitPublic` at line
+657); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
+step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
+`FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
+`tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
+`z.enum` in `gocrm-ui/src/pages/forms/FormBuilder.tsx:48,85`.
 Do not reorder the spam layers in `SubmitPublic` and do not change the success-shaped response for
 spam: both are deliberate (`REVIEW.md`, "Skip"). Mapping a field to a new lead column is a schema
 change (section 3).
@@ -438,7 +459,7 @@ it is the cleanest removal.
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
 | Wiring | `cmd/main.go` (import line 12; construction lines 245-270; handler line 304; reconcile and scheduler lines 338-357; route line 413); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, aeoRuntime.Stop)` (line 427) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker |
-| Configuration | `AEOConfig` and its block (`internal/config/config.go:144,290`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go` |
+| Configuration | `AEOConfig` and its block (`internal/config/config.go:144,290`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:134-138`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:319-346`), the AEO nav group (`MainLayout.tsx`, from line 161), the AEO case in `ConfigurationSettings.test.tsx` |
@@ -483,12 +504,14 @@ Points that catch people out:
   `MIGRATION_SOURCES` in `scripts/ci/check-go.py:53`, or it first runs against MySQL at release
   time. On 4dfe404, `TestProductsAndQuotesMigration` and `TestMigrationAutomationSchema` are in none
   of the three (`command grep -rn "ProductsAndQuotes\|MigrationAutomation" .github scripts` prints
-  nothing).
+  nothing); tracked in #228.
 - **Run browsers the way CI does.** `make e2e` builds a disposable backend with the `gophercrm_e2e`
   tag, resets a `*_e2e` database and pins the environment. `make e2e E2E_DB_DRIVER=sqlite` needs no
   database server; `make e2e SPECS="e2e/tests/<spec>.ts"` narrows the run.
-- **`make verify`** is exactly the core jobs for a general application change: run it before you
-  push.
+- **`make verify`** is what the `full` profile runs for a general application change. Bounded
+  profiles (`auth`, `auth-persistence`, `transaction`, `migration`, `aeo`, `mailer`) replace it with
+  their targeted commands (`core_commands`, `validation.py:605-617`; [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md),
+  line 21). Run what the planner selects for your diff, or `make verify` when you want the full set.
 - **Documentation impact** is advisory input to review, not approval
   ([DOCUMENTATION_WORKFLOW.md](DOCUMENTATION_WORKFLOW.md)). The reviewer still decides whether
   each listed document is accurate.
@@ -512,8 +535,9 @@ Goal: <one sentence of behaviour, with the issue number>.
 Recipe: docs/EXTENDING.md section <n>. Reference implementation: <file>.
 Rules: docs/EXTENDING.md section 1; long form in docs/DEVELOPMENT.md.
 Prove it: write the test that fails on the current code first, then fix.
-Gate: run validation.py on the diff and run the commands it selects; run make verify for an
-application change.
+Gate: run validation.py on the diff and run the commands its profile selects, plus every named
+acceptance check. make verify is what the full profile runs; a bounded profile (auth,
+auth-persistence, transaction, migration, aeo, mailer) replaces it with targeted commands.
 Do not: edit applied migrations, CI workflow or validation policy files, or a test to make it
 pass.
 Stop and report if: a test needs TEST_MYSQL_DSN and none is available, or the change needs a file

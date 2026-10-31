@@ -29,7 +29,12 @@ FEATURE_DOCS = {
 # modules the use-case recipes build on.
 FORK_GUIDES = ('docs/FORKING.md', 'docs/EXTENDING.md')
 USE_CASES = 'docs/USE_CASES.md'
-USE_CASE_FEATURES = ('form', 'automation', 'ticket', 'quote')
+# Matched on feature directories and file-name prefixes, never as a substring, so
+# UserForm.tsx, CompanyForm.tsx, dealFormat.ts or the shared components/form/
+# widgets do not count as the forms module.
+USE_CASE_DIRS = ('internal/forms/', 'gocrm-ui/src/pages/forms/', 'gocrm-ui/src/pages/automation/',
+                 'gocrm-ui/src/pages/tickets/', 'gocrm-ui/src/pages/quotes/')
+USE_CASE_FILE_PREFIXES = ('form_', 'form.', 'forms.', 'automation', 'ticket', 'quote')
 REVIEW_SCHEMA = {
     'type': 'array', 'items': {
         'type': 'object', 'additionalProperties': False,
@@ -55,6 +60,11 @@ def safe_path(path):
 def is_document(path):
     return (path.endswith(('.md', '.mdx', '.rst')) or path in {
         '.env.example', 'gocrm-ui/.env.example', 'api/swagger.json', 'api/swagger.yaml', 'api/docs.go'})
+
+
+def is_use_case_path(path):
+    return (path.startswith(USE_CASE_DIRS)
+            or PurePosixPath(path).name.lower().startswith(USE_CASE_FILE_PREFIXES))
 
 
 def suggestions(paths):
@@ -89,7 +99,7 @@ def suggestions(paths):
             if (path.startswith('internal/config/') or path == 'cmd/main.go'
                     or (path.startswith('internal/handler/') and path.endswith('routes.go'))):
                 add(FORK_GUIDES, 'fork upgrade and extension guidance')
-            if any(feature in lower for feature in USE_CASE_FEATURES):
+            if is_use_case_path(path):
                 add((USE_CASES,), 'use-case recipes')
             if 'aeo' in lower:
                 add(('docs/AEO_SECURITY.md',), 'AEO operations and security')

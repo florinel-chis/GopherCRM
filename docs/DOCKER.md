@@ -9,9 +9,11 @@ The stack is three containers wired by `docker-compose.yml` at the repo root:
 | `ui`      | built from `gocrm-ui/Dockerfile` | Production React build served by nginx  | 3000      |
 
 The UI container's nginx proxies `/api/v1/` to the backend, so the browser only
-ever talks to `http://localhost:3000` — no CORS involved. The API is also
-reachable directly on `http://localhost:8080/api/v1` if you want to hit it with
-curl or an API key.
+ever talks to `http://localhost:3000`. The browser still sends an `Origin`
+header, and nginx forwards `Host` without the port (`gocrm-ui/docker/nginx.conf:14`),
+so the backend's CORS allowlist applies; the Compose files list the UI origin
+for you (`CORS_ALLOWED_ORIGINS`). The API is also reachable directly on
+`http://localhost:8080/api/v1` if you want to hit it with curl or an API key.
 
 If you would rather not run a database server, `docker-compose.sqlite.yml` is a
 two-container variant of the same stack backed by a SQLite file — see
@@ -81,7 +83,12 @@ Notes on the wiring:
   password and every API call carries a token, so over plain HTTP both cross
   the network in clear text. The stack as shipped is for `localhost`; put a
   TLS-terminating reverse proxy in front of the UI port before anyone reaches
-  it over a network.
+  it over a network. Both files publish the backend's `8080` and the UI port on
+  every host interface (`docker-compose.yml:61-62,75-76`,
+  `docker-compose.sqlite.yml:46-47,60-61`), so the proxy alone leaves both
+  reachable over plain HTTP: remove the backend publication and bind the UI to
+  loopback (or a private network) in an override, as shown under
+  [Several installations on one host](#several-installations-on-one-host).
 - `TRUSTED_PROXIES=172.28.0.0/16` matches the fixed compose subnet so the
   rate limiter keys on the real client IP forwarded by the ui nginx, not on
   the proxy container's address. If you change the subnet in
@@ -123,7 +130,13 @@ Notes on the wiring:
   enabled on exactly one replica and set `AUTOMATION_ENABLED=false` on the
   others: those serve the API and record events but neither execute runs nor
   reconcile them at boot. Runs left `running` by a killed worker container
-  are recovered when the next worker container boots.
+  are recovered when the next worker container boots. This does not make the
+  backend safe to scale as a whole: every backend container marks all AEO runs
+  still `running` as failed when it starts, whatever its `AUTOMATION_ENABLED`
+  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:338`,
+  `internal/repository/aeo_repository.go:310-320`), so a second replica fails
+  the first one's AEO run, and the AEO scheduler and overlap guard are
+  per process. Keep one backend container (#229).
 
 ## Running Compose beyond localhost
 
@@ -140,8 +153,13 @@ Set by the Compose files:
   `DB_PASSWORD`, from the shell or `.env`.
 - `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS`, **hard-coded** to
   `http://localhost:${UI_PORT}` (and `127.0.0.1`). Behind a real host name,
-  password-reset links point at localhost and browsers on the real origin get
-  a bare 403 from the CORS check.
+  password-reset links point at localhost. Browsers on an origin that is not
+  listed get a bare 403 from the CORS check, except when the `Origin` equals
+  `http://` or `https://` plus the `Host` the backend receives, which the
+  pinned `gin-contrib/cors` v1.7.5 (`go.mod:7`) lets through: a TLS proxy on
+  port 443 that forwards the host name to the UI nginx passes, a UI on any other
+  origin than the API's does not. Set `CORS_ALLOWED_ORIGINS` to your real
+  origin either way.
 - `SERVER_MODE=production`, `TRUSTED_PROXIES` for the fixed subnet,
   `API_PREFIX`, `LOG_FORMAT=json` and the database settings.
 
@@ -156,8 +174,10 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
 - `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR`, `AEO_EGRESS_*`, the
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
-- `JWT_ACCESS_TOKEN_MINUTES`, `REFRESH_TOKEN_EXPIRY_DAYS` and the other
-  token lifetimes.
+- `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:262-267`.
+  `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
+  issues.
 
 To change any of these, add them to the backend `environment` in a
 `docker-compose.override.yml` (Compose merges it automatically for
@@ -180,7 +200,25 @@ installation from the same file needs, in its override:
 - its own project name (`docker compose -p client-b ...`), which also gives it
   its own volume names;
 - its own backend host port, or no published backend port at all, and its own
-  `UI_PORT`;
+  `UI_PORT`. A plain `ports:` list in an override is **added** to the shipped
+  one, and `ports: []` changes nothing, so both keep `8080` published. Remove a
+  publication with the `!reset` tag (checked with Compose 2.19.0), then add the replacement from a further
+  file, or replace the list in one file with `!override` (Compose 2.24.4 or
+  later):
+
+  ```yaml
+  # docker-compose.override.yml
+  services:
+    backend:
+      ports: !reset []          # no host port for the API
+    ui:
+      ports: !override          # Compose >= 2.24.4
+        - "127.0.0.1:3101:80"   # loopback only, behind the TLS proxy
+  ```
+
+  Check the result with `docker compose -f docker-compose.yml -f
+  docker-compose.override.yml config` before starting it (an explicit `-f`
+  disables the automatic pick-up of the override file);
 - its own subnet, with `TRUSTED_PROXIES` changed to match: two networks with
   the same range cannot both be created;
 - its own `JWT_SECRET` and `API_KEY_SECRET`;
@@ -252,15 +290,25 @@ docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup
     sqlite3 /data/gophercrm.db \"VACUUM INTO '/backup/gophercrm-backup.db'\""
 ```
 
-Restore by putting the file back as `/data/gophercrm.db` with the backend
-stopped, and removing any leftover `-wal`/`-shm` next to it. A snapshot from
-option 2 lands root-owned — the throwaway container runs as root, the backend
-runs as `gophercrm` (uid 10001) — so hand it back before starting the backend,
-in the same root container that put the file in place:
+Restore with the backend stopped, and match the restore to the backup:
+
+- **Offline copy (option 1):** put back `gophercrm.db` together with the
+  `gophercrm.db-wal` and `gophercrm.db-shm` copied with it, replacing all
+  three. The WAL can hold committed transactions that are not yet in the main
+  file — the backend can exit without a final checkpoint (`cmd/main.go:120-127`)
+  — so deleting it, or mixing it with another backup's main file, loses data.
+- **`VACUUM INTO` snapshot (option 2):** it is one self-contained file. Put it
+  back as `/data/gophercrm.db` and delete any `-wal`/`-shm` left in the
+  volume, which belong to the database you are replacing.
+
+A file written by a root container lands root-owned — the throwaway container
+runs as root, the backend runs as `gophercrm` (uid 10001) — so hand the
+restored files back before starting the backend, in the same root container
+that put them in place:
 
 ```bash
 docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data \
-  alpine:3.20 chown 10001 /data/gophercrm.db
+  alpine:3.20 sh -c 'chown 10001 /data/gophercrm.db*'
 ```
 
 Without it the backend opens the database read-only and fails on the first

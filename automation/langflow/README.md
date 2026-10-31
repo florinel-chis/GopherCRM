@@ -98,10 +98,14 @@ To run it against your own repository:
    - `workflow_addition_issues`: empty, or the tickets in your queue that may add a workflow file
      (it must be a subset of `issues`);
    - `completion_target`: `"pr"` to stop at a reviewed, green PR, or `"merge"` to let the runner merge it.
-2. Leave `required_checks` (line 45) alone unless your CI has the same jobs under other names. The policy
-   loader refuses a configuration that drops any of the six upstream check names
-   (`REQUIRED_CHECKS` in `gophercrm_runner/config.py:9-13`, enforced at `:202-203`), so a fork that renames
-   jobs in `.github/workflows/ci.yml` must keep those six names on its branch protection.
+2. Leave `required_checks` (line 45) alone. The policy loader refuses a configuration that drops any of
+   the six upstream check names (`REQUIRED_CHECKS` in `gophercrm_runner/config.py:9-13`, enforced at
+   `:202-203`), and the runner reads the pull request's own check results: it waits until a successful
+   check with each of those exact names is present (`check_state`, `gophercrm_runner/gates.py:44-63`,
+   used by the CI wait in `engine.py:1072` and by `merge_gate` at `gates.py:77`). Branch protection does
+   not change what the runner looks for. A fork that runs the runner must therefore keep emitting those
+   six check names from its CI (the job `name:` values in `.github/workflows/ci.yml:70,93,174,206`), or
+   change `REQUIRED_CHECKS`, its `config.json` and its branch protection together.
 3. Use fresh private state outside the checkout; the loader refuses a `state_dir` inside it
    (`gophercrm_runner/config.py:213-214`). Never copy another installation's state directory or journals.
 4. Run `gophercrm-runner doctor --config <config.json>` and resolve every finding before the first

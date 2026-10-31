@@ -65,7 +65,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 
 - **Replace the example `JWT_SECRET`.** The placeholder is long enough to start the app, so a copied
   `.env.example` runs with a public secret (`internal/config/config.go:230-240`, #210).
-- **Set `CORS_ALLOWED_ORIGINS`** for any UI origin other than localhost on 5173, 3000 or 8080
+- **Set `CORS_ALLOWED_ORIGINS`** for any cross-origin UI other than localhost on 5173, 3000 or 8080
   (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
 - **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
   admin with `make build-tools && make create-admin`.

@@ -607,7 +607,7 @@ Represents system configuration settings that control application behavior.
 - `leads.conversion.require_notes` - Whether non-blank conversion notes are required (enforced; also on `GET /configurations/ui`)
 - `leads.conversion.auto_assign_owner` - Make the lead owner the customer's `assigned_to_id` on conversion (enforced; also on `GET /configurations/ui`)
 - `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
-- `tickets.auto_assign_support` - Seeded (`internal/models/configuration.go:354`) but not read by the application: tickets are never auto-assigned. Whether to implement or retire it is #224
+- `tickets.auto_assign_support` - Seeded (`internal/models/configuration.go:354`) but not read by the application, so it distributes nothing among support users. Independently of it, `POST /tickets` without `assigned_to_id` assigns the ticket to the user who created it (`internal/handler/ticket_handler.go:107-110`). Whether to implement or retire the setting is #224
 
 ## API Request/Response Format
 

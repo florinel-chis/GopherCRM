@@ -18,7 +18,8 @@ Each recipe has the same parts:
   works, and the rest needs code).
 - **Existing flow**: what happens, in order, and where in the code it happens.
 - **Setup**: configuration and data you provide. Nothing in this step changes code.
-- **Gaps**: what is missing, with its issue number, or "no issue" when nothing is filed yet.
+- **Gaps**: what is missing, with the issue that tracks it. Every gap has an issue; scope the
+  project has decided against is listed under *Do not promise* instead.
 - **Do not promise**: what a client or manager might assume the system does, but it does not.
 
 When a gap means code changes, do not guess which CI profile the change will run. Run the planner
@@ -58,9 +59,15 @@ These caveats apply to every recipe that takes in leads through forms.
 - **Behind a reverse proxy or CDN, set `TRUSTED_PROXIES`.** The rate limiter keys on the client
   IP, and the stored submission IP comes from the same source. With no trusted proxies, every
   visitor shares the proxy's address and one rate-limit bucket.
-- **A cancelled request writes nothing.** Public form submit and confirm, lead conversion and bulk
-  status updates run on the HTTP request's context. A visitor who closes the tab mid-request leaves
-  no submission behind, and a confirmation token is not spent (`docs/DEVELOPMENT.md:166-170`, #194).
+- **A request cancelled before its commit writes nothing; one cancelled after it does not undo
+  anything.** Public form submit and confirm, lead conversion and bulk status updates run on the
+  HTTP request's context (`docs/DEVELOPMENT.md:166-170`, #194). A visitor who closes the tab while
+  the transaction is still open leaves no submission behind and does not spend a confirmation
+  token. The form transaction commits before the notification and follow-up mail are sent and
+  before the response is written (`storeReceivedSubmission` and `ConfirmSubmission`,
+  `internal/service/form_service.go:856-881,950-987`), so a disconnect after the commit leaves the
+  submission stored and the token spent. A client that sees no response cannot conclude that
+  nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
   status to be in `leads.conversion.allowed_statuses`. The seeded value is `contacted` and
   `qualified` (`internal/models/configuration.go:267-280`), so a fresh form lead (status `new`)
@@ -102,8 +109,11 @@ and turns some into deals and quotes.
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
-   every lead (`CanViewLead`, `internal/service/lead_visibility.go:23`). A form with no default
-   owner creates leads only an admin can see.
+   every lead (`CanViewLead`, `internal/service/lead_visibility.go:23`). A form that creates
+   leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
+   (`internal/models/form.go:273-275`, called from `internal/service/form_service.go:455`). A form
+   with lead creation turned off may have no owner; its submissions are stored and no lead is
+   written (`internal/service/form_service.go:867-869`).
 6. Automation reacts to `lead_created` (and `lead_updated` for repeats). Typical steps: a condition
    on `source`, `create_task`, `notify`, `wait`, a condition `status == new`, and a staff
    `send_email` (event and step names in `internal/models/automation.go:31-59`; condition fields in
@@ -155,13 +165,13 @@ values. One shared installation does not work for several clients, for two reaso
 - Attribution: UTM parameters land in lead notes. Do not map them into `source`, which automation
   routes on. Separate attribution fields are #220.
 - No nurture email to leads: `send_email` reaches staff users only (`docs/ROADMAP.md`, "Email to
-  leads and customers"). No issue.
+  leads and customers"). Tracked in #238.
 - Form mail retry: #216. Submission retention purge: #217.
 - Branding: mail subjects are hard-coded (`internal/mailer/smtp.go:84`,
   `internal/service/quote_email.go:12-15`), and the `general.company_name` and
   `ui.theme.primary_color` settings have no consumer in the UI
   (`gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93`). Tracked in #221.
-- AEO export or client reporting: no issue.
+- AEO export or client reporting: #244.
 
 ### Do not promise
 
@@ -200,7 +210,10 @@ lost deal.
 
 - Set `deals.default_currency` in Settings (`internal/models/configuration.go:344`).
 - Create the products (admin only) and the sales users. Configure SMTP for quote email.
-- Review the pipeline at `/dashboard/pipeline` (admin and sales, `internal/handler/routes.go:219`).
+- Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
+  `gocrm-ui/src/routes/index.tsx:53,161`), both admin and sales. An integration reads the same
+  totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
+  (`internal/handler/routes.go:219`).
 - The quote email subject reads "Quote Q-… from GopherCRM" (`internal/service/quote_email.go:12-15`).
   Changing it is a code edit until #221 lands.
 
@@ -214,12 +227,12 @@ renewals are not modelled.
   1,000,000, `internal/models/quote.go:203,280`); staff record acceptance, and there is no client
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:88-91`); no PDF, only browser print
-  (`docs/FEATURES.md`, section 4d). No issue.
+  (`docs/FEATURES.md`, section 4d). Tracked in #233.
 - Tasks have no `deal_id`. A task created by a deal rule links to the deal's customer, or its lead
-  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). No issue.
+  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
 - The customer pages show a fabricated `total_revenue` of zero: #186.
 - Sales users can read tickets, but the navigation item is hidden from them (`docs/ROADMAP.md`,
-  "Sales ticket navigation"). No issue.
+  "Sales ticket navigation"). Tracked in #241.
 
 ### Do not promise
 
@@ -264,16 +277,15 @@ engines describe its product against competitors.
 
 ### Gaps
 
-- No usage or billing sync from the product.
 - Lead `external_id` is stored (`internal/models/lead.go:44`), and `LeadService.GetByExternalID`
   exists (`internal/service/lead_service.go:143`), but no route calls it: #215.
-- No AEO export or alerting. No issue.
+- No AEO export or alerting: #244.
 - No nurture email (recipe 1).
 
 ### Do not promise
 
-That sales can be attributed to AEO, that AEO improves rankings, or tenant isolation for the SaaS
-company's own customers.
+That sales can be attributed to AEO, that AEO improves rankings, usage or billing sync from the
+product, or tenant isolation for the SaaS company's own customers.
 
 ## 4. Customer issue register for a small IT or services firm
 
@@ -291,8 +303,12 @@ history. This is a staff-maintained register, not a shared helpdesk.
   customer, assignee and resolution, and nothing else (`Ticket`, `internal/models/ticket.go`).
 - A customer user can read its own ticket at `GET /tickets/:id`, with internal comments removed
   (`internal/handler/ticket_handler.go:385-405`), and `TicketDetail` renders it read-only
-  (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:127-135`). Customers cannot list tickets
-  (`ticket_handler.go:153`) and have no ticket navigation, create form or comment form.
+  (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:127-135`). `GET /tickets` and `GET /tickets/my`
+  refuse customers (`ticket_handler.go:153,316`), but `GET /customers/:id/tickets` lists the
+  tickets of the customer record linked to the caller's account and refuses any other id
+  (`internal/handler/routes.go:148`, `ticket_handler.go:250-260`; tested in
+  `internal/integration/ticket_visibility_integration_test.go:560`). The UI has no customer
+  ticket navigation, create form or comment form.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
 - Bulk status updates, at most 100 ids, all or nothing (`internal/service/bulk_status_service.go`).
 - The dashboard's recent tickets are narrowed to what the caller may see.
@@ -300,14 +316,20 @@ history. This is a staff-maintained register, not a shared helpdesk.
 ### Setup
 
 - Seed companies and customers with a script against the REST API. There is no import screen.
-- Assign tickets by hand. The seeded `tickets.auto_assign_support` setting has no effect
-  (`internal/models/configuration.go:354`; no code reads it). Tracked in #224.
+- Assign tickets deliberately. A ticket created without `assigned_to_id` is assigned to the
+  user who created it (`internal/handler/ticket_handler.go:107-110`), so an admin or an
+  integration key that omits the field becomes the assignee. The seeded
+  `tickets.auto_assign_support` setting has no effect (`internal/models/configuration.go:354`; no
+  code reads it). Tracked in #224.
 - Train staff on the difference between internal notes and public comments.
-- An integration that creates both customers and tickets must use an admin API key: customer
-  create is admin and sales (`internal/handler/routes.go:40`), ticket create is support and admin,
-  and API keys carry their owner's full role with no scopes (`APIKey`,
-  `internal/models/apikey.go:5`). Two keys do not work either, because a support key sees only the
-  tickets assigned to it. Tracked in #211.
+- An integration that creates both customers and tickets **with one identity** must use an admin
+  API key: customer create is admin and sales (`internal/handler/routes.go:40`), ticket create is
+  support and admin (`internal/handler/ticket_handler.go:87`), and API keys carry their owner's
+  full role with no scopes (`APIKey`, `internal/models/apikey.go:5`). Two identities also work: a
+  sales key creates the customer and a support key creates the ticket. The support key can then
+  read only tickets assigned to its own user (`ticket_handler.go:195`), which is the default when
+  it omits `assigned_to_id`; a ticket it assigns to a technician drops out of its reads. A
+  least-privilege credential is tracked in #211.
 
 ### Gaps before a shared desk
 
@@ -321,8 +343,9 @@ history. This is a staff-maintained register, not a shared helpdesk.
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
   (`docs/DEVELOPMENT.md:870`). Whether complaint text should be scrubbed is #214.
-- No SLA fields, no ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation —
-  deliberate v1 cuts"), no attachments. No issue.
+- No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
+  cuts"): #242.
+- No SLA fields and no attachments on tickets: #243.
 
 ### Do not promise
 
@@ -338,14 +361,13 @@ A supplier that answers requests for quotation from business customers.
   allow an override and a percentage discount per line, and pipeline totals per currency
   (`internal/models/product.go`, `internal/models/quote.go`, `internal/models/deal_pipeline.go`).
 - **Gaps:**
-  - No VAT or tax lines (`docs/FEATURES.md`, 4d.3), which most EU business-to-business quotes need.
-    No issue.
-  - Integer quantities only (`internal/models/quote.go:203`).
+  - No VAT or tax lines (`docs/FEATURES.md`, 4d.3), which most EU business-to-business quotes need,
+    and integer quantities only (`internal/models/quote.go:203`). Both are part of #233,
+    with the other quote limits from recipe 2.
   - Product SKUs are indexed but not unique (`internal/models/product.go:19`), so they are not safe
-    as a key into an ERP.
-  - No stock, order or ERP handoff.
-  - All the quote limits from recipe 2.
-- **Do not promise:** an order, a delivery date or an inventory commitment.
+    as a key into an ERP: #239.
+- **Do not promise:** an order, a delivery date, an inventory commitment, or a stock, order or ERP
+  handoff.
 
 ## 6. Training provider
 
@@ -359,9 +381,8 @@ A provider that runs courses for individuals and corporate groups.
   - A repeat enquiry keeps the lead's original `source` (shared caveats), so routing by course
     breaks for anyone who enquires about a second course. A form-finalised event that carries the
     form and submission ids is the first change needed: #220.
-  - No sessions, capacity or booking.
-  - Automation schedules run daily in UTC (`internal/models/automation.go:12`).
-- **Do not promise:** booking or attendance tracking.
+- **Limit:** automation schedules run daily in UTC (`internal/models/automation.go:12`).
+- **Do not promise:** sessions, capacity, booking or attendance tracking.
 
 ## 7. Poor fits
 
@@ -400,8 +421,12 @@ planning around an issue number.
 | Seeded settings that have no effect (`tickets.auto_assign_support`, `security.session_timeout_hours`) | 4 | `internal/models/configuration.go:333,354` | #224 |
 | Fabricated `total_revenue` on customers | 2, 5 | customer list and detail pages | #186 |
 | A bulk status outcome row can stay `pending` after its write fails | 4 | `internal/service/bulk_status_service.go` | #196 |
-| Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | no issue |
-| More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | no issue |
-| Tax lines, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | no issue |
-| `deal_id` on tasks | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | no issue |
-| AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | no issue |
+| Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
+| More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
+| Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
+| Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
+| `deal_id` on tasks | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
+| Ticket navigation for sales users | 2 | `docs/ROADMAP.md`, "Sales ticket navigation" | #241 |
+| Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
+| Ticket SLA fields and attachments | 4 | `internal/models/ticket.go` | #243 |
+| AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |
