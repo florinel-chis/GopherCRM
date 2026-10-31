@@ -184,6 +184,15 @@ class DocumentationTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([path])})
 
+    def test_frozen_scope_patterns_keep_use_case_guidance(self):
+        for pattern in ('internal/service/form*.go', 'internal/handler/form*.go', 'internal/models/form*',
+                        'internal/service/automation_*.go', 'internal/handler/ticket*.go', 'internal/models/quote*.go'):
+            with self.subTest(pattern=pattern):
+                self.assertIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+        for pattern in ('internal/service/*.go', 'internal/service/user*.go', 'gocrm-ui/src/pages/deals/*.tsx'):
+            with self.subTest(pattern=pattern):
+                self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+
     def test_changed_fork_documents_are_always_assessed(self):
         selected = {d['path'] for d in docs.suggestions(
             ['docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'])}

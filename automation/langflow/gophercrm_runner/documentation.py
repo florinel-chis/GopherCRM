@@ -63,8 +63,18 @@ def is_document(path):
 
 
 def is_use_case_path(path):
-    return (path.startswith(USE_CASE_DIRS)
-            or PurePosixPath(path).name.lower().startswith(USE_CASE_FILE_PREFIXES))
+    if path.startswith(USE_CASE_DIRS):
+        return True
+    name = PurePosixPath(path).name.lower()
+    if name.startswith(USE_CASE_FILE_PREFIXES):
+        return True
+    # A frozen scope pattern such as internal/service/form*.go: the literal text
+    # before the first wildcard must be able to begin one of the prefixes.
+    if '*' not in name and '?' not in name:
+        return False
+    stem = name.split('*', 1)[0].split('?', 1)[0]
+    return bool(stem) and any(
+        prefix.startswith(stem) or stem.startswith(prefix) for prefix in USE_CASE_FILE_PREFIXES)
 
 
 def suggestions(paths):
