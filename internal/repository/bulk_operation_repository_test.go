@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -48,7 +49,7 @@ func TestBulkOperationRepository_CreateAndUpdateStatus(t *testing.T) {
 		Status:       models.StatusPending,
 		TotalItems:   5,
 	}
-	require.NoError(t, repo.Create(op))
+	require.NoError(t, repo.Create(context.Background(), op))
 	assert.NotZero(t, op.ID)
 
 	var fetched models.BulkOperation
@@ -59,7 +60,7 @@ func TestBulkOperationRepository_CreateAndUpdateStatus(t *testing.T) {
 	assert.Equal(t, models.StatusPending, fetched.Status)
 	assert.Equal(t, 5, fetched.TotalItems)
 
-	require.NoError(t, repo.UpdateStatus(op.ID, models.StatusCompleted))
+	require.NoError(t, repo.UpdateStatus(context.Background(), op.ID, models.StatusCompleted))
 	var updated models.BulkOperation
 	require.NoError(t, db.First(&updated, op.ID).Error)
 	assert.Equal(t, models.StatusCompleted, updated.Status)
@@ -69,8 +70,8 @@ func TestBulkOperationRepository_CreateAndUpdateStatus(t *testing.T) {
 		UserID: user.ID, ResourceType: "tasks", Type: models.BulkAction,
 		Status: models.StatusPending, TotalItems: 1,
 	}
-	require.NoError(t, repo.Create(other))
-	require.NoError(t, repo.UpdateStatus(other.ID, models.StatusFailed))
+	require.NoError(t, repo.Create(context.Background(), other))
+	require.NoError(t, repo.UpdateStatus(context.Background(), other.ID, models.StatusFailed))
 	var first, second models.BulkOperation
 	require.NoError(t, db.First(&first, op.ID).Error)
 	assert.Equal(t, models.StatusCompleted, first.Status)

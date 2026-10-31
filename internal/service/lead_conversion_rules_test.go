@@ -9,6 +9,7 @@ package service
 // schema when TEST_MYSQL_DSN is set, and every assertion reads committed rows.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -186,7 +187,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		assert.True(t, autoAssign, "owner assignment is on as seeded")
 
 		lead := env.newLead(models.LeadStatusNew, nil)
-		_, err = env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		_, err = env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		env.assertRefused(err, "status", lead)
 		var ruleErr *LeadConversionRuleError
 		require.True(t, errors.As(err, &ruleErr))
@@ -194,7 +195,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 
 		for _, status := range []models.LeadStatus{models.LeadStatusQualified, models.LeadStatusContacted} {
 			lead := env.newLead(status, nil)
-			customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+			customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 			require.NoError(t, err, "status %s is allowed by default", status)
 			assert.NotZero(t, customer.ID)
 		}
@@ -206,11 +207,11 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env.set("leads.conversion.allowed_statuses", []interface{}{"unqualified"})
 
 		qualified := env.newLead(models.LeadStatusQualified, nil)
-		_, err := env.svc.ConvertToCustomer(qualified.ID, &models.Customer{})
+		_, err := env.svc.ConvertToCustomer(context.Background(), qualified.ID, &models.Customer{})
 		env.assertRefused(err, "status", qualified)
 
 		unqualified := env.newLead(models.LeadStatusUnqualified, nil)
-		customer, err := env.svc.ConvertToCustomer(unqualified.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), unqualified.ID, &models.Customer{})
 		require.NoError(t, err)
 		assert.Equal(t, models.LeadStatusConverted, env.committedLead(unqualified.ID).Status)
 		assert.Equal(t, unqualified.Email, env.committedCustomer(customer.ID).Email)
@@ -223,12 +224,12 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 
 		for _, notes := range []string{"", "   \n\t"} {
 			lead := env.newLead(models.LeadStatusQualified, nil)
-			_, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{Notes: notes})
+			_, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{Notes: notes})
 			env.assertRefused(err, "notes", lead)
 		}
 
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{Notes: "Signed the pilot order"})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{Notes: "Signed the pilot order"})
 		require.NoError(t, err)
 		assert.Equal(t, "Signed the pilot order", env.committedCustomer(customer.ID).Notes)
 	})
@@ -237,7 +238,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env := root.bind(t)
 		env.reset()
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		assert.Empty(t, env.committedCustomer(customer.ID).Notes)
 	})
@@ -246,7 +247,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env := root.bind(t)
 		env.reset()
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		stored := env.committedCustomer(customer.ID)
 		require.NotNil(t, stored.AssignedToID, "auto_assign_owner is on by default")
@@ -259,7 +260,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env.reset()
 		env.set("leads.conversion.auto_assign_owner", false)
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		stored := env.committedCustomer(customer.ID)
 		assert.Nil(t, stored.AssignedToID)
@@ -271,7 +272,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env.reset()
 		companyID := env.company.ID
 		lead := env.newLead(models.LeadStatusQualified, &companyID)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		stored := env.committedCustomer(customer.ID)
 		require.NotNil(t, stored.CompanyID)
@@ -283,7 +284,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env := root.bind(t)
 		env.reset()
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		customer, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		customer, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		assert.Nil(t, env.committedCustomer(customer.ID).CompanyID)
 	})
@@ -303,7 +304,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		neverLead := env.newLead(models.LeadStatusQualified, &neverID)
 
 		for _, l := range []*models.Lead{lead, neverLead} {
-			customer, err := env.svc.ConvertToCustomer(l.ID, &models.Customer{})
+			customer, err := env.svc.ConvertToCustomer(context.Background(), l.ID, &models.Customer{})
 			require.NoError(t, err)
 			assert.Nil(t, env.committedCustomer(customer.ID).CompanyID, "a link to a company that is not live is not carried over")
 			assert.Equal(t, models.LeadStatusConverted, env.committedLead(l.ID).Status)
@@ -314,10 +315,10 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env := root.bind(t)
 		env.reset()
 		lead := env.newLead(models.LeadStatusQualified, nil)
-		first, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		first, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.NoError(t, err)
 
-		_, err = env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		_, err = env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, apperrors.ErrLeadConverted), "got %v", err)
 		assert.Equal(t, int64(1), env.customersWithEmail(lead.Email))
@@ -337,7 +338,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Create(&existing).Error)
 		require.NoError(t, db.Model(&models.Lead{}).Where("id = ?", lead.ID).Update("customer_id", existing.ID).Error)
 
-		_, err := env.svc.ConvertToCustomer(lead.ID, &models.Customer{})
+		_, err := env.svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, apperrors.ErrLeadConverted), "got %v", err)
 		assert.Zero(t, env.customersWithEmail(lead.Email), "no second customer is written")
@@ -352,7 +353,7 @@ func runLeadConversionRuleScenarios(t *testing.T, db *gorm.DB) {
 		env.reset()
 		companyID := env.company.ID
 		lead := env.newLead(models.LeadStatusQualified, &companyID)
-		customer, err := env.failing.ConvertToCustomer(lead.ID, &models.Customer{Notes: "kept nowhere"})
+		customer, err := env.failing.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{Notes: "kept nowhere"})
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, errConvertWriteFailed), "got %v", err)
 		assert.Nil(t, customer)
@@ -384,7 +385,7 @@ func TestLeadConversionSettingsReadFailureWritesNothing(t *testing.T) {
 		utils.NewTransactionManager(db), WithLeadConversionRules(brokenConversionSettings{}))
 	lead := env.newLead(models.LeadStatusQualified, nil)
 
-	_, err := svc.ConvertToCustomer(lead.ID, &models.Customer{})
+	_, err := svc.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errDatabase), "got %v", err)
 	assert.False(t, errors.Is(err, apperrors.ErrValidation), "an outage is not a validation failure")
@@ -413,29 +414,29 @@ func TestLeadConversionLogLevels(t *testing.T) {
 
 	hook.Reset()
 	refused := env.newLead(models.LeadStatusNew, nil)
-	_, err := env.svc.ConvertToCustomer(refused.ID, &models.Customer{})
+	_, err := env.svc.ConvertToCustomer(context.Background(), refused.ID, &models.Customer{})
 	require.Error(t, err)
 	assert.Empty(t, errorEntries(), "a status refusal is not a server error")
 
 	hook.Reset()
 	taken := env.newLead(models.LeadStatusQualified, nil)
 	require.NoError(t, env.db.Create(&models.Customer{FirstName: "Existing", LastName: "Customer", Email: taken.Email}).Error)
-	_, err = env.svc.ConvertToCustomer(taken.ID, &models.Customer{})
+	_, err = env.svc.ConvertToCustomer(context.Background(), taken.ID, &models.Customer{})
 	require.True(t, errors.Is(err, apperrors.ErrDuplicateEmail), "got %v", err)
 	assert.Empty(t, errorEntries(), "a duplicate email is not a server error")
 
 	hook.Reset()
 	converted := env.newLead(models.LeadStatusQualified, nil)
-	_, err = env.svc.ConvertToCustomer(converted.ID, &models.Customer{})
+	_, err = env.svc.ConvertToCustomer(context.Background(), converted.ID, &models.Customer{})
 	require.NoError(t, err)
 	hook.Reset()
-	_, err = env.svc.ConvertToCustomer(converted.ID, &models.Customer{})
+	_, err = env.svc.ConvertToCustomer(context.Background(), converted.ID, &models.Customer{})
 	require.True(t, errors.Is(err, apperrors.ErrLeadConverted))
 	assert.Empty(t, errorEntries(), "an already converted lead is not a server error")
 
 	hook.Reset()
 	broken := env.newLead(models.LeadStatusQualified, nil)
-	_, err = env.failing.ConvertToCustomer(broken.ID, &models.Customer{})
+	_, err = env.failing.ConvertToCustomer(context.Background(), broken.ID, &models.Customer{})
 	require.Error(t, err)
 	assert.NotEmpty(t, errorEntries(), "a failed write is a server error")
 }

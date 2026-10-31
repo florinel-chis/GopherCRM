@@ -132,6 +132,14 @@ func (s *leadService) GetByID(id uint) (*models.Lead, error) {
 	return s.leadRepo.GetByIDWithPreloads(id, "Owner", "CompanyRecord")
 }
 
+// GetByIDContext reads the lead like GetByID on a handle bound to ctx.
+func (s *leadService) GetByIDContext(ctx context.Context, id uint) (*models.Lead, error) {
+	if s.txManager == nil {
+		return s.GetByID(id)
+	}
+	return s.leadRepo.WithTx(s.txManager.DB(ctx)).GetByIDWithPreloads(id, "Owner", "CompanyRecord")
+}
+
 func (s *leadService) GetByExternalID(externalID string) (*models.Lead, error) {
 	return s.leadRepo.GetByExternalID(externalID)
 }
@@ -556,14 +564,29 @@ func logConversionFailure(logger *logrus.Entry, err error, message string) {
 // still names a live company; a link to a deleted company is dropped rather
 // than failing the conversion, because the caller did not send it and cannot
 // correct it in this request, and deleting a company clears its links anyway.
-func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Customer) (*models.Customer, error) {
+//
+// ctx is the caller's request (issue #107). It bounds the lead read, the wait
+// for a connection and for the lead's row lock, and the retries; a cancelled
+// request returns the context's error and writes nothing. The conversion
+// settings are read through the configuration service, which does not take a
+// context yet.
+//
+// The conversion is a transaction root: a ctx that already carries a
+// transaction is refused with utils.ErrTransactionRootRequired before anything
+// is read, because the settings reads would need a second connection and the
+// conversion could not be undone by the enclosing rollback it cannot see.
+func (s *leadService) ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error) {
+	if utils.InTransaction(ctx) {
+		return nil, utils.ErrTransactionRootRequired
+	}
 	if err := normalizeCustomerWebsite(customerData); err != nil {
 		return nil, err
 	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", leadID), "LeadService", "ConvertToCustomer")
 
-	// First, validate the lead outside of transaction
-	lead, err := s.leadRepo.GetByID(leadID)
+	// First, validate the lead outside of transaction. The read is bound to
+	// the request: a caller that has gone away stops waiting for a connection.
+	lead, err := s.leadRepo.WithTx(s.txManager.DB(ctx)).GetByID(leadID)
 	if err != nil {
 		logConversionFailure(logger, err, "Lead not found")
 		return nil, err
@@ -592,8 +615,10 @@ func (s *leadService) ConvertToCustomer(leadID uint, customerData *models.Custom
 	// not inherit the id or the derived fields of one that rolled back.
 	requested := *customerData
 
-	// Execute conversion within a transaction with retry logic
-	ctx := context.Background()
+	// Execute conversion within a transaction with retry logic. The request
+	// context bounds the wait for a connection and for the lead's row lock,
+	// and a cancelled request stops the retries; the transaction then rolls
+	// back, so a conversion is either committed whole or not at all.
 	var convertedCustomer *models.Customer
 
 	err = s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {

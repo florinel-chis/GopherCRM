@@ -342,7 +342,7 @@ func (c *confirmationFixture) pendingLink(t *testing.T) string {
 func (c *confirmationFixture) pendingLinkFor(t *testing.T, form *models.Form) string {
 	t.Helper()
 	c.reset(t)
-	_, err := c.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := c.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	messages := c.mail.messages()
 	require.Len(t, messages, 1, "only the confirmation mail goes out before the address is proven")
@@ -449,11 +449,11 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 	t.Run("a link works once and a replay is rejected", func(t *testing.T) {
 		token := c.pendingLink(t)
 
-		require.NoError(t, c.service.ConfirmSubmission(token))
+		require.NoError(t, c.service.ConfirmSubmission(context.Background(), token))
 		c.assertConfirmedAndAnnounced(t)
 
 		c.mail.reset()
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, confirmedState)
 	})
 
@@ -461,7 +461,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 		token := c.pendingLink(t)
 		c.exec(t, "UPDATE form_confirmation_tokens SET used_at = ?", time.Now().Add(-time.Minute))
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, dbSnapshot{pending: 1})
 	})
 
@@ -469,7 +469,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 		c.pendingLink(t)
 
 		for _, token := range []string{"", "never-issued"} {
-			assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+			assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		}
 		c.assertNothingHappened(t, pendingState)
 	})
@@ -478,7 +478,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 		token := c.pendingLink(t)
 		c.exec(t, "UPDATE form_confirmation_tokens SET expires_at = ?", time.Now().Add(-time.Second))
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, pendingState)
 	})
 
@@ -495,13 +495,13 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 			}
 		})
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, pendingState)
 
 		// The rollback discarded the simulated expiry with everything else, so
 		// the same link completes once the clock no longer crosses it.
 		c.hooks.clear()
-		require.NoError(t, c.service.ConfirmSubmission(token))
+		require.NoError(t, c.service.ConfirmSubmission(context.Background(), token))
 		c.assertConfirmedAndAnnounced(t)
 	})
 
@@ -515,7 +515,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 			}
 		})
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, pendingState)
 	})
 
@@ -527,7 +527,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 				token := c.pendingLink(t)
 				c.exec(t, "UPDATE form_submissions SET status = ?", status)
 
-				assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+				assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 
 				expected := dbSnapshot{unspent: 1}
 				if status == models.FormSubmissionConfirmed {
@@ -542,7 +542,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 		token := c.pendingLink(t)
 		c.exec(t, "DELETE FROM form_submissions")
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, dbSnapshot{unspent: 1})
 	})
 
@@ -553,7 +553,7 @@ func runFormConfirmationTokenClaimScenarios(t *testing.T, db *gorm.DB) {
 		token := c.pendingLinkFor(t, doomed)
 		require.NoError(t, c.service.Delete(doomed.ID))
 
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, pendingState)
 	})
 }
@@ -597,7 +597,7 @@ func runFormConfirmationRollbackScenarios(t *testing.T, db *gorm.DB) {
 			}
 			c.hooks.install(tc.install)
 
-			err := c.service.ConfirmSubmission(token)
+			err := c.service.ConfirmSubmission(context.Background(), token)
 			require.ErrorIs(t, err, injected, "the failure reaches the caller as it is")
 			assert.NotErrorIs(t, err, ErrInvalidConfirmationToken)
 			c.assertNothingHappened(t, before)
@@ -608,7 +608,7 @@ func runFormConfirmationRollbackScenarios(t *testing.T, db *gorm.DB) {
 			// The same link, retried once the database behaves, completes the
 			// confirmation: the token was handed back by the rollback.
 			c.hooks.clear()
-			require.NoError(t, c.service.ConfirmSubmission(token))
+			require.NoError(t, c.service.ConfirmSubmission(context.Background(), token))
 			c.assertConfirmedAndAnnounced(t)
 			if existing != nil {
 				notes := c.leadNotes(t, existing.ID)
@@ -674,7 +674,7 @@ func runFormConfirmationConcurrentScenarios(t *testing.T, db *gorm.DB, connectio
 		for i := 0; i < confirmationCompetitors; i++ {
 			go func() {
 				<-start
-				results <- c.service.ConfirmSubmission(token)
+				results <- c.service.ConfirmSubmission(context.Background(), token)
 			}()
 		}
 		close(start)
@@ -705,7 +705,7 @@ func runFormConfirmationConcurrentScenarios(t *testing.T, db *gorm.DB, connectio
 
 		// A later replay of the same link is rejected and announces nothing more.
 		c.mail.reset()
-		assert.ErrorIs(t, c.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+		assert.ErrorIs(t, c.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		c.assertNothingHappened(t, confirmedState)
 	})
 }

@@ -205,6 +205,33 @@ func (tm *TransactionManager) WithTransactionAndRetry(ctx context.Context, fn fu
 	}
 }
 
+// DB returns a handle for a statement that belongs to the caller's unit of
+// work but runs outside a managed callback, such as a read that precedes the
+// transaction or an audit row written before it. When ctx carries an active
+// transaction the handle is that transaction, so the statement never asks
+// SQLite's single-connection pool for a second connection; otherwise it is the
+// root handle. Either way it is bound to ctx: a cancelled or expired request
+// stops waiting for a pooled connection or a row lock and the statement is
+// abandoned with the context's error.
+func (tm *TransactionManager) DB(ctx context.Context) *gorm.DB {
+	if tx := activeTransaction(ctx); tx != nil {
+		return tx.WithContext(ctx)
+	}
+	return tm.db.WithContext(ctx)
+}
+
+// ErrTransactionRootRequired is returned by an operation that must own its
+// transaction when it is called with a context that already carries one. Such
+// an operation sends mail or writes an audit row after its own commit, which
+// an enclosing transaction could still roll back, so it refuses to nest
+// instead of announcing work that may be discarded.
+var ErrTransactionRootRequired = errors.New("operation must run as its own transaction, not inside an enclosing one")
+
+// InTransaction reports whether ctx carries an active transaction.
+func InTransaction(ctx context.Context) bool {
+	return activeTransaction(ctx) != nil
+}
+
 // GetTxFromContext retrieves the transaction from the context
 func GetTxFromContext(ctx context.Context) (*gorm.DB, bool) {
 	tx, ok := ctx.Value(txKey).(*gorm.DB)

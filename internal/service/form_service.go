@@ -525,7 +525,7 @@ func newFormPublicID() (string, error) {
 // all reported as not-found: the public surface never explains why a form is
 // unavailable.
 func (s *formService) PublicDefinition(publicID, origin string) (*PublicFormDefinition, error) {
-	form, err := s.publishedForm(publicID)
+	form, err := s.publishedForm(s.repo, publicID)
 	if err != nil {
 		return nil, err
 	}
@@ -562,8 +562,8 @@ func (s *formService) PublicDefinition(publicID, origin string) (*PublicFormDefi
 	return definition, nil
 }
 
-func (s *formService) publishedForm(publicID string) (*models.Form, error) {
-	form, err := s.repo.GetByPublicID(publicID)
+func (s *formService) publishedForm(repo repository.FormRepository, publicID string) (*models.Form, error) {
+	form, err := repo.GetByPublicID(publicID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
 			return nil, fmt.Errorf("form %q not found: %w", publicID, apperrors.ErrNotFound)
@@ -635,10 +635,20 @@ func originHost(origin string) string {
 // validation is reported to the client; every spam layer produces the same
 // success-shaped outcome a genuine submission gets, with the submission stored
 // as spam so an admin can see what the filters caught.
-func (s *formService) SubmitPublic(publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error) {
+//
+// A submission is a transaction root: it mails after its own commit, so a ctx
+// that already carries a transaction is refused with
+// utils.ErrTransactionRootRequired before anything is read or written.
+func (s *formService) SubmitPublic(ctx context.Context, publicID string, req *PublicSubmissionRequest, meta SubmissionMeta) (*SubmitOutcome, error) {
+	if utils.InTransaction(ctx) {
+		return nil, utils.ErrTransactionRootRequired
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "form"), "FormService", "SubmitPublic")
 
-	form, err := s.publishedForm(publicID)
+	// Every statement of a submission is bound to the visitor's request: a
+	// request that is cancelled or times out stops waiting for a connection,
+	// abandons the captcha call and stores nothing.
+	form, err := s.publishedForm(s.repo.WithTx(s.txManager.DB(ctx)), publicID)
 	if err != nil {
 		return nil, err
 	}
@@ -654,31 +664,35 @@ func (s *formService) SubmitPublic(publicID string, req *PublicSubmissionRequest
 		return nil, err
 	}
 	if spamReason != "" {
-		return s.recordSpam(form, values, meta, req, spamReason)
+		return s.recordSpam(ctx, form, values, meta, req, spamReason)
 	}
 
 	if !originAllowed(form.AllowedDomains, meta.Origin) {
-		return s.recordSpam(form, values, meta, req, models.FormSpamReasonDomain)
+		return s.recordSpam(ctx, form, values, meta, req, models.FormSpamReasonDomain)
 	}
 
 	if strings.TrimSpace(req.Honeypot) != "" {
-		return s.recordSpam(form, values, meta, req, models.FormSpamReasonHoneypot)
+		return s.recordSpam(ctx, form, values, meta, req, models.FormSpamReasonHoneypot)
 	}
 
-	if !s.checkCaptcha(form, req, meta) {
-		return s.recordSpam(form, values, meta, req, models.FormSpamReasonCaptcha)
+	passed, err := s.checkCaptcha(ctx, form, req, meta)
+	if err != nil {
+		return nil, err
+	}
+	if !passed {
+		return s.recordSpam(ctx, form, values, meta, req, models.FormSpamReasonCaptcha)
 	}
 
 	submission := s.newSubmission(form, values, meta, req)
 	if form.DoubleOptIn {
 		submission.Status = models.FormSubmissionPending
-		if err := s.storePendingSubmission(form, submission); err != nil {
+		if err := s.storePendingSubmission(ctx, form, submission); err != nil {
 			utils.LogServiceResponse(logger, err)
 			return nil, err
 		}
 	} else {
 		submission.Status = models.FormSubmissionReceived
-		if err := s.storeReceivedSubmission(form, submission); err != nil {
+		if err := s.storeReceivedSubmission(ctx, form, submission); err != nil {
 			utils.LogServiceResponse(logger, err)
 			return nil, err
 		}
@@ -782,32 +796,40 @@ func (s *formService) checkChallenge(challenge string) (string, error) {
 // missing key pair degrades protection rather than blocking every submission.
 // An unreachable verification service counts as a failure: it must never be
 // possible to pass the check by breaking it.
-func (s *formService) checkCaptcha(form *models.Form, req *PublicSubmissionRequest, meta SubmissionMeta) bool {
+//
+// The call runs on the visitor's request context. When that request is
+// cancelled or times out the check is abandoned and the context's error is
+// returned instead of a verdict: nobody is waiting for the answer, and filing
+// the submission as captcha spam would record a verdict that was never made.
+func (s *formService) checkCaptcha(ctx context.Context, form *models.Form, req *PublicSubmissionRequest, meta SubmissionMeta) (bool, error) {
 	if !form.CaptchaEnabled || s.verifier == nil {
-		return true
+		return true, nil
 	}
 	if strings.TrimSpace(req.CaptchaToken) == "" {
-		return false
+		return false, nil
 	}
 
-	ok, err := s.verifier.Verify(context.Background(), req.CaptchaToken, meta.IP)
+	ok, err := s.verifier.Verify(ctx, req.CaptchaToken, meta.IP)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, fmt.Errorf("captcha verification abandoned: %w", ctxErr)
+		}
 		utils.Logger.WithError(utils.LogError(err)).WithField("form_id", form.ID).
 			Warn("Captcha verification failed to complete; treating the submission as spam")
-		return false
+		return false, nil
 	}
-	return ok
+	return ok, nil
 }
 
 // recordSpam stores a rejected submission and answers with the outcome a
 // genuine submission would have produced. No mail is sent and no lead is
 // created — the row exists purely so an admin can audit the filters.
-func (s *formService) recordSpam(form *models.Form, values map[string]string, meta SubmissionMeta, req *PublicSubmissionRequest, reason string) (*SubmitOutcome, error) {
+func (s *formService) recordSpam(ctx context.Context, form *models.Form, values map[string]string, meta SubmissionMeta, req *PublicSubmissionRequest, reason string) (*SubmitOutcome, error) {
 	submission := s.newSubmission(form, values, meta, req)
 	submission.Status = models.FormSubmissionSpam
 	submission.SpamReason = reason
 
-	if err := s.repo.CreateSubmission(submission); err != nil {
+	if err := s.repo.WithTx(s.txManager.DB(ctx)).CreateSubmission(submission); err != nil {
 		return nil, err
 	}
 
@@ -831,8 +853,8 @@ func (s *formService) newSubmission(form *models.Form, values map[string]string,
 // feeds, then sends whatever mail the form configures. The lead and the
 // submission's link to it are written in one transaction so a submission can
 // never point at a lead that was rolled back.
-func (s *formService) storeReceivedSubmission(form *models.Form, submission *models.FormSubmission) error {
-	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.Form, submission *models.FormSubmission) error {
+	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
@@ -863,10 +885,10 @@ func (s *formService) storeReceivedSubmission(form *models.Form, submission *mod
 // its single-use token. Prior outstanding tokens for the same form and address
 // are spent first, so re-submitting leaves exactly one working link. No lead is
 // created and no notification is sent until the address is confirmed.
-func (s *formService) storePendingSubmission(form *models.Form, submission *models.FormSubmission) error {
+func (s *formService) storePendingSubmission(ctx context.Context, form *models.Form, submission *models.FormSubmission) error {
 	var rawToken string
 
-	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
@@ -918,7 +940,17 @@ func (s *formService) storePendingSubmission(form *models.Form, submission *mode
 // on a confirmation that never happened. Mail goes out only once the
 // transaction has committed; a notification about a confirmation that was then
 // rolled back would announce a lead that does not exist.
-func (s *formService) ConfirmSubmission(rawToken string) error {
+//
+// The transaction runs on the visitor's request context: a request cancelled
+// while it waits for a connection or for the token's row lock rolls back
+// before anything is claimed, so the link stays usable. Like a submission it
+// is a transaction root and refuses a ctx that already carries a transaction
+// (utils.ErrTransactionRootRequired): its mail could not be taken back if an
+// enclosing transaction rolled back.
+func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) error {
+	if utils.InTransaction(ctx) {
+		return utils.ErrTransactionRootRequired
+	}
 	logger := utils.LogServiceCall(utils.Logger.WithField("handler", "confirm"), "FormService", "ConfirmSubmission")
 
 	if strings.TrimSpace(rawToken) == "" {
@@ -930,7 +962,7 @@ func (s *formService) ConfirmSubmission(rawToken string) error {
 		form       *models.Form
 		submission *models.FormSubmission
 	)
-	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction

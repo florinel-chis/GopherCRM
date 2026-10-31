@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -444,7 +445,7 @@ func TestFormServiceListReportsSubmissionCounts(t *testing.T) {
 	f.publish(t, quiet)
 
 	for i := 0; i < 2; i++ {
-		_, err := f.service.SubmitPublic(busy.PublicID, validSubmission(), submissionMeta())
+		_, err := f.service.SubmitPublic(context.Background(), busy.PublicID, validSubmission(), submissionMeta())
 		require.NoError(t, err)
 	}
 
@@ -649,7 +650,7 @@ func TestFormServiceSubmitRejectsInvalidValues(t *testing.T) {
 			req.Consent = true
 			tc.mutate(req)
 
-			outcome, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+			outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
 
 			require.Error(t, err)
 			assert.Nil(t, outcome)
@@ -744,7 +745,7 @@ func TestFormServiceSubmitRejectsValuesWiderThanTheirColumn(t *testing.T) {
 				Challenge: challengeAged(30 * time.Second),
 			}
 
-			outcome, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+			outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
 
 			require.Error(t, err)
 			assert.Nil(t, outcome)
@@ -771,7 +772,7 @@ func TestFormServiceSubmitRejectsWideValuesBeforeTheSpamLayers(t *testing.T) {
 		Honeypot:  "https://buy-now.example",
 	}
 
-	_, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
 
 	var fieldErrors FieldErrors
 	require.ErrorAs(t, err, &fieldErrors)
@@ -796,7 +797,7 @@ func TestFormServiceSubmitAcceptsValuesThatFillTheirColumn(t *testing.T) {
 		"message":    strings.Repeat("m", models.FormDefaultMaxLength),
 	}
 
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    values,
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -823,7 +824,7 @@ func TestFormServiceSubmitKeepsAStricterDeclaredLimit(t *testing.T) {
 	form.Fields[0].MaxLength = 20
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"email": "ada@example.com", "first_name": strings.Repeat("a", 21)},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -845,7 +846,7 @@ func TestFormServiceSubmitNormalisesStoredValues(t *testing.T) {
 	req.Values["email"] = "  Ada@Example.COM  "
 	req.Values["newsletter"] = "on"
 
-	_, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
 	require.NoError(t, err)
 
 	stored := f.submissions(t, form.ID)
@@ -866,7 +867,7 @@ func TestFormServiceSubmitStoresUntickedCheckboxAsFalse(t *testing.T) {
 	})
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	stored := f.submissions(t, form.ID)
@@ -880,7 +881,7 @@ func TestFormServiceSubmitRejectsUnpublishedForm(t *testing.T) {
 	draft.Status = models.FormStatusDraft
 	f.publish(t, draft)
 
-	_, err := f.service.SubmitPublic(draft.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), draft.PublicID, validSubmission(), submissionMeta())
 	assert.True(t, apperrors.IsNotFound(err))
 }
 
@@ -946,7 +947,7 @@ func TestFormServiceSpamLayersAreStoredAndAnsweredLikeSuccess(t *testing.T) {
 			meta := submissionMeta()
 			tc.mutate(req, &meta)
 
-			outcome, err := f.service.SubmitPublic(form.PublicID, req, meta)
+			outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, meta)
 
 			require.NoError(t, err, "a spam submission is answered exactly like a genuine one")
 			require.NotNil(t, outcome)
@@ -981,7 +982,7 @@ func TestFormServiceSpamLayerOrderIsFixed(t *testing.T) {
 	meta := submissionMeta()
 	meta.Origin = "https://scraper.example"
 
-	_, err := f.service.SubmitPublic(form.PublicID, req, meta)
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, meta)
 	require.NoError(t, err)
 
 	stored := f.submissions(t, form.ID)
@@ -995,7 +996,7 @@ func TestFormServiceCaptchaLayerIsSkippedWithoutServerKeys(t *testing.T) {
 	form.CaptchaEnabled = true
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	stored := f.submissions(t, form.ID)
@@ -1009,7 +1010,7 @@ func TestFormServiceSubmitCreatesLeadAndNotifies(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.newForm())
 
-	outcome, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	assert.Equal(t, models.FormSubmitActionMessage, outcome.Action)
 	assert.Equal(t, formDefaultThankYouMessage, outcome.Message)
@@ -1049,12 +1050,12 @@ func TestFormServiceSubmitDeduplicatesLeadsByAddress(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.newForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	second := validSubmission()
 	second.Values["message"] = "Following up on my earlier note."
-	_, err = f.service.SubmitPublic(form.PublicID, second, submissionMeta())
+	_, err = f.service.SubmitPublic(context.Background(), form.PublicID, second, submissionMeta())
 	require.NoError(t, err)
 
 	leads := f.leads(t)
@@ -1077,7 +1078,7 @@ func TestFormServiceSubmitWithoutLeadCreation(t *testing.T) {
 	form.DefaultOwnerID = 0
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	assert.Empty(t, f.leads(t))
@@ -1096,7 +1097,7 @@ func TestFormServiceSubmitSplitsSingleNameField(t *testing.T) {
 	}
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"name": "Grace Brewster Hopper", "email": "grace@example.com"},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -1118,7 +1119,7 @@ func TestFormServiceSubmitSplitsSingleWordName(t *testing.T) {
 	}
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"name": "Ada", "email": "lovelace@example.com"},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -1138,7 +1139,7 @@ func TestFormServiceSubmitFallsBackToUsableLeadNames(t *testing.T) {
 	}
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"email": "ada@example.com"},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -1160,7 +1161,7 @@ func TestFormServiceSubmitFallbackSurnameFitsTheColumn(t *testing.T) {
 
 	// A valid address whose local part alone is wider than leads.last_name.
 	address := strings.Repeat("a", 200) + "@example.com"
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"email": address},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -1183,7 +1184,7 @@ func TestFormServiceSubmitFallbackSurnameKeepsWholeCharacters(t *testing.T) {
 
 	// Two-byte characters: clipping by bytes would cut one in half.
 	address := strings.Repeat("ä", 150) + "@example.com"
-	_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 		Values:    map[string]string{"email": address},
 		Challenge: challengeAged(30 * time.Second),
 	}, submissionMeta())
@@ -1249,7 +1250,7 @@ func TestFormServiceRepeatedSubmissionsKeepLeadNotesWithinTheColumn(t *testing.T
 	f.publish(t, form)
 
 	for i := 1; i <= 6; i++ {
-		_, err := f.service.SubmitPublic(form.PublicID, &PublicSubmissionRequest{
+		_, err := f.service.SubmitPublic(context.Background(), form.PublicID, &PublicSubmissionRequest{
 			Values: map[string]string{
 				"email":   "repeat@example.com",
 				"ref":     fmt.Sprintf("sub-%d", i),
@@ -1274,7 +1275,7 @@ func TestFormServiceSubmitRedirectOutcome(t *testing.T) {
 	form.RedirectURL = "https://customer.example/thanks"
 	f.publish(t, form)
 
-	outcome, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	assert.Equal(t, models.FormSubmitActionRedirect, outcome.Action)
 	assert.Equal(t, "https://customer.example/thanks", outcome.RedirectURL)
@@ -1289,7 +1290,7 @@ func TestFormServiceSubmitSendsImmediateFollowUpWhenNotOptIn(t *testing.T) {
 	form.ContentURL = "https://files.example/guide.pdf"
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	followUps := f.mailer.to("ada@example.com")
@@ -1303,7 +1304,7 @@ func TestFormServiceSubmitSurvivesMailFailure(t *testing.T) {
 	form := f.publish(t, f.newForm())
 	f.mailer.err = assert.AnError
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 
 	require.NoError(t, err, "mail is a side effect of a submission that is already stored")
 	assert.Len(t, f.submissions(t, form.ID), 1)
@@ -1324,7 +1325,7 @@ func TestFormServiceOptInDefersEverythingToConfirmation(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	outcome, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	assert.True(t, outcome.PendingConfirmation)
 	assert.Equal(t, formDefaultPendingMessage, outcome.Message)
@@ -1347,12 +1348,12 @@ func TestFormServiceConfirmCompletesTheSubmission(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	token := tokenFromLink(t, f.mailer.messages()[0].Body)
 	f.mailer.reset()
 
-	require.NoError(t, f.service.ConfirmSubmission(token))
+	require.NoError(t, f.service.ConfirmSubmission(context.Background(), token))
 
 	stored := f.submissions(t, form.ID)
 	require.Len(t, stored, 1)
@@ -1383,7 +1384,7 @@ func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) 
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	token := tokenFromLink(t, f.mailer.messages()[0].Body)
 
@@ -1393,7 +1394,7 @@ func TestFormServiceConfirmRefusesAPendingValueWiderThanItsColumn(t *testing.T) 
 	legacy.Data["first_name"] = strings.Repeat("x", 120)
 	require.NoError(t, f.db.Save(&legacy).Error)
 
-	err = f.service.ConfirmSubmission(token)
+	err = f.service.ConfirmSubmission(context.Background(), token)
 	require.ErrorIs(t, err, ErrInvalidConfirmationToken)
 
 	var tokens []models.FormConfirmationToken
@@ -1409,13 +1410,13 @@ func TestFormServiceConfirmIsSingleUse(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	token := tokenFromLink(t, f.mailer.messages()[0].Body)
 
-	require.NoError(t, f.service.ConfirmSubmission(token))
+	require.NoError(t, f.service.ConfirmSubmission(context.Background(), token))
 
-	err = f.service.ConfirmSubmission(token)
+	err = f.service.ConfirmSubmission(context.Background(), token)
 	assert.ErrorIs(t, err, ErrInvalidConfirmationToken)
 	assert.Len(t, f.leads(t), 1, "a second click creates nothing")
 }
@@ -1424,7 +1425,7 @@ func TestFormServiceConfirmRejectsUnusableTokens(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	stored := f.submissions(t, form.ID)
 	require.Len(t, stored, 1)
@@ -1442,7 +1443,7 @@ func TestFormServiceConfirmRejectsUnusableTokens(t *testing.T) {
 		"expired": expired,
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.ErrorIs(t, f.service.ConfirmSubmission(token), ErrInvalidConfirmationToken)
+			assert.ErrorIs(t, f.service.ConfirmSubmission(context.Background(), token), ErrInvalidConfirmationToken)
 		})
 	}
 
@@ -1453,18 +1454,18 @@ func TestFormServiceResubmitInvalidatesTheEarlierLink(t *testing.T) {
 	f := newDefaultFormFixture(t)
 	form := f.publish(t, f.optInForm())
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	firstToken := tokenFromLink(t, f.mailer.messages()[0].Body)
 	f.mailer.reset()
 
-	_, err = f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err = f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 	secondToken := tokenFromLink(t, f.mailer.messages()[0].Body)
 	require.NotEqual(t, firstToken, secondToken)
 
-	assert.ErrorIs(t, f.service.ConfirmSubmission(firstToken), ErrInvalidConfirmationToken)
-	require.NoError(t, f.service.ConfirmSubmission(secondToken))
+	assert.ErrorIs(t, f.service.ConfirmSubmission(context.Background(), firstToken), ErrInvalidConfirmationToken)
+	require.NoError(t, f.service.ConfirmSubmission(context.Background(), secondToken))
 }
 
 func TestFormServiceConfirmationMailUsesTheFormsOwnCopy(t *testing.T) {
@@ -1474,7 +1475,7 @@ func TestFormServiceConfirmationMailUsesTheFormsOwnCopy(t *testing.T) {
 	form.ConfirmationBody = "Hi there,\n\nConfirm here: {confirmation_link}\n"
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	messages := f.mailer.messages()
@@ -1485,7 +1486,7 @@ func TestFormServiceConfirmationMailUsesTheFormsOwnCopy(t *testing.T) {
 	assert.Contains(t, messages[0].Body, formTestConfirmURL+"?token=")
 
 	// The link must still be usable when it comes out of a hand-written body.
-	require.NoError(t, f.service.ConfirmSubmission(tokenFromLink(t, messages[0].Body)))
+	require.NoError(t, f.service.ConfirmSubmission(context.Background(), tokenFromLink(t, messages[0].Body)))
 }
 
 func TestFormServiceConfirmationMailAppendsAMissingPlaceholder(t *testing.T) {
@@ -1494,13 +1495,13 @@ func TestFormServiceConfirmationMailAppendsAMissingPlaceholder(t *testing.T) {
 	form.ConfirmationBody = "Someone forgot the link."
 	f.publish(t, form)
 
-	_, err := f.service.SubmitPublic(form.PublicID, validSubmission(), submissionMeta())
+	_, err := f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 	require.NoError(t, err)
 
 	messages := f.mailer.messages()
 	require.Len(t, messages, 1)
 	assert.Contains(t, messages[0].Body, "Someone forgot the link.")
-	require.NoError(t, f.service.ConfirmSubmission(tokenFromLink(t, messages[0].Body)))
+	require.NoError(t, f.service.ConfirmSubmission(context.Background(), tokenFromLink(t, messages[0].Body)))
 }
 
 func TestFormServiceOptInSpamNeverMintsAToken(t *testing.T) {
@@ -1510,7 +1511,7 @@ func TestFormServiceOptInSpamNeverMintsAToken(t *testing.T) {
 	req := validSubmission()
 	req.Honeypot = "spam"
 
-	outcome, err := f.service.SubmitPublic(form.PublicID, req, submissionMeta())
+	outcome, err := f.service.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
 	require.NoError(t, err)
 	assert.True(t, outcome.PendingConfirmation, "the spam answer is shaped exactly like the genuine one")
 

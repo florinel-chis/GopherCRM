@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,30 +28,32 @@ type stubBulkStatusService struct {
 	gotRole    models.UserRole
 	gotIDs     []uint
 	gotStatus  string
+	gotCtx     context.Context
 	result     *models.BulkStatusUpdateResult
 	err        error
 }
 
-func (s *stubBulkStatusService) record(actorID uint, role models.UserRole, ids []uint, status string) {
+func (s *stubBulkStatusService) record(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status string) {
 	s.called = true
+	s.gotCtx = ctx
 	s.gotActorID = actorID
 	s.gotRole = role
 	s.gotIDs = ids
 	s.gotStatus = status
 }
 
-func (s *stubBulkStatusService) BulkSetLeadStatus(actorID uint, role models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, role, ids, string(status))
 	return s.result, s.err
 }
 
-func (s *stubBulkStatusService) BulkSetTicketStatus(actorID uint, role models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, role, ids, string(status))
 	return s.result, s.err
 }
 
-func (s *stubBulkStatusService) BulkSetTaskStatus(actorID uint, role models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, role, ids, string(status))
 	return s.result, s.err
 }
 
@@ -464,4 +467,33 @@ func (suite *BulkStatusHandlerTestSuite) TestBulkUpdateLeadStatus_ConvertedIsAVa
 	suite.Equal(utils.ErrCodeValidation, resp.Error.Code)
 	suite.Contains(resp.Error.Message, "/convert")
 	suite.Equal(map[string]interface{}{"field": "status"}, resp.Error.Details)
+}
+
+// TestBulkStatusRunsOnTheRequestContext pins issue #107: the service gets the
+// request's own context, so a client that goes away stops the batch.
+func (suite *BulkStatusHandlerTestSuite) TestBulkStatusRunsOnTheRequestContext() {
+	type marker struct{}
+	cases := []struct {
+		path string
+		body interface{}
+	}{
+		{"/leads/bulk/status", gin.H{"lead_ids": []uint{1}, "status": "contacted"}},
+		{"/tickets/bulk/status", gin.H{"ticket_ids": []uint{1}, "status": "resolved"}},
+		{"/tasks/bulk/status", gin.H{"task_ids": []uint{1}, "status": "completed"}},
+	}
+	for _, tc := range cases {
+		suite.stub.gotCtx = nil
+		payload, err := json.Marshal(tc.body)
+		suite.Require().NoError(err)
+		req, err := http.NewRequestWithContext(context.WithValue(context.Background(), marker{}, tc.path),
+			http.MethodPost, tc.path, bytes.NewBuffer(payload))
+		suite.Require().NoError(err)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		suite.Require().Equal(http.StatusOK, w.Code, tc.path)
+		suite.Require().NotNil(suite.stub.gotCtx, tc.path)
+		suite.Equal(tc.path, suite.stub.gotCtx.Value(marker{}), tc.path)
+	}
 }
