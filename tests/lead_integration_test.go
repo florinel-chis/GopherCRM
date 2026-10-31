@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -16,9 +17,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -43,26 +44,26 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	}
 	err := utils.InitLogger(logConfig)
 	suite.NoError(err)
-	
+
 	// Setup test database
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	suite.NoError(err)
-	
+
 	// Migrate the schema
 	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Lead{}, &models.Customer{},
 		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 	suite.NoError(err)
-	
+
 	suite.db = db
-	
+
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	
+
 	// Initialize repositories
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
-	
+
 	// Initialize services
 	jwtConfig := config.JWTConfig{
 		Secret:      "test-secret",
@@ -72,12 +73,12 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	suite.userService = service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(db)
 	suite.leadService = service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
-	
+
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)
 	userHandler := handler.NewUserHandler(suite.userService)
 	leadHandler := handler.NewLeadHandler(suite.leadService)
-	
+
 	// Setup Gin router
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -85,24 +86,24 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	router.Use(middleware.Logger())
 	router.Use(middleware.ErrorHandler())
 	router.Use(gin.Recovery())
-	
+
 	// Setup routes
 	api := router.Group("/api/v1")
-	
+
 	// Auth routes
 	api.POST("/auth/login", authHandler.Login)
-	
+
 	// Protected routes
 	protected := api.Group("")
 	protected.Use(middleware.Auth(suite.authService))
-	
+
 	// User routes
 	protected.POST("/users", userHandler.Create)
 	protected.GET("/users", userHandler.List)
 	protected.GET("/users/:id", userHandler.Get)
 	protected.PUT("/users/:id", userHandler.Update)
 	protected.DELETE("/users/:id", userHandler.Delete)
-	
+
 	// Lead routes
 	protected.POST("/leads", leadHandler.Create)
 	protected.GET("/leads", leadHandler.List)
@@ -110,9 +111,9 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	protected.PUT("/leads/:id", leadHandler.Update)
 	protected.DELETE("/leads/:id", leadHandler.Delete)
 	protected.POST("/leads/:id/convert", leadHandler.ConvertToCustomer)
-	
+
 	suite.router = router
-	
+
 	// Create test users
 	suite.createTestUsers()
 }
@@ -129,7 +130,7 @@ func (suite *LeadIntegrationTestSuite) createTestUsers() {
 	err := suite.userService.Register(adminUser, "password123")
 	suite.NoError(err)
 	suite.adminUser = adminUser
-	
+
 	// Create sales user
 	salesUser := &models.User{
 		Email:     "sales@test.com",
@@ -141,12 +142,12 @@ func (suite *LeadIntegrationTestSuite) createTestUsers() {
 	err = suite.userService.Register(salesUser, "password123")
 	suite.NoError(err)
 	suite.salesUser = salesUser
-	
+
 	// Get tokens
 	adminToken, err := suite.authService.Login("admin@test.com", "password123")
 	suite.NoError(err)
 	suite.adminToken = adminToken
-	
+
 	salesToken, err := suite.authService.Login("sales@test.com", "password123")
 	suite.NoError(err)
 	suite.salesToken = salesToken
@@ -166,7 +167,7 @@ func (suite *LeadIntegrationTestSuite) makeRequestWithAuth(method, url string, b
 	} else {
 		reqBody = bytes.NewBuffer(nil)
 	}
-	
+
 	req := httptest.NewRequest(method, url, reqBody)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -174,10 +175,10 @@ func (suite *LeadIntegrationTestSuite) makeRequestWithAuth(method, url string, b
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	
+
 	rec := httptest.NewRecorder()
 	suite.router.ServeHTTP(rec, req)
-	
+
 	return rec
 }
 
@@ -191,16 +192,16 @@ func (suite *LeadIntegrationTestSuite) TestCreateLead_AdminSuccess() {
 		Source:    "website",
 		OwnerID:   &suite.salesUser.ID,
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/leads", payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	leadData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "John", leadData["first_name"])
 	assert.Equal(suite.T(), "Doe", leadData["last_name"])
@@ -217,16 +218,16 @@ func (suite *LeadIntegrationTestSuite) TestCreateLead_SalesSuccess() {
 		Company:   "Tech Corp",
 		Source:    "referral",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/leads", payload, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	leadData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "Jane", leadData["first_name"])
 	assert.Equal(suite.T(), float64(suite.salesUser.ID), leadData["owner_id"])
@@ -239,11 +240,11 @@ func (suite *LeadIntegrationTestSuite) TestCreateLead_SalesCannotAssignToOthers(
 		Email:     "bob@example.com",
 		OwnerID:   &suite.adminUser.ID, // Sales user trying to assign to admin
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/leads", payload, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -265,21 +266,21 @@ func (suite *LeadIntegrationTestSuite) TestListLeads_AdminSeesAll() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead1)
 	suite.NoError(err)
 	err = suite.leadService.Create(lead2)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/leads", nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	data := response.Data.(map[string]interface{})
 	leads := data["leads"].([]interface{})
 	assert.Len(suite.T(), leads, 2)
@@ -300,28 +301,114 @@ func (suite *LeadIntegrationTestSuite) TestListLeads_SalesSeesOnlyOwn() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead1)
 	suite.NoError(err)
 	err = suite.leadService.Create(lead2)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/leads", nil, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	data := response.Data.(map[string]interface{})
 	leads := data["leads"].([]interface{})
 	assert.Len(suite.T(), leads, 1)
 	assert.Equal(suite.T(), float64(1), data["total"])
-	
+
 	lead := leads[0].(map[string]interface{})
 	assert.Equal(suite.T(), "Lead2", lead["first_name"])
+}
+
+// listByExternalID calls GET /leads?external_id= and decodes {leads, total}.
+func (suite *LeadIntegrationTestSuite) listByExternalID(externalID, token string) ([]interface{}, float64) {
+	rec := suite.makeRequestWithAuth("GET", "/api/v1/leads?external_id="+externalID+"&search=Other", nil, token)
+	suite.Require().Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var response utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+	data := response.Data.(map[string]interface{})
+	leads, ok := data["leads"].([]interface{})
+	suite.Require().True(ok, "leads is an array, also when empty")
+	return leads, data["total"].(float64)
+}
+
+func (suite *LeadIntegrationTestSuite) TestListLeads_ByExternalID() {
+	adminLead := &models.Lead{FirstName: "AdminOwned", Email: "ext-admin@example.com", ExternalID: "crm-admin-1",
+		OwnerID: suite.adminUser.ID, Status: models.LeadStatusNew}
+	salesLead := &models.Lead{FirstName: "SalesOwned", Email: "ext-sales@example.com", ExternalID: "crm-sales-1",
+		OwnerID: suite.salesUser.ID, Status: models.LeadStatusNew}
+	other := &models.Lead{FirstName: "Other", Email: "other@example.com", OwnerID: suite.salesUser.ID, Status: models.LeadStatusNew}
+	for _, lead := range []*models.Lead{adminLead, salesLead, other} {
+		suite.Require().NoError(suite.leadService.Create(lead))
+	}
+
+	// The admin finds any lead, with its owner loaded; external_id wins over
+	// the search for "Other" that every call also sends.
+	leads, total := suite.listByExternalID("crm-sales-1", suite.adminToken)
+	suite.Require().Len(leads, 1)
+	suite.Equal(float64(1), total)
+	found := leads[0].(map[string]interface{})
+	suite.Equal(float64(salesLead.ID), found["id"])
+	suite.Equal("crm-sales-1", found["external_id"])
+	suite.Equal("Sales", found["owner"].(map[string]interface{})["first_name"])
+
+	// Sales finds its own lead ...
+	leads, total = suite.listByExternalID("crm-sales-1", suite.salesToken)
+	suite.Require().Len(leads, 1)
+	suite.Equal(float64(1), total)
+
+	// ... and gets the same empty answer for another owner's lead as for an
+	// unknown value.
+	leads, total = suite.listByExternalID("crm-admin-1", suite.salesToken)
+	suite.Empty(leads)
+	suite.Equal(float64(0), total)
+	leads, total = suite.listByExternalID("crm-unknown", suite.adminToken)
+	suite.Empty(leads)
+	suite.Equal(float64(0), total)
+
+	// An erased (soft-deleted) lead is not found either.
+	suite.Require().NoError(suite.db.Delete(&models.Lead{}, salesLead.ID).Error)
+	leads, total = suite.listByExternalID("crm-sales-1", suite.adminToken)
+	suite.Empty(leads)
+	suite.Equal(float64(0), total)
+}
+
+func (suite *LeadIntegrationTestSuite) TestListLeads_ByExternalIDSharedByTwoOwners() {
+	// The admin's lead is created first, so it has the lower id.
+	older := &models.Lead{FirstName: "OlderAdmin", Email: "dup-admin@example.com", ExternalID: "crm-dup",
+		OwnerID: suite.adminUser.ID, Status: models.LeadStatusNew}
+	later := &models.Lead{FirstName: "LaterSales", Email: "dup-sales@example.com", ExternalID: "crm-dup",
+		OwnerID: suite.salesUser.ID, Status: models.LeadStatusNew}
+	suite.Require().NoError(suite.leadService.Create(older))
+	suite.Require().NoError(suite.leadService.Create(later))
+	suite.Require().Less(older.ID, later.ID)
+
+	leads, total := suite.listByExternalID("crm-dup", suite.adminToken)
+	suite.Require().Len(leads, 2)
+	suite.Equal(float64(2), total)
+	suite.Equal(float64(older.ID), leads[0].(map[string]interface{})["id"], "ascending id order")
+	suite.Equal(float64(later.ID), leads[1].(map[string]interface{})["id"])
+
+	leads, total = suite.listByExternalID("crm-dup", suite.salesToken)
+	suite.Require().Len(leads, 1)
+	suite.Equal(float64(1), total)
+	suite.Equal(float64(later.ID), leads[0].(map[string]interface{})["id"])
+}
+
+func (suite *LeadIntegrationTestSuite) TestListLeads_ByExternalIDTooLong() {
+	rec := suite.makeRequestWithAuth("GET", "/api/v1/leads?external_id="+strings.Repeat("x", service.LeadExternalIDMaxLength+1), nil, suite.adminToken)
+	suite.Equal(http.StatusBadRequest, rec.Code)
+
+	var response utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response))
+	suite.Require().NotNil(response.Error)
+	suite.Equal(utils.ErrCodeValidation, response.Error.Code)
 }
 
 func (suite *LeadIntegrationTestSuite) TestGetLead_AdminSuccess() {
@@ -332,19 +419,19 @@ func (suite *LeadIntegrationTestSuite) TestGetLead_AdminSuccess() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	leadData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "Test", leadData["first_name"])
 	assert.Equal(suite.T(), "Lead", leadData["last_name"])
@@ -358,12 +445,12 @@ func (suite *LeadIntegrationTestSuite) TestGetLead_SalesCannotAccessOthers() {
 		OwnerID:   suite.adminUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
@@ -375,25 +462,25 @@ func (suite *LeadIntegrationTestSuite) TestUpdateLead_Success() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	payload := handler.UpdateLeadRequest{
 		FirstName: "Updated",
 		LastName:  "Name",
 		Status:    models.LeadStatusContacted,
 	}
-	
+
 	rec := suite.makeRequestWithAuth("PUT", fmt.Sprintf("/api/v1/leads/%d", lead.ID), payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	leadData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "Updated", leadData["first_name"])
 	assert.Equal(suite.T(), "Name", leadData["last_name"])
@@ -408,14 +495,14 @@ func (suite *LeadIntegrationTestSuite) TestDeleteLead_Success() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusNew,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/leads/%d", lead.ID), nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
-	
+
 	// Verify lead is deleted
 	_, err = suite.leadService.GetByID(lead.ID)
 	assert.Error(suite.T(), err)
@@ -497,31 +584,31 @@ func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_Success() {
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusQualified,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	payload := handler.ConvertLeadRequest{
 		CompanyName: "Acme Corporation",
 		Address:     "123 Main St",
 		Notes:       "Converted from qualified lead",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID), payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	customerData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "John", customerData["first_name"])
 	assert.Equal(suite.T(), "Doe", customerData["last_name"])
 	assert.Equal(suite.T(), "john@example.com", customerData["email"])
 	assert.Equal(suite.T(), "Acme Corporation", customerData["company"])
-	
+
 	// Verify lead status is updated
 	updatedLead, err := suite.leadService.GetByID(lead.ID)
 	suite.NoError(err)
@@ -536,18 +623,18 @@ func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_AlreadyConverted() 
 		OwnerID:   suite.salesUser.ID,
 		Status:    models.LeadStatusConverted,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	payload := handler.ConvertLeadRequest{
 		CompanyName: "Acme Corporation",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID), payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -625,23 +712,23 @@ func (suite *LeadIntegrationTestSuite) TestConvertToCustomer_SalesUserForbidden(
 		OwnerID:   suite.adminUser.ID, // Sales user trying to convert admin's lead
 		Status:    models.LeadStatusQualified,
 	}
-	
+
 	err := suite.leadService.Create(lead)
 	suite.NoError(err)
-	
+
 	payload := handler.ConvertLeadRequest{
 		CompanyName: "Acme Corporation",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", fmt.Sprintf("/api/v1/leads/%d/convert", lead.ID), payload, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *LeadIntegrationTestSuite) TestUnauthorizedAccess() {
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/leads", nil, "")
 	assert.Equal(suite.T(), http.StatusUnauthorized, rec.Code)
-	
+
 	rec = suite.makeRequestWithAuth("GET", "/api/v1/leads", nil, "invalid-token")
 	assert.Equal(suite.T(), http.StatusUnauthorized, rec.Code)
 }

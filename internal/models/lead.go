@@ -75,7 +75,7 @@ type Lead struct {
 	OwnerID uint `json:"owner_id" example:"7"`
 	// The owner's account. Always present in the JSON. GET /leads/{id}, the
 	// admin GET /leads (except with the classification filter),
-	// GET /companies/{id}/leads and the dashboard fill it in with the User
+	// GET /leads?external_id= for admin and sales, GET /companies/{id}/leads and the dashboard fill it in with the User
 	// object (see the User schema); elsewhere (create and update responses, a
 	// sales user's list) it is a zero-valued placeholder (id 0, every string
 	// empty, role "" included), which is not a valid User, so this property is

@@ -10,7 +10,7 @@ the frontend gating.
 
 **Sources**
 
-- `docs/FEATURES.md` section 3 (rows 3.1–3.11) and section 10 (bulk status intro), Gap Summary
+- `docs/FEATURES.md` section 3 (rows 3.1–3.12) and section 10 (bulk status intro), Gap Summary
   G16, G17, G21, G34.
 - Frontend: `gocrm-ui/src/pages/leads/LeadList.tsx`, `LeadForm.tsx`, `LeadDetail.tsx`;
   `gocrm-ui/src/components/DataTable.tsx`, `ConvertLeadDialog.tsx`, `ConfirmDialog.tsx`,
@@ -867,6 +867,38 @@ the frontend gating.
   returns a zero limit — `?limit=0` falls back to 20 rather than 500ing
   (`utils.ParseOffsetLimit`; verified live, `meta.per_page` came back as 20).
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (new)
+
+## 3.12 Look up by external id (API only)
+
+### TC-LEAD-067 — GET /leads?external_id= returns the visible matches and never reveals a hidden one
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** Admin and sales JWTs; one lead owned by the sales user with
+  `external_id` `crm-sales-1`, one owned by the admin with `crm-admin-1`, and two leads sharing
+  `crm-dup`: the older owned by the admin, the later by the sales user.
+- **Steps:**
+  1. As admin, `GET /api/v1/leads?external_id=crm-sales-1&search=zzz&sort_by=email&offset=40`.
+  2. As sales, `GET /api/v1/leads?external_id=crm-sales-1`.
+  3. As sales, `GET /api/v1/leads?external_id=crm-admin-1`, then `?external_id=crm-unknown`.
+  4. `?external_id=crm-dup` as admin, then as sales.
+  5. `GET /api/v1/leads?external_id=` followed by 256 characters.
+- **Expected:** Step 1: 200, `data.leads` holds only the sales user's lead (owner loaded),
+  `data.total` 1, `meta.page` 1: `external_id` wins over search, classification, sort and paging.
+  Step 2: the same lead. Step 3: both answers are identical, 200 with `data.leads` `[]` and
+  `data.total` 0, never 403 or 404, so an external id cannot be probed. Step 4: the admin gets
+  both leads in ascending id order (`total` 2), the sales user only its later lead (`total` 1).
+  Step 5: 400 `VALIDATION_ERROR` with `details` `{field: "external_id"}` (the column is
+  `varchar(255)`, counted in characters). An empty `external_id` is ignored and the normal list
+  is returned.
+- **Known issue:** at most the first 100 matching leads by id are read before the visibility
+  filter, so with more than 100 leads sharing one value later ones are not returned. On
+  MySQL/MariaDB the match follows the column collation (`utf8mb4_unicode_ci`: case-insensitive,
+  trailing spaces ignored); SQLite compares bytes.
+- **Automation:** automated (backend) — `internal/handler/lead_handler_test.go`
+  `TestList_ExternalID_*`; `internal/repository/lead_repository_test.go`
+  `TestLeadRepository_ListByExternalID`; `tests/lead_integration_test.go`
+  `TestListLeads_ByExternalID`, `TestListLeads_ByExternalIDSharedByTwoOwners`,
+  `TestListLeads_ByExternalIDTooLong`.
 
 ---
 

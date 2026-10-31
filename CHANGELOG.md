@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lead lookup by external id.** `GET /leads?external_id=` returns the live leads whose
+  `external_id` equals the value, in the usual list shape (ascending id, owner loaded, `total` is
+  their number), so integrations can correlate their records with CRM leads. It takes precedence
+  over `search`, `classification`, the sort and paging. Visibility follows the lead policy (admin
+  any lead, sales its own) row by row: a lead the caller may not see is left out, never 403 or
+  404, so an unknown id and a hidden one read the same. At most the first 100 matching leads are
+  read. A value longer than the 255-character column is 400 `VALIDATION_ERROR`.
+
 - **Complete API reference and its CI gate.** Every operation of the Swagger 2.0 spec in `api/`
   now names the roles it admits, its parameters with defaults and clamping, the `error.code`
   values it can return and their conditions, and its side effects; every schema property is
