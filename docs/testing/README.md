@@ -11,7 +11,7 @@ Each document was fact-checked against the source after writing; the corrections
 are folded in. "Automated" means the cited spec file contains an exactly-matching test title, not
 that the test was executed as part of writing this catalog.
 
-The table counts each document's `### TC-` cases by their **Priority** and the first word of their
+The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
 **Automation** line (re-summed 2026-10-31). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
@@ -21,10 +21,10 @@ blocked.
 
 | Document | Area | Cases | P0 | P1 | P2 | Automated | Planned | Blocked |
 |---|---|---|---|---|---|---|---|---|
-| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 48 | 12 | 21 | 15 | 27 | 19 | 2 |
+| [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 53 | 17 | 21 | 15 | 32 | 19 | 2 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, conversion, bulk status | 66 | 15 | 36 | 15 | 30 | 28 | 8 |
-| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 43 | 15 | 15 | 13 | 15 | 19 | 9 |
+| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 45 | 16 | 16 | 13 | 17 | 19 | 9 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 49 | 21 | 19 | 9 | 6 | 40 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 48 | 13 | 19 | 16 | 10 | 28 | 10 |
 | [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 14 | 25 | 1 |
@@ -36,19 +36,20 @@ blocked.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 34 | 18 | 13 | 3 | 16 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **632** | **205** | **279** | **148** | **232** | **318** | **82** |
+| **Total** | | **639** | **211** | **280** | **148** | **239** | **318** | **82** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
 detail the case lists. They are counted as automated above.
 
-[11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. No case in it cites a Playwright
-spec: ten cases are automated below the browser (the route-coexistence smoke test, the two
+[11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. No case in it is automated by a
+Playwright spec: ten cases are automated below the browser (the route-coexistence smoke test, the two
 column-length cases TC-AEO-041 and TC-AEO-042, and TC-AEO-043 to 049 of section 11.7 — provider
 configuration, egress policy, failure sanitization and the run runtime, added 2026-10 with #86,
 #134 and #154), 36 are planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist
 yet, and three are blocked. `gocrm-ui/e2e/tests/aeo-providers.spec.ts` exercises the provider
-connections in the browser but is not yet cited by any case. Where a Go
+connections in the browser; TC-AEO-049 mentions it for runtime credentials, but it automates no
+case's own steps. Where a Go
 or Vitest test already pins a case's behaviour the Automation line names it, so the E2E spec can be
 written against a verified contract. Of the original 42 cases, seven are marked *regression*. Six pin defects found
 and fixed during the module's adversarial review: 500-instead-of-400 on whitespace input

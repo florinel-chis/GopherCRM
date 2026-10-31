@@ -453,7 +453,7 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | # | Gap | Suggested Action |
 |---|-----|------------------|
 | G11 | No E2E test for logout | Add to `login.spec.ts` |
-| ~~G12~~ | ~~No token refresh at all~~ | **RESOLVED** — `POST /auth/refresh` rotates refresh tokens (row 1.3) and the SPA's 401 interceptor shares one refresh per session and settles every queued request (#115, `client.refresh.test.ts`) |
+| ~~G12~~ | ~~No token refresh at all~~ | **RESOLVED** — `POST /auth/refresh` rotates refresh tokens (row 1.3) and the SPA's 401 interceptor shares one in-flight refresh among a tab's concurrent requests and settles every queued request (cross-tab coordination is #184) (#115, `client.refresh.test.ts`) |
 | G13 | No E2E tests for API key management | Create `admin-apikeys.spec.ts` |
 | G14 | No E2E tests for configuration settings | Create `admin-configurations.spec.ts` |
 | G15 | Dashboard stats not tested for correctness | Add a `dashboard_handler_test.go` and assert values against the DB |
