@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 11
+POLICY_VERSION = 12
 SMOKE = "e2e/tests/health-smoke.spec.ts"
 # The API reference gate is cheap and profile-independent: bounded and runner
 # profiles run it next to hygiene, the full profile through make verify.
@@ -51,6 +51,13 @@ SHARED_FILES = {
     "Makefile", "go.mod", "go.sum", ".gitignore", ".gitattributes",
     "internal/handler/routes.go", "internal/service/interfaces.go",
     "internal/repository/interfaces.go",
+}
+# Operator and developer tools that neither the server, the CI gates nor `make e2e`
+# execute. Like documentation they add no browser specs beyond the health smoke; any
+# tests they have live in make verify-hygiene, which every profile runs. Explicit files only: a new script stays unmapped (full).
+TOOLING_FILES = {
+    "scripts/create_database.sql", "scripts/seed_e2e_data.sh", "scripts/aeo_live_smoke.sh",
+    "scripts/forms_live_smoke.sh", "gocrm-ui/cleanup-test-users.sh",
 }
 DOC_FILES = {"README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "AGENTS.md"}
 RUNNER_PREFIXES = ("automation/langflow/", "scripts/ci/")
@@ -515,7 +522,7 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
                 or any(ord(c) < 32 for c in name)):
             raise ValueError("Invalid changed path")
         if (name in DOC_FILES or name.startswith("docs/") and name.endswith(".md")
-                or name == '.env.example' and env_comments):
+                or name == '.env.example' and env_comments or name in TOOLING_FILES):
             continue
         if name in MAILER_FILES or MAILER_TEST.fullmatch(name):
             mailer_paths = application_paths = True

@@ -61,6 +61,25 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(plan(["README.md"], full=True)["profile"], "full")
         self.assertEqual(plan(["docs/DEVELOPMENT.md"])["specs"], [SMOKE])
 
+    def test_operator_tooling_selects_no_browser_suites(self):
+        tooling = ['scripts/create_database.sql', 'scripts/seed_e2e_data.sh', 'scripts/aeo_live_smoke.sh',
+                   'scripts/forms_live_smoke.sh', 'gocrm-ui/cleanup-test-users.sh']
+        for path in tooling:
+            with self.subTest(path=path):
+                self.assertEqual(plan([path])['profile'], 'contextual')
+                self.assertEqual(plan([path])['specs'], [SMOKE])
+        # The #226 fix: tooling plus its hygiene test is a runner-profile change, not full.
+        mixed = plan(tooling + ['scripts/ci/tests/test_database_name.py', 'CHANGELOG.md', 'docs/SETUP.md'])
+        self.assertEqual(mixed['profile'], 'runner')
+        self.assertEqual(mixed['specs'], [SMOKE])
+        # Tooling never hides application changes, and the list is exact, not a prefix.
+        self.assertIn('e2e/tests/admin-tickets.spec.ts',
+                      plan(tooling + ['internal/repository/ticket_repository.go'])['specs'])
+        for path in ['scripts/anonymize_legacy_deleted_pii.sql', 'scripts/new_tool.sh',
+                     'scripts/create_database.sql.bak', 'gocrm-ui/e2e/scripts/cleanup-admin-test-data.sh']:
+            with self.subTest(path=path):
+                self.assertEqual(plan([path])['profile'], 'full')
+
     def test_runner_only_uses_relevant_checks_and_smoke_without_full_application_tests(self):
         paths = ['automation/langflow/gophercrm_runner/batches.py', 'scripts/ci/plan-validation.py',
                  '.github/workflows/ci.yml', 'docs/VALIDATION_RELEASE.md']
