@@ -127,30 +127,69 @@ var formLeadFields = map[string]bool{
 // added to Form later — notification addresses, mail bodies, the lead owner —
 // cannot leak by default.
 type PublicFormDefinition struct {
-	Name         string                `json:"name"`
-	PublicID     string                `json:"public_id"`
-	Fields       []models.FormFieldDef `json:"fields"`
-	ConsentText  string                `json:"consent_text,omitempty"`
-	SubmitAction string                `json:"submit_action"`
+	// Form name, for the heading the renderer shows.
+	Name string `json:"name" example:"Website contact form"`
+	// Public identifier of the form (the {key} of the public URLs).
+	PublicID string `json:"public_id" example:"q3VZr0n8TjK1bWcY5xL2aQ"`
+	// Ordered field definitions; max_length is the limit the submission
+	// validator enforces. Always an array.
+	Fields []models.FormFieldDef `json:"fields"`
+	// Consent statement to show with a checkbox; when present the submission
+	// must carry consent=true. Omitted when the form has none.
+	ConsentText string `json:"consent_text,omitempty" example:"I agree to be contacted about my enquiry."`
+	// What to do after submitting: show a message or redirect. Defaults to
+	// message.
+	SubmitAction string `json:"submit_action" enums:"message,redirect" example:"message"`
+
 	// RecaptchaSiteKey is present only when the form asks for the check and
 	// the server has the key pair to run it.
-	RecaptchaSiteKey string `json:"recaptcha_site_key,omitempty"`
+
+	// reCAPTCHA v3 site key the renderer loads; present only when the form
+	// enables reCAPTCHA and the server has both keys configured.
+	RecaptchaSiteKey string `json:"recaptcha_site_key,omitempty" example:"6LcExampleSiteKey000000000000000000000000"`
+
 	// Challenge pins the moment this definition was handed out; the submission
 	// carries it back so the server can tell a filled-in form from an instant
 	// replay.
-	Challenge string `json:"challenge"`
+
+	// Signed time-trap token minted for this response. Send it back unchanged
+	// as challenge with the submission; a submission sent less than 3 seconds
+	// or more than 24 hours after it was issued is filed as spam.
+	Challenge string `json:"challenge" example:"MTc2MTgxNTYwMA.4e3b9a0c5d7f21e8b6a4c3d2f1e0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2"`
+
 	// HoneypotField is the name of the decoy input the renderer must include.
-	HoneypotField string `json:"honeypot_field"`
+
+	// Name of the decoy input the renderer must include and hide from people;
+	// always "website_url_confirm". A non-empty value in the submission files
+	// it as spam.
+	HoneypotField string `json:"honeypot_field" example:"website_url_confirm"`
 }
 
-// PublicSubmissionRequest is the body of a public submission.
+// PublicSubmissionRequest is the body of a public submission. The validate
+// tag on Challenge only marks it required in the API specification; the
+// service enforces it (gin validates binding tags, never validate tags).
 type PublicSubmissionRequest struct {
-	Values       map[string]string `json:"values"`
-	Consent      bool              `json:"consent"`
-	Challenge    string            `json:"challenge"`
-	Honeypot     string            `json:"website_url_confirm"`
-	CaptchaToken string            `json:"captcha_token"`
-	PageURL      string            `json:"page_url"`
+	// Submitted values keyed by field name. Only fields the definition
+	// declares are allowed; missing optional fields count as empty. Values are
+	// trimmed; checkbox values true, 1, on, yes or checked (any case) mean
+	// ticked, anything else unticked.
+	Values map[string]string `json:"values"`
+	// Whether the visitor accepted the consent text; must be true when the
+	// form has consent text, ignored otherwise.
+	Consent bool `json:"consent" example:"true"`
+	// The challenge from the definition response, unchanged. Required: a
+	// missing or blank one is 400 VALIDATION_ERROR.
+	Challenge string `json:"challenge" validate:"required" example:"MTc2MTgxNTYwMA.4e3b9a0c5d7f21e8b6a4c3d2f1e0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2"`
+	// Honeypot input; must be absent or empty. A non-empty value files the
+	// submission as spam.
+	Honeypot string `json:"website_url_confirm" example:""`
+	// reCAPTCHA v3 token; needed only when the definition carried
+	// recaptcha_site_key. Missing or failing tokens file the submission as
+	// spam.
+	CaptchaToken string `json:"captcha_token" example:""`
+	// URL of the page the form was submitted from, stored as the submission's
+	// referrer (cut to 512 characters). Not verified.
+	PageURL string `json:"page_url" example:"https://www.example.com/pricing"`
 }
 
 // SubmissionMeta is what the transport knows about a submission and the
@@ -165,10 +204,18 @@ type SubmissionMeta struct {
 // spam layer produces exactly the same outcome as a genuine one, so a bot
 // learns nothing from the response.
 type SubmitOutcome struct {
-	Action              string `json:"action"`
-	Message             string `json:"message,omitempty"`
-	RedirectURL         string `json:"redirect_url,omitempty"`
-	PendingConfirmation bool   `json:"pending_confirmation"`
+	// The form's submit action: show message in place, or redirect to
+	// redirect_url.
+	Action string `json:"action" enums:"message,redirect" example:"message"`
+	// Text to show for the message action: the form's thank-you message, or a
+	// default ("check your inbox" for double opt-in forms). Omitted for the
+	// redirect action.
+	Message string `json:"message,omitempty" example:"Thank you. Your submission has been received."`
+	// Where to send the browser for the redirect action; omitted otherwise.
+	RedirectURL string `json:"redirect_url,omitempty" example:"https://www.example.com/thank-you"`
+	// True when the form uses double opt-in, so a confirmation mail has been
+	// sent (also reported for submissions filed as spam, which get no mail).
+	PendingConfirmation bool `json:"pending_confirmation" example:"false"`
 }
 
 // FieldErrors reports per-field validation failures of a submission, keyed by

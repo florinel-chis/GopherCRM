@@ -8,27 +8,61 @@ import (
 )
 
 // APIResponse represents a unified response structure
+//
+// @Description Envelope of every JSON response (the CSV export and the public form pages are the exceptions). success tells the outcome; data carries the payload on success, error the failure on error; meta is always present.
 type APIResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   *APIError   `json:"error,omitempty"`
-	Meta    *APIMeta    `json:"meta,omitempty"`
+	// True for a 2xx response, false when error is set.
+	Success bool `json:"success" example:"true"`
+	// Operation-specific payload on success (each operation documents its
+	// shape). Absent on errors and on successes without a payload.
+	Data interface{} `json:"data,omitempty"`
+	// Failure details; present only when success is false.
+	Error *APIError `json:"error,omitempty"`
+	// Request metadata, present on every enveloped response, with pagination
+	// fields on paginated lists.
+	Meta *APIMeta `json:"meta,omitempty"`
 }
 
 // APIError represents error details
+//
+// @Description Error object of a failed request. code is the stable value to branch on; message is for people and may change.
 type APIError struct {
-	Code    string      `json:"code"`
-	Message string      `json:"message"`
+	// Stable machine-readable error code. Shared codes: VALIDATION_ERROR,
+	// BAD_REQUEST, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT,
+	// TOO_MANY_REQUESTS, INTERNAL_ERROR, MAIL_DELIVERY_FAILED; operations
+	// document their own additional codes (for example INVALID_REFERENCE,
+	// SESSION_STALE, SESSION_REFRESH_UNAVAILABLE).
+	Code string `json:"code" example:"VALIDATION_ERROR"`
+	// Human-readable explanation. Not stable: do not parse it.
+	Message string `json:"message" example:"Validation failed"`
+	// Optional context; its JSON type depends on the code and the operation,
+	// so the schema leaves it open. Usually an object: a binding failure
+	// (VALIDATION_ERROR) maps each failed field to a message, keyed by the
+	// server-side Go field name (for example "Email", "FirstName"), not the
+	// JSON name; TOO_MANY_REQUESTS carries {"retry_after": "60s"}. Some
+	// operations send another shape (for example a plain string on POST
+	// /aeo/prompts/{id}/run with an invalid id) and document it; many errors
+	// omit it.
 	Details interface{} `json:"details,omitempty"`
 }
 
 // APIMeta represents metadata for responses
+//
+// @Description Response metadata. request_id is always present; the pagination fields appear only on paginated list responses and, like every zero value here, are omitted when 0.
 type APIMeta struct {
-	RequestID  string `json:"request_id"`
-	Page       int    `json:"page,omitempty"`
-	PerPage    int    `json:"per_page,omitempty"`
-	Total      int64  `json:"total,omitempty"`
-	TotalPages int64  `json:"total_pages,omitempty"`
+	// Correlation id of the request: the client's X-Request-ID header when
+	// sent, otherwise a server-generated UUID. Also returned in the
+	// X-Request-ID response header.
+	RequestID string `json:"request_id" example:"3b1f8c2e-6d4a-4f0e-9a51-2c7d9e8b1a40"`
+	// 1-based page number of this response (paginated lists only; omitted when 0).
+	Page int `json:"page,omitempty" example:"1"`
+	// Page size used for this response (paginated lists only; omitted when 0).
+	PerPage int `json:"per_page,omitempty" example:"20"`
+	// Total number of matching records (paginated lists only; omitted when
+	// 0, so an empty result carries no total).
+	Total int64 `json:"total,omitempty" example:"57"`
+	// Number of pages at per_page (paginated lists only; omitted when 0).
+	TotalPages int64 `json:"total_pages,omitempty" example:"3"`
 }
 
 // Common error codes

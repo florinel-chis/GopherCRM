@@ -42,7 +42,7 @@ command and open http://localhost:3001 instead.
 
 **Docs:** [Docker](docs/DOCKER.md) · [Setup](docs/SETUP.md) · [Features](docs/FEATURES.md) ·
 [Developer guide](docs/DEVELOPMENT.md) · [Data model](docs/datamodel.md) ·
-[Screenshots](docs/SCREENSHOTS.md) · [API spec](api/swagger.yaml) · [Roadmap](docs/ROADMAP.md) ·
+[Screenshots](docs/SCREENSHOTS.md) · [API reference](api/index.html) ([spec](api/swagger.yaml)) · [Roadmap](docs/ROADMAP.md) ·
 [Changelog](CHANGELOG.md) · [Releases](https://github.com/florinel-chis/GopherCRM/releases) · [Validation and release workflow](docs/VALIDATION_RELEASE.md) · [Documentation maintenance](docs/DOCUMENTATION_WORKFLOW.md)
 
 If it's useful, a star helps others find it.
@@ -536,6 +536,11 @@ npm run lint
 All application routes are mounted under `/api/v1` (configurable via `API_PREFIX`). Every endpoint
 returns the unified envelope `{ success, data, error, meta }`.
 
+The complete reference, with every operation's roles, parameters, error codes and schemas, is
+generated into `api/`: open `api/index.html` in a browser (a static page that works offline,
+straight from the checkout), or feed `api/swagger.json` / `api/swagger.yaml` (Swagger 2.0) to a
+client generator. The list below is the overview.
+
 `GET /health` is served outside the API prefix and needs no authentication.
 
 ### Authentication (public)
@@ -827,10 +832,14 @@ expired, or if its owner has been deactivated or erased.
 The only bulk endpoints are the entity-specific `bulk/status` routes listed above. There is no
 generic bulk create, update, delete or action API.
 
-A generated Swagger 2.0 spec is checked in at `api/swagger.json` / `api/swagger.yaml`. It is built
-from swag annotations on the handlers — regenerate it with `make swagger` after changing a handler
-or route. The spec is **not** served by the application; `internal/handler/routes.go` remains the
-routing source of truth.
+The reference in `api/` (`swagger.json`, `swagger.yaml` and the HTML page `index.html`) is built
+from the swag annotations on the handlers, their request/response types and the general block in
+`cmd/main.go`. Regenerate it with `make swagger` after changing a handler, a documented type or a
+route; `make verify-api-docs` (part of `make verify` and CI) fails when the committed files are
+stale, a route has no operation, a parameter or body the registered handler reads is undocumented
+(or documented with the wrong type), a status its route middleware can return (401, 403, 429) is
+missing, an operation's security alternatives are wrong, or a description is missing. Nothing is **served** by the
+application; `internal/handler/routes.go` remains the routing source of truth.
 
 ## Project Structure
 
@@ -854,7 +863,7 @@ gophercrm/
 ├── tests/                       # Further integration tests
 ├── scripts/                     # create_database.sql, anonymize_legacy_deleted_pii.sql
 ├── migrations/                  # SQL migrations
-├── api/                         # Generated OpenAPI (Swagger 2.0) spec — make swagger
+├── api/                         # Generated Swagger 2.0 spec + static HTML reference — make swagger
 ├── docs/                        # Project documentation (developer guide, setup, features, roadmap)
 ├── gocrm-ui/                    # React TypeScript frontend
 │   ├── src/

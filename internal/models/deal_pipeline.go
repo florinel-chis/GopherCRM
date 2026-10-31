@@ -23,12 +23,15 @@ type DealWonRow struct {
 // DealPipelineTotal is the money of one stage in one currency. Amounts in
 // different currencies are never added together.
 type DealPipelineTotal struct {
+	// ISO 4217 code of this total; one entry per currency present in the
+	// stage.
 	Currency string `json:"currency" example:"EUR"`
-	// AmountCents is the sum of amount_cents of the stage's deals in this
-	// currency.
+	// Sum of amount_cents of the stage's live deals in this currency, in
+	// minor units.
 	AmountCents int64 `json:"amount_cents" example:"1250000"`
-	// WeightedCents is round_half_up(Σ amount_cents × probability / 100),
-	// rounded once on the sum.
+	// Probability-weighted amount in minor units: round_half_up(sum of
+	// amount_cents x probability / 100), integer arithmetic, rounded once on
+	// the sum, never per deal.
 	WeightedCents int64 `json:"weighted_cents" example:"500000"`
 }
 
@@ -36,27 +39,40 @@ type DealPipelineTotal struct {
 // the stage and their totals per currency (sorted by currency code; empty,
 // never null, when the stage holds no deal).
 type DealPipelineStage struct {
-	Stage  DealStage           `json:"stage" example:"proposal"`
-	Count  int64               `json:"count" example:"3"`
+	// The stage this entry aggregates. The five stages always appear, in
+	// pipeline order.
+	Stage DealStage `json:"stage" example:"proposal"`
+	// Number of live (not deleted) deals in the stage, over all currencies.
+	Count int64 `json:"count" example:"3"`
+	// One total per currency, sorted by currency code; an empty array, never
+	// null, when the stage holds no deal.
 	Totals []DealPipelineTotal `json:"totals"`
 }
 
 // DealPipeline is the payload of GET /deals/pipeline: every stage of
 // DealStages, in pipeline order, empty ones included.
 type DealPipeline struct {
+	// All five stages in pipeline order (qualification, proposal,
+	// negotiation, won, lost), empty ones included.
 	Stages []DealPipelineStage `json:"stages"`
 }
 
 // DealWonTotal is the amount won in one currency.
 type DealWonTotal struct {
-	Currency    string `json:"currency" example:"EUR"`
-	AmountCents int64  `json:"amount_cents" example:"990000"`
+	// ISO 4217 code of this total.
+	Currency string `json:"currency" example:"EUR"`
+	// Sum of amount_cents of the deals won in the period in this currency,
+	// in minor units.
+	AmountCents int64 `json:"amount_cents" example:"990000"`
 }
 
 // DealWonSummary counts the deals won in a period, with the amounts per
 // currency (sorted by currency code; empty, never null).
 type DealWonSummary struct {
-	Count  int64          `json:"count" example:"2"`
+	// Number of deals won in the period, over all currencies.
+	Count int64 `json:"count" example:"2"`
+	// The amounts won per currency, sorted by currency code; an empty array,
+	// never null, when nothing was won.
 	Totals []DealWonTotal `json:"totals"`
 }
 
@@ -64,6 +80,10 @@ type DealWonSummary struct {
 // stages as DealPipeline plus the deals won in the current calendar month
 // (UTC).
 type DealDashboardPipeline struct {
-	Stages       []DealPipelineStage `json:"stages"`
-	WonThisMonth DealWonSummary      `json:"won_this_month"`
+	// The pipeline stages, exactly as GET /deals/pipeline returns them for
+	// the caller (a sales user's own deals only).
+	Stages []DealPipelineStage `json:"stages"`
+	// Deals whose closed_at falls in the current calendar month (UTC) and
+	// that are in the won stage, for the same owner scope.
+	WonThisMonth DealWonSummary `json:"won_this_month"`
 }

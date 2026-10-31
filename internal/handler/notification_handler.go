@@ -23,31 +23,38 @@ func NewNotificationHandler(notificationService service.NotificationService) *No
 }
 
 // UnreadCountResponse is the body of GET /notifications/unread-count.
+//
+// @Description Data payload of GET /notifications/unread-count.
 type UnreadCountResponse struct {
-	Unread int64 `json:"unread"`
+	// Number of the caller's notifications that have not been marked read.
+	Unread int64 `json:"unread" example:"3"`
 }
 
 // MarkAllReadResponse is the body of POST /notifications/read-all.
+//
+// @Description Data payload of POST /notifications/read-all.
 type MarkAllReadResponse struct {
-	Marked int64 `json:"marked"`
+	// Number of notifications this call marked read (0 when none were unread).
+	Marked int64 `json:"marked" example:"3"`
 }
 
 // List godoc
 // @Summary List my notifications
-// @Description One page of the caller's own notifications, newest first (admin, sales and support; customers get 403). unread=true narrows to the unread ones. Pagination goes through the shared parser.
+// @Description One page of the caller's own notifications, newest first (created_at, then id, descending). Roles: admin, sales and support. Notifications are created only by the notify step of automation rules, and are hard-deleted when their recipient or the lead they refer to is erased. unread=true narrows to the unread ones; unread=false or absent lists all. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100.
 // @Tags notifications
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param unread query bool false "Only unread notifications"
-// @Success 200 {object} utils.APIResponse{data=[]models.Notification,meta=utils.APIMeta} "Notifications retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "unread is not a boolean"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - staff role required"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "Page number (1-based); overrides offset when greater than 0"
+// @Param offset query int false "Number of notifications to skip" default(0)
+// @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
+// @Param unread query bool false "true lists only unread notifications; any value strconv.ParseBool accepts"
+// @Success 200 {object} utils.APIResponse{data=[]models.Notification,meta=utils.APIMeta} "One page of notifications; meta carries page, per_page, total and total_pages"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - unread is not a boolean"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required (customers are refused by the route guard)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /notifications [get]
 func (h *NotificationHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "NotificationHandler.List")
@@ -77,15 +84,16 @@ func (h *NotificationHandler) List(c *gin.Context) {
 
 // UnreadCount godoc
 // @Summary Count my unread notifications
-// @Description The caller's unread notification count (admin, sales and support; customers get 403).
+// @Description The number of the caller's unread notifications. Roles: admin, sales and support.
 // @Tags notifications
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=UnreadCountResponse} "Unread count"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - staff role required"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required (customers are refused by the route guard)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /notifications/unread-count [get]
 func (h *NotificationHandler) UnreadCount(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "NotificationHandler.UnreadCount")
@@ -100,18 +108,19 @@ func (h *NotificationHandler) UnreadCount(c *gin.Context) {
 
 // MarkRead godoc
 // @Summary Mark a notification read
-// @Description Mark the caller's own notification read and return it; one that belongs to another user, or does not exist, is 404. Marking an already read notification again is a no-op.
+// @Description Mark one of the caller's own notifications read (read_at set to now) and return it. Roles: admin, sales and support. A notification that belongs to another user is 404, exactly like a missing one. Marking an already read notification again is a no-op that keeps the original read_at. No request body.
 // @Tags notifications
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Notification ID"
-// @Success 200 {object} utils.APIResponse{data=models.Notification} "Notification marked read"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid notification ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - staff role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Notification not found"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Notification} "The notification, read"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required (customers are refused by the route guard)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no notification with this id addressed to the caller"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /notifications/{id}/read [post]
 func (h *NotificationHandler) MarkRead(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "NotificationHandler.MarkRead")
@@ -130,15 +139,16 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 
 // MarkAllRead godoc
 // @Summary Mark all my notifications read
-// @Description Mark every unread notification of the caller read and return how many were marked. Nobody else's notifications are touched.
+// @Description Mark every unread notification of the caller read and return how many were marked. Roles: admin, sales and support. Nobody else's notifications are touched. No request body.
 // @Tags notifications
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=MarkAllReadResponse} "Count of notifications marked read"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - staff role required"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required (customers are refused by the route guard)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /notifications/read-all [post]
 func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "NotificationHandler.MarkAllRead")

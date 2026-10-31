@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Complete API reference and its CI gate.** Every operation of the Swagger 2.0 spec in `api/`
+  now names the roles it admits, its parameters with defaults and clamping, the `error.code`
+  values it can return and their conditions, and its side effects; every schema property is
+  described, with examples, enums for the closed sets and the limits the code enforces. The
+  general description covers authentication, the response envelope, the error catalogue,
+  pagination, rate limits (and the absence of rate-limit headers), CORS and `X-Request-ID`, and
+  every tag is described. The four public form pages that return JavaScript or HTML
+  (`GET /forms/public/embed.js`, `GET /forms/public/{key}/view`, `GET` and `POST
+  /forms/public/confirm`) are documented under a new `public-forms` tag, the quote responses now
+  show the fields their JSON really carries (`number` and the customer, deal and owner
+  summaries), and list payloads are typed. `make swagger` also renders `api/index.html`, a static
+  offline HTML reference. `make verify-api-docs` (in `make verify`, CI and every validation
+  profile) fails when `api/` differs from a fresh generation, a route has no operation or an
+  operation no route, an operation's security disagrees with the route's authentication (exactly
+  the two schemes as alternatives behind it), a 401, 403 or 429 the route middleware can return is
+  undocumented, a query parameter, form field or body the registered handler reads is undocumented
+  (or a documented one is never read, or the body's schema or required flag differs from what the
+  handler binds), the base path or a security scheme's header form is wrong, a description, tag or
+  success response is missing, or a closed set's enum drifts from its Go constants.
+
 - **Follow-up automation: rule names on runs, field-level rule errors, dry run of unsaved edits.**
   Run responses (`GET /automation/runs`, `GET /automation/runs/{id}`, the cancel answer) carry
   `rule_name` — the rule's current name, also for a deleted rule, flagged `rule_deleted` — and
@@ -350,6 +370,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The API key security scheme names the header the server reads.** The spec described a
+  separate `ApiKey` header, which is never read; it now documents `Authorization: ApiKey <key>`
+  (#227).
 - **`make build` and `make run` work again.** They compiled only `cmd/main.go`, but the `cmd`
   package now spans several files, so both failed with `undefined: drainAEO`. They build the
   package (`./cmd`) now, and the documented run commands use `go run ./cmd`.

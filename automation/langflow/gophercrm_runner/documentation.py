@@ -57,9 +57,22 @@ def safe_path(path):
     return path
 
 
+# The generated API reference: `make swagger` writes all three from the swag
+# annotations (handlers, models, the general block in cmd/main.go) and
+# `make verify-api-docs` fails when they are stale.
+API_REFERENCE = ('api/swagger.json', 'api/swagger.yaml', 'api/index.html')
+API_SOURCE_FILES = {'cmd/main.go', 'internal/utils/response.go', 'scripts/docs/render_api_reference.py',
+                    'scripts/docs/swag-overrides'}
+
+
 def is_document(path):
     return (path.endswith(('.md', '.mdx', '.rst')) or path in {
-        '.env.example', 'gocrm-ui/.env.example', 'api/swagger.json', 'api/swagger.yaml', 'api/docs.go'})
+        '.env.example', 'gocrm-ui/.env.example', *API_REFERENCE})
+
+
+def is_api_source(path):
+    return (path.startswith(('internal/handler/', 'internal/models/', 'internal/service/')) and path.endswith('.go')
+            and not path.endswith('_test.go')) or path in API_SOURCE_FILES
 
 
 def is_use_case_path(path):
@@ -92,6 +105,8 @@ def suggestions(paths):
                 add((path,), 'changed documentation')
             continue
         lower = path.lower()
+        if is_api_source(path):
+            add(API_REFERENCE, 'generated API reference; run make swagger when annotations change')
         if ('docker' in lower or path in {'.github/workflows/deploy.yml', 'scripts/deploy/bootstrap.sh'}
                 or path.startswith('scripts/deploy/')):
             add(('docs/DOCKER.md', 'docs/SETUP.md'), 'container or deployment operations')
@@ -115,8 +130,6 @@ def suggestions(paths):
                 add(('docs/AEO_SECURITY.md',), 'AEO operations and security')
             if path.startswith('internal/middleware/') or 'auth' in lower:
                 add(('docs/DEVELOPMENT.md', 'docs/testing/09-cross-cutting.md'), 'security or shared behavior')
-            if path.startswith('internal/handler/'):
-                add(('api/swagger.json', 'api/swagger.yaml', 'api/docs.go'), 'generated API contract; regenerate when annotations change')
             if path.startswith(('cmd/', 'internal/config/')):
                 add(('docs/SETUP.md', '.env.example'), 'runtime configuration')
         elif path.startswith('migrations/'):

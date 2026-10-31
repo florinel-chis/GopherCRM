@@ -12,8 +12,11 @@ import subprocess
 import tempfile
 
 
-POLICY_VERSION = 9
+POLICY_VERSION = 10
 SMOKE = "e2e/tests/health-smoke.spec.ts"
+# The API reference gate is cheap and profile-independent: bounded and runner
+# profiles run it next to hygiene, the full profile through make verify.
+API_DOCS = ('make', 'verify-api-docs')
 FEATURES = {
     "aeo": ("aeo-providers",),
     "company": ("admin-companies", "admin-customers", "admin-deals", "admin-leads", "leads-convert-api"),
@@ -548,8 +551,9 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         # corresponding production paths determine browser coverage.
         if name.startswith(("internal/integration/", "test/", "tests/")) and name.endswith("_test.go"):
             continue
-        if name.startswith("api/") and name.endswith((".json", ".yaml")):
-            # Generated API contracts can describe unrelated endpoints.
+        if name.startswith("api/") and name.endswith((".json", ".yaml", ".html")):
+            # Generated API contracts (and the reference rendered from them)
+            # can describe unrelated endpoints.
             reasons.append(f"API contract: {name}")
             continue
         if name.startswith("gocrm-ui/e2e/tests/"):
@@ -607,7 +611,7 @@ def core_commands(configured, selected, *, explicit_full=False):
         check = (('python3', 'scripts/ci/check-auth.py', '--persistence') if selected['profile'] == 'auth-persistence' else
                  ('python3', 'scripts/ci/check-auth.py') if selected['profile'] == 'auth' else
                  ('python3', 'scripts/ci/check-go.py', selected['profile']))
-        commands = [('make', 'verify-hygiene'), check]
+        commands = [('make', 'verify-hygiene'), API_DOCS, check]
         if selected['profile'] == 'auth-persistence':
             commands.append(('python3', 'scripts/ci/check-go.py', 'transaction', '--storage-only'))
         commands.append(('npm', 'ci', '--prefix', 'gocrm-ui'))
@@ -616,7 +620,7 @@ def core_commands(configured, selected, *, explicit_full=False):
         return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
                            and tuple(c) not in commands]
     if selected['profile'] == 'runner':
-        commands = [('make', 'verify-hygiene'), ('make', 'verify-runner'),
+        commands = [('make', 'verify-hygiene'), API_DOCS, ('make', 'verify-runner'),
                     ('npm', 'ci', '--prefix', 'gocrm-ui')]
         return commands + [tuple(c) for c in configured if tuple(c) != ('make', 'verify')
                            and tuple(c) not in commands]

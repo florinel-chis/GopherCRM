@@ -18,7 +18,8 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth/transaction/migration/AEO/mailer profiles: hygiene + targeted Go checks + build/health; runner-only: hygiene + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| Hygiene and core checks | Auth/transaction/migration/AEO/mailer profiles: hygiene + API docs gate + targeted Go checks + build/health; runner-only: hygiene + API docs gate + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
+| API reference gate | `make verify-api-docs` in every profile (CI: unconditional step of the Backend job) | Same |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
@@ -38,7 +39,7 @@ Known entity changes select related specs and the read-only health smoke test; m
 changes take the union. Unmapped shared infrastructure, schema, dependencies, API contracts,
 unknown application paths select the complete browser suite. Runner-only changes under
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
-`runner` profile: local `make verify-hygiene`, `make verify-runner`, all frozen acceptance
+`runner` profile: local `make verify-hygiene`, `make verify-api-docs`, `make verify-runner`, all frozen acceptance
 checks, and SQLite health smoke. CI runs API/frontend build health checks, the affected Go
 probe checks, runner tests and health smoke on its three existing database jobs. It does
 not run unrelated application unit/race suites or the full feature-browser matrix for
@@ -233,6 +234,34 @@ make e2e E2E_DB_DRIVER=sqlite SPECS='e2e/tests/health-smoke.spec.ts e2e/tests/ad
 Use literal spec names from the plan. Omitting `SPECS` runs the full browser suite.
 The base must be an ancestor of the candidate. CI validates the merged candidate; the
 runner requires the candidate to contain current main before merge.
+
+## API reference gate
+
+`make verify-api-docs` keeps the committed API reference honest. It runs the route extractor's
+Go tests, then `scripts/ci/check-api-docs.py`, which regenerates `api/swagger.json`,
+`api/swagger.yaml` and `api/index.html` into a temporary directory through the same
+`make api-docs` target `make swagger` uses and compares the bytes, and checks the spec itself:
+every route registered in `cmd/main.go` and `internal/handler/*routes*.go` (read with go/ast by
+`scripts/ci/apiroutes`) has an operation and the reverse, with `GET /health` the one documented
+exclusion; an operation behind `middleware.Auth` offers exactly the two schemes as alternatives
+(no anonymous `{}` alternative, no combined requirement) and a public one declares none; every
+status the route middleware can answer with (401, 403, 429) is documented; the handler the router
+registers for a route carries its `@Router` annotation, and the query parameters, form fields and
+request body that handler reads (read from source by the same tool) are documented, the body as a
+`$ref` to the bound type with the right `required` flag and a 400 response, and nothing it does
+not read is;
+every operation, parameter, response, property and tag is described and every operation has a
+success and an error response; tags are declared once and used; `$ref`s resolve; path
+parameters match their templates; `basePath` equals the `API_PREFIX` default; the two security
+schemes name the `Authorization` header and show their `Authorization: Bearer <...>` /
+`Authorization: ApiKey <...>` form; and the known closed sets carry exactly the values of their
+Go constants. The checker's rule-by-rule mutation tests and the renderer's tests run in
+`make verify-hygiene`.
+
+The gate is part of `make verify`, runs as an unconditional step of the CI Backend job (after Go
+setup, for every profile, without adding a job), and is the second command of every bounded and
+runner command set in `validation.py`. A change under `api/` still selects the full profile
+(reason `API contract`): a regenerated reference can describe any endpoint.
 
 ## Migration CI
 

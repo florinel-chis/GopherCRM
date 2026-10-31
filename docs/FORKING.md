@@ -170,8 +170,9 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 ### 2.4 Calling the API with a key
 
 API keys go in the `Authorization` header with the `ApiKey` scheme
-(`internal/middleware/auth.go:19-28`). A bare `ApiKey:` header is rejected with 401, although the
-swagger security definition in `cmd/main.go` names a header called `ApiKey` (#227).
+(`internal/middleware/auth.go:19-28`). A bare `ApiKey:` header is rejected with 401. The API
+reference (`api/index.html`, generated from `cmd/main.go`) documents the same
+`Authorization: ApiKey <key>` form.
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \

@@ -23,18 +23,91 @@ import (
 
 // @title GopherCRM API
 // @version 1.2.0
-// @description CRM API for managing users, leads, customers, companies, deals, products, quotes, tickets, tasks and API keys.
+// @description GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.
+// @description
+// @description ## Authentication
+// @description Protected operations accept one credential in the Authorization header, either `Authorization: Bearer <jwt>` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey <key>` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED "Missing or invalid authorization header"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED "Invalid credentials".
+// @description Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens (a password changed through PUT /users/me revokes none), but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
+// @description Roles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN "Insufficient permissions". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.
+// @description
+// @description ## Response envelope
+// @description Every JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.
+// @description Exceptions that are not enveloped: GET /customers/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
+// @description
+// @description ## Errors
+// @description error.code is the stable value to branch on; error.message is for people and may change. Shared codes:
+// @description - 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.
+// @description - 400 BAD_REQUEST: malformed JSON ("Invalid request format"), typically an unparsable path id, or another request the handler refuses as a whole.
+// @description - 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).
+// @description - 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.
+// @description - 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.
+// @description - 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.
+// @description - 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.
+// @description - INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.
+// @description - 429 TOO_MANY_REQUESTS: see Rate limits.
+// @description - 500 INTERNAL_ERROR: an unexpected failure ("An unexpected error occurred"); details are logged server-side, never returned.
+// @description - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).
+// @description Each operation lists the codes it can return and the condition behind each.
+// @description
+// @description ## Pagination, sorting and filtering
+// @description List operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.
+// @description
+// @description ## Rate limits
+// @description Requests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {"retry_after": "60s"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.
+// @description
+// @description ## CORS and headers
+// @description Browser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).
+// @description Every response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.
 // @BasePath /api/v1
 
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
-// @description JWT access token. Format: "Bearer {token}"
+// @description JWT access token from POST /auth/login or POST /auth/refresh, sent as "Authorization: Bearer <jwt>". Valid until it expires; logout does not revoke it.
 
 // @securityDefinitions.apikey ApiKeyAuth
 // @in header
-// @name ApiKey
-// @description API key issued via POST /api-keys. The plaintext key is shown only once at creation.
+// @name Authorization
+// @description Personal API key from POST /api-keys, sent in the same Authorization header as "Authorization: ApiKey <key>" (the gcrm_ prefix may be sent or left off). A header named ApiKey is not read. The plaintext key is shown only once, at creation.
+
+// @tag.name auth
+// @tag.description Login, registration, token refresh, logout, password change and reset.
+// @tag.name users
+// @tag.description Staff and customer accounts, the caller's own profile, activation (admin).
+// @tag.name api-keys
+// @tag.description Personal API keys for the Authorization: ApiKey <key> scheme.
+// @tag.name configurations
+// @tag.description System settings, UI configuration and encrypted integration secrets.
+// @tag.name dashboard
+// @tag.description Aggregated widgets: stats, pipeline, activity, recent records.
+// @tag.name leads
+// @tag.description Leads, conversion to customers, lead bulk status.
+// @tag.name customers
+// @tag.description Customers, CSV export, linked login, their tickets.
+// @tag.name companies
+// @tag.description Companies (organisations) and their linked records.
+// @tag.name deals
+// @tag.description Deal pipeline, stage changes and stage history.
+// @tag.name products
+// @tag.description Product catalogue used by quote lines.
+// @tag.name quotes
+// @tag.description Quotes, quote lines, status workflow and history.
+// @tag.name tickets
+// @tag.description Support tickets, comments, ticket bulk status.
+// @tag.name tasks
+// @tag.description Tasks, upcoming tasks, task bulk status.
+// @tag.name labels
+// @tag.description Task labels.
+// @tag.name automation
+// @tag.description Automation rules, dry runs and run history.
+// @tag.name notifications
+// @tag.description In-app notifications created by automation.
+// @tag.name aeo
+// @tag.description Answer-engine visibility tracking: profile, prompts, runs, reports.
+// @tag.name forms
+// @tag.description Embeddable lead-capture forms and their submissions (staff side).
+// @tag.name public-forms
+// @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 
 // revision is the commit the binary was built from, set by the release build
 // (-ldflags "-X main.revision=<sha>"). The deploy pipeline waits for /health to

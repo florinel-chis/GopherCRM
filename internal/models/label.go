@@ -8,17 +8,21 @@ package models
 // deletion sidesteps the trap documented for users and customers: a unique
 // index on `name` is not scoped to `deleted_at`, so a soft-deleted label would
 // keep its name reserved forever.
+//
+// @Description A coloured tag that can be attached to tasks. Labels are hard-deleted.
 type Label struct {
 	BaseModel
-	Name  string `gorm:"not null;type:varchar(50);uniqueIndex" json:"name"`
-	Color string `gorm:"not null;type:varchar(7)" json:"color"`
+	// Display name, trimmed, 1 to 50 characters and unique case-insensitively.
+	Name string `gorm:"not null;type:varchar(50);uniqueIndex" json:"name" example:"Follow-up" maxLength:"50"`
+	// Colour as #RRGGBB (six hex digits behind a hash).
+	Color string `gorm:"not null;type:varchar(7)" json:"color" example:"#FF8800"`
 	// Tasks is the inverse side of Task.Labels. It exists so the repository can
 	// manage the join table through GORM's association API; it is never
 	// serialized, both to keep the payload small and to avoid a cycle with
 	// Task.Labels.
 	Tasks []Task `gorm:"many2many:task_labels" json:"-"`
-	// TaskCount is how many live tasks carry the label. It is computed by the
-	// repository, not stored: `gorm:"-"` keeps it out of both the schema and
-	// every generated statement.
-	TaskCount int64 `gorm:"-" json:"task_count"`
+	// Number of live (not soft-deleted) tasks carrying the label, computed on
+	// read and never stored. Filled in by GET /labels and PUT /labels/{id}; 0
+	// in the POST /labels response and in labels embedded in a task. Read-only.
+	TaskCount int64 `gorm:"-" json:"task_count" example:"4" readonly:"true"`
 }

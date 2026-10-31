@@ -29,10 +29,15 @@ const (
 // trigger.filters, trigger.filters.status, trigger.filters.stage, steps,
 // steps[i].step_type or steps[i].config.<name>, where i is the zero-based
 // index of the step in the request's steps array.
+//
+// @Description One refused field of an automation rule body.
 type RuleFieldError struct {
-	Field   string `json:"field"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	// Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based index in the steps array.
+	Field string `json:"field" example:"steps[0].config.title"`
+	// Why it was refused: required (missing or blank), too_long, line_break (a title or subject with a line break), invalid_value (not an allowed value), out_of_range (a number outside its bounds, or waits adding up to more than 90 days), not_applicable (set where it does not apply), unknown_placeholder, too_many (more than 20 steps) or unknown_reference (an unknown, deactivated or customer user).
+	Code string `json:"code" enums:"required,too_long,line_break,invalid_value,out_of_range,not_applicable,unknown_placeholder,too_many,unknown_reference" example:"required"`
+	// Human-readable explanation; it may quote the refused value.
+	Message string `json:"message" example:"title is required"`
 }
 
 // RuleValidationError carries every refusal of one rule body, in the order

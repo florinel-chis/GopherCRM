@@ -12,7 +12,7 @@ help:
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
 	@echo "  make test         - Run Go tests"
-	@echo "  make verify       - Core CI checks: hygiene, Go build/vet/test -race, frontend build/lint/test"
+	@echo "  make verify       - Core CI checks: hygiene, Go build/vet/test -race, frontend build/lint/test, API docs"
 	@echo "  make verify-runner - Runner tests, workflow export parity, and database probe tests"
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
@@ -20,7 +20,8 @@ help:
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
-	@echo "  make swagger      - Regenerate api/swagger.json and api/swagger.yaml"
+	@echo "  make swagger      - Regenerate api/swagger.json, api/swagger.yaml and the HTML reference api/index.html"
+	@echo "  make verify-api-docs - Check that api/ is current and every route is documented (part of make verify)"
 
 .PHONY: create-db
 create-db:
@@ -41,7 +42,7 @@ test:
 # Core CI jobs call these targets. Browser and runner checks have separate
 # targets below. Run make verify before pushing a branch.
 .PHONY: verify verify-hygiene verify-backend verify-frontend
-verify: verify-hygiene verify-backend verify-frontend
+verify: verify-hygiene verify-backend verify-frontend verify-api-docs
 
 verify-hygiene:
 	scripts/ci/check-file-sizes.sh
@@ -88,12 +89,30 @@ create-admin:
 build-tools:
 	go build -o bin/create-admin cmd/create-admin/main.go
 
-.PHONY: swagger
+.PHONY: swagger api-docs verify-api-docs
 # -B gobuildid stamps an LC_UUID load command: swag's module targets an older
 # Go, whose linker default omits it, and current macOS refuses to run such a
 # binary ("missing LC_UUID load command"). The flag is a no-op elsewhere.
+SWAG = go run -ldflags "-B gobuildid" github.com/swaggo/swag/cmd/swag@v1.16.6
+API_DOCS_DIR ?= api
+# The OpenAPI spec (JSON and YAML) from the swag annotations, then the static
+# HTML reference rendered from it. scripts/docs/swag-overrides holds swag's
+# global type replacements. verify-api-docs regenerates through the
+# same api-docs target into a temporary directory and compares the bytes.
 swagger:
-	go run -ldflags "-B gobuildid" github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/main.go --output api --outputTypes json,yaml --parseDependency
+	$(MAKE) --no-print-directory api-docs API_DOCS_DIR=api
+
+api-docs:
+	$(SWAG) init -g cmd/main.go --output $(API_DOCS_DIR) --outputTypes json,yaml --parseDependency --quiet --overridesFile scripts/docs/swag-overrides
+	python3 scripts/docs/render_api_reference.py $(API_DOCS_DIR)/swagger.json $(API_DOCS_DIR)/index.html
+
+# Fails when api/ is stale or the spec is incomplete: routes without an
+# operation (and the reverse), missing descriptions, tags or enums. The route
+# extractor's own tests run first.
+verify-api-docs:
+	go test ./scripts/ci/apiroutes
+	python3 scripts/ci/check-api-docs.py
+
 # Install automation/langflow[flows] in an isolated Python 3.12 environment first.
 RUNNER_PYTHON ?= python3
 .PHONY: verify-runner

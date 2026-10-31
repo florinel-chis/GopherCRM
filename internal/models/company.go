@@ -24,31 +24,57 @@ package models
 // (#109).
 type Company struct {
 	BaseModel
-	Name          string `gorm:"not null;type:varchar(200)" json:"name"`
-	Domain        string `gorm:"type:varchar(255);index" json:"domain"`
-	Website       string `gorm:"type:varchar(255)" json:"website"`
-	Industry      string `gorm:"type:varchar(100)" json:"industry"`
-	EmployeeRange string `gorm:"type:varchar(20)" json:"employee_range"`
-	Phone         string `gorm:"type:varchar(50)" json:"phone"`
-	Address       string `gorm:"type:varchar(255)" json:"address"`
-	City          string `gorm:"type:varchar(100)" json:"city"`
-	State         string `gorm:"type:varchar(100)" json:"state"`
-	Country       string `gorm:"type:varchar(100)" json:"country"`
-	PostalCode    string `gorm:"type:varchar(20)" json:"postal_code"`
-	Notes         string `gorm:"type:text" json:"notes"`
+	// Company name, trimmed, 1 to 200 characters. Required.
+	Name string `gorm:"not null;type:varchar(200)" json:"name" example:"Acme Corporation"`
+	// Normalised domain: lower case, without scheme, path, query, a leading
+	// "www." or a trailing dot. Empty when not set. Unique among live
+	// (not deleted) companies.
+	Domain string `gorm:"type:varchar(255);index" json:"domain" example:"acme.com"`
+	// Website as entered (trimmed); an http or https URL, or empty.
+	Website string `gorm:"type:varchar(255)" json:"website" example:"https://www.acme.com"`
+	// Industry, free text, at most 100 characters; may be empty.
+	Industry string `gorm:"type:varchar(100)" json:"industry" example:"Manufacturing"`
+	// Head-count band, or empty when unknown.
+	EmployeeRange string `gorm:"type:varchar(20)" json:"employee_range" enums:"1-10,11-50,51-200,201-500,501-1000,1000+," example:"51-200"`
+	// Switchboard phone number, free text, at most 50 characters.
+	Phone string `gorm:"type:varchar(50)" json:"phone" example:"+1 555 0100"`
+	// Street address, at most 255 characters.
+	Address string `gorm:"type:varchar(255)" json:"address" example:"1 Industrial Way"`
+	// City, at most 100 characters.
+	City string `gorm:"type:varchar(100)" json:"city" example:"Springfield"`
+	// State or region, at most 100 characters.
+	State string `gorm:"type:varchar(100)" json:"state" example:"IL"`
+	// Country, free text, at most 100 characters.
+	Country string `gorm:"type:varchar(100)" json:"country" example:"USA"`
+	// Postal code, at most 20 characters.
+	PostalCode string `gorm:"type:varchar(20)" json:"postal_code" example:"62701"`
+	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
+	Notes string `gorm:"type:text" json:"notes" example:"Key account; renewal in Q3."`
 
 	// OwnerID is the account manager: a staff account, not personal data about
 	// the company. Nullable because a company may sit unowned.
-	OwnerID *uint `gorm:"index" json:"owner_id,omitempty"`
-	Owner   *User `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
+
+	// Account manager (a user id). Omitted when the company is unowned.
+	OwnerID *uint `gorm:"index" json:"owner_id,omitempty" example:"7"`
+	// The account manager's user record, loaded by the company endpoints;
+	// omitted when unowned or when the owner account no longer exists.
+	Owner *User `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 
 	// CustomerCount, LeadCount and DealCount are how many live customers, leads
 	// and deals point at the company. They are computed by the repository, not
 	// stored: `gorm:"-"` keeps them out of the schema and of every generated
 	// statement.
-	CustomerCount int64 `gorm:"-" json:"customer_count"`
-	LeadCount     int64 `gorm:"-" json:"lead_count"`
-	DealCount     int64 `gorm:"-" json:"deal_count"`
+
+	// Number of live customers linked to the company. Computed by the company
+	// endpoints; 0 where the company is embedded in another record (a lead's
+	// company_record, a deal's company). Read-only.
+	CustomerCount int64 `gorm:"-" json:"customer_count" readonly:"true" example:"4"`
+	// Number of live leads linked to the company, whoever owns them. Computed
+	// like customer_count. Read-only.
+	LeadCount int64 `gorm:"-" json:"lead_count" readonly:"true" example:"9"`
+	// Number of live deals linked to the company, whoever owns them. Computed
+	// like customer_count. Read-only.
+	DealCount int64 `gorm:"-" json:"deal_count" readonly:"true" example:"2"`
 }
 
 // Column widths of the companies table. The handler rejects a value that would

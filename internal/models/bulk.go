@@ -76,6 +76,9 @@ type BulkOperationItem struct {
 // no per-item results to report: the operation either updates every listed
 // record or updates none of them, so a single count says everything there is to
 // say about a success, and a failure is carried by the error instead.
+//
+// @Description Result of an all-or-nothing bulk status update: every listed record was updated.
 type BulkStatusUpdateResult struct {
-	Updated int `json:"updated"`
+	// Number of records updated: the count of distinct ids in the request (a repeated id is updated once).
+	Updated int `json:"updated" example:"3"`
 }

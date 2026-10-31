@@ -22,48 +22,104 @@ func NewCustomerHandler(customerService service.CustomerService) *CustomerHandle
 	return &CustomerHandler{customerService: customerService}
 }
 
+// @Description Body of POST /customers. Text fields other than the names and email are optional free text.
 type CreateCustomerRequest struct {
-	Website    string `json:"website,omitempty"`
-	FirstName  string `json:"first_name" binding:"required"`
-	LastName   string `json:"last_name" binding:"required"`
-	Email      string `json:"email" binding:"required,email"`
-	Phone      string `json:"phone,omitempty"`
-	Company    string `json:"company,omitempty"`
-	Position   string `json:"position,omitempty"`
-	Address    string `json:"address,omitempty"`
-	City       string `json:"city,omitempty"`
-	State      string `json:"state,omitempty"`
-	Country    string `json:"country,omitempty"`
-	PostalCode string `json:"postal_code,omitempty"`
-	Notes      string `json:"notes,omitempty"`
+	// Optional web site: an absolute http or https URL with a host, at most 255
+	// characters after trimming.
+	Website string `json:"website,omitempty" maxLength:"255" example:"https://acme.example"`
+	// Given name; required, non-empty.
+	FirstName string `json:"first_name" binding:"required" example:"Ana"`
+	// Family name; required, non-empty.
+	LastName string `json:"last_name" binding:"required" example:"Popescu"`
+	// Email address; required, valid, and not used by any customer, erased
+	// ones included (409).
+	Email string `json:"email" binding:"required,email" format:"email" example:"ana.popescu@example.com"`
+	// Phone number, free text.
+	Phone string `json:"phone,omitempty" example:"+40 721 000 000"`
+	// Free-text company name; independent of company_id.
+	Company string `json:"company,omitempty" example:"Acme SRL"`
+	// Job title.
+	Position string `json:"position,omitempty" example:"Purchasing manager"`
+	// Street address.
+	Address string `json:"address,omitempty" example:"Strada Exemplu 1"`
+	// City.
+	City string `json:"city,omitempty" example:"Cluj-Napoca"`
+	// State, county or region.
+	State string `json:"state,omitempty" example:"Cluj"`
+	// Country, free text.
+	Country string `json:"country,omitempty" example:"Romania"`
+	// Postal code.
+	PostalCode string `json:"postal_code,omitempty" example:"400000"`
+	// Free-text notes.
+	Notes string `json:"notes,omitempty" example:"Met at the trade fair."`
 	// CompanyID links the customer to a company record; 0 or absent means
 	// none. It is independent of the free-text Company field above.
-	CompanyID *uint `json:"company_id,omitempty"`
+
+	// Optional link to a live company record; 0 or absent means no link. An id
+	// matching no live company is 400 INVALID_REFERENCE.
+	CompanyID *uint `json:"company_id,omitempty" example:"3"`
 }
 
+// @Description Body of PUT /customers/{id}. Every field is optional. A text field that is omitted or empty leaves the stored value unchanged (it cannot be cleared this way), except website, where an empty string clears it.
 type UpdateCustomerRequest struct {
 	// Website: absent leaves the value alone; an empty string clears it.
-	Website    *string `json:"website,omitempty"`
-	FirstName  string  `json:"first_name,omitempty"`
-	LastName   string  `json:"last_name,omitempty"`
-	Email      string  `json:"email,omitempty" binding:"omitempty,email"`
-	Phone      string  `json:"phone,omitempty"`
-	Company    string  `json:"company,omitempty"`
-	Position   string  `json:"position,omitempty"`
-	Address    string  `json:"address,omitempty"`
-	City       string  `json:"city,omitempty"`
-	State      string  `json:"state,omitempty"`
-	Country    string  `json:"country,omitempty"`
-	PostalCode string  `json:"postal_code,omitempty"`
-	Notes      string  `json:"notes,omitempty"`
+
+	// Web site: omitted or null leaves it unchanged, "" clears it, anything
+	// else must be an absolute http or https URL with a host, at most 255
+	// characters after trimming.
+	Website *string `json:"website,omitempty" maxLength:"255" example:"https://acme.example"`
+	// New given name; empty leaves it unchanged.
+	FirstName string `json:"first_name,omitempty" example:"Ana"`
+	// New family name; empty leaves it unchanged.
+	LastName string `json:"last_name,omitempty" example:"Popescu"`
+	// New email address; must be valid and not used by another customer (409).
+	// Empty leaves it unchanged.
+	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"ana.popescu@example.com"`
+	// New phone number; empty leaves it unchanged.
+	Phone string `json:"phone,omitempty" example:"+40 721 000 000"`
+	// New free-text company name; empty leaves it unchanged.
+	Company string `json:"company,omitempty" example:"Acme SRL"`
+	// New job title; empty leaves it unchanged.
+	Position string `json:"position,omitempty" example:"Purchasing manager"`
+	// New street address; empty leaves it unchanged.
+	Address string `json:"address,omitempty" example:"Strada Exemplu 1"`
+	// New city; empty leaves it unchanged.
+	City string `json:"city,omitempty" example:"Cluj-Napoca"`
+	// New state, county or region; empty leaves it unchanged.
+	State string `json:"state,omitempty" example:"Cluj"`
+	// New country; empty leaves it unchanged.
+	Country string `json:"country,omitempty" example:"Romania"`
+	// New postal code; empty leaves it unchanged.
+	PostalCode string `json:"postal_code,omitempty" example:"400000"`
+	// New notes, replacing the old ones; empty leaves them unchanged.
+	Notes string `json:"notes,omitempty" example:"Prefers email contact."`
 	// CompanyID: absent leaves the link alone, 0 clears it, any other value
 	// must name a live company.
-	CompanyID *uint `json:"company_id,omitempty"`
+
+	// Company link: omitted or null leaves it unchanged, 0 clears it, any
+	// other value must name a live company (400 INVALID_REFERENCE otherwise).
+	CompanyID *uint `json:"company_id,omitempty" example:"3"`
 }
 
 // AssignCustomerRequest carries the staff account a customer is being handed to.
+//
+// @Description Body of POST /customers/{id}/assign.
 type AssignCustomerRequest struct {
-	UserID uint `json:"user_id" binding:"required"`
+	// ID of the new account manager: an existing, active admin or sales user.
+	// Required and non-zero.
+	UserID uint `json:"user_id" binding:"required" minimum:"1" example:"7"`
+}
+
+// CustomerListResponse documents the data payload of GET /customers for the
+// OpenAPI spec; the handler builds it as a gin.H.
+//
+// @Description A page of customers.
+type CustomerListResponse struct {
+	// The customers of this page, never null.
+	Customers []models.Customer `json:"customers"`
+	// Total number of customers matching the query, across all pages (also
+	// in meta.total, where it is omitted when 0).
+	Total int64 `json:"total" example:"57"`
 }
 
 // customerExportColumns is the CSV header, and the order every data row is
@@ -77,21 +133,21 @@ var customerExportColumns = []string{
 }
 
 // Create godoc
-// @Summary Create a new customer
-// @Description Create a new customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL. Optional company_id links the customer to a company record, independently of the free-text company field; an id that matches no live company rejects the request with 400 INVALID_REFERENCE, and 0 or absent means no link.
+// @Summary Create a customer
+// @Description Admin and sales (route guard, repeated in the handler). Creates a customer without an account manager or login link. website is trimmed and must be empty or an absolute http or https URL with a host, at most 255 characters. company_id optionally links a company record, independently of the free-text company field; 0 or absent means no link. No mail is sent and no automation event is recorded.
 // @Tags customers
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CreateCustomerRequest true "Customer creation request"
-// @Success 201 {object} utils.APIResponse{data=models.Customer} "Customer created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, or an unknown company_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Customer with this email already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CreateCustomerRequest true "New customer"
+// @Success 201 {object} utils.APIResponse{data=models.Customer} "Customer created"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: first_name, last_name or email missing, or email invalid (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), or an invalid website (the message says why). INVALID_REFERENCE: company_id names no live company"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions)"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: a customer already uses this email"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer could not be stored"
 // @Router /customers [post]
 func (h *CustomerHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Create")
@@ -152,22 +208,23 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List customers
-// @Description List customers with pagination, optional search and sorting. Admin, sales and support roles see the same unfiltered set; the customer role is rejected outright and has no view of its own record here.
+// @Description Admin, sales and support (checked in the handler; customer gets 403). All three roles see the same unfiltered set of live customers; there is no ownership narrowing. data holds customers and total; meta repeats the pagination (page, per_page, total, total_pages, each omitted when 0). Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then id, in the requested direction. search matches a substring (SQL LIKE) of first_name, last_name, email, company, phone or notes and combines with the sort. The embedded user (the customer's login) is loaded only for the default listing without search and sort_by.
+// @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0; page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, first_name, last_name, email, company)
-// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search across customer fields; takes precedence over sort_by"
-// @Success 200 {object} utils.APIResponse{data=object{customers=[]models.Customer,total=integer},meta=utils.APIMeta} "Customers retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, Sales or Support role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; a positive value overrides offset"
+// @Param offset query int false "Number of rows to skip, ignored when page is given" default(0)
+// @Param limit query int false "Page size; capped at 100, non-positive or invalid values give 20" default(20)
+// @Param sort_by query string false "Sort column; any other value is ignored (ascending id order)" Enums(created_at, updated_at, first_name, last_name, email, company)
+// @Param sort_order query string false "Sort direction; any other value falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Substring matched against first_name, last_name, email, company, phone and notes"
+// @Success 200 {object} utils.APIResponse{data=CustomerListResponse,meta=utils.APIMeta} "A page of customers"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions to list customers)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customers could not be read"
 // @Router /customers [get]
 func (h *CustomerHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.List")
@@ -236,20 +293,20 @@ func (h *CustomerHandler) List(c *gin.Context) {
 }
 
 // Get godoc
-// @Summary Get a customer by ID
-// @Description Retrieve a single customer. Admin, sales and support roles may read any customer; the customer role is rejected and cannot read its own record through this endpoint.
+// @Summary Get a customer
+// @Description Admin, sales and support (checked in the handler) may read any live customer; the customer role gets 403, also for its own record. The response embeds the customer's login (user) and the linked company (company_record) when they exist.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, Sales or Support role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "The customer"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions to view customers)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live customer with this id (erased customers included)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer could not be read"
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Get")
@@ -291,22 +348,22 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a customer
-// @Description Update a customer (admin and sales roles only). Website is optional, trimmed, at most 255 characters, and must be an http or https URL; omitted or null leaves it unchanged, an empty string clears it. Other text fields apply only when non-empty. company_id: absent leaves the company link unchanged, 0 clears it, any other value must name a live company or the request is rejected with 400 INVALID_REFERENCE. The free-text company field is independent of the link.
+// @Description Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. The whole row is written back.
 // @Tags customers
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Param request body UpdateCustomerRequest true "Customer update request"
-// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data, or an unknown company_id (INVALID_REFERENCE)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "Customer with this email already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateCustomerRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "The updated customer"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID, malformed JSON (Invalid request format), or an invalid website (the message says why). VALIDATION_ERROR: email is not an email address (details maps Email to a message). INVALID_REFERENCE: company_id names no live company"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions to update customers)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live customer with this id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another customer already uses this email"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer could not be read or stored"
 // @Router /customers/{id} [put]
 func (h *CustomerHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Update")
@@ -415,20 +472,20 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 }
 
 // Delete godoc
-// @Summary Erase a customer
-// @Description Irreversibly erase a customer (admin role only). This is a GDPR Article 17 erasure, not a reversible archive: every personal field is overwritten in place — the email is replaced by an unrelated random address in the reserved .invalid domain — and the row is then soft-deleted so foreign keys from tickets and tasks still resolve. The same person is erased everywhere in the same transaction: every lead converted into the customer and, when user_id names a customer-role account, that login (credentials purged) and its other customer records. A staff account in user_id, the account manager (assigned_to_id) and other business links are never erased. Use deactivation instead when the data must be recoverable.
+// @Summary Erase a customer (irreversible)
+// @Description Admin only (route guard, repeated in the handler). A GDPR Article 17 erasure, not an archive: in one transaction every personal field (names, email, phone, company, website, position, postal address, notes) is overwritten in place, the email becoming an unrelated random address in the reserved .invalid domain, and the row is soft-deleted so references from tickets, tasks and deals still resolve. The same person is erased everywhere in that transaction: every lead converted into the customer (with its linked form submissions scrubbed) and, when user_id names a customer-role account, that login (credentials purged) and its other customer records. A staff account in user_id, the account manager (assigned_to_id), company_id and deals are left as they are. Any failure before the commit rolls the whole erasure back. A failed COMMIT is the exception: its outcome is ambiguous (the erasure may have been applied), so read the record again before retrying.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Erasure failed"
+// @Success 204 "Erased; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live customer with this id (an already erased customer included)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the erasure failed; before the commit it was rolled back and nothing was erased, while a failed COMMIT is ambiguous (the erasure may have been applied)"
 // @Router /customers/{id} [delete]
 func (h *CustomerHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Delete")
@@ -478,26 +535,24 @@ var customerSortColumns = map[string]bool{
 }
 
 // Export godoc
-// @Summary Export customers as CSV
-// @Description Download every customer matching the optional filters as a CSV file. ADMIN ROLE ONLY, and deliberately narrower than the list endpoint, which sales and support can also read: a single request here egresses the personal data of the entire customer base in a form that leaves the application, so the GDPR data-minimisation principle puts it out of reach of the roles that only need to work one record at a time.
-// @Description
-// @Description The response is NOT the utils.APIResponse envelope. It is the raw CSV body — Content-Type text/csv; charset=utf-8, Content-Disposition attachment; filename=customers-export.csv — because the client saves it as a file. Errors before the file starts are still reported through the ordinary JSON envelope.
-// @Description
-// @Description Columns, in order: id, first_name, last_name, email, phone, company, address, notes, assigned_to_id, created_at, updated_at. Timestamps are RFC3339. An unassigned customer exports an empty assigned_to_id cell. Fields that a spreadsheet would treat as a formula are prefixed with an apostrophe.
-// @Description
-// @Description The export is not paginated: every matching row is included. Soft-deleted (erased) customers are excluded.
+// @Summary Export customers as CSV (admin)
+// @Description Admin only (route guard, repeated in the handler), deliberately narrower than the list, which sales and support can read: one request egresses the personal data of the whole customer base, so data minimisation keeps it from the roles that work one record at a time.
+// @Description The success body is NOT the JSON envelope: it is the raw CSV, Content-Type text/csv; charset=utf-8 and Content-Disposition attachment; filename=customers-export.csv. Errors raised before the file starts (401, 403, 429, 500) still use the JSON envelope. Every row is read before the first byte is written, so a database failure is a JSON 500, never a truncated file.
+// @Description Columns, in this order: id, first_name, last_name, email, phone, company, address, notes, assigned_to_id, created_at, updated_at, website. Timestamps are RFC 3339; an unassigned customer has an empty assigned_to_id. A text cell starting with =, @, a tab or a carriage return, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula.
+// @Description Not paginated: every live customer matching search is included; erased customers never are. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then id, in the requested direction.
 // @Tags customers
 // @Produce text/csv
+// @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param search query string false "Free-text search across first name, last name, email, company, phone and notes"
-// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, first_name, last_name, email, company)
-// @Param sort_order query string false "Sort direction; ignored unless sort_by is supplied" Enums(asc, desc) default(asc)
-// @Success 200 {string} string "CSV file of customers (raw body, not the API envelope)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param search query string false "Substring matched against first_name, last_name, email, company, phone and notes"
+// @Param sort_by query string false "Sort column; any other value is ignored (ascending id order)" Enums(created_at, updated_at, first_name, last_name, email, company)
+// @Param sort_order query string false "Sort direction, used only with sort_by; any other value falls back to asc" Enums(asc, desc) default(asc)
+// @Success 200 {string} string "The CSV file (raw body, not the JSON envelope)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customers could not be read"
 // @Router /customers/export [get]
 func (h *CustomerHandler) Export(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Export")
@@ -627,26 +682,23 @@ func isNumericLike(value string) bool {
 }
 
 // Assign godoc
-// @Summary Assign a customer to a user
-// @Description Set the staff account that owns this customer relationship (admin and sales roles only; the route is guarded by middleware.RequireRole(admin, sales) and the handler repeats the check).
-// @Description
-// @Description The target account must exist, must be active, and must hold the admin or sales role: customer ownership is a sales function, so support accounts are rejected the same way a support-only ticket assignee is, and a customer-role account is rejected outright — handing it a book of other people's records would be a data-protection incident.
-// @Description
-// @Description A missing customer or a missing user is 404. A user that exists but is deactivated or holds the wrong role is 400, because the request identified a real account and was refused on its merits.
+// @Summary Assign a customer to an account manager
+// @Description Admin and sales (route guard, repeated in the handler); sales may assign any customer, not only its own. Sets assigned_to_id to user_id and returns the customer (with its login and company embedded; assigned_to itself is not embedded). The target must exist, be active and hold the admin or sales role: support and customer accounts are refused, since customer ownership is a sales function and handing a customer account a book of other people's records would be a data-protection incident.
+// @Description A missing customer or user is 404; an existing user that is deactivated or holds the wrong role is 400, because the request named a real account and was refused on its merits.
 // @Tags customers
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Customer ID"
-// @Param request body AssignCustomerRequest true "Assignment request"
-// @Success 200 {object} utils.APIResponse{data=models.Customer} "Customer assigned successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid customer ID or request data, or the target user is deactivated or holds a role that cannot own customers"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin or Sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Customer or user not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body AssignCustomerRequest true "The new account manager"
+// @Success 200 {object} utils.APIResponse{data=models.Customer} "The customer with its new account manager"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID, malformed JSON (Invalid request format), Cannot assign a customer to a deactivated user, or Customers can only be assigned to sales or admin users. VALIDATION_ERROR: user_id missing or 0 (details maps UserID to a message)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: Customer not found, or User not found (no live user with user_id)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer could not be read or stored"
 // @Router /customers/{id}/assign [post]
 func (h *CustomerHandler) Assign(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Assign")

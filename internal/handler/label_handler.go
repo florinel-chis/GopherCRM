@@ -25,29 +25,37 @@ func NewLabelHandler(labelService service.LabelService) *LabelHandler {
 // together admit exactly #RRGGBB — `hexcolor` alone would also accept the
 // three-digit #RGB shorthand, which the colour column and the frontend swatch
 // picker do not use.
+//
+// @Description Body of POST /labels.
 type CreateLabelRequest struct {
-	Name  string `json:"name" binding:"required,max=50"`
-	Color string `json:"color" binding:"required,hexcolor,len=7"`
+	// Display name, 1 to 50 characters. Trimmed before it is stored; blank after trimming is 400. Must be unique case-insensitively (409).
+	Name string `json:"name" binding:"required,max=50" example:"Follow-up"`
+	// Colour as #RRGGBB: a hash and exactly six hex digits (the three-digit shorthand is refused).
+	Color string `json:"color" binding:"required,hexcolor,len=7" example:"#FF8800"`
 }
 
 // UpdateLabelRequest is the body of PUT /labels/:id. Both fields are optional;
 // an absent field leaves that part of the label alone.
+//
+// @Description Body of PUT /labels/{id}. Both fields are optional; an absent or empty field is left unchanged.
 type UpdateLabelRequest struct {
-	Name  string `json:"name,omitempty" binding:"omitempty,max=50"`
-	Color string `json:"color,omitempty" binding:"omitempty,hexcolor,len=7"`
+	// New name, at most 50 characters, trimmed and unique case-insensitively among the other labels; absent or empty keeps the current name.
+	Name string `json:"name,omitempty" binding:"omitempty,max=50" example:"Waiting on customer"`
+	// New colour as #RRGGBB; absent or empty keeps the current colour.
+	Color string `json:"color,omitempty" binding:"omitempty,hexcolor,len=7" example:"#3366CC"`
 }
 
 // List godoc
 // @Summary List labels
-// @Description Every label, ordered by name ascending, as a bare array. Each label carries task_count, the number of live (not soft-deleted) tasks currently using it. Available to every authenticated role.
+// @Description Every label, ordered by name ascending, as a bare array (no pagination). Roles: every authenticated role. Each label carries task_count, the number of live (not soft-deleted) tasks using it, counted across all assignees whatever the caller's role.
 // @Tags labels
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=[]models.Label} "Labels retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=[]models.Label} "All labels; an empty array when none"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /labels [get]
 func (h *LabelHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LabelHandler.List")
@@ -65,20 +73,20 @@ func (h *LabelHandler) List(c *gin.Context) {
 
 // Create godoc
 // @Summary Create a label
-// @Description Create a label (admin, sales and support roles only). The name is trimmed before it is stored and must be unique case-insensitively, so "Urgent" and "urgent" cannot coexist. The colour must be a six-digit hex value with a leading hash, e.g. #FF8800.
+// @Description Create a label. Roles: admin, sales and support (customers get 403 from the route guard). The name is trimmed before it is stored and must be unique case-insensitively, so Urgent and urgent cannot coexist. The colour must be a hash followed by six hex digits, e.g. #FF8800.
 // @Tags labels
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CreateLabelRequest true "Label creation request"
-// @Success 201 {object} utils.APIResponse{data=models.Label} "Label created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, blank name or malformed colour"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A label with this name already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CreateLabelRequest true "Label to create"
+// @Success 201 {object} utils.APIResponse{data=models.Label} "Label created; task_count is 0"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the name is blank after trimming or the colour is malformed"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - a label with this name (case-insensitively) already exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /labels [post]
 func (h *LabelHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LabelHandler.Create")
@@ -101,22 +109,22 @@ func (h *LabelHandler) Create(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a label
-// @Description Rename or recolour a label (admin, sales and support roles only). Only the fields present in the request body are applied; a label may keep its own name, so a pure recolour is never reported as a duplicate. The response carries the refreshed task_count.
+// @Description Rename or recolour a label. Roles: admin, sales and support. Only non-empty fields are applied; a label may keep its own name, so a pure recolour is never a duplicate. The checks run in this order: id, body binding, lookup (404), name and colour validation, uniqueness. The response carries the refreshed task_count. Tasks carrying the label show the change on their next read.
 // @Tags labels
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Label ID"
-// @Param request body UpdateLabelRequest true "Label update request"
-// @Success 200 {object} utils.APIResponse{data=models.Label} "Label updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid label ID, invalid request data, blank name or malformed colour"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, sales or support role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Label not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "A label with this name already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateLabelRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.Label} "The updated label"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the name is blank after trimming or the colour is malformed; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin, sales or support role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no label with this id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - another label already has this name (case-insensitively)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /labels/{id} [put]
 func (h *LabelHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LabelHandler.Update")
@@ -163,19 +171,19 @@ func (h *LabelHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a label
-// @Description Delete a label (admin role only) and detach it from every task that carries it, in one transaction. The deletion is permanent: labels hold no personal data and are not soft-deleted, so the row is gone rather than hidden. The tasks themselves are untouched.
+// @Description Delete a label and detach it from every task that carries it, in one transaction. Roles: admin only (route guard). The deletion is permanent: labels hold no personal data and are not soft-deleted, so the row is gone and its name can be reused at once. The tasks themselves are untouched.
 // @Tags labels
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Label ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid label ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Label not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Label deleted; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no label with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /labels/{id} [delete]
 func (h *LabelHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LabelHandler.Delete")

@@ -20,44 +20,71 @@ func NewUserHandler(userService service.UserService) *UserHandler {
 	return &UserHandler{userService: userService}
 }
 
+// @Description Body of POST /users (admin). Unlike public registration, the requested role is honoured.
 type CreateUserRequest struct {
-	Email     string          `json:"email" binding:"required,email"`
-	Password  string          `json:"password" binding:"required,min=10"`
-	FirstName string          `json:"first_name" binding:"required"`
-	LastName  string          `json:"last_name" binding:"required"`
-	Role      models.UserRole `json:"role" binding:"required,oneof=admin sales support customer"`
+	// Login email address; must be valid and not used by any account (409).
+	Email string `json:"email" binding:"required,email" format:"email" example:"sam.sales@example.com"`
+	// Initial password: at least 10 characters with an uppercase letter, a
+	// lowercase letter, a digit and a special character. More than 72 bytes is
+	// answered with 400 (bcrypt limit).
+	Password string `json:"password" binding:"required,min=10" minLength:"10" example:"Str0ng!Passw0rd"`
+	// Given name; required, non-empty.
+	FirstName string `json:"first_name" binding:"required" example:"Sam"`
+	// Family name; required, non-empty.
+	LastName string `json:"last_name" binding:"required" example:"Seller"`
+	// Role of the new account; required, one of admin, sales, support, customer.
+	Role models.UserRole `json:"role" binding:"required,oneof=admin sales support customer" example:"sales"`
 }
 
+// @Description Body of PUT /users/{id}. Every field is optional; an omitted or empty field leaves the stored value unchanged (names and email cannot be cleared).
 type UpdateUserRequest struct {
-	Email     string          `json:"email,omitempty" binding:"omitempty,email"`
-	FirstName string          `json:"first_name,omitempty"`
-	LastName  string          `json:"last_name,omitempty"`
-	Role      models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer"`
-	IsActive  *bool           `json:"is_active,omitempty"`
+	// New login email; must be valid and not used by another account (409).
+	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"sam.sales@example.com"`
+	// New given name; empty leaves it unchanged.
+	FirstName string `json:"first_name,omitempty" example:"Sam"`
+	// New family name; empty leaves it unchanged.
+	LastName string `json:"last_name,omitempty" example:"Seller"`
+	// New role. Applied only when the caller is an admin and silently ignored
+	// otherwise; a value outside admin, sales, support, customer is a 400 for
+	// every caller.
+	Role models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer" example:"support"`
+	// New active flag. Applied only when the caller is an admin and silently
+	// ignored otherwise. false deactivates the account (its tokens and API keys
+	// stop working); unlike POST /users/{id}/deactivate this path does not stop
+	// an admin from deactivating itself.
+	IsActive *bool `json:"is_active,omitempty" example:"true"`
 }
 
+// @Description Body of PUT /users/me. Every field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here.
 type UpdateMeRequest struct {
-	Email     string `json:"email,omitempty" binding:"omitempty,email"`
-	FirstName string `json:"first_name,omitempty"`
-	LastName  string `json:"last_name,omitempty"`
-	Password  string `json:"password,omitempty" binding:"omitempty,min=10"`
+	// New login email; must be valid and not used by another account (409).
+	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"jane.doe@example.com"`
+	// New given name; empty leaves it unchanged.
+	FirstName string `json:"first_name,omitempty" example:"Jane"`
+	// New family name; empty leaves it unchanged.
+	LastName string `json:"last_name,omitempty" example:"Doe"`
+	// New password: at least 10 characters with an uppercase letter, a
+	// lowercase letter, a digit and a special character. The current password
+	// is not asked for and existing refresh tokens are NOT revoked (POST
+	// /auth/change-password does both). More than 72 bytes fails with 500.
+	Password string `json:"password,omitempty" binding:"omitempty,min=10" minLength:"10" example:"N3w!Passw0rd2026"`
 }
 
 // Create godoc
-// @Summary Create a new user
-// @Description Create a new user with any role (admin role only). Unlike the public /auth/register endpoint, this one honours the requested role.
+// @Summary Create a user (admin)
+// @Description Admin only (route guard). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the admin chose.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CreateUserRequest true "User creation request"
-// @Success 201 {object} utils.APIResponse{data=models.User} "User created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, password does not meet complexity requirements, or user could not be created"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Param request body CreateUserRequest true "New account"
+// @Success 201 {object} utils.APIResponse{data=models.User} "User created"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password fails the complexity policy, or the user could not be stored (the underlying message is returned, e.g. a password over 72 bytes)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: an account already uses this email"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Router /users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Create")
@@ -96,23 +123,24 @@ func (h *UserHandler) Create(c *gin.Context) {
 }
 
 // List godoc
-// @Summary List users
-// @Description List users with pagination, optional search and sorting (admin role only)
+// @Summary List users (admin)
+// @Description Admin only (route guard). Returns a page of live accounts as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Erased accounts are not listed. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. search matches a substring (SQL LIKE) of email, first_name or last_name and combines with the sort.
+// @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0); page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (1-based); when supplied it overrides offset"
-// @Param offset query int false "Result offset, ignored when page is supplied" default(0)
-// @Param limit query int false "Page size, capped at 100" default(20)
-// @Param sort_by query string false "Sort column; ignored unless one of the allowed values" Enums(created_at, updated_at, email, first_name, last_name, role)
-// @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search across user fields; takes precedence over sort_by"
-// @Success 200 {object} utils.APIResponse{data=[]models.User,meta=utils.APIMeta} "Users retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param page query int false "1-based page number; a positive value overrides offset"
+// @Param offset query int false "Number of rows to skip, ignored when page is given" default(0)
+// @Param limit query int false "Page size; capped at 100, non-positive or invalid values give 20" default(20)
+// @Param sort_by query string false "Sort column; any other value is ignored (ascending id order)" Enums(created_at, updated_at, email, first_name, last_name, role)
+// @Param sort_order query string false "Sort direction; any other value falls back to asc" Enums(asc, desc) default(asc)
+// @Param search query string false "Substring matched against email, first_name and last_name"
+// @Success 200 {object} utils.APIResponse{data=[]models.User,meta=utils.APIMeta} "A page of users; pagination in meta"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the users could not be read"
 // @Router /users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.List")
@@ -179,19 +207,19 @@ func (h *UserHandler) List(c *gin.Context) {
 }
 
 // Get godoc
-// @Summary Get a user by ID
-// @Description Retrieve a single user. Any authenticated user may fetch their own record; fetching another user's record requires the admin role.
+// @Summary Get a user
+// @Description Any authenticated role may read its own account; reading another account requires the admin role. The permission check runs before the lookup, so a non-admin asking for another id gets 403 whether or not it exists. Erased accounts are not found.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "User ID"
-// @Success 200 {object} utils.APIResponse{data=models.User} "User retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only view your own profile unless you are an admin"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The user"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID (not an unsigned 32-bit integer; 0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a non-admin asked for another account (You can only view your own profile)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id. Any lookup failure, a database error included, is answered this way"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Router /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Get")
@@ -224,22 +252,22 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Update a user. Any authenticated user may update their own record; updating another user's record requires the admin role. The role and is_active fields are applied only for admins and silently ignored for everyone else.
+// @Description Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. Passwords are changed through PUT /users/me or POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "User ID"
-// @Param request body UpdateUserRequest true "User update request"
-// @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or request data"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - you can only update your own profile unless you are an admin"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateUserRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The updated user"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer (details maps the Go field name to a message)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a non-admin tried to update another account (You can only update your own profile)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
 // @Router /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Update")
@@ -311,20 +339,21 @@ func (h *UserHandler) Update(c *gin.Context) {
 }
 
 // Delete godoc
-// @Summary Delete a user (irreversible erasure of personal data)
-// @Description Delete a user (admin role only). This is a GDPR Article 17 erasure and is IRREVERSIBLE: every personal field is overwritten in place — the email is replaced with a random address in the reserved .invalid domain, the names are blanked and the password hash is made unusable — before the row is soft-deleted, and the user's API keys and refresh tokens are purged so no credential outlives the account. The row itself is kept so foreign keys from tickets, tasks and leads still resolve. Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers; erasing a staff user leaves the records it owns, manages or is linked to untouched. To suspend someone reversibly, set is_active to false via the update endpoint instead. Admins cannot delete their own account.
+// @Summary Erase a user (irreversible)
+// @Description Admin only (route guard, repeated in the handler); an admin cannot erase its own account. This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
+// @Description Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. To suspend an account reversibly use POST /users/{id}/deactivate instead.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "User ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or attempt to delete your own account"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Erased; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or You cannot delete your own account"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id (an already erased account included)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the erasure failed; before the commit it was rolled back and nothing was erased, while a failed COMMIT is ambiguous (the erasure may have been applied)"
 // @Router /users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Delete")
@@ -368,16 +397,16 @@ func (h *UserHandler) Delete(c *gin.Context) {
 }
 
 // GetMe godoc
-// @Summary Get the current user
-// @Description Retrieve the profile of the currently authenticated user
+// @Summary Get the caller's account
+// @Description Any authenticated role. Returns the account the credential belongs to.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=models.User} "User retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The caller's account"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account could not be read (erased after authentication, or a database error)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Router /users/me [get]
 func (h *UserHandler) GetMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.GetMe")
@@ -396,21 +425,21 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 }
 
 // UpdateMe godoc
-// @Summary Update the current user
-// @Description Update the profile of the currently authenticated user. Only email, name and password can be changed here — role and active status are not settable through this endpoint. A 404 here means the account was deleted while the session was still live.
+// @Summary Update the caller's account
+// @Description Any authenticated role. Changes the caller's email, names and/or password; only non-empty fields are written, and role and active status cannot be changed here. A new password must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character); unlike POST /auth/change-password the current password is not required and existing refresh tokens are not revoked. A body with nothing to apply returns the account unchanged.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body UpdateMeRequest true "Profile update request"
-// @Success 200 {object} utils.APIResponse{data=models.User} "User updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data or password does not meet complexity requirements"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found - the authenticated account no longer exists"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "User with this email already exists"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateMeRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The updated account"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: email is not an email address or password is shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), or the password fails the complexity policy"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account was erased while the credential was still in use"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the account could not be updated, or the password is over 72 bytes (bcrypt limit)"
 // @Router /users/me [put]
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.UpdateMe")
@@ -469,20 +498,20 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 }
 
 // Activate godoc
-// @Summary Activate a user account
-// @Description Sets a user's active status to true (admin role only)
+// @Summary Activate a user (admin)
+// @Description Admin only (route guard). Sets is_active to true, so the account can log in again and its unexpired access tokens and active API keys work again. Idempotent: an already active account is returned unchanged.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "User ID"
-// @Success 200 {object} utils.APIResponse{data=models.User} "User activated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The activated user"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
 // @Router /users/{id}/activate [post]
 func (h *UserHandler) Activate(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Activate")
@@ -510,20 +539,20 @@ func (h *UserHandler) Activate(c *gin.Context) {
 }
 
 // Deactivate godoc
-// @Summary Deactivate a user account
-// @Description Sets a user's active status to false (admin role only). Admins cannot deactivate their own account.
+// @Summary Deactivate a user (admin)
+// @Description Admin only (route guard); an admin cannot deactivate its own account here. Sets is_active to false, the reversible alternative to erasure: from the next request on the account cannot log in, its bearer tokens and API keys are rejected, and a refresh of its tokens fails. No data is changed and this call deletes no refresh token, but a refresh attempted while the account is deactivated revokes the token it presented. Idempotent.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "User ID"
-// @Success 200 {object} utils.APIResponse{data=models.User} "User deactivated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid user ID or attempt to deactivate your own account"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "User not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.User} "The deactivated user"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or You cannot deactivate your own account"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
 // @Router /users/{id}/deactivate [post]
 func (h *UserHandler) Deactivate(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Deactivate")

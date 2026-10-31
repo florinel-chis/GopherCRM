@@ -74,65 +74,116 @@ func (s QuoteStatus) CanTransitionTo(to QuoteStatus) bool {
 // its history untouched (the links are business links, like a deal's).
 type Quote struct {
 	BaseModel
-	Title  string      `gorm:"not null;type:varchar(200)" json:"title"`
-	Status QuoteStatus `gorm:"not null;default:'draft';type:varchar(20);index" json:"status"`
+	// Quote title, trimmed, 1 to 200 characters. Required.
+	Title string `gorm:"not null;type:varchar(200)" json:"title" example:"Acme rollout - phase 1"`
+	// Lifecycle status. Always draft on create; changed only through POST
+	// /quotes/{id}/status.
+	Status QuoteStatus `gorm:"not null;default:'draft';type:varchar(20);index" json:"status" example:"draft"`
+
 	// Currency is immutable once the quote has lines: every line is priced in
 	// it and the totals are only meaningful within it.
-	Currency string `gorm:"not null;type:char(3)" json:"currency"`
+
+	// ISO 4217 code shared by every line: exactly three upper-case ASCII
+	// letters. Defaults to the deals.default_currency setting (EUR as
+	// shipped); can change only while the quote has no lines.
+	Currency string `gorm:"not null;type:char(3)" json:"currency" minLength:"3" maxLength:"3" example:"EUR"`
+
 	// The totals carry no column default so an explicit 0 is kept; they are
 	// recomputed from the lines by the service on every line change and never
 	// taken from a request.
-	SubtotalCents int64 `gorm:"not null" json:"subtotal_cents"`
-	DiscountCents int64 `gorm:"not null" json:"discount_cents"`
-	TotalCents    int64 `gorm:"not null" json:"total_cents"`
+
+	// Sum of quantity x unit_price_cents over the lines, in minor units.
+	// Computed by the server on every line change; read-only.
+	SubtotalCents int64 `gorm:"not null" json:"subtotal_cents" readonly:"true" example:"240000"`
+	// subtotal_cents minus total_cents: the money taken off by the per-line
+	// discounts, in minor units. Computed; read-only.
+	DiscountCents int64 `gorm:"not null" json:"discount_cents" readonly:"true" example:"30000"`
+	// Sum of the lines' line_total_cents, in minor units, at most
+	// 1000000000000 (10^12). Computed; read-only.
+	TotalCents int64 `gorm:"not null" json:"total_cents" readonly:"true" example:"210000"`
+
 	// ValidUntil is a calendar date, stored as local midnight in a DATE
 	// column and exposed as YYYY-MM-DD, the deal date convention. Acceptance
 	// is refused once it lies in the past; expiry itself is a manual status.
+
+	// Last day the offer is valid, a calendar date YYYY-MM-DD. Omitted when
+	// not set. Accepting the quote is refused once this date lies before
+	// today (server's local date); expiry itself is never automatic.
 	ValidUntil *time.Time `gorm:"type:date" json:"valid_until,omitempty" swaggertype:"string" format:"date" example:"2026-12-31"`
-	Notes      string     `gorm:"type:text" json:"notes"`
+	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
+	// Included in the quote email.
+	Notes string `gorm:"type:text" json:"notes" example:"Prices exclude VAT."`
+
 	// SentAt is set on draft→sent and cleared on sent→draft; ClosedAt is set
 	// on accepted, rejected and expired. LastEmailedAt is stamped by the
 	// conditional update that follows a successful email. All three in UTC.
-	SentAt        *time.Time `json:"sent_at,omitempty"`
-	ClosedAt      *time.Time `json:"closed_at,omitempty"`
-	LastEmailedAt *time.Time `json:"last_emailed_at,omitempty"`
 
-	DealID     *uint     `gorm:"index" json:"deal_id,omitempty"`
-	Deal       *Deal     `gorm:"foreignKey:DealID" json:"-"`
-	CustomerID *uint     `gorm:"index" json:"customer_id,omitempty"`
+	// When the quote last moved draft to sent (UTC); cleared on sent to draft.
+	// Omitted when not set. Read-only.
+	SentAt *time.Time `json:"sent_at,omitempty" readonly:"true" example:"2026-10-02T10:00:00Z"`
+	// When the quote was accepted, rejected or expired (UTC); cleared on sent
+	// to draft. Omitted when not set. Read-only.
+	ClosedAt *time.Time `json:"closed_at,omitempty" readonly:"true" example:"2026-10-09T15:30:00Z"`
+	// When the quote was last emailed successfully (UTC). Omitted when never.
+	// Read-only.
+	LastEmailedAt *time.Time `json:"last_emailed_at,omitempty" readonly:"true" example:"2026-10-02T10:05:00Z"`
+
+	// Deal the quote grew from; set on create only, never editable. Omitted
+	// when there is none.
+	DealID *uint `gorm:"index" json:"deal_id,omitempty" example:"88"`
+	Deal   *Deal `gorm:"foreignKey:DealID" json:"-"`
+	// Customer the quote is addressed to (the email recipient). Omitted when
+	// there is none, which happens when the quote was created from a deal
+	// without a customer.
+	CustomerID *uint     `gorm:"index" json:"customer_id,omitempty" example:"31"`
 	Customer   *Customer `gorm:"foreignKey:CustomerID" json:"-"`
 
-	// OwnerID defaults to the caller; only an admin may name somebody else.
-	OwnerID uint  `gorm:"not null;index" json:"owner_id"`
+	// Staff user owning the quote. Defaults to the caller; only an admin may
+	// name somebody else. Sales users see only their own quotes.
+	OwnerID uint  `gorm:"not null;index" json:"owner_id" example:"7"`
 	Owner   *User `gorm:"foreignKey:OwnerID" json:"-"`
 
 	// Lines is the only declared side of the quote/line association, so
 	// AutoMigrate creates exactly one constraint (fk_quotes_lines) on
 	// quote_lines.quote_id.
+
+	// The priced lines ordered by position, then id. Present on the detail
+	// and write responses; an empty array (never null) in lists, which do not
+	// load lines.
 	Lines []QuoteLine `gorm:"foreignKey:QuoteID" json:"lines"`
 }
 
 // QuoteCustomerSummary is what a quote discloses about its customer: the
 // display fields, never the contact details.
 type QuoteCustomerSummary struct {
-	ID        uint   `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Company   string `json:"company"`
+	// Customer id.
+	ID uint `json:"id" example:"31"`
+	// Customer's given name.
+	FirstName string `json:"first_name" example:"Grace"`
+	// Customer's family name.
+	LastName string `json:"last_name" example:"Hopper"`
+	// Customer's free-text company name.
+	Company string `json:"company" example:"Acme Corporation"`
 }
 
 // QuoteDealSummary is what a quote discloses about its deal.
 type QuoteDealSummary struct {
-	ID    uint      `json:"id"`
-	Title string    `json:"title"`
-	Stage DealStage `json:"stage"`
+	// Deal id.
+	ID uint `json:"id" example:"88"`
+	// Deal title.
+	Title string `json:"title" example:"Acme rollout 2027"`
+	// The deal's current stage.
+	Stage DealStage `json:"stage" example:"proposal"`
 }
 
 // QuoteOwnerSummary is what a quote discloses about its owner.
 type QuoteOwnerSummary struct {
-	ID        uint   `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
+	// User id.
+	ID uint `json:"id" example:"7"`
+	// The user's given name.
+	FirstName string `json:"first_name" example:"Sam"`
+	// The user's family name.
+	LastName string `json:"last_name" example:"Seller"`
 }
 
 // QuoteNumber renders the human-readable number of a quote: Q- followed by the
@@ -179,6 +230,26 @@ func (q Quote) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// QuoteJSON documents the JSON form of a Quote, which Quote.MarshalJSON
+// produces: the stored fields plus the computed number and the summaries of
+// the customer, the deal and the owner. It exists for the API specification
+// only and is never instantiated; Quote is what the code passes around.
+type QuoteJSON struct {
+	Quote
+	// Human-readable quote number: Q- followed by the id zero-padded to six
+	// digits. Computed; read-only.
+	Number string `json:"number" readonly:"true" example:"Q-000042"`
+	// Display summary of the linked customer (never its contact details).
+	// Omitted when the quote has no customer or the customer was erased.
+	Customer *QuoteCustomerSummary `json:"customer,omitempty"`
+	// Summary of the deal the quote grew from. Omitted when there is none or
+	// the deal was deleted.
+	Deal *QuoteDealSummary `json:"deal,omitempty"`
+	// Summary of the owner (no email). Omitted when the owner account no
+	// longer exists.
+	Owner *QuoteOwnerSummary `json:"owner,omitempty"`
+}
+
 // QuoteLine is one priced row of a quote. It copies the product's name and
 // price when it is added, so the quote reads the same whatever happens to the
 // catalogue afterwards; both copies are editable while the quote is a draft.
@@ -189,21 +260,41 @@ func (q Quote) MarshalJSON() ([]byte, error) {
 // AutoMigrate creates exactly one constraint (fk_quote_lines_product). The
 // quote side is declared on Quote.Lines.
 type QuoteLine struct {
-	ID        uint      `gorm:"primarykey" json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	QuoteID   uint      `gorm:"not null;index" json:"quote_id"`
-	ProductID uint      `gorm:"not null;index" json:"product_id"`
-	Product   *Product  `gorm:"foreignKey:ProductID" json:"product,omitempty"`
+	// Line id.
+	ID uint `gorm:"primarykey" json:"id" example:"501"`
+	// When the line was added (UTC).
+	CreatedAt time.Time `json:"created_at" example:"2026-10-01T09:00:00Z"`
+	// When the line was last changed (UTC).
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-01T09:05:00Z"`
+	// The quote the line belongs to.
+	QuoteID uint `gorm:"not null;index" json:"quote_id" example:"42"`
+	// The product the line was priced from. The product may since have been
+	// changed, deactivated or deleted; the line keeps its copies.
+	ProductID uint `gorm:"not null;index" json:"product_id" example:"9"`
+	// Never loaded by the quote endpoints, so always omitted.
+	Product *Product `gorm:"foreignKey:ProductID" json:"product,omitempty"`
+
 	// Position is the 1-based display order, assigned max+1 on insert. No
 	// column default, like every bound column below: an explicit 0 would be
 	// replaced on create.
-	Position       int64  `gorm:"not null" json:"position"`
-	Description    string `gorm:"not null;type:varchar(255)" json:"description"`
-	Quantity       int64  `gorm:"not null" json:"quantity"`
-	UnitPriceCents int64  `gorm:"not null" json:"unit_price_cents"`
-	DiscountBP     int64  `gorm:"column:discount_bp;not null" json:"discount_bp"`
-	LineTotalCents int64  `gorm:"not null" json:"line_total_cents"`
+
+	// 1-based display order. A new line gets the highest position plus one;
+	// positions are not renumbered and need not be unique.
+	Position int64 `gorm:"not null" json:"position" minimum:"1" example:"1"`
+	// Line text: the product name at the time the line was added unless
+	// overridden. Trimmed, 1 to 255 characters.
+	Description string `gorm:"not null;type:varchar(255)" json:"description" example:"Annual support plan"`
+	// Number of units, 1 to 1000000.
+	Quantity int64 `gorm:"not null" json:"quantity" minimum:"1" maximum:"1000000" example:"2"`
+	// Price per unit in minor units of the quote's currency, 0 to
+	// 1000000000000: the product's price at the time the line was added
+	// unless overridden.
+	UnitPriceCents int64 `gorm:"not null" json:"unit_price_cents" minimum:"0" maximum:"1000000000000" example:"120000"`
+	// Per-line discount in basis points, 0 to 10000 (1250 = 12.5 percent).
+	DiscountBP int64 `gorm:"column:discount_bp;not null" json:"discount_bp" minimum:"0" maximum:"10000" example:"1250"`
+	// quantity x unit_price_cents x (10000 - discount_bp) / 10000, rounded half
+	// up to a whole minor unit. Computed by the server; read-only.
+	LineTotalCents int64 `gorm:"not null" json:"line_total_cents" readonly:"true" example:"210000"`
 }
 
 // QuoteLineInput is a line to add: the product it is priced from, the
@@ -234,13 +325,20 @@ type QuoteLinePatch struct {
 // foreign key to its quote; its id is also the monotonic marker the email
 // stamp compares against to detect a revision that committed during the send.
 type QuoteStatusChange struct {
-	ID          uint         `gorm:"primarykey" json:"id"`
-	QuoteID     uint         `gorm:"not null;index" json:"quote_id"`
-	FromStatus  *QuoteStatus `gorm:"type:varchar(20)" json:"from_status"`
-	ToStatus    QuoteStatus  `gorm:"not null;type:varchar(20)" json:"to_status"`
-	ChangedByID uint         `gorm:"not null" json:"changed_by_id"`
-	ChangedBy   *User        `gorm:"foreignKey:ChangedByID" json:"-"`
-	ChangedAt   time.Time    `gorm:"not null" json:"changed_at"`
+	// History row id, increasing in write order.
+	ID uint `gorm:"primarykey" json:"id" example:"77"`
+	// The quote this row belongs to.
+	QuoteID uint `gorm:"not null;index" json:"quote_id" example:"42"`
+	// Status before the change; null on the first row, written when the
+	// quote was created.
+	FromStatus *QuoteStatus `gorm:"type:varchar(20)" json:"from_status" extensions:"x-nullable" example:"draft"`
+	// Status after the change.
+	ToStatus QuoteStatus `gorm:"not null;type:varchar(20)" json:"to_status" example:"sent"`
+	// User who made the change.
+	ChangedByID uint  `gorm:"not null" json:"changed_by_id" example:"7"`
+	ChangedBy   *User `gorm:"foreignKey:ChangedByID" json:"-"`
+	// When the change was written (UTC, RFC 3339).
+	ChangedAt time.Time `gorm:"not null" json:"changed_at" example:"2026-10-02T10:00:00Z"`
 }
 
 // MarshalJSON replaces the preloaded user by a summary without the email.
@@ -254,6 +352,17 @@ func (c QuoteStatusChange) MarshalJSON() ([]byte, error) {
 		out.ChangedBy = &QuoteOwnerSummary{ID: c.ChangedBy.ID, FirstName: c.ChangedBy.FirstName, LastName: c.ChangedBy.LastName}
 	}
 	return json.Marshal(out)
+}
+
+// QuoteStatusChangeJSON documents the JSON form of a QuoteStatusChange, which
+// QuoteStatusChange.MarshalJSON produces: the stored fields plus a summary of
+// the acting user without the email. It exists for the API specification
+// only and is never instantiated.
+type QuoteStatusChangeJSON struct {
+	QuoteStatusChange
+	// Summary of the acting user (no email). Omitted when that account no
+	// longer exists.
+	ChangedBy *QuoteOwnerSummary `json:"changed_by,omitempty"`
 }
 
 // Column widths of the quotes and quote_lines tables. The handler and the

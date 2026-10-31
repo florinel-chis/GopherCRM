@@ -21,54 +21,82 @@ func NewTaskHandler(taskService service.TaskService) *TaskHandler {
 	return &TaskHandler{taskService: taskService}
 }
 
+// @Description Body of POST /tasks.
 type CreateTaskRequest struct {
-	Title        string              `json:"title" binding:"required"`
-	Description  string              `json:"description,omitempty"`
-	Priority     models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
-	DueDate      *time.Time          `json:"due_date,omitempty"`
-	AssignedToID uint                `json:"assigned_to_id" binding:"required"`
-	LeadID       *uint               `json:"lead_id,omitempty"`
-	CustomerID   *uint               `json:"customer_id,omitempty"`
-	// LabelIDs attaches existing labels to the new task. Absent or empty means
-	// no labels; an id that matches no label rejects the whole request. The
-	// list is capped at 100 ids, the same bound the bulk endpoints use, so a
-	// single request cannot turn a few client bytes into an arbitrarily large
-	// IN clause.
-	LabelIDs []uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0"`
+	// Short summary of the task. Required (non-empty). Not length-checked by the API; the column is 255 characters wide.
+	Title string `json:"title" binding:"required" example:"Call back about the renewal"`
+	// Free-text details.
+	Description string `json:"description,omitempty" example:"Customer asked for a quote on the 50-seat plan."`
+	// Priority; medium when omitted or empty.
+	Priority models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high" example:"high"`
+	// Due date and time (RFC 3339). Optional.
+	DueDate *time.Time `json:"due_date,omitempty" example:"2026-11-05T09:00:00Z"`
+	// ID of the user to assign the task to. Required (non-zero). Non-admin callers must send their own user id; admins may name any active user.
+	AssignedToID uint `json:"assigned_to_id" binding:"required" example:"7"`
+	// ID of a lead to link. The lead must exist and be visible to the caller (admins any lead, sales users only the leads they own, every other role none), otherwise 404. Cannot be combined with customer_id.
+	LeadID *uint `json:"lead_id,omitempty" example:"12"`
+	// ID of a customer to link. The customer must exist, otherwise 404. Cannot be combined with lead_id.
+	CustomerID *uint `json:"customer_id,omitempty" example:"3"`
+	// IDs of existing labels to attach, at most 100, each positive (the cap
+	// bounds the IN clause a single request can produce). Absent or empty means
+	// no labels; a repeated id is attached once; an id that matches no label
+	// rejects the whole request with 400 INVALID_REFERENCE.
+	LabelIDs []uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0" example:"1,4"`
 }
 
+// @Description Body of PUT /tasks/{id}. Every field is optional; absent or empty fields are left unchanged.
 type UpdateTaskRequest struct {
-	Title        string              `json:"title,omitempty"`
-	Description  string              `json:"description,omitempty"`
-	Status       models.TaskStatus   `json:"status,omitempty" binding:"omitempty,oneof=pending in_progress completed cancelled"`
-	Priority     models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high"`
-	DueDate      *time.Time          `json:"due_date,omitempty"`
-	AssignedToID uint                `json:"assigned_to_id,omitempty"`
-	LeadID       *uint               `json:"lead_id,omitempty"`
-	CustomerID   *uint               `json:"customer_id,omitempty"`
-	// LabelIDs is a POINTER so the two cases stay distinguishable: an absent
-	// field (nil) leaves the label set alone, while a present one — including an
-	// empty array — replaces it wholesale. When present it is capped at 100 ids,
-	// exactly as on create.
-	LabelIDs *[]uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0"`
+	// New title; an absent or empty value leaves the title unchanged.
+	Title string `json:"title,omitempty" example:"Call back about the renewal"`
+	// New description; an absent or empty value leaves it unchanged (it cannot be cleared).
+	Description string `json:"description,omitempty" example:"Quote sent, waiting for the signature."`
+	// New status; absent or empty leaves it unchanged. A completed task cannot be moved to any other status (400).
+	Status models.TaskStatus `json:"status,omitempty" binding:"omitempty,oneof=pending in_progress completed cancelled" example:"in_progress"`
+	// New priority; absent or empty leaves it unchanged.
+	Priority models.TaskPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high" example:"medium"`
+	// New due date (RFC 3339); absent or null leaves it unchanged (it cannot be cleared).
+	DueDate *time.Time `json:"due_date,omitempty" example:"2026-11-06T09:00:00Z"`
+	// New assignee; absent, 0 or the current assignee leaves it unchanged. Any other value is admin-only (403 otherwise) and must name an existing, active user.
+	AssignedToID uint `json:"assigned_to_id,omitempty" example:"7"`
+	// Lead to link. When present it must name a lead the caller may see (404 otherwise), even when it equals the stored link. Absent keeps the stored link; null is the same as absent. Cannot be combined with customer_id.
+	LeadID *uint `json:"lead_id,omitempty" example:"12"`
+	// Customer to link. When present without lead_id it replaces the association: the lead link is cleared and this customer (which must exist) is linked. Absent (or null) keeps the stored link.
+	CustomerID *uint `json:"customer_id,omitempty" example:"3"`
+	// Replacement label set, at most 100 ids, each positive. The field is a
+	// pointer so the cases stay distinguishable: absent (or null) leaves the
+	// labels untouched, while a present array, even an empty one, replaces the
+	// whole set. An id that matches no label rejects the whole request with 400
+	// INVALID_REFERENCE.
+	LabelIDs *[]uint `json:"label_ids,omitempty" binding:"omitempty,max=100,dive,gt=0" example:"1,4"`
+}
+
+// TaskListData is the data payload of GET /tasks and GET /tasks/my. It is a
+// documentation-only type: the handlers build the same shape inline.
+//
+// @Description Data payload of GET /tasks and GET /tasks/my: one page of tasks and the total before pagination.
+type TaskListData struct {
+	// The page of tasks. Unsorted pages come in ascending id order; a sorted page is ordered by the sort column, then id in the same direction.
+	Tasks []models.Task `json:"tasks"`
+	// Number of tasks matching the caller's scope and filters before pagination; the same value as meta.total.
+	Total int64 `json:"total" example:"42"`
 }
 
 // Create godoc
 // @Summary Create a new task
-// @Description Create a new task (admin, support and sales roles only). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. A task may reference a lead or a customer, but not both. lead_id must name a lead the caller may see — admins any lead, sales users only the leads they own, every other role none — and a lead the caller may not see is answered with 404 exactly like a missing one. The new task always starts in status "pending" regardless of the request body. Optional label_ids attaches existing labels; a repeated id is attached once, and any id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Create a task. Roles: admin, sales and support (customers get 403 before the body is read). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. The task always starts in status pending, whatever the body says, and priority defaults to medium. A task may link a lead or a customer, but not both. lead_id must name a lead the caller may see (admins any lead, sales users only the leads they own, every other role none); a hidden lead is answered with 404 exactly like a missing one. label_ids attaches existing labels (a repeated id is attached once); any id that matches no label rejects the whole request. The checks run in this order: role, body binding, self-assignment, assignee (exists, active), lead, customer, lead-and-customer conflict, labels. No automation event and no notification is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body CreateTaskRequest true "Task creation request"
-// @Success 201 {object} utils.APIResponse{data=models.Task} "Task created successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid request data, assignee is deactivated, or task links both a lead and a customer"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin, support or sales role required, or non-admin assigning to another user"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Assignee, lead or customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body CreateTaskRequest true "Task to create"
+// @Success 201 {object} utils.APIResponse{data=models.Task} "Task created; assigned_to is a zero-valued object in this response"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the assignee is deactivated or both lead_id and customer_id are given; INVALID_REFERENCE when a label id matches no label"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller is a customer, or a non-admin named another user as assignee"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the assignee, the lead (missing or hidden from the caller) or the customer does not exist"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks [post]
 func (h *TaskHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Create")
@@ -134,19 +162,19 @@ func (h *TaskHandler) Create(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a task by ID
-// @Description Retrieve a single task. Admins can view any task; every other role can only view tasks assigned to them. lead_id and lead are omitted when the caller may not see the linked lead (sales users see only the leads they own, roles other than admin and sales none); this is decided on every read, so it follows reassignments and lead ownership changes. The same applies to every task this API returns.
+// @Description Retrieve one task with its assignee, lead, customer and labels. Roles: every authenticated role; admins may read any task, every other role only tasks assigned to them (403 otherwise, checked after the task is found, so a missing id is 404 for everyone). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read. The same redaction applies to every task this API returns.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Task ID"
-// @Success 200 {object} utils.APIResponse{data=models.Task} "Task retrieved successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Task is not assigned to you"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=models.Task} "The task"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - a non-admin asked for a task not assigned to them"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live task with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/{id} [get]
 func (h *TaskHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Get")
@@ -187,22 +215,22 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 // List godoc
 // @Summary List tasks
-// @Description List tasks. Admins see all tasks and may use search and sorting; every other role is silently narrowed to the tasks assigned to them, and the search, sort_by and sort_order parameters are ignored for them — EXCEPT when label_id is given, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search: when both are sent, search is ignored. An unparseable or non-positive label_id is ignored, and a label_id that matches no label simply yields an empty page rather than a 404. Each task carries its lead (lead_id and lead) only when the caller may see that lead, as on GET /tasks/{id}.
+// @Description One page of tasks. Roles: every authenticated role. Admins see every task and may use search and sorting. Every other role is silently narrowed to the tasks assigned to them, and search, sort_by and sort_order are ignored for them, except with label_id, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search (search is ignored when both are sent); an unparseable or non-positive label_id is ignored, and an unknown one yields an empty page rather than 404. Precedence for admins: label_id, then search, then sort_by, then the plain list. search matches title or description with SQL LIKE. An unknown sort_by is ignored (unsorted, ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; offset defaults to 0; limit defaults to 20, non-positive or unparseable values fall back to the default and anything above 100 is clamped to 100. The non-admin path without label_id returns assigned_to as a zero-valued object. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param page query int false "Page number (1-based); overrides offset when greater than 0"
-// @Param offset query int false "Pagination offset" default(0)
-// @Param limit query int false "Page size (max 100)" default(20)
-// @Param sort_by query string false "Sort column; ignored unless one of the allowed values, and ignored entirely for non-admin callers" Enums(created_at, updated_at, title, status, priority, due_date)
+// @Param offset query int false "Number of tasks to skip" default(0)
+// @Param limit query int false "Page size; clamped to 100" default(20)
+// @Param sort_by query string false "Sort column (admin, or any role with label_id); unknown values are ignored" Enums(created_at, updated_at, title, status, priority, due_date)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Free-text search across task fields; admin only, takes precedence over sort_by, and is itself overridden by label_id"
-// @Param label_id query int false "Only tasks carrying this label; combinable with sort_by/sort_order for every role"
-// @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param search query string false "Substring matched against title and description (admin only; ignored when label_id is given)"
+// @Param label_id query int false "Only tasks carrying this label; non-admins still see only their own tasks"
+// @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of tasks; meta carries page, per_page, total and total_pages"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks [get]
 func (h *TaskHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.List")
@@ -293,18 +321,18 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 // ListMyTasks godoc
 // @Summary List tasks assigned to the current user
-// @Description List the tasks assigned to the authenticated user. Available to every authenticated role, including admins, who also see only their own tasks here. Sorting and search are not supported on this endpoint.
+// @Description One page of the tasks assigned to the caller, in ascending id order. Roles: every authenticated role; admins also see only their own tasks here. No sorting, search or label filter. Pagination as on GET /tasks (page overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued object on this endpoint (the assignee is not loaded). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param page query int false "Page number (1-based); overrides offset when greater than 0"
-// @Param offset query int false "Pagination offset" default(0)
-// @Param limit query int false "Page size (max 100)" default(20)
-// @Success 200 {object} utils.APIResponse{data=object{tasks=[]models.Task,total=int},meta=utils.APIMeta} "Tasks retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param offset query int false "Number of tasks to skip" default(0)
+// @Param limit query int false "Page size; clamped to 100" default(20)
+// @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of the caller's tasks"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/my [get]
 func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.ListMyTasks")
@@ -354,16 +382,16 @@ const (
 
 // GetUpcoming godoc
 // @Summary List tasks due in the next N days
-// @Description The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending. Completed and cancelled tasks are excluded, as are tasks with no due date. The window starts at the current instant, so tasks that are already overdue are NOT included — use the task list for those. Admins see every assignee's tasks; every other role sees only the tasks assigned to them. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned.
+// @Description The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending (then id). Roles: every authenticated role; admins see every assignee's tasks, every other role only the tasks assigned to them. Completed and cancelled tasks and tasks without a due date are excluded; the window starts at the current instant, so overdue tasks are NOT included. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned and there is no pagination. Labels are not loaded here (labels is omitted). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param days query int false "Size of the look-ahead window in days; clamped to 1-90" minimum(1) maximum(90) default(7)
-// @Success 200 {object} utils.APIResponse{data=[]models.Task} "Upcoming tasks retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=[]models.Task} "Up to 100 upcoming tasks; an empty array when none"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/upcoming [get]
 func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.GetUpcoming")
@@ -404,21 +432,21 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task; only the fields present in the request body are applied. Admins can update any task; every other role can only update tasks assigned to them. Only admins may change assigned_to_id (sending the current assignee back unchanged is not treated as a reassignment). A task that is already completed cannot be moved to another status, and a task cannot reference both a lead and a customer. A lead_id that is sent must name a lead the caller may see (as on create; a hidden lead is a 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent, and is omitted from the response when the caller may not see it. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link is set after validation, regardless of visibility of the old lead. Sending both link fields still rejects the request; an invalid customer leaves the task unchanged. label_ids, when present, REPLACES the whole label set — an empty array clears it — while omitting the field leaves the labels untouched; an id that matches no label rejects the whole request with 400 INVALID_REFERENCE. At most 100 ids are accepted, each of which must be positive; a longer list is rejected as a validation error.
+// @Description Partially update a task: absent or empty fields are left unchanged (title, description, due_date and the links cannot be cleared this way). Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Only admins may change assigned_to_id; sending the current assignee back is not a reassignment. A completed task cannot be moved to another status. A task cannot link both a lead and a customer. A lead_id that is sent must name a lead the caller may see (a hidden lead is 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link set after validation, whether or not the caller could see the old lead. label_ids, when present, replaces the whole label set (an empty array clears it); absent leaves the labels untouched; any id that matches no label rejects the whole request. The order of checks: id, body binding, task lookup, ownership, reassignment permission, then assignee, lead, customer, conflict, completed status, labels; any failure leaves the task unchanged. No automation event is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Task ID"
-// @Param request body UpdateTaskRequest true "Task update request"
-// @Success 200 {object} utils.APIResponse{data=models.Task} "Task updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID, invalid request data, assignee is deactivated, task links both a lead and a customer, or the task is already completed"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Task is not assigned to you, or only admins can reassign tasks"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task, assignee, lead or customer not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param request body UpdateTaskRequest true "Fields to change"
+// @Success 200 {object} utils.APIResponse{data=models.Task} "The updated task"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the new assignee is deactivated, the task would link both a lead and a customer, or a completed task would change status; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_REFERENCE when a label id matches no label"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - a non-admin tried to update a task not assigned to them, or to reassign a task"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the task, the new assignee, the lead (missing or hidden from the caller) or the customer does not exist"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/{id} [put]
 func (h *TaskHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Update")
@@ -522,19 +550,19 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a task
-// @Description Delete a task (admin role only). The role check runs before the ID is parsed, so non-admins always receive 403. A missing task is reported as 404; any other failure is reported as 500.
+// @Description Soft-delete a task. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. The task's label links stay in the join table but the task no longer appears anywhere (and no longer counts towards a label's task_count).
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Task ID"
-// @Success 204 "No Content"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Invalid task ID"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Task not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 204 "Task deleted; no body"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live task with this id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/{id} [delete]
 func (h *TaskHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Delete")

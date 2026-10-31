@@ -29,8 +29,18 @@ func NewConfigurationHandler(configService service.ConfigurationService) *Config
 // raw bytes of false, 0 and "" are non-empty, so binding:"required" rejects
 // only a genuinely missing field. A literal null does bind (as the four bytes
 // "null") and is rejected explicitly in the handler, since there is no
-// configuration type a null could be stored as.
+// configuration type a null could be stored as. The spec documents Value as
+// any JSON value (scripts/docs/swag-overrides maps json.RawMessage to
+// interface{}).
+//
+// @Description Body of PUT /configurations/{key}.
 type SetConfigurationRequest struct {
+	// The new value, as a JSON value of the entry's declared type: a string
+	// for string, true or false for boolean, a whole number for integer, any
+	// JSON value for float, json and array (stored as its JSON text). Falsy
+	// values (false, 0, "") are accepted; the field must be present and must
+	// not be null. For a sensitive entry send the plaintext secret, or "" to
+	// clear it.
 	Value json.RawMessage `json:"value" binding:"required"`
 }
 
@@ -42,11 +52,26 @@ type SetConfigurationRequest struct {
 // obtained the key material. The response carries an empty value and reports
 // only whether one is stored, which is all the UI needs to show a "configured"
 // state next to a write-only input.
+//
+// @Description A configuration entry as the API returns it. A sensitive entry (is_sensitive) always carries an empty value; is_set tells whether one is stored.
 type ConfigurationResponse struct {
 	models.Configuration
 	// IsSet reports whether the entry currently holds a value. For a
 	// sensitive entry it is the only evidence of its content.
-	IsSet bool `json:"is_set"`
+
+	// Whether the entry currently holds a non-empty value, computed before
+	// masking. For a sensitive entry it is the only evidence of its content.
+	// Read-only.
+	IsSet bool `json:"is_set" example:"true" readonly:"true"`
+}
+
+// ConfigurationListResponse documents the data payload of the configuration
+// list endpoints for the OpenAPI spec; the handlers build it as a gin.H.
+//
+// @Description A list of configuration entries.
+type ConfigurationListResponse struct {
+	// The entries, never null (an empty list is []).
+	Configurations []ConfigurationResponse `json:"configurations"`
 }
 
 // newConfigurationResponse masks one entry. is_set is computed before masking,
@@ -71,17 +96,17 @@ func newConfigurationResponses(configs []models.Configuration) []ConfigurationRe
 
 // GetAll returns all configurations
 // GetAll godoc
-// @Summary List all configurations
-// @Description Retrieve every configuration entry, ordered by category and key (admin only). A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Summary List all configurations (admin)
+// @Description Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=object{configurations=[]ConfigurationResponse}} "Configurations retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=ConfigurationListResponse} "Every configuration entry"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the configurations could not be read"
 // @Router /configurations [get]
 func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetAll")
@@ -108,18 +133,18 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 
 // GetByCategory returns configurations by category
 // GetByCategory godoc
-// @Summary List configurations in a category
-// @Description Retrieve all configurations belonging to a category (admin only). An unrecognised category yields an empty list rather than an error. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Summary List the configurations of a category (admin)
+// @Description Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param category path string true "Configuration category" Enums(general, leads, customers, deals, tickets, tasks, security, integration, ui)
-// @Success 200 {object} utils.APIResponse{data=object{configurations=[]ConfigurationResponse}} "Configurations retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param category path string true "Configuration category; any other value yields an empty list" Enums(general, leads, customers, deals, tickets, tasks, security, integration, ui)
+// @Success 200 {object} utils.APIResponse{data=ConfigurationListResponse} "The entries of the category (possibly empty)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the configurations could not be read"
 // @Router /configurations/category/{category} [get]
 func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetByCategory")
@@ -152,19 +177,19 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 
 // GetByKey returns a specific configuration
 // GetByKey godoc
-// @Summary Get a configuration by key
-// @Description Retrieve a single configuration entry by its key (admin only). A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Summary Get a configuration entry (admin)
+// @Description Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param key path string true "Configuration key"
-// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "Configuration retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param key path string true "Configuration key, e.g. security.allow_public_registration"
+// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The entry"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the entry could not be read"
 // @Router /configurations/{key} [get]
 func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetByKey")
@@ -202,22 +227,23 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 
 // Set updates a configuration value
 // Set godoc
-// @Summary Update a configuration value
-// @Description Set the value of an existing configuration and return the updated entry (admin only). A sensitive entry (is_sensitive) takes its new value in plaintext, stores it encrypted and is returned masked — send an empty string to clear it. The value must match the entry's declared type — a boolean entry takes only true/false, an integer entry only a whole number, a string entry only a string — and a mismatch is rejected rather than coerced. Read-only configurations are rejected, as are values outside the entry's valid_values constraint.
+// @Summary Change a configuration value (admin)
+// @Description Admin only (route guard, repeated in the handler). Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.
+// @Description A sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart.
 // @Tags configurations
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param key path string true "Configuration key"
-// @Param request body SetConfigurationRequest true "New configuration value. Any JSON value is accepted, falsy ones (false, 0, \"\") included; the value field itself must be present and must not be null."
-// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "Configuration updated successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Missing or null value, a value whose type does not match the configuration's declared type, read-only configuration, or a value outside the entry's valid_values constraint"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param key path string true "Configuration key, e.g. security.allow_public_registration"
+// @Param request body SetConfigurationRequest true "The new value; any JSON value except null, falsy values included"
+// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The updated entry"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: value missing (details maps Value to a message). BAD_REQUEST: malformed JSON (Invalid request format), Configuration value cannot be null, Configuration is read-only, or Invalid value for configuration (outside valid_values, wrong type, or a rejected AEO provider setting)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the value could not be stored or a sensitive value could not be encrypted"
 // @Router /configurations/{key} [put]
 func (h *ConfigurationHandler) Set(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.Set")
@@ -286,20 +312,20 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 
 // Reset resets a configuration to its default value
 // Reset godoc
-// @Summary Reset a configuration to its default value
-// @Description Restore a configuration's value from its stored default and return the updated entry (admin only). Read-only configurations are rejected. A sensitive entry is returned masked; resetting one clears it, since sensitive entries carry no default.
+// @Summary Reset a configuration to its default (admin)
+// @Description Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param key path string true "Configuration key"
-// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "Configuration reset successfully"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "Configuration is read-only"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "Forbidden - Admin role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "Configuration not found"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Param key path string true "Configuration key, e.g. security.allow_public_registration"
+// @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The reset entry"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Configuration is read-only"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the entry could not be stored"
 // @Router /configurations/{key}/reset [post]
 func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.Reset")
@@ -389,16 +415,16 @@ func (h *ConfigurationHandler) leadConversionUIConfigurations(logger *logrus.Ent
 
 // GetUIConfigurations returns configurations that are safe for UI consumption
 // GetUIConfigurations godoc
-// @Summary List UI-safe configurations
-// @Description Retrieve the configurations the frontend is allowed to read: the whole ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and three synthetic read-only lead-conversion entries carrying the values the convert endpoint enforces: leads.conversion.allowed_statuses (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner (boolean). An entry whose setting cannot be read is omitted. Available to any authenticated user. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Summary List the UI-safe configurations
+// @Description Any authenticated role. Returns, in data.configurations and in this order: every entry of the ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and three synthetic read-only lead-conversion entries holding the values the convert endpoint enforces: leads.conversion.allowed_statuses (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner (boolean). The synthetic entries are not stored rows: their id is 0, their timestamps are the zero time (0001-01-01T00:00:00Z) and is_read_only is true. An entry whose setting cannot be read is left out instead of failing the request (except the ui category itself). A sensitive entry would be masked, but none of these is sensitive.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=object{configurations=[]ConfigurationResponse}} "Configurations retrieved successfully"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "Unauthorized"
-// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "Too many requests - rate limit exceeded"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "Internal server error"
+// @Success 200 {object} utils.APIResponse{data=ConfigurationListResponse} "The UI-safe entries"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the ui category could not be read"
 // @Router /configurations/ui [get]
 func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetUIConfigurations")
