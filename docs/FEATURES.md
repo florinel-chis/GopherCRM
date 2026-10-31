@@ -1,6 +1,6 @@
 # GopherCRM Feature Documentation & Test Coverage
 
-> **Last updated:** 2026-10-29 for rule names on automation runs, field-level rule errors and the dry run of unsaved rule edits (section 4e).
+> **Last updated:** 2026-10-31: task list and form frontend coverage (rows 6.1, 6.2) and resolved gaps G12, G33 and G36. Before that, 2026-10-29 for rule names on automation runs, field-level rule errors and the dry run of unsaved rule edits (section 4e).
 > **Baseline audit:** 2026-08-05; historical suite totals below have not been recounted.
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
@@ -278,8 +278,8 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 
 | # | Gap | Suggested Action |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 6.1 | **View Tasks List** | Table with title, status, priority, assignee, due date | `admin-tasks.spec.ts`: admin can view tasks list page | `task_handler_test.go`: TestListTasks_Success, TestListTasks_NonAdminGetsOwnTasks | -- | `internal/integration/task_integration_test.go`: TestTaskLifecycle | **partial** | No frontend unit test for `TaskList` |
-| 6.2 | **Create Task** | Form with title, description, priority, due date, assignee, related lead/customer | `admin-tasks.spec.ts`: create task, minimal data, different priorities | `task_handler_test.go`: TestCreateTask_Success, _NonAdminAssignToOther_Forbidden, _ValidationError, _ServiceError; `task_service_test.go`: 8 create tests | -- | `internal/integration/task_integration_test.go`: TestTaskCreationPermissions, TestTaskValidation | **partial** | No frontend unit test for `TaskForm` |
+| 6.1 | **View Tasks List** | Table with title, status, priority, assignee, due date | `admin-tasks.spec.ts`: admin can view tasks list page | `task_handler_test.go`: TestListTasks_Success, TestListTasks_NonAdminGetsOwnTasks | `TaskList.test.tsx`; `TaskList.rowActions.test.tsx`: the row menu acts on its own row after sorting and searching (#114) | `internal/integration/task_integration_test.go`: TestTaskLifecycle | **covered** | -- |
+| 6.2 | **Create Task** | Form with title, description, priority, due date, assignee, related lead/customer | `admin-tasks.spec.ts`: create task, minimal data, different priorities | `task_handler_test.go`: TestCreateTask_Success, _NonAdminAssignToOther_Forbidden, _ValidationError, _ServiceError; `task_service_test.go`: 8 create tests | `TaskForm.test.tsx`: the label picker only (inline create hidden from customers, duplicate-name 409 recovery) | `internal/integration/task_integration_test.go`: TestTaskCreationPermissions, TestTaskValidation | **partial** | No frontend unit test covers the task fields themselves |
 | 6.3 | **Edit Task** | Update task fields; mark as complete. Only admins may reassign | `admin-tasks.spec.ts`: edit task, track task progress through status changes | `task_handler_test.go`: TestUpdateTask_Success, _NonAdminReassign_Forbidden, _NonAdminSameAssignee_Success, _NonAdminDifferentAssignee_Forbidden, _AdminReassign_Success, _NonAdminAccessOthersTask_Forbidden | `TaskList.rowActions.test.tsx`: "Mark as Complete" from the row menu completes the chosen task after a re-sort (mouse and keyboard); no menu on completed tasks | `internal/integration/task_integration_test.go`: TestTaskLifecycle, TestTaskBusinessRules | **covered** | Editing used to 403 for non-admins when the request merely echoed the current assignee; `TestUpdateTask_NonAdminSameAssignee_Success` is the regression test |
 | 6.4 | **Delete Task** | Admin-only deletion. Ordinary soft delete | `admin-tasks.spec.ts`: delete a task | `task_handler_test.go`: TestDeleteTask_Success, TestDeleteTask_NonAdminForbidden | -- | `erasure_test.go`: TestTaskAndTicketDeletesRemainPlainSoftDeletes | **covered** | -- |
 | 6.5 | **Filter by Status/Priority** | Dropdown filters | `admin-tasks.spec.ts`: filter by status, filter by priority | -- | -- | -- | **partial** | Confirmed: `task_handler.go` reads only `search`, `sort_by`, `sort_order` (plus pagination). Filtering is client-side |
@@ -453,7 +453,7 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | # | Gap | Suggested Action |
 |---|-----|------------------|
 | G11 | No E2E test for logout | Add to `login.spec.ts` |
-| G12 | No token refresh at all | Implement `RefreshAccessToken`, then test it |
+| ~~G12~~ | ~~No token refresh at all~~ | **RESOLVED** — `POST /auth/refresh` rotates refresh tokens (row 1.3) and the SPA's 401 interceptor shares one refresh per session and settles every queued request (#115, `client.refresh.test.ts`) |
 | G13 | No E2E tests for API key management | Create `admin-apikeys.spec.ts` |
 | G14 | No E2E tests for configuration settings | Create `admin-configurations.spec.ts` |
 | G15 | Dashboard stats not tested for correctness | Add a `dashboard_handler_test.go` and assert values against the DB |
@@ -462,7 +462,7 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | G18 | No E2E test for "My Tasks" / "My Tickets" views | Add to existing admin specs |
 | G19 | No E2E test for user profile (My Profile) | Create `profile.spec.ts` |
 | G20 | No E2E test for deleting a user, nor for activate/deactivate | Add to `admin-users.spec.ts` (7.4, 7.5) |
-| G33 | No frontend unit tests for `TaskList` / `TaskForm` / `UserList` | Mirror the ticket test files |
+| ~~G33~~ | ~~No frontend unit tests for `TaskList` / `TaskForm` / `UserList`~~ | **RESOLVED** — `TaskList.test.tsx`, `TaskList.rowActions.test.tsx` (#114), `TaskForm.test.tsx` and `UserList.test.tsx` exist; `TaskForm.test.tsx` covers only the label picker (row 6.2) |
 | G34 | Status/priority/role filters are client-side only | Either add backend query params, or document the list pages as page-local filters |
 
 ### Low priority
@@ -474,7 +474,7 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | G23 | CSRF rejection not tested at route level | Add a test that omits the CSRF token |
 | G35 | CSRF middleware exists but is never installed | Either wire `middleware.CSRF` into `cmd/main.go` and add a rejection test, or remove it |
 | G37 | `RateLimitGenerous` covers only the public form GETs, not authenticated reads | Resolved as far as "dead code" goes — `SetupFormPublicRoutes` applies it. Decide whether authenticated read routes should get it too, or document that they deliberately do not |
-| G36 | ESLint reports 40 errors / 137 warnings | Mostly unused Playwright fixture args and `any`; untouched by the privacy work |
+| ~~G36~~ | ~~ESLint reports 40 errors / 137 warnings~~ | **RESOLVED** — zero errors and zero warnings; `npm run lint` runs `eslint . --max-warnings=0` in CI |
 
 ---
 
