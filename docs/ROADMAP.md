@@ -132,8 +132,6 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   not advertise STARTTLS (or a path attacker who strips the offer) receives mail, including
   password-reset and confirmation links, in cleartext. A setting that refuses delivery without
   TLS (and optionally implicit TLS on port 465) is a known gap.
-- **Sales ticket navigation** — the backend allows sales to read tickets, but the nav item is
-  hidden from them (deep links work); widen the nav or narrow the read routes, a product call.
 
 ## Defects found while documenting the API (2026-10)
 

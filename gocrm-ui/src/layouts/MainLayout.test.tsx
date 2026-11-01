@@ -92,6 +92,20 @@ describe('MainLayout', () => {
     }
   });
 
+  it('shows Tickets to admin, sales and support and hides it from customer', () => {
+    for (const role of ['admin', 'sales', 'support'] as const) {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+      const view = render(<MainLayout />);
+
+      expect(navigation().getByText('Tickets')).toBeInTheDocument();
+      view.unmount();
+    }
+
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'customer' })));
+    render(<MainLayout />);
+    expect(navigation().queryByText('Tickets')).not.toBeInTheDocument();
+  });
+
   it('keeps the existing role-gated entries as they were', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'support' })));
     render(<MainLayout />);

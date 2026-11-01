@@ -132,10 +132,12 @@ const navItems: NavItem[] = [
     roles: ['admin', 'sales', 'support'],
   },
   {
+    // Same read roles as the API: sales reads every ticket, read-only (the
+    // ticket pages offer it no create, edit or delete).
     title: 'Tickets',
     path: '/tickets',
     icon: <Assignment />,
-    roles: ['admin', 'support'],
+    roles: ['admin', 'sales', 'support'],
   },
   {
     title: 'Tasks',

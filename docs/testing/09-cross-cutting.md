@@ -14,7 +14,7 @@ coverage matrix.
 - `docs/FEATURES.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
   6.5, 7.5, 7.8 for the shared list conventions; Gap Summary G22, G34
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (no access-token blocklist,
-  concurrent-refresh stampede, sales ticket navigation)
+  concurrent-refresh stampede)
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`, `gocrm-ui/src/components/Breadcrumbs.tsx`,
   `gocrm-ui/src/components/DataTable.tsx`, `gocrm-ui/src/components/ErrorBoundary.tsx`,
@@ -74,7 +74,7 @@ the in-handler role checks (API gate). It is the specification the cases in this
 | `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `requiredRole=['admin','sales']` (pathless layout, #120) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
 | `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:157`, `:239`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
 | `/customers/new` | `requiredRole=['admin','sales']` (shares the lead guard, #120) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
-| `/tickets`, `/tickets/:id` | authenticated only | admin, support | list/get: 403 only for customer (`ticket_handler.go:135`, `:354`) — **sales can read** |
+| `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:135`, `:354`) — sales reads, read-only |
 | `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:69`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:230`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
 | `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:209`); `/configurations` is admin except `/configurations/ui` |
@@ -151,22 +151,20 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   (`internal/middleware/auth.go:64`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
 
-### TC-XCUT-006 — Sales can read tickets by deep link although the nav item is hidden
+### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** Logged in as a `sales` user; at least one ticket exists (create it as admin
   first from `generateTicketData()`).
 - **Steps:**
-  1. Confirm the sidebar has no **Tickets** entry.
-  2. Navigate directly to `/tickets`.
+  1. Confirm the sidebar has a **Tickets** entry.
+  2. Click it.
   3. Open the first ticket.
 - **Expected:** Both pages render and `GET /api/v1/tickets` and `GET /api/v1/tickets/:id` return
   **200** — the ticket handler rejects only the `customer` role (`ticket_handler.go:135`, `:354`).
   The **Create Ticket** button is absent and the row Edit/Delete icons are absent (`TicketList`
-  `canCreate`/`canEdit`/`canDelete`).
-- **Known issue:** Nav gating and API gating disagree: `MainLayout.navItems` restricts the Tickets
-  entry to `['admin','support']` while the API lets sales read. Recorded in `docs/ROADMAP.md`
-  ("Sales ticket navigation") as an open product call.
+  `canCreate`/`canEdit`/`canDelete`). Nav gating and API gating agree since #241: `MainLayout`
+  lists the Tickets entry for `['admin','sales','support']`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-007 — Sales is bounced from the ticket write routes
@@ -526,16 +524,16 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** Logged in as the `customer` account.
-- **Steps:** On `/`, look at the Quick Actions panel, then click **New Lead**; go back and click
-  **New Ticket**.
-- **Expected:** All four Quick Action buttons render — the panel has no role gate at all. **New
-  Lead** is refused by the route guard: since #120 `/leads/new` sits under an admin+sales
-  `ProtectedRoute`, so the app redirects to `/unauthorized` ("Access Denied") before any form
-  renders, matching `RequireRole(admin, sales)` on the API (`routes.go:24`). **New Ticket** is
-  refused the same way (admin+support guard). **New Task** still opens a form whose save is
-  refused by the API, and **View Customers** opens a list whose request is 403.
-- **Known issue:** The dashboard offers four actions to a customer-role user and none of them
-  works; two now end on Access Denied, the task form still fails only after it has been filled in.
+- **Steps:** On `/`, look at the Quick Actions panel, then click **New Lead**.
+- **Expected:** Three Quick Action buttons render: **New Lead**, **New Task** and **View
+  Customers**. **New Ticket** is absent: since #241 it shows only to admin and support, the roles
+  ticket create admits (`Dashboard.tsx` `canCreateTicket`). **New Lead** is refused by the route
+  guard: since #120 `/leads/new` sits under an admin+sales `ProtectedRoute`, so the app redirects
+  to `/unauthorized` ("Access Denied") before any form renders, matching `RequireRole(admin,
+  sales)` on the API (`routes.go:24`). **New Task** still opens a form whose save is refused by
+  the API, and **View Customers** opens a list whose request is 403.
+- **Known issue:** The dashboard offers three actions to a customer-role user and none of them
+  works; one ends on Access Denied, the task form still fails only after it has been filled in.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ---

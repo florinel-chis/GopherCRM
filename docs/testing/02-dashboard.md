@@ -304,30 +304,31 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   FEATURES.md row 2.2 is **untested**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
-### TC-DASH-016 — Quick Actions are shown to every role, including customer
+### TC-DASH-016 — Quick Actions are shown to every role, New Ticket only to admin and support
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** a customer account registered by the test.
 - **Steps:**
   1. Land on `/` after registration.
-  2. Assert all four Quick Action buttons are visible.
+  2. Assert which Quick Action buttons are visible.
   3. Compare against the sidebar.
-- **Expected:** all four buttons are visible. The Quick Actions panel sits **outside** the
-  `canViewStats` guard in `Dashboard.tsx` (lines 207-243) and has no role check of its own, while
-  `MainLayout`'s `navItems` hides Leads (admin+sales), Customers (admin+sales+support) and Tickets
-  (admin+support) from a customer. The sidebar and the Quick Actions therefore disagree on the same
-  page.
+- **Expected:** "New Lead", "New Task" and "View Customers" are visible; "New Ticket" is not. The
+  Quick Actions panel sits **outside** the `canViewStats` guard in `Dashboard.tsx`; only "New
+  Ticket" has a role check (`canCreateTicket`, admin and support, matching ticket create on the API
+  and the `/tickets/new` route; since #241 it is hidden from sales as well). `MainLayout`'s
+  `navItems` hides Leads (admin+sales), Customers and Tickets (admin+sales+support) from a
+  customer, so the sidebar and the remaining Quick Actions still disagree on the same page.
 - **Known issue:** the panel advertises actions the caller cannot perform. Backend guards still hold
-  — `/leads` is `RequireRole(admin, sales)` and ticket create is support+admin — so this is a UI
-  affordance defect, not an authorization hole.
+  — `/leads` is `RequireRole(admin, sales)` — so this is a UI affordance defect, not an
+  authorization hole. Vitest covers the New Ticket gating (`Dashboard.test.tsx`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
-### TC-DASH-017 — Customer clicking "New Ticket" is redirected to /unauthorized
+### TC-DASH-017 — Customer opening /tickets/new is redirected to /unauthorized
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** a customer account registered by the test, on `/`.
 - **Steps:**
-  1. Click "New Ticket".
+  1. Navigate directly to `/tickets/new` (the dashboard offers the customer no "New Ticket" button).
 - **Expected:** the URL becomes `/unauthorized` and the Unauthorized page renders. `tickets/new`
   sits under the pathless `ProtectedRoute requiredRole={['admin','support']}` layout route in
   `routes/index.tsx`, which issues `<Navigate to="/unauthorized" replace />`.
@@ -346,9 +347,8 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   (the whole `/leads` group is `RequireRole(admin, sales)`), and the form surfaces the error rather
   than navigating away.
 - **Known issue:** the front end and the back end disagree: `/tickets/new` is route-guarded but
-  `/leads/new`, `/tasks/new` and `/customers` are not, so three of the four Quick Actions lead a
-  customer into a page they cannot use. Related to the "Sales ticket navigation" product call in
-  `docs/ROADMAP.md`.
+  `/leads/new`, `/tasks/new` and `/customers` are not, so all three Quick Actions a customer is
+  shown lead into a page it cannot use.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-019 — Support clicking "New Lead" reaches a form it cannot submit

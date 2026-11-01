@@ -156,6 +156,27 @@ describe('Dashboard', () => {
     }
   );
 
+  it.each(['admin', 'support'] as const)('offers the New Ticket quick action to %s', async (role) => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+
+    renderDashboard();
+
+    expect(await screen.findByRole('button', { name: 'New Ticket' })).toBeInTheDocument();
+  });
+
+  it.each(['sales', 'customer'] as const)(
+    'hides the New Ticket quick action from %s, whom the API refuses ticket creation',
+    async (role) => {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ role })));
+
+      renderDashboard();
+
+      expect(await screen.findByText('Quick Actions')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'New Ticket' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New Task' })).toBeInTheDocument();
+    }
+  );
+
   it('does not fetch or render stats for the customer role', async () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'customer' })));
 
