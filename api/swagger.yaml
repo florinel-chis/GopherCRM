@@ -14076,12 +14076,12 @@ paths:
       description: 'One page of the live tasks linked to the deal, with their assignee,
         labels, lead and deal loaded. Roles: admin (every task of any deal) and sales
         (only on a deal it owns, and only the tasks assigned to it, filtered in the
-        query, so total and meta.total count only those; another owner''s deal is 403).
-        Support and customer roles are refused. The unsorted order is ascending id;
-        with sort_by the order is that column, then id in the same direction, and
-        a sort_order other than asc or desc becomes desc. lead_id and lead are omitted
-        whenever the caller may not see the linked lead (admins see every lead, sales
-        users only the leads they own), decided again on every read.'
+        query, so total and meta.total count only those; another owner''s deal is
+        403). Support and customer roles are refused. The unsorted order is ascending
+        id; with sort_by the order is that column, then id in the same direction,
+        and a sort_order other than asc or desc becomes desc. lead_id and lead are
+        omitted whenever the caller may not see the linked lead (admins see every
+        lead, sales users only the leads they own), decided again on every read.'
       parameters:
       - description: Deal ID
         in: path
