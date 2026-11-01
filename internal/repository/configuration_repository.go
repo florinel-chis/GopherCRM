@@ -103,6 +103,12 @@ func (r *configurationRepository) BulkUpsert(configs []models.Configuration) err
 }
 
 func (r *configurationRepository) InitializeDefaults() error {
+	// Retired entries are removed for good: a soft-deleted row would keep
+	// its config_key and block the unique index if the key ever came back.
+	if err := r.db.Unscoped().Where("config_key IN ?", models.RetiredConfigurationKeys).
+		Delete(&models.Configuration{}).Error; err != nil {
+		return err
+	}
 	defaults := models.DefaultConfigurations()
 	return r.BulkUpsert(defaults)
 }

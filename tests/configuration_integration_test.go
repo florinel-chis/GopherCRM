@@ -268,13 +268,24 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration() {
 }
 
 func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_InvalidValue() {
-	// Test setting invalid value for session timeout (should be from valid values)
+	// An integer entry restricted to a list of valid values; 999 is not one.
+	suite.NoError(suite.db.Unscoped().Where("config_key = ?", "test.choice.integer").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.choice.integer",
+		Value:        "24",
+		Type:         models.ConfigTypeInteger,
+		Category:     models.CategoryGeneral,
+		Description:  "Test integer configuration with valid values",
+		DefaultValue: "24",
+		ValidValues:  `[1, 8, 24, 48, 72, 168]`,
+	}).Error)
+
 	requestBody := map[string]interface{}{
 		"value": 999, // Invalid value
 	}
 
 	bodyBytes, _ := json.Marshal(requestBody)
-	req, _ := http.NewRequest("PUT", "/api/v1/configurations/security.session_timeout_hours", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("PUT", "/api/v1/configurations/test.choice.integer", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+suite.adminToken)
 
@@ -448,13 +459,28 @@ func (suite *ConfigurationIntegrationTestSuite) setConfiguration(key, body strin
 	return w
 }
 
+// seedTestBoolean (re)creates a boolean entry no application code reads, so
+// the falsy-value cases cannot disturb a setting another test relies on.
+func (suite *ConfigurationIntegrationTestSuite) seedTestBoolean() {
+	suite.NoError(suite.db.Unscoped().Where("config_key = ?", "test.boolean.setting").Delete(&models.Configuration{}).Error)
+	suite.NoError(suite.db.Create(&models.Configuration{
+		Key:          "test.boolean.setting",
+		Value:        "true",
+		Type:         models.ConfigTypeBoolean,
+		Category:     models.CategoryGeneral,
+		Description:  "Test boolean configuration",
+		DefaultValue: "false",
+	}).Error)
+}
+
 // TestSetConfiguration_FalseBoolean is the headline falsy-value case: turning a
 // boolean configuration off used to be rejected as a missing field.
 func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_FalseBoolean() {
-	err := suite.configService.Set("tickets.auto_assign_support", true)
+	suite.seedTestBoolean()
+	err := suite.configService.Set("test.boolean.setting", true)
 	suite.NoError(err)
 
-	w := suite.setConfiguration("tickets.auto_assign_support", `{"value": false}`)
+	w := suite.setConfiguration("test.boolean.setting", `{"value": false}`)
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 
 	var response map[string]interface{}
@@ -462,7 +488,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_FalseBoolea
 	config := response["data"].(map[string]interface{})
 	assert.Equal(suite.T(), "false", config["value"])
 
-	value, err := suite.configService.GetBool("tickets.auto_assign_support")
+	value, err := suite.configService.GetBool("test.boolean.setting")
 	suite.NoError(err)
 	assert.False(suite.T(), value)
 }
@@ -539,7 +565,8 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_TypeMismatc
 		DefaultValue: "something",
 	}).Error)
 
-	suite.NoError(suite.configService.Set("tickets.auto_assign_support", true))
+	suite.seedTestBoolean()
+	suite.NoError(suite.configService.Set("test.boolean.setting", true))
 
 	cases := []struct {
 		name     string
@@ -547,8 +574,8 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_TypeMismatc
 		body     string
 		unharmed string
 	}{
-		{name: "string on boolean entry", key: "tickets.auto_assign_support", body: `{"value": "yes"}`, unharmed: "true"},
-		{name: "number on boolean entry", key: "tickets.auto_assign_support", body: `{"value": 1}`, unharmed: "true"},
+		{name: "string on boolean entry", key: "test.boolean.setting", body: `{"value": "yes"}`, unharmed: "true"},
+		{name: "number on boolean entry", key: "test.boolean.setting", body: `{"value": 1}`, unharmed: "true"},
 		{name: "string on integer entry", key: "test.mismatch.integer", body: `{"value": "10"}`, unharmed: "42"},
 		{name: "fractional number on integer entry", key: "test.mismatch.integer", body: `{"value": 3.5}`, unharmed: "42"},
 		{name: "number on string entry", key: "test.mismatch.string", body: `{"value": 5}`, unharmed: "something"},
@@ -577,6 +604,7 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_TypeMismatc
 // against the strictness added alongside it: false, 0 and "" are of the right
 // type and must still be stored.
 func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_CorrectTypesStillAccepted() {
+	suite.seedTestBoolean()
 	suite.NoError(suite.db.Where("config_key = ?", "test.accepted.integer").Delete(&models.Configuration{}).Error)
 	suite.NoError(suite.db.Create(&models.Configuration{
 		Key:          "test.accepted.integer",
@@ -603,8 +631,8 @@ func (suite *ConfigurationIntegrationTestSuite) TestSetConfiguration_CorrectType
 		body  string
 		value string
 	}{
-		{name: "false on boolean entry", key: "tickets.auto_assign_support", body: `{"value": false}`, value: "false"},
-		{name: "true on boolean entry", key: "tickets.auto_assign_support", body: `{"value": true}`, value: "true"},
+		{name: "false on boolean entry", key: "test.boolean.setting", body: `{"value": false}`, value: "false"},
+		{name: "true on boolean entry", key: "test.boolean.setting", body: `{"value": true}`, value: "true"},
 		{name: "zero on integer entry", key: "test.accepted.integer", body: `{"value": 0}`, value: "0"},
 		{name: "integral number on integer entry", key: "test.accepted.integer", body: `{"value": 7}`, value: "7"},
 		{name: "empty string on string entry", key: "test.accepted.string", body: `{"value": ""}`, value: ""},

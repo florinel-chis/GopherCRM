@@ -282,9 +282,11 @@ schema). A root that skipped proves nothing.
 - Everything in category `ui` reaches every authenticated user through `GET /configurations/ui`
   (`GetUIConfigurations`, `internal/handler/configuration_handler.go:403`). Never put a sensitive
   key there.
-- Ship the consumer and its test in the same change. A seeded setting nobody reads is a defect:
-  `tickets.auto_assign_support` and `security.session_timeout_hours` are seeded and not read
-  (#224).
+- Ship the consumer and its test in the same change. A seeded setting nobody reads is a defect.
+  To retire one, remove it from `DefaultConfigurations`, add its key to
+  `models.RetiredConfigurationKeys` (startup deletes it) and ship a migration pair that deletes
+  it on MySQL, as #224 did for `tickets.auto_assign_support` and
+  `security.session_timeout_hours`.
 - Security toggles fail closed on a read error (`middleware.RequireRegistrationEnabled`).
 
 ## 6. Add an automation event or step

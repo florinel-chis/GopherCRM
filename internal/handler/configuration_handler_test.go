@@ -257,10 +257,10 @@ func (suite *ConfigurationHandlerTestSuite) TestSet_ReadOnlyReturns400() {
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_InvalidValueReturns400() {
-	suite.mockService.On("Set", "security.session_timeout_hours", float64(999)).
-		Return(fmt.Errorf("invalid value for configuration %q: %w", "security.session_timeout_hours", apperrors.ErrConfigurationInvalidValue))
+	suite.mockService.On("Set", "test.choice.integer", float64(999)).
+		Return(fmt.Errorf("invalid value for configuration %q: %w", "test.choice.integer", apperrors.ErrConfigurationInvalidValue))
 
-	w := suite.put("security.session_timeout_hours", `{"value":999}`)
+	w := suite.put("test.choice.integer", `{"value":999}`)
 
 	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
 	var response utils.APIResponse
@@ -279,11 +279,11 @@ func (suite *ConfigurationHandlerTestSuite) TestSet_DatabaseErrorReturns500() {
 // --- Set: falsy values ---
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_FalseIsForwardedToService() {
-	config := &models.Configuration{Key: "tickets.auto_assign_support", Value: "false", Type: models.ConfigTypeBoolean}
-	suite.mockService.On("Set", "tickets.auto_assign_support", false).Return(nil)
-	suite.mockService.On("GetByKey", "tickets.auto_assign_support").Return(config, nil)
+	config := &models.Configuration{Key: "leads.conversion.require_notes", Value: "false", Type: models.ConfigTypeBoolean}
+	suite.mockService.On("Set", "leads.conversion.require_notes", false).Return(nil)
+	suite.mockService.On("GetByKey", "leads.conversion.require_notes").Return(config, nil)
 
-	w := suite.put("tickets.auto_assign_support", `{"value":false}`)
+	w := suite.put("leads.conversion.require_notes", `{"value":false}`)
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 }

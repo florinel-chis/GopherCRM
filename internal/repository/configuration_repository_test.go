@@ -184,3 +184,33 @@ func TestLeadConversionStatusMetadataMatchesTheLeadEnum(t *testing.T) {
 	assert.Subset(t, listed, value)
 	assert.Subset(t, listed, defaultValue)
 }
+
+// An upgraded database still holds the retired entries the earlier seed wrote,
+// live or soft-deleted. Booting must remove both, hard, and seed no
+// replacement.
+func TestInitializeDefaultsRemovesRetiredEntries(t *testing.T) {
+	db := setupConfigurationDB(t)
+	repo := NewConfigurationRepository(db)
+
+	require.NotEmpty(t, models.RetiredConfigurationKeys)
+	for i, key := range models.RetiredConfigurationKeys {
+		row := models.Configuration{Key: key, Value: "true", Type: models.ConfigTypeBoolean, Category: models.CategoryGeneral}
+		require.NoError(t, db.Create(&row).Error)
+		if i%2 == 1 {
+			require.NoError(t, db.Delete(&row).Error)
+		}
+	}
+
+	require.NoError(t, repo.InitializeDefaults())
+
+	var remaining int64
+	require.NoError(t, db.Unscoped().Model(&models.Configuration{}).
+		Where("config_key IN ?", models.RetiredConfigurationKeys).Count(&remaining).Error)
+	assert.Zero(t, remaining, "retired entries must be deleted, soft-deleted ones included")
+
+	for _, retired := range models.RetiredConfigurationKeys {
+		for _, seeded := range models.DefaultConfigurations() {
+			assert.NotEqual(t, retired, seeded.Key, "a retired key is still seeded")
+		}
+	}
+}

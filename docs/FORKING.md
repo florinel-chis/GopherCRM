@@ -349,19 +349,18 @@ environment. `docs/AEO_SECURITY.md` explains why.
 
 ### 4.3 Settings
 
-Settings are seeded at startup from `internal/models/configuration.go`. Two of them have no
-effect today:
+Settings are seeded at startup from `internal/models/configuration.go`. Two settings that had no
+effect were retired in #224; startup deletes them (`models.RetiredConfigurationKeys`):
 
-- `tickets.auto_assign_support` (`internal/models/configuration.go:354`) — nothing reads it, and
-  nothing distributes tickets among support users. A ticket created without `assigned_to_id` is
-  assigned to its creator (`internal/handler/ticket_handler.go:107-110`).
-- `security.session_timeout_hours` (`internal/models/configuration.go:333`) — the access-token
-  lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:262`, used at
+- `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
+  created without `assigned_to_id` is assigned to its creator
+  (`internal/handler/ticket_handler.go:107-110`).
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:262`, used at
   `internal/service/auth_service.go:344`) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:267`). `JWT_ACCESS_TOKEN_MINUTES` is read
   (`config.go:263`) but only feeds the unused cookie helper.
 
-Implementing or retiring them is #224. The company name and colour settings are covered in
+The company name and colour settings are covered in
 section 3.1.
 
 ### 4.4 Module switches

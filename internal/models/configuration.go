@@ -287,6 +287,18 @@ func isValueInList(value interface{}, validValues []interface{}) bool {
 	return false
 }
 
+// RetiredConfigurationKeys lists entries earlier releases seeded and nothing
+// ever read: security.session_timeout_hours (session length comes from
+// JWT_EXPIRY_HOURS and REFRESH_TOKEN_EXPIRY_DAYS) and
+// tickets.auto_assign_support (tickets are never distributed among support
+// users). Seeding deletes them so the settings page stops offering switches
+// that change nothing; migration 20261031120000_retire_inert_configurations
+// does the same for MySQL and MariaDB.
+var RetiredConfigurationKeys = []string{
+	"security.session_timeout_hours",
+	"tickets.auto_assign_support",
+}
+
 // DefaultConfigurations returns the default system configurations
 func DefaultConfigurations() []Configuration {
 	defaults := []Configuration{
@@ -357,17 +369,6 @@ func DefaultConfigurations() []Configuration {
 			IsReadOnly:   false,
 		},
 		{
-			Key:          "security.session_timeout_hours",
-			Value:        "24",
-			Type:         ConfigTypeInteger,
-			Category:     CategorySecurity,
-			Description:  "Session timeout in hours",
-			DefaultValue: "24",
-			IsSystem:     true,
-			IsReadOnly:   false,
-			ValidValues:  `[1, 8, 24, 48, 72, 168]`,
-		},
-		{
 			Key:          "deals.default_currency",
 			Value:        DealDefaultCurrency,
 			Type:         ConfigTypeString,
@@ -375,16 +376,6 @@ func DefaultConfigurations() []Configuration {
 			Description:  "ISO 4217 currency code a new deal takes when none is sent (three upper-case letters)",
 			DefaultValue: DealDefaultCurrency,
 			IsSystem:     true,
-			IsReadOnly:   false,
-		},
-		{
-			Key:          "tickets.auto_assign_support",
-			Value:        "true",
-			Type:         ConfigTypeBoolean,
-			Category:     CategoryTickets,
-			Description:  "Whether to automatically assign tickets to available support users",
-			DefaultValue: "false",
-			IsSystem:     false,
 			IsReadOnly:   false,
 		},
 		// Answer-engine credentials. They ship empty: an engine stays on its

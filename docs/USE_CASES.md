@@ -318,9 +318,9 @@ history. This is a staff-maintained register, not a shared helpdesk.
 - Seed companies and customers with a script against the REST API. There is no import screen.
 - Assign tickets deliberately. A ticket created without `assigned_to_id` is assigned to the
   user who created it (`internal/handler/ticket_handler.go:107-110`), so an admin or an
-  integration key that omits the field becomes the assignee. The seeded
-  `tickets.auto_assign_support` setting has no effect (`internal/models/configuration.go:354`; no
-  code reads it). Tracked in #224.
+  integration key that omits the field becomes the assignee. Nothing distributes tickets among
+  support users; the `tickets.auto_assign_support` setting that suggested otherwise was retired
+  in #224.
 - Train staff on the difference between internal notes and public comments.
 - An integration that creates both customers and tickets **with one identity** must use an admin
   API key: customer create is admin and sales (`internal/handler/routes.go:40`), ticket create is
@@ -418,7 +418,6 @@ planning around an issue number.
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:143` | #215 |
 | Shared support queue and server-side ticket filters | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #218 |
 | Customer-visible ticket replies by email | 4 | no ticket path sends mail | #219 |
-| Seeded settings that have no effect (`tickets.auto_assign_support`, `security.session_timeout_hours`) | 4 | `internal/models/configuration.go:333,354` | #224 |
 | Fabricated `total_revenue` on customers | 2, 5 | customer list and detail pages | #186 |
 | A bulk status outcome row can stay `pending` after its write fails | 4 | `internal/service/bulk_status_service.go` | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |

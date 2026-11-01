@@ -36,12 +36,12 @@ blocked until the page is built.
   through `/register` (public registration always creates a `customer`), but sales and support
   accounts must be created by an admin through the Users page using `generateUserData()` from
   `e2e/fixtures/admin-user.ts` and then logged in through the login form. Cases needing that say so.
-- **Configurations are global, shared, mutable state.** There are only seven rows, all seeded by
+- **Configurations are global, shared, mutable state.** There are 23 rows, all seeded by
   `InitializeDefaults()`, and every session of the application reads the same ones. Any spec that
   writes a configuration must run serially and restore the value it changed (POST
-  `/configurations/{key}/reset` is the cheapest restore, but note that `tickets.auto_assign_support`
-  ships with `value=true` and `default_value=false`, so "reset" is not "restore" for that key —
-  see TC-SET-026).
+  `/configurations/{key}/reset` is the cheapest restore, but note that
+  `leads.conversion.allowed_statuses` ships with `value=["qualified", "contacted"]` and
+  `default_value=["qualified"]`, so "reset" is not "restore" for that key — see TC-SET-026).
 - **API key names in tests must come from a faker generator**, not a literal. Add
   `generateAPIKeyData()` to `e2e/fixtures/admin-user.ts` alongside the existing generators, building
   the name the same way they build emails (a `key_` prefix, `Date.now()` and
@@ -325,10 +325,12 @@ blocked until the page is built.
   3. Step through the tabs.
 - **Expected:** The page issues `GET /configurations` (admin-only) and renders one table per
   category with columns Key, Description, Type, Current Value, Default Value, System, Read-Only,
-  Actions. With the seeded defaults there are seven entries: General (1) `general.company_name`,
-  UI & Theme (1) `ui.theme.primary_color`, Security (1) `security.session_timeout_hours`, Leads (3)
-  `leads.conversion.{allowed_statuses,require_notes,auto_assign_owner}`, Tickets (1)
-  `tickets.auto_assign_support`. A warning banner sits above the tabs. If the request fails the page
+  Actions. With the seeded defaults there are 23 entries: General (1) `general.company_name`,
+  UI & Theme (1) `ui.theme.primary_color`, Security (1) `security.allow_public_registration`,
+  Leads (3) `leads.conversion.{allowed_statuses,require_notes,auto_assign_owner}`, Deals (1)
+  `deals.default_currency`, Integration (16) the `integration.aeo.*` keys, models and base URLs,
+  and none under Tickets (`security.session_timeout_hours` and `tickets.auto_assign_support` were
+  retired in #224; startup deletes them). A warning banner sits above the tabs. If the request fails the page
   shows the snackbar "Failed to load configurations" and an empty shell.
 - **Automation:** automated — `gocrm-ui/e2e/screenshots/08-settings.spec.ts` "configuration settings
   page"
@@ -339,11 +341,12 @@ blocked until the page is built.
 - **Preconditions:** Seeded admin logged in, default configuration set.
 - **Steps:**
   1. Open `/settings/configuration`.
-  2. Select the "Customers", "Tasks" and "Integration" tabs in turn.
+  2. Select the "Customers", "Tickets" and "Tasks" tabs in turn.
 - **Expected:** Each shows `No configurations found for <label>` and no table. The tab labels read
-  `Customers (0)`, `Tasks (0)`, `Integration (0)` — the counts come from the client-side filter
-  `getConfigurationsByCategory`, not from a server query, so all eight category tabs exist
-  regardless of what is stored.
+  `Customers (0)`, `Tickets (0)`, `Tasks (0)` — the counts come from the client-side filter
+  `getConfigurationsByCategory`, not from a server query, so all nine category tabs exist
+  regardless of what is stored (Tickets has been empty since #224 retired
+  `tickets.auto_assign_support`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (new; closes G14)
 
 ### TC-SET-018 — Render each value according to its declared type
@@ -352,10 +355,11 @@ blocked until the page is built.
 - **Preconditions:** Seeded admin logged in, default configuration set.
 - **Steps:**
   1. Open `/settings/configuration`.
-  2. Inspect the Current Value cell on the Leads and Tickets tabs.
+  2. Inspect the Current Value cell on the Leads and General tabs.
 - **Expected:** `boolean` renders as a chip labelled `True` (green) or `False`; `array` renders one
   chip per element, so `leads.conversion.allowed_statuses` shows `qualified` and `contacted`;
-  `string` and `integer` render as plain text; `json` renders monospaced. The Key cell is monospaced,
+  `string` renders as plain text. No seeded entry is `integer` (since #224) or `json`, so their
+  rendering (plain text, monospaced) needs a test-only fixture inserted directly. The Key cell is monospaced,
   `is_system` rows carry a blue "System" chip, and `is_read_only` rows would carry a warning
   "Read-Only" chip — no seeded row sets that flag, so the chip is never seen with default data.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
@@ -386,7 +390,7 @@ blocked until the page is built.
 - **Type:** functional
 - **Preconditions:** Seeded admin logged in; spec restores the original value.
 - **Steps:**
-  1. Tickets tab, edit `tickets.auto_assign_support`.
+  1. Leads tab, edit `leads.conversion.require_notes`.
   2. Flip the switch in the dialog and save.
 - **Expected:** The dialog renders a MUI `Switch` (its label text follows the state, "True"/"False").
   Saving sends a real JSON boolean, so `Configuration.SetValue` stores `"true"`/`"false"` and the
@@ -418,9 +422,9 @@ blocked until the page is built.
 - **Type:** negative
 - **Preconditions:** Seeded admin logged in.
 - **Steps:**
-  1. Security tab, edit `security.session_timeout_hours`.
+  1. Edit an integer entry whose valid values are `[1, 8, 24, 48, 72, 168]`.
   2. Type `25` into the number field and click "Save".
-- **Expected:** `PUT /configurations/security.session_timeout_hours` returns **400** with
+- **Expected:** `PUT /configurations/{key}` returns **400** with
   `Invalid value for configuration` (`ErrConfigurationInvalidValue`, raised by `IsValidValue`
   against `[1, 8, 24, 48, 72, 168]`). The dialog stays open and the snackbar shows the page's own
   generic text `Failed to update configuration`. The stored value is unchanged; `24` saves fine.
@@ -429,14 +433,16 @@ blocked until the page is built.
   free-form number field while a *string* entry with an allowlist gets a dropdown. The constraint is
   only visible as the "Valid values:" line of text, and the rejection reason from the API is
   discarded in favour of a generic message (`handleSaveEdit` ignores the error body).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
+- **Automation:** blocked — no seeded entry is an integer since #224 retired
+  `security.session_timeout_hours`; backend coverage in `tests/configuration_integration_test.go`
+  `TestSetConfiguration_InvalidValue` (a test-only `test.choice.integer` entry)
 
 ### TC-SET-023 — Clear the integer field and observe the null rejection
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Seeded admin logged in.
 - **Steps:**
-  1. Security tab, edit `security.session_timeout_hours`.
+  1. Edit an integer entry.
   2. Select the field contents and delete them, leaving it empty.
   3. Click "Save".
 - **Expected:** The number field's `onChange` runs `parseInt('', 10)`, which is `NaN`; `NaN`
@@ -446,7 +452,8 @@ blocked until the page is built.
   `Failed to update configuration` and the value is untouched.
 - **Known issue:** the dialog performs no client-side validation before sending, so an empty numeric
   field produces a server round-trip and an unhelpful message rather than an inline field error.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
+- **Automation:** blocked — no seeded entry is an integer since #224 retired
+  `security.session_timeout_hours`
 
 ### TC-SET-024 — Confirm values are type-checked, never coerced
 - **Priority:** P0
@@ -455,14 +462,14 @@ blocked until the page is built.
   Playwright's `request` fixture; the dialog cannot produce a wrong-typed value for these keys).
 - **Steps:**
   1. `PUT /configurations/leads.conversion.require_notes` with `{"value":"yes"}`.
-  2. `PUT /configurations/security.session_timeout_hours` with `{"value":24.5}`.
-  3. `PUT /configurations/general.company_name` with `{"value":42}`.
-  4. Re-read each key with `GET /configurations/{key}`.
-- **Expected:** All three are **400** `Invalid value for configuration`, and every stored value is
+  2. `PUT /configurations/general.company_name` with `{"value":42}`.
+  3. Re-read each key with `GET /configurations/{key}`.
+- **Expected:** Both are **400** `Invalid value for configuration`, and every stored value is
   unchanged. `Configuration.SetValue` returns an error on a type mismatch instead of coercing —
   a non-boolean used to become `"false"` and a non-string `""`, which answered the caller with a
-  success and a corrupted value. An integral float such as `24.0` is still accepted for an integer
-  entry; `24.5` is not (`asInteger` refuses to truncate). Correctly typed values still work.
+  success and a corrupted value. No seeded entry is an integer since #224; for one, an integral float
+  such as `24.0` is accepted and `24.5` is not (`asInteger` refuses to truncate), which the backend
+  tests cover with test-only entries. Correctly typed values still work.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (API-level assertions
   alongside the UI ones); backend coverage in `tests/configuration_integration_test.go`
   `TestSetConfiguration_TypeMismatch` and `TestSetConfiguration_CorrectTypesStillAccepted`
@@ -487,19 +494,20 @@ blocked until the page is built.
 ### TC-SET-026 — Reset a configuration to its stored default
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** Seeded admin logged in. Note the pre-state of `tickets.auto_assign_support`:
-  `value=true`, `default_value=false`.
+- **Preconditions:** Seeded admin logged in. Note the pre-state of
+  `leads.conversion.allowed_statuses`: `value=["qualified", "contacted"]`,
+  `default_value=["qualified"]`.
 - **Steps:**
-  1. Tickets tab, click the reset (circular arrow) action on `tickets.auto_assign_support`.
+  1. Leads tab, click the reset (circular arrow) action on `leads.conversion.allowed_statuses`.
   2. Observe the row.
-- **Expected:** `POST /configurations/tickets.auto_assign_support/reset` returns **200**; the
-  snackbar reads `Configuration reset to default`, the list reloads and the Current Value chip flips
-  from `True` to `False`. There is **no** confirmation dialog — a single click overwrites the current
+- **Expected:** `POST /configurations/leads.conversion.allowed_statuses/reset` returns **200**; the
+  snackbar reads `Configuration reset to default`, the list reloads and the Current Value cell drops
+  the `contacted` chip. There is **no** confirmation dialog — a single click overwrites the current
   value with `default_value`.
 - **Known issue:** the seeded row ships with a value that differs from its own default
   (`models.DefaultConfigurations()`), so "reset" visibly changes behaviour on a system nobody has
   edited, and the unconfirmed single click makes that easy to trigger by accident. A spec that resets
-  this key must restore `true` afterwards, or later runs start from a different state.
+  this key must restore `["qualified", "contacted"]` afterwards, or later runs start from a different state.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
 
 ### TC-SET-027 — Reject a reset for an unknown key
@@ -537,7 +545,7 @@ blocked until the page is built.
 ### TC-SET-029 — Confirm read-only entries cannot be edited or reset
 - **Priority:** P1
 - **Type:** negative
-- **Preconditions:** A configuration row with `is_read_only=true`. **None of the seven seeded rows
+- **Preconditions:** A configuration row with `is_read_only=true`. **None of the 23 seeded rows
   sets this flag** (verified against `models.DefaultConfigurations()` and a live
   `GET /configurations`), so the fixture must be inserted directly.
 - **Steps:**
