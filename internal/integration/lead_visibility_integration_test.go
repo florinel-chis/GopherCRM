@@ -81,7 +81,7 @@ func (s *LeadVisibilityIntegrationTestSuite) SetupTest() {
 	userRepo := repository.NewUserRepository(db)
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db))
+	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db), repository.NewDealRepository(db))
 	dealService := service.NewDealService(repository.NewDealRepository(db), repository.NewCompanyRepository(db), customerRepo,
 		leadRepo, userRepo, nil, utils.NewTransactionManager(db))
 

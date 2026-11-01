@@ -511,6 +511,25 @@ every sort column is tied, both directions, with filters, checking every page ag
 expected sequence and the count. The Database migrations workflow runs both roots, the MySQL one
 on MySQL 8 and MariaDB 10.11, and its checker rejects a skip.
 
+**A task's deal link (#240).** `tasks.deal_id` is additive to the lead-or-customer rule and follows
+`service.CanViewDeal` (`internal/service/deal_visibility.go`): admin any deal, sales its own, every
+other role none. `checkDealLink` is the write side: a missing and a hidden deal both give
+`ErrDealNotFound` with one message, and only a not-found lookup is mapped, so an outage answers 500.
+`TaskService.UpdateWithLabels` takes `dealIDSent`: absent keeps the stored link unchecked, a sent id
+is checked even when it equals the stored one, and 0 clears the link when the actor may see the stored
+deal; a clear of a hidden link returns no error and keeps it. The create and update paths detach
+`task.Deal` before every repository write, because GORM writes a preloaded belongs-to id back over
+the foreign key, and re-attach it for the response. Every handler answering with a task goes through
+`redactTaskLinks`, and `Task.MarshalJSON` fills the `deal` summary (id, title, stage) from the
+preloaded deal only. Regression roots: `TestTaskDealLinkWriteRules`, `TestTaskDealLinkClear`,
+`TestCanViewDeal`, `TestRedactTaskDeal`, `TestTaskDealLogsOmitDealTitle`,
+`TestAutomationDealTaskLink{SQLite,MySQL}`, `TestAutomationDryRunReportsDealLink`
+(`internal/service`); `TestTaskDealLinkRepository{SQLite,MySQL}`, `TestTaskDealLinkSurvivesErasure`
+(`internal/repository`); `TestTaskDealReadRoutes{SQLite,MySQL}`, `TestDealTasksEndpoint{SQLite,MySQL}`,
+`TestTaskDealLinkIntegration{SQLite,MySQL}` (`internal/integration`); `TestTaskDealHandlerErrorMapping`;
+`TestTaskJSONDealSummary`, `TestTaskDealLinkSQLiteUpgradeFromV120` (`internal/models`);
+`TestTaskDealLinkMigration`, `TestTaskDealLinkMigrationFiles` (`cmd/migrate`).
+
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
 in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in

@@ -37,6 +37,8 @@ type CreateTaskRequest struct {
 	LeadID *uint `json:"lead_id,omitempty" example:"12"`
 	// ID of a customer to link. The customer must exist, otherwise 404. Cannot be combined with lead_id.
 	CustomerID *uint `json:"customer_id,omitempty" example:"3"`
+	// ID of a deal to link; 0 or absent means no link. The deal must be live, closed deals included, and visible to the caller (admins any deal, sales users only the deals they own, every other role none), otherwise 404. May be combined with lead_id or customer_id, and is not cross-checked against them.
+	DealID *uint `json:"deal_id,omitempty" example:"88"`
 	// IDs of existing labels to attach, at most 100, each positive (the cap
 	// bounds the IN clause a single request can produce). Absent or empty means
 	// no labels; a repeated id is attached once; an id that matches no label
@@ -62,6 +64,8 @@ type UpdateTaskRequest struct {
 	LeadID *uint `json:"lead_id,omitempty" example:"12"`
 	// Customer to link. When present without lead_id it replaces the association: the lead link is cleared and this customer (which must exist) is linked. Absent (or null) keeps the stored link.
 	CustomerID *uint `json:"customer_id,omitempty" example:"3"`
+	// Deal to link. Absent (or null) keeps the stored link unchecked. An id must name a live deal the caller may see, closed deals included (404 otherwise), even when it equals the stored link; it replaces a link hidden from the caller too. 0 clears the link when the caller may see the stored deal; a clear of a link hidden from the caller answers 200 and leaves the link in place.
+	DealID *uint `json:"deal_id,omitempty" example:"88"`
 	// Replacement label set, at most 100 ids, each positive. The field is a
 	// pointer so the cases stay distinguishable: absent (or null) leaves the
 	// labels untouched, while a present array, even an empty one, replaces the
@@ -83,7 +87,7 @@ type TaskListData struct {
 
 // Create godoc
 // @Summary Create a new task
-// @Description Create a task. Roles: admin, sales and support (customers get 403 before the body is read). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. The task always starts in status pending, whatever the body says, and priority defaults to medium. A task may link a lead or a customer, but not both. lead_id must name a lead the caller may see (admins any lead, sales users only the leads they own, every other role none); a hidden lead is answered with 404 exactly like a missing one. label_ids attaches existing labels (a repeated id is attached once); any id that matches no label rejects the whole request. The checks run in this order: role, body binding, self-assignment, assignee (exists, active), lead, customer, lead-and-customer conflict, labels. No automation event and no notification is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
+// @Description Create a task. Roles: admin, sales and support (customers get 403 before the body is read). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. The task always starts in status pending, whatever the body says, and priority defaults to medium. A task may link a lead or a customer, but not both. lead_id must name a lead the caller may see (admins any lead, sales users only the leads they own, every other role none); a hidden lead is answered with 404 exactly like a missing one. label_ids attaches existing labels (a repeated id is attached once); any id that matches no label rejects the whole request. deal_id links a deal the caller may see under the same rule of roles (0 means no link), beside a lead or a customer. The checks run in this order: role, body binding, self-assignment, assignee (exists, active), lead, customer, lead-and-customer conflict, deal, labels. No automation event and no notification is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -94,7 +98,7 @@ type TaskListData struct {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the assignee is deactivated or both lead_id and customer_id are given; INVALID_REFERENCE when a label id matches no label"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller is a customer, or a non-admin named another user as assignee"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the assignee, the lead (missing or hidden from the caller) or the customer does not exist"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the assignee, the lead or the deal (missing or hidden from the caller) or the customer does not exist"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks [post]
@@ -132,6 +136,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		AssignedToID: req.AssignedToID,
 		LeadID:       req.LeadID,
 		CustomerID:   req.CustomerID,
+		DealID:       optionalID(req.DealID),
 		Status:       models.TaskStatusPending,
 	}
 
@@ -139,6 +144,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		logger.WithError(utils.LogError(err)).Error("Failed to create task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
+			errors.Is(err, apperrors.ErrDealNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
 		} else if errors.Is(err, apperrors.ErrLabelNotFound) {
@@ -155,7 +161,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	service.RedactTaskLead(leadViewer(c), task)
+	redactTaskLinks(c, task)
 	utils.LogHandlerResponse(logger, http.StatusCreated, task)
 	utils.RespondSuccess(c, http.StatusCreated, task)
 }
@@ -208,7 +214,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 		return
 	}
 
-	service.RedactTaskLead(leadViewer(c), task)
+	redactTaskLinks(c, task)
 	utils.LogHandlerResponse(logger, http.StatusOK, task)
 	utils.RespondSuccess(c, http.StatusOK, task)
 }
@@ -304,7 +310,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 		utils.RespondInternalError(c)
 		return
 	}
-	service.RedactTaskLeads(leadViewer(c), tasks)
+	redactTaskLinksOfPage(c, tasks)
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
@@ -354,7 +360,7 @@ func (h *TaskHandler) ListMyTasks(c *gin.Context) {
 		utils.RespondInternalError(c)
 		return
 	}
-	service.RedactTaskLeads(leadViewer(c), tasks)
+	redactTaskLinksOfPage(c, tasks)
 
 	meta := &utils.APIMeta{
 		RequestID:  c.GetString("request_id"),
@@ -424,15 +430,89 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 	if tasks == nil {
 		tasks = []models.Task{}
 	}
-	service.RedactTaskLeads(leadViewer(c), tasks)
+	redactTaskLinksOfPage(c, tasks)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, tasks)
 	utils.RespondSuccess(c, http.StatusOK, tasks)
 }
 
+// ListByDeal godoc
+// @Summary List a deal's tasks
+// @Description One page of the live tasks linked to the deal, with their assignee, labels, lead and deal loaded. Roles: admin (every task of any deal) and sales (only on a deal it owns, and only the tasks assigned to it, filtered in the query, so total and meta.total count only those; another owner's deal is 403). Support and customer roles are refused. The unsorted order is ascending id; with sort_by the order is that column, then id in the same direction, and a sort_order other than asc or desc becomes desc. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own), decided again on every read.
+// @Tags tasks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Deal ID"
+// @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
+// @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
+// @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
+// @Param sort_by query string false "Sort column" Enums(id, title, status, priority, due_date, assigned_to_id, created_at, updated_at)
+// @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
+// @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of the deal's tasks"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID') or sort_by is not an allowed column ('Invalid sort column')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or 'You can only view your own deals': a sales user asked about a deal it does not own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
+// @Router /deals/{id}/tasks [get]
+func (h *TaskHandler) ListByDeal(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "TaskHandler.ListByDeal")
+
+	id, ok := pathID(c, "Invalid deal ID")
+	if !ok {
+		return
+	}
+	offset, limit, sortBy, sortOrder, ok := listParams(c, "tasks")
+	if !ok {
+		return
+	}
+
+	tasks, total, err := h.taskService.ListByDeal(leadViewer(c), id, offset, limit, sortBy, sortOrder)
+	if err != nil {
+		switch {
+		case errors.Is(err, apperrors.ErrDealNotFound):
+			logger.WithError(utils.LogError(err)).Warn("Deal not found")
+			utils.RespondNotFound(c, "Deal not found")
+		case errors.Is(err, apperrors.ErrForbidden):
+			logger.WithError(utils.LogError(err)).Warn("Deal access refused")
+			utils.RespondForbidden(c, "You can only view your own deals")
+		default:
+			logger.WithError(utils.LogError(err)).Error("Failed to list the tasks of a deal")
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
+	redactTaskLinksOfPage(c, tasks)
+
+	responseData := gin.H{"tasks": tasks, "total": total}
+	utils.LogHandlerResponse(logger, http.StatusOK, responseData)
+	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, pageMeta(c, offset, limit, total))
+}
+
+// redactTaskLinks removes the lead and the deal the caller may not see from a
+// task about to be returned. Every handler answering with a task goes through
+// this or redactTaskLinksOfPage.
+func redactTaskLinks(c *gin.Context, task *models.Task) {
+	viewer := leadViewer(c)
+	service.RedactTaskLead(viewer, task)
+	service.RedactTaskDeal(viewer, task)
+}
+
+// redactTaskLinksOfPage is redactTaskLinks for a page of tasks.
+func redactTaskLinksOfPage(c *gin.Context, tasks []models.Task) {
+	viewer := leadViewer(c)
+	service.RedactTaskLeads(viewer, tasks)
+	service.RedactTaskDeals(viewer, tasks)
+}
+
 // Update godoc
 // @Summary Update a task
-// @Description Partially update a task: absent or empty fields are left unchanged (title, description, due_date and the links cannot be cleared this way). Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Only admins may change assigned_to_id; sending the current assignee back is not a reassignment. A completed task cannot be moved to another status. A task cannot link both a lead and a customer. A lead_id that is sent must name a lead the caller may see (a hidden lead is 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link set after validation, whether or not the caller could see the old lead. label_ids, when present, replaces the whole label set (an empty array clears it); absent leaves the labels untouched; any id that matches no label rejects the whole request. The order of checks: id, body binding, task lookup, ownership, reassignment permission, then assignee, lead, customer, conflict, completed status, labels; any failure leaves the task unchanged. No automation event is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
+// @Description Partially update a task: absent or empty fields are left unchanged (title, description, due_date, lead_id and customer_id cannot be cleared this way). Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Only admins may change assigned_to_id; sending the current assignee back is not a reassignment. A completed task cannot be moved to another status. A task cannot link both a lead and a customer. A lead_id that is sent must name a lead the caller may see (a hidden lead is 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link set after validation, whether or not the caller could see the old lead. deal_id is independent of those links: absent keeps the stored link unchecked; an id must name a live deal the caller may see, closed deals included (a hidden deal is 404 like a missing one), even when it equals the stored link; 0 clears the link when the caller may see the stored deal (an admin also when that deal was deleted), and answers 200 and keeps the link when it is hidden from the caller, so a clear can neither reveal nor sever it. label_ids, when present, replaces the whole label set (an empty array clears it); absent leaves the labels untouched; any id that matches no label rejects the whole request. The order of checks: id, body binding, task lookup, ownership, reassignment permission, then assignee, lead, customer, conflict, completed status, deal, labels; any failure leaves the task unchanged. No automation event is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -444,7 +524,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the new assignee is deactivated, the task would link both a lead and a customer, or a completed task would change status; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_REFERENCE when a label id matches no label"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - a non-admin tried to update a task not assigned to them, or to reassign a task"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the task, the new assignee, the lead (missing or hidden from the caller) or the customer does not exist"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the task, the new assignee, the lead or the deal (missing or hidden from the caller) or the customer does not exist"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/{id} [put]
@@ -524,11 +604,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 			task.LeadID = nil
 		}
 	}
+	// Absent keeps the stored link; 0 is a clear, which the service applies only
+	// when the caller may see the stored deal.
+	if req.DealID != nil {
+		task.DealID = optionalID(req.DealID)
+	}
 
-	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, req.LeadID != nil, currentUserID); err != nil {
+	if err := h.taskService.UpdateWithLabels(task, req.LabelIDs, req.LeadID != nil, req.DealID != nil, currentUserID); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update task")
 		if errors.Is(err, apperrors.ErrAssigneeNotFound) ||
 			errors.Is(err, apperrors.ErrLeadNotFound) ||
+			errors.Is(err, apperrors.ErrDealNotFound) ||
 			errors.Is(err, apperrors.ErrCustomerNotFound) {
 			utils.RespondNotFound(c, err.Error())
 		} else if errors.Is(err, apperrors.ErrLabelNotFound) {
@@ -543,7 +629,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		return
 	}
 
-	service.RedactTaskLead(leadViewer(c), task)
+	redactTaskLinks(c, task)
 	utils.LogHandlerResponse(logger, http.StatusOK, task)
 	utils.RespondSuccess(c, http.StatusOK, task)
 }

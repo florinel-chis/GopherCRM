@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -8,12 +9,14 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
 )
 
 // taskListPreloads are the associations the task listings carry. The lead is
-// among them because RedactTaskLead decides on it: without it every lead link
-// would read as hidden to non-admins.
-var taskListPreloads = []string{"AssignedTo", "Labels", "Lead"}
+// among them because RedactTaskLead decides on it, and the deal because
+// RedactTaskDeal does: without them every such link would read as hidden to
+// non-admins.
+var taskListPreloads = []string{"AssignedTo", "Labels", "Lead", "Deal"}
 
 type taskService struct {
 	taskRepo     repository.TaskRepository
@@ -21,27 +24,30 @@ type taskService struct {
 	leadRepo     repository.LeadRepository
 	customerRepo repository.CustomerRepository
 	labelRepo    repository.LabelRepository
+	dealRepo     repository.DealRepository
 }
 
-func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository) TaskService {
+func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository, dealRepo repository.DealRepository) TaskService {
 	return &taskService{
 		taskRepo:     taskRepo,
 		userRepo:     userRepo,
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
 		labelRepo:    labelRepo,
+		dealRepo:     dealRepo,
 	}
 }
 
 // Create persists a task without touching its label set. It has no acting
-// user, so it cannot link a lead (see CanViewLead).
+// user, so it cannot link a lead or a deal (see CanViewLead and CanViewDeal).
 func (s *taskService) Create(task *models.Task) error {
 	return s.CreateWithLabels(task, nil, 0)
 }
 
 // CreateWithLabels persists a task and attaches the referenced labels. With no
 // label ids it is exactly Create, down to the repository call it makes. A lead
-// link must be a lead actorID may see.
+// link must be a lead actorID may see, a deal link a deal actorID may see; a
+// deal_id of 0 means no link.
 func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "task"), "TaskService", "Create")
 
@@ -90,15 +96,30 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actor
 		return fmt.Errorf("task cannot be linked to both lead and customer: %w", apperrors.ErrTaskLeadCustomerConflict)
 	}
 
+	// Validate deal if provided: it must exist and be visible to the actor. It
+	// coexists with a lead or a customer link and is not cross-checked against
+	// them.
+	if task.DealID != nil && *task.DealID == 0 {
+		task.DealID = nil
+	}
+	var deal *models.Deal
+	if task.DealID != nil {
+		deal, err = s.acceptDealLink(logger, actorID, *task.DealID)
+		if err != nil {
+			return err
+		}
+	}
+
 	labels, err := s.resolveLabels(labelIDs)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Unknown label referenced")
 		return err
 	}
 
-	// The checked lead is attached only after the write, for the response, so
-	// GORM never saves it as an association of the new task.
+	// The checked lead and deal are attached only after the write, for the
+	// response, so GORM never saves them as associations of the new task.
 	task.Lead = nil
+	task.Deal = nil
 	if len(labels) == 0 {
 		err = s.taskRepo.Create(task)
 	} else {
@@ -109,6 +130,7 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actor
 		return err
 	}
 	task.Lead = lead
+	task.Deal = deal
 
 	logger.WithFields(map[string]interface{}{
 		"task_id": task.ID,
@@ -168,9 +190,9 @@ func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]model
 }
 
 // Update persists the task and leaves its label set untouched. It has no
-// acting user, so it cannot link the task to another lead.
+// acting user, so it cannot link the task to another lead or deal.
 func (s *taskService) Update(task *models.Task) error {
-	return s.UpdateWithLabels(task, nil, false, 0)
+	return s.UpdateWithLabels(task, nil, false, false, 0)
 }
 
 // UpdateWithLabels persists the task and, when labelIDs is non-nil, REPLACES
@@ -178,7 +200,9 @@ func (s *taskService) Update(task *models.Task) error {
 // set; nil leaves it exactly as it was. A lead link that differs from the
 // stored one, or any lead link the request sent (leadIDSent), must be a lead
 // actorID may see; a stored link the request did not mention is kept as it is.
-func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent bool, actorID uint) error {
+// The deal link follows settleDealLink: dealIDSent tells a request that named
+// deal_id (nil or 0 on the task then means a clear) from one that did not.
+func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("task_id", task.ID), "TaskService", "Update")
 
 	// Get existing task to validate the update
@@ -243,6 +267,11 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 		return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
 	}
 
+	deal, err := s.settleDealLink(logger, task, existingTask, dealIDSent, actorID)
+	if err != nil {
+		return err
+	}
+
 	var labels []models.Label
 	if labelIDs != nil {
 		labels, err = s.resolveLabels(*labelIDs)
@@ -264,6 +293,9 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 	if newAssignee != nil {
 		task.AssignedTo = models.User{}
 	}
+	// Always detached, unlike the two above: the deal settled on is known here
+	// and goes back on the task for the response below.
+	task.Deal = nil
 
 	if labelIDs == nil {
 		err = s.taskRepo.Update(task)
@@ -280,9 +312,74 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 	if newAssignee != nil {
 		task.AssignedTo = *newAssignee
 	}
+	task.Deal = deal
 
 	logger.WithField("task_id", task.ID).Info("Task updated successfully")
 	return nil
+}
+
+// settleDealLink decides the deal_id an update commits, writes it onto the task
+// and returns the deal to attach to the response:
+//
+//   - deal_id absent: the stored link stays, unchecked, whoever may see it, so
+//     the assignee can keep editing a task whose deal has changed hands.
+//   - deal_id sent as a deal (even the stored one): checkDealLink decides, so
+//     the answer cannot reveal which hidden deal the task points at. A deal the
+//     actor may see replaces even a link hidden from it.
+//   - deal_id sent as a clear (nil or 0): the link goes when the actor may see
+//     the stored deal, and an admin also when that deal was deleted. A link
+//     hidden from the actor stays and no error is returned, so a clear can
+//     neither reveal nor sever it; the read redaction then answers as if the
+//     task had no link.
+//
+// A changed non-zero id without dealIDSent is checked like a sent one, so no
+// path writes an unchecked link.
+func (s *taskService) settleDealLink(logger *logrus.Entry, task, existing *models.Task, dealIDSent bool, actorID uint) (*models.Deal, error) {
+	if task.DealID != nil && *task.DealID == 0 {
+		task.DealID = nil
+	}
+
+	if task.DealID != nil {
+		if !dealIDSent && !linkChanged(task.DealID, existing.DealID) {
+			return existing.Deal, nil
+		}
+		return s.acceptDealLink(logger, actorID, *task.DealID)
+	}
+
+	if existing.DealID == nil {
+		return nil, nil
+	}
+	if dealIDSent {
+		viewer, err := leadViewerOf(s.userRepo, actorID)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Error("Failed to load the actor of a deal link clear")
+			return nil, err
+		}
+		if CanViewDeal(viewer, linkedDeal(existing.DealID, existing.Deal)) {
+			logger.WithField("deal_id", *existing.DealID).Info("Deal link cleared")
+			return nil, nil
+		}
+		logger.WithField("deal_id", *existing.DealID).Info("Deal link kept: hidden from the actor")
+	}
+	task.DealID = existing.DealID
+	return existing.Deal, nil
+}
+
+// acceptDealLink runs checkDealLink and logs the outcome. Log lines carry ids
+// only: the error text is "unknown deal_id N", never the deal's title or notes.
+func (s *taskService) acceptDealLink(logger *logrus.Entry, actorID, dealID uint) (*models.Deal, error) {
+	logger = logger.WithField("deal_id", dealID)
+	deal, err := checkDealLink(s.dealRepo, s.userRepo, actorID, dealID)
+	if err != nil {
+		if errors.Is(err, apperrors.ErrDealNotFound) {
+			logger.WithError(utils.LogError(err)).Warn("Deal link rejected")
+		} else {
+			logger.WithError(utils.LogError(err)).Error("Failed to check deal link")
+		}
+		return nil, err
+	}
+	logger.Info("Deal link accepted")
+	return deal, nil
 }
 
 // resolveLabels turns a list of label ids into the labels themselves,
@@ -357,6 +454,55 @@ func (s *taskService) listByLabel(labelID uint, assigneeID *uint, offset, limit 
 	}
 
 	logger.WithField("total", total).Info("Tasks listed by label")
+	return tasks, total, nil
+}
+
+// ListByDeal returns one page of a deal's live tasks for GET /deals/{id}/tasks.
+// A deal that does not exist or was soft-deleted is ErrDealNotFound; one the
+// viewer may not see is ErrForbidden. An admin gets every task of the deal.
+// Any other viewer, which CanViewDeal has narrowed to the sales owner, gets
+// only the tasks assigned to it, inside the query and before the limit, so the
+// total counts only those: owning a deal does not widen who may read a task.
+func (s *taskService) ListByDeal(viewer LeadViewer, dealID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
+		"deal_id": dealID,
+		"offset":  offset,
+		"limit":   limit,
+	}), "TaskService", "ListByDeal")
+
+	deal, err := s.dealRepo.GetByID(dealID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Deal not found")
+			return nil, 0, fmt.Errorf("deal %d not found: %w", dealID, apperrors.ErrDealNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to load deal")
+		return nil, 0, err
+	}
+	if !CanViewDeal(viewer, deal) {
+		logger.Warn("Deal hidden from the caller")
+		return nil, 0, fmt.Errorf("deal %d is not visible to the caller: %w", dealID, apperrors.ErrForbidden)
+	}
+
+	var assigneeID *uint
+	if viewer.Role != models.RoleAdmin {
+		id := viewer.UserID
+		assigneeID = &id
+	}
+
+	tasks, err := s.taskRepo.ListByDeal(dealID, assigneeID, offset, limit, sortBy, sortOrder, taskListPreloads...)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list tasks by deal")
+		return nil, 0, err
+	}
+
+	total, err := s.taskRepo.CountByDeal(dealID, assigneeID)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to count tasks by deal")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Tasks listed by deal")
 	return tasks, total, nil
 }
 

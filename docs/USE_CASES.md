@@ -228,8 +228,9 @@ renewals are not modelled.
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:88-91`); no PDF, only browser print
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
-- Tasks have no `deal_id`. A task created by a deal rule links to the deal's customer, or its lead
-  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
+- A task's `deal_id` (set by a deal rule or through the API, listed by `GET /deals/{id}/tasks`) has
+  no screen yet: the web client does not show it. Tasks created by a deal rule before #240 are not
+  backfilled (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts").
 - The customer pages show a fabricated `total_revenue` of zero: #186.
 
 ### Do not promise
@@ -388,7 +389,7 @@ Each of these would need a different core model, not a recipe.
 
 | Business | Why it does not fit |
 |---|---|
-| Field-service dispatch | No dispatch calendar, no offline mode, no attachments, and tasks have no `deal_id` (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts") |
+| Field-service dispatch | No dispatch calendar, no offline mode and no attachments |
 | Recruiting | No attachments for CVs, and the pipeline links one deal to one customer, where recruiting needs many candidates per opening |
 | Nonprofit donor CRM | No recurring gifts, campaigns or nurture email to contacts |
 | Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`internal/models/aeo.go:28-31`) |
@@ -422,7 +423,6 @@ planning around an issue number.
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
-| `deal_id` on tasks | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
 | Ticket SLA fields and attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

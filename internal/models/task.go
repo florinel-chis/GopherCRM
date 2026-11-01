@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // TaskStatus is the workflow status of a task. A new task always starts as
 // pending, and a completed task cannot be moved to any other status.
@@ -24,7 +27,7 @@ const (
 	TaskPriorityHigh   TaskPriority = "high"
 )
 
-// @Description A to-do item assigned to one user, optionally linked to a lead or a customer (never both) and carrying labels.
+// @Description A to-do item assigned to one user, optionally linked to a lead or a customer (never both) and to a deal, and carrying labels.
 type Task struct {
 	BaseModel
 	// Short summary of the task. Always present. The column is 255 characters wide; the API does not check the length before the write.
@@ -49,6 +52,27 @@ type Task struct {
 	CustomerID *uint `json:"customer_id,omitempty" example:"3"`
 	// The linked customer. Only loaded by GET /tasks/{id} and PUT /tasks/{id} (and omitted from the PUT response when that request changed customer_id); omitted everywhere else.
 	Customer *Customer `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+	// ID of the linked deal, independent of the lead or customer link. Omitted when the task has no deal link, and also when the caller may not see that deal (admins see every deal, sales users only the deals they own, every other role none); this is decided on every read. An admin still receives it after the deal was deleted; every other role does not.
+	DealID *uint `gorm:"index" json:"deal_id,omitempty" example:"88"`
+	// Deal is what the visibility decision and DealSummary are made from. It is
+	// never serialised itself: a deal carries its amount, notes, owner, lead and
+	// customer, and a task discloses none of them.
+	Deal *Deal `gorm:"foreignKey:DealID" json:"-"`
+	// Summary of the linked deal, under the same visibility rule as deal_id: omitted whenever deal_id is omitted, and also when the deal was deleted.
+	DealSummary *QuoteDealSummary `gorm:"-" json:"deal,omitempty"`
 	// Labels attached to the task. Omitted when the task has none, and not loaded (so omitted) by GET /tasks/upcoming. The embedded labels carry task_count 0.
 	Labels []Label `gorm:"many2many:task_labels" json:"labels,omitempty"`
+}
+
+// MarshalJSON replaces the preloaded deal by its summary. The summary comes
+// from the preloaded Deal only, so a task whose deal is not loaded, or was
+// removed by the redaction, has no deal key whatever DealSummary holds.
+func (t Task) MarshalJSON() ([]byte, error) {
+	type plain Task
+	out := plain(t)
+	out.DealSummary = nil
+	if t.DealID != nil && t.Deal != nil {
+		out.DealSummary = &QuoteDealSummary{ID: t.Deal.ID, Title: t.Deal.Title, Stage: t.Deal.Stage}
+	}
+	return json.Marshal(out)
 }

@@ -193,8 +193,9 @@ each a candidate follow-up:
 - **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
   sweep is a retention decision, not an erasure one (the rows hold ids only).
 - **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer,
-  ticket and company triggers, a `deal_id` on tasks** — none of them exist; a deal run links its
-  task to the deal's customer, else its lead.
+  ticket and company triggers** — none of them exist. A deal run records the deal on its task
+  (`deal_id`, #240) and links the deal's customer, else its lead; tasks created by earlier runs are
+  not backfilled, and the web client does not show the link yet (the API does).
 
 ## Sensitive settings — follow-ups
 

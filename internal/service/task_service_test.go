@@ -42,7 +42,7 @@ func (suite *TaskServiceTestSuite) SetupTest() {
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
 	suite.mockLabelRepo = new(mocks.LabelRepository)
-	suite.service = NewTaskService(suite.mockTaskRepo, suite.mockUserRepo, suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockLabelRepo)
+	suite.service = NewTaskService(suite.mockTaskRepo, suite.mockUserRepo, suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockLabelRepo, nil)
 }
 
 func (suite *TaskServiceTestSuite) TearDownTest() {
@@ -317,7 +317,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_ChangingToAHiddenLeadIsRejected() 
 	leadID := uint(30)
 	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, AssignedToID: 1, LeadID: &leadID}
 
-	err := suite.service.UpdateWithLabels(task, nil, true, 10)
+	err := suite.service.UpdateWithLabels(task, nil, true, false, 10)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "got %v", err)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
@@ -333,7 +333,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_UnchangedLinkIsNotRechecked() {
 		Lead: &models.Lead{BaseModel: models.BaseModel{ID: 30}, OwnerID: 20}}
 	suite.mockTaskRepo.On("Update", task).Return(nil)
 
-	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, false, 10))
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, false, false, 10))
 	suite.mockLeadRepo.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
 	suite.mockUserRepo.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
 }
@@ -353,7 +353,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_SendingTheStoredHiddenLeadIsReject
 		for _, sent := range []uint{30, 31} {
 			leadID := sent
 			task := &models.Task{BaseModel: models.BaseModel{ID: 5}, Title: "Probe", AssignedToID: 1, LeadID: &leadID}
-			answers = append(answers, suite.service.UpdateWithLabels(task, nil, true, 10))
+			answers = append(answers, suite.service.UpdateWithLabels(task, nil, true, false, 10))
 		}
 		for i, err := range answers {
 			assert.Truef(suite.T(), errors.Is(err, apperrors.ErrLeadNotFound), "%s, probe %d: got %v", role, i, err)
@@ -372,7 +372,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_SendingTheStoredVisibleLeadIsAccep
 	task := &models.Task{BaseModel: models.BaseModel{ID: 5}, Title: "Renamed", AssignedToID: 1, LeadID: &sent}
 	suite.mockTaskRepo.On("Update", task).Return(nil)
 
-	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, 10))
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, false, 10))
 }
 
 // Moving the link drops the lead preloaded for the old one before the save,
@@ -387,7 +387,7 @@ func (suite *TaskServiceTestSuite) TestUpdate_ChangingToAVisibleLeadSwapsThePrel
 		return t.Lead == nil && t.LeadID != nil && *t.LeadID == 30
 	})).Return(nil)
 
-	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, 10))
+	require.NoError(suite.T(), suite.service.UpdateWithLabels(task, nil, true, false, 10))
 	assert.Same(suite.T(), lead, task.Lead)
 }
 

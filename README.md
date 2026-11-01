@@ -733,6 +733,8 @@ authentication and live on the moderate tier:
 - `GET /api/v1/tasks/:id` - Get specific task
 - `PUT /api/v1/tasks/:id` - Update task *(only admins may reassign)*
 - `DELETE /api/v1/tasks/:id` - Delete task *(admin; ordinary soft delete)*
+- `GET /api/v1/deals/:id/tasks` - The deal's live tasks, paginated *(admin all of them; the sales
+  owner only those assigned to it; 403 for anybody else)*
 - `POST /api/v1/tasks/bulk/status` - Set the status of up to 100 tasks, all-or-nothing *(non-admins
   only their own assignments; completed tasks cannot change status)*
 

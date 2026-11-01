@@ -145,7 +145,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	suite.mailer = &recordingMailer{}
 	quoteService := service.NewQuoteService(repository.NewQuoteRepository(suite.db), productRepo, dealRepo, customerRepo, userRepo, configService, suite.mailer, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
-	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db))
+	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db), repository.NewDealRepository(suite.db))
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 
 	// Setup handlers

@@ -356,6 +356,24 @@ func (_m *TaskRepository) CountByLabel(labelID uint, assignedToID *uint) (int64,
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+// ListByDeal provides a mock function with given fields: dealID, assignedToID, offset, limit, sortBy, sortOrder, preloads
+func (_m *TaskRepository) ListByDeal(dealID uint, assignedToID *uint, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Task, error) {
+	ret := _m.Called(dealID, assignedToID, offset, limit, sortBy, sortOrder, preloads)
+
+	var r0 []models.Task
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Task)
+	}
+	return r0, ret.Error(1)
+}
+
+// CountByDeal provides a mock function with given fields: dealID, assignedToID
+func (_m *TaskRepository) CountByDeal(dealID uint, assignedToID *uint) (int64, error) {
+	ret := _m.Called(dealID, assignedToID)
+
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func (_m *TaskRepository) WithTx(tx *gorm.DB) repository.TaskRepository {
 	_m.Called(tx)
 	return _m

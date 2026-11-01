@@ -159,6 +159,10 @@ func SetupTaskRoutes(router *gin.RouterGroup, handler *TaskHandler) {
 		tasks.PUT("/:id", handler.Update)
 		tasks.DELETE("/:id", handler.Delete)
 	}
+
+	// A sub-list on the deal path, registered here under the deals guard (admin
+	// and sales), as the quotes file does with /deals/:id/quotes.
+	router.GET("/deals/:id/tasks", middleware.RequireRole(models.RoleAdmin, models.RoleSales), handler.ListByDeal)
 }
 
 // SetupLabelRoutes mounts the task-label endpoints. Reading labels is open to

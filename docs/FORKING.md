@@ -604,7 +604,7 @@ the `paths` object of `api/swagger.json`;
   include 990 top-level `Test` functions, 107 Vitest files and 22 Playwright specs with 161 browser
   tests, run against MySQL 8, MariaDB 10.11 and SQLite (`.github/workflows/ci.yml`). The manual
   catalog in `docs/testing/` documents over 600 cases.
-- **Schema:** 12 SQL migration pairs, kept in parity with GORM AutoMigrate and checked by a
+- **Schema:** 14 SQL migration pairs, kept in parity with GORM AutoMigrate and checked by a
   migrations workflow for fresh install, populated upgrade, rollback and reapply.
 - **Delivery machinery:** 5 GitHub workflows with 15 jobs; 9 validation profiles that pick the
   checks from the diff; a no-skip SQL coverage gate; one e2e driver used identically locally and

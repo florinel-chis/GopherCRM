@@ -173,6 +173,11 @@ type TaskRepository interface {
 	// the non-admin scoping is pushed down to SQL.
 	ListByLabel(labelID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	CountByLabel(labelID uint, assignedToID *uint) (int64, error)
+	// ListByDeal and CountByDeal narrow to the live tasks of one deal, with the
+	// same assignee convention. The order ends in the id, and a sort column
+	// outside the tasks allowlist is refused.
+	ListByDeal(dealID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
+	CountByDeal(dealID uint, assignedToID *uint) (int64, error)
 	WithTx(tx *gorm.DB) TaskRepository
 }
 

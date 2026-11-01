@@ -642,3 +642,20 @@ regression anchors, not endorsements.
   `TestTaskUpdate_InvalidCustomerPreservesHiddenLead` and
   `TestTaskUpdate_ExplicitLeadAndCustomerStillConflict` exercise the real HTTP/service/repository
   path; the browser case needs a non-admin role-login helper.
+
+### TC-TASK-049 — A deal link is checked on write and redacted on every read
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** Admin, sales A (owns a deal), sales B, support and a customer-role user. Each has a task assigned to it, linked by the test to A's deal, due within a week, carrying a label.
+- **Steps:**
+  1. As each user, read the task through `GET /tasks` (with and without `label_id`; as admin also with `search` and `sort_by`), `/tasks/my`, `/tasks/upcoming`, `/tasks/{id}`, `/dashboard/upcoming-tasks`, and `PUT` its description.
+  2. `POST /tasks` with A's `deal_id` as admin, A, B, support and the customer; again with an id that matches no deal; again with `deal_id` 0.
+  3. As A, `PUT` a task with `deal_id` of A's deal, then of a won deal of A's. Move the deal to B and `GET`; `PUT` `deal_id` equal to the stored link; move it back.
+  4. With the deal on B, as A `PUT` `deal_id` 0, and compare with the same request on an unlinked task. Repeat with the deal on A.
+  5. As admin, delete the deal; `GET` the task as admin and as A.
+- **Expected:** Step 1: admin and A receive `deal_id` and `deal` with exactly `id`, `title` and `stage`; B, support and the customer receive neither key, and the customer gets **403** on the dashboard. A's edit keeps the stored link. Step 2: **201** with the summary for admin and A, **403** for the customer, **404** with one message shape for a hidden or missing deal, nothing written; `deal_id` 0 is an unlinked task. Step 3: a closed deal is accepted; the link stops showing after the deal changes owner and shows again when it returns; the stored id is unchanged throughout, and sending it while hidden is **404**. Step 4: **200** with neither key and the same body keys as the unlinked task, with the stored link unchanged; with the deal on A, a NULL is committed. Step 5: the task and its `deal_id` remain; the admin receives `deal_id` and no `deal`; A receives neither.
+- **Automation:** automated (backend) — `internal/integration/task_deal_integration_test.go`
+  (`TestTaskDealReadRoutes{SQLite,MySQL}`, `TestTaskDealLinkIntegration{SQLite,MySQL}`);
+  `internal/service/task_deal_link_test.go` (`TestTaskDealLinkWriteRules`, `TestTaskDealLinkClear`,
+  `TestTaskDealLogsOmitDealTitle`); `internal/handler/task_deal_handler_test.go`. No browser case:
+  the web client does not show the link yet.

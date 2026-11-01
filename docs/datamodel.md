@@ -447,7 +447,7 @@ is what keeps a second executor from recording a second `sending` row for an ema
 | step_type | string | Yes | max 20 | |
 | outcome | string | Yes | `succeeded`, `skipped`, `failed`, `sending`, `waiting`, max 20 | |
 | error_code | string | No | `recipient_unavailable`, `mail_failed`, `email_unconfirmed`, max 40 | |
-| detail | text (JSON) | No | decoded as `details`; ids and statuses only | `task_id`, `notification_id`, `assignee_id`, `recipient_id`, `from_owner_id`, `to_owner_id`, `lead_id`, `customer_id`, `due_date`, `resume_at`, `result`, `branch`, `next_position` |
+| detail | text (JSON) | No | decoded as `details`; ids and statuses only | `task_id`, `notification_id`, `assignee_id`, `recipient_id`, `from_owner_id`, `to_owner_id`, `lead_id`, `customer_id`, `deal_id`, `due_date`, `resume_at`, `result`, `branch`, `next_position` |
 | executed_at | datetime | Yes | UTC | |
 
 ### Notification
@@ -536,6 +536,14 @@ Represents tasks and to-dos for users.
 | assigned_to_id | uint | Yes | - | FK to users | Assigned user |
 | lead_id | uint | No | - | FK to leads | Related lead |
 | customer_id | uint | No | - | FK to customers | Related customer |
+| deal_id | uint | No | - | FK to deals, indexed (`idx_tasks_deal_id`, `fk_tasks_deal`) | Related deal, independent of the lead or customer link |
+
+`deal_id` follows the deal rule (admin any deal, sales only the deals it owns, every other role
+none) when it is written and on every read: a caller who may not see the deal receives neither
+`deal_id` nor the `deal` summary (id, title, stage). Soft-deleting a deal keeps the id on its tasks:
+an admin then receives `deal_id` with no `deal`. Erasing the lead or customer of a linked deal leaves
+the link and the deal in place. Migration: `20261101120000_add_task_deal_link`; rows that existed
+before it stay NULL.
 
 ### Task Status Values
 - `pending` - Not started

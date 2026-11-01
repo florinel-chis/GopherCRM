@@ -156,18 +156,20 @@ func assertUpgradedV120(t *testing.T) {
 	assert.Contains(t, indexSQL(t, "customers", "idx_customers_email"), "UNIQUE",
 		"the unique email index must survive the rebuild")
 
-	// The deals tables (new in this release) are created on the populated
-	// file, with their own foreign keys, and no existing table was given a
-	// foreign key to them: deals point at companies, customers, leads and
-	// users, never the other way round, so no further table is rebuilt.
+	// The deals tables are created on the populated file, with their own
+	// foreign keys. The one existing table given a foreign key to them is tasks
+	// (rebuilt for fk_tasks_deal): deals point at companies, customers, leads
+	// and users, never the other way round.
 	for _, table := range []string{"deals", "deal_stage_changes"} {
 		assert.True(t, DB.Migrator().HasTable(table), "%s must exist after the upgrade", table)
 	}
 	assert.Contains(t, tableSQL(t, "deals"), "CONSTRAINT `fk_deals_owner` FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`)")
 	assert.Contains(t, tableSQL(t, "deal_stage_changes"), "CONSTRAINT `fk_deal_stage_changes_changed_by` FOREIGN KEY (`changed_by_id`) REFERENCES `users`(`id`)")
-	for _, table := range []string{"users", "companies", "customers", "leads", "tickets", "tasks"} {
+	for _, table := range []string{"users", "companies", "customers", "leads", "tickets"} {
 		assert.NotContains(t, tableSQL(t, table), "REFERENCES `deals`", "%s must not have gained a foreign key to deals", table)
 	}
+	assert.Contains(t, tableSQL(t, "tasks"), "CONSTRAINT `fk_tasks_deal` FOREIGN KEY (`deal_id`) REFERENCES `deals`(`id`)",
+		"tasks must have gained its foreign key to deals")
 
 	// A second migration on the upgraded file is a no-op.
 	before := schemaSnapshot(t)
@@ -201,6 +203,36 @@ func TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120(t *testing.T) {
 	require.NoError(t, MigrateDatabase())
 
 	assertUpgradedV120(t)
+}
+
+// TestTaskDealLinkSQLiteUpgradeFromV120 is the SQLite half of the task-to-deal
+// link (#240): SQLite installs never run the SQL migration, so AutoMigrate adds
+// tasks.deal_id, its index and its foreign key, which rebuilds tasks while
+// task_labels references its rows. Every existing task stays, unlinked, and a
+// deal link is enforced afterwards.
+func TestTaskDealLinkSQLiteUpgradeFromV120(t *testing.T) {
+	openV120Fixture(t)
+	require.False(t, DB.Migrator().HasColumn("tasks", "deal_id"), "the v1.2.0 fixture has no deal link")
+
+	require.NoError(t, MigrateDatabase())
+
+	assertUpgradedV120(t)
+
+	assert.True(t, DB.Migrator().HasColumn("tasks", "deal_id"), "tasks.deal_id")
+	assert.NotEmpty(t, indexSQL(t, "tasks", "idx_tasks_deal_id"), "idx_tasks_deal_id must exist")
+	assert.NotEmpty(t, indexSQL(t, "tasks", "idx_tasks_deleted_at"), "idx_tasks_deleted_at must survive the rebuild")
+	assert.Contains(t, tableSQL(t, "tasks"), "CONSTRAINT `fk_tasks_deal` FOREIGN KEY (`deal_id`) REFERENCES `deals`(`id`)")
+
+	var linked int64
+	require.NoError(t, DB.Table("tasks").Where("deal_id IS NOT NULL").Count(&linked).Error)
+	assert.Zero(t, linked, "no existing task is backfilled")
+
+	var dangling struct{ ID uint }
+	require.NoError(t, DB.Raw("SELECT id FROM tasks ORDER BY id LIMIT 1").Scan(&dangling).Error)
+	require.NotZero(t, dangling.ID)
+	err := DB.Exec("UPDATE tasks SET deal_id = 999999 WHERE id = ?", dangling.ID).Error
+	require.Error(t, err, "a deal_id naming no deal must be refused")
+	assert.Contains(t, err.Error(), "FOREIGN KEY constraint failed")
 }
 
 // TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade proves that

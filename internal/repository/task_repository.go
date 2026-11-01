@@ -25,7 +25,7 @@ func (r *taskRepository) Create(task *models.Task) error {
 
 func (r *taskRepository) GetByID(id uint) (*models.Task, error) {
 	var task models.Task
-	err := r.db.Preload("AssignedTo").Preload("Lead").Preload("Customer").Preload("Labels").First(&task, id).Error
+	err := r.db.Preload("AssignedTo").Preload("Lead").Preload("Customer").Preload("Deal").Preload("Labels").First(&task, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -35,11 +35,12 @@ func (r *taskRepository) GetByID(id uint) (*models.Task, error) {
 // GetByAssignedToID backs GET /tasks/my and the non-admin branch of GET /tasks.
 // Labels are preloaded here even though the assignee is not: a task's labels
 // are part of how it renders in every listing, so leaving them out would make
-// the chips disappear for exactly the callers who see this path. The lead is
-// preloaded so the handler can decide whether the caller may see it.
+// the chips disappear for exactly the callers who see this path. The lead and
+// the deal are preloaded so the handler can decide whether the caller may see
+// them.
 func (r *taskRepository) GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := orderByID(r.db.Preload("Labels").Preload("Lead").Where("assigned_to_id = ?", assignedToID), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
+	err := orderByID(r.db.Preload("Labels").Preload("Lead").Preload("Deal").Where("assigned_to_id = ?", assignedToID), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -56,7 +57,7 @@ func (r *taskRepository) Delete(id uint) error {
 
 func (r *taskRepository) List(offset, limit int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := orderByID(r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead"), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
+	err := orderByID(r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead").Preload("Deal"), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -156,9 +157,9 @@ func (r *taskRepository) ListDueBetween(assignedToID *uint, from, to time.Time, 
 
 // openDueQuery is the shared predicate behind the two due-date listings: a task
 // that is still open and actually has a due date, optionally narrowed to one
-// assignee. The lead is preloaded for the lead-visibility decision.
+// assignee. The lead and the deal are preloaded for the visibility decisions.
 func (r *taskRepository) openDueQuery(assignedToID *uint) *gorm.DB {
-	query := r.db.Preload("AssignedTo").Preload("Lead").
+	query := r.db.Preload("AssignedTo").Preload("Lead").Preload("Deal").
 		Where("due_date IS NOT NULL").
 		Where("status NOT IN ?", []string{
 			string(models.TaskStatusCompleted),
@@ -267,6 +268,41 @@ func (r *taskRepository) labelQuery(labelID uint, assignedToID *uint) *gorm.DB {
 	query := r.db.Model(&models.Task{}).
 		Joins("JOIN task_labels ON task_labels.task_id = tasks.id").
 		Where("task_labels.label_id = ?", labelID)
+	if assignedToID != nil {
+		query = query.Where("tasks.assigned_to_id = ?", *assignedToID)
+	}
+	return query
+}
+
+// ListByDeal returns one page of the live tasks of a deal. A nil assignedToID
+// means every assignee; a non-nil one narrows inside the query, before the
+// limit. The order ends in tasks.id and the sort column comes only from the
+// tasks allowlist.
+func (r *taskRepository) ListByDeal(dealID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
+	var tasks []models.Task
+	query := r.dealQuery(dealID, assignedToID)
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	query, err := orderPage(query, "tasks", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// CountByDeal counts the tasks of a deal, under the same scoping as ListByDeal.
+func (r *taskRepository) CountByDeal(dealID uint, assignedToID *uint) (int64, error) {
+	var count int64
+	err := r.dealQuery(dealID, assignedToID).Count(&count).Error
+	return count, err
+}
+
+// dealQuery is the shared predicate behind the two deal reads. GORM adds
+// `tasks.deleted_at IS NULL` for the model being queried.
+func (r *taskRepository) dealQuery(dealID uint, assignedToID *uint) *gorm.DB {
+	query := r.db.Model(&models.Task{}).Where("tasks.deal_id = ?", dealID)
 	if assignedToID != nil {
 		query = query.Where("tasks.assigned_to_id = ?", *assignedToID)
 	}

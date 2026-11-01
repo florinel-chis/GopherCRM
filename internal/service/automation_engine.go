@@ -737,6 +737,9 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 		if task.CustomerID != nil {
 			plan.details["customer_id"] = *task.CustomerID
 		}
+		if task.DealID != nil {
+			plan.details["deal_id"] = *task.DealID
+		}
 		plan.effect = func() error {
 			if err := e.tasks.WithTx(tx).Create(task); err != nil {
 				return err
@@ -810,8 +813,10 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 
 // buildAutomationTask renders the task of a create_task step: assigned to
 // the resolved user, due due_in_days after execution (UTC), linked to the
-// lead of a lead run, and to the deal's customer, else its lead, never both.
-// The text is rendered through the task allowlist only: a task survives the
+// lead of a lead run, and to the deal of a deal run plus the deal's customer,
+// else its lead, never both of those two. The deal link is a business link the
+// rule wrote, not the rule's actor reading the deal, so it is set whoever the
+// assignee is and whatever the stage. The text is rendered through the task allowlist only: a task survives the
 // erasure of its lead, so no name, address, phone or company is ever copied
 // into it.
 func buildAutomationTask(cfg models.AutomationStepConfig, rec *automationRecord, assigneeID uint, now time.Time) *models.Task {
@@ -833,6 +838,8 @@ func buildAutomationTask(cfg models.AutomationStepConfig, rec *automationRecord,
 		leadID := rec.id
 		task.LeadID = &leadID
 	case models.AutomationEntityDeal:
+		dealID := rec.id
+		task.DealID = &dealID
 		if rec.deal.CustomerID != nil {
 			customerID := *rec.deal.CustomerID
 			task.CustomerID = &customerID

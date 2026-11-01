@@ -626,3 +626,17 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   `deal_lead_visibility_test.go`
   `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy`; `deal_lead_visibility_handler_test.go`
   `TestDealRoutes_HideALeadTheOwnerMayNotSee`, `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink`.
+
+### TC-DEAL-035 — GET /deals/{id}/tasks lists a deal's tasks under the deal rule
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Admin, sales A (owns a deal), sales B, support and a customer-role user. The deal has tasks assigned to A and to B, plus a soft-deleted task; A also has a task on another deal.
+- **Steps:**
+  1. `GET /api/v1/deals/{id}/tasks` as admin and as A; again with `limit=2`, and with `sort_by=status`.
+  2. As B, support and the customer.
+  3. As admin and as A on an unknown deal and on a soft-deleted deal.
+  4. As admin with a bad id and with `sort_by=description`.
+- **Expected:** Step 1: **200** with `data.tasks`, `data.total` and pagination `meta`. The admin gets every live task of the deal; A only the tasks assigned to A, narrowed before the limit, with `total` counting only those. Tied sort values end in the id, so pages neither repeat nor lose a row. Step 2: **403**. Step 3: **404** "Deal not found". Step 4: **400**. A task never carries the deal's amount or notes.
+- **Automation:** automated (backend) — `internal/integration/task_deal_integration_test.go`
+  `TestDealTasksEndpoint{SQLite,MySQL}`; `internal/repository/task_deal_link_test.go`
+  `TestTaskDealLinkRepository{SQLite,MySQL}`. No browser case: the web client does not list these.
