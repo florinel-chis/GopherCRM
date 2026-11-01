@@ -71,6 +71,8 @@ export const Component: React.FC = () => {
   // Deals are admin and sales only on the API; support sees the customer
   // without the section.
   const canSeeDeals = user?.role === 'admin' || user?.role === 'sales';
+  // Ticket creation is admin and support on the API and the /tickets/new route.
+  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
 
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -127,13 +129,15 @@ export const Component: React.FC = () => {
           <Typography variant="h4">{customer.company_name}</Typography>
         </Box>
         <Box display="flex" gap={1}>
-          <Button
-            variant="contained"
-            startIcon={<TicketIcon />}
-            onClick={() => navigate(`/tickets/new?customer_id=${customer.id}`)}
-          >
-            Create Ticket
-          </Button>
+          {canCreateTicket && (
+            <Button
+              variant="contained"
+              startIcon={<TicketIcon />}
+              onClick={() => navigate(`/tickets/new?customer_id=${customer.id}`)}
+            >
+              Create Ticket
+            </Button>
+          )}
           <Button
             variant="outlined"
             startIcon={<EditIcon />}
@@ -309,14 +313,16 @@ export const Component: React.FC = () => {
           <Box sx={{ p: 3 }}>
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
               <Typography variant="h6">Support Tickets</Typography>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<TicketIcon />}
-                onClick={() => navigate(`/tickets/new?customer_id=${customer.id}`)}
-              >
-                New Ticket
-              </Button>
+              {canCreateTicket && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<TicketIcon />}
+                  onClick={() => navigate(`/tickets/new?customer_id=${customer.id}`)}
+                >
+                  New Ticket
+                </Button>
+              )}
             </Box>
             {ticketsData?.data && ticketsData.data.length > 0 ? (
               <List>

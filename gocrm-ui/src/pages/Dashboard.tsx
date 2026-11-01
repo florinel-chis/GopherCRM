@@ -129,6 +129,8 @@ export const Dashboard: React.FC = () => {
   // support and customer), so the other roles get neither the widgets nor the
   // request. The API scopes sales to its own deals.
   const canViewDeals = user?.role === 'admin' || user?.role === 'sales';
+  // Ticket creation is admin and support on the API and the /tickets/new route.
+  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
 
   const {
     data: pipeline,
@@ -257,14 +259,16 @@ export const Dashboard: React.FC = () => {
           >
             New Lead
           </Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<TicketIcon />}
-            onClick={() => navigate('/tickets/new')}
-          >
-            New Ticket
-          </Button>
+          {canCreateTicket && (
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={<TicketIcon />}
+              onClick={() => navigate('/tickets/new')}
+            >
+              New Ticket
+            </Button>
+          )}
           <Button
             variant="contained"
             color="info"

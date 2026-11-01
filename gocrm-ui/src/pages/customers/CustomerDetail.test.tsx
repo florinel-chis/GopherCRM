@@ -153,3 +153,34 @@ describe('CustomerDetail fields', () => {
   });
 });
 
+
+describe('CustomerDetail ticket creation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(vi.fn());
+    vi.mocked(useParams).mockReturnValue({ id: '5' });
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, total_pages: 0 });
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(createMockCustomer({ id: 5, company_name: 'Bolt Robotics' }));
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({ deals: [], total: 0 });
+  });
+
+  it.each(['admin', 'support'] as const)('offers both ticket-create buttons to %s', async (role) => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role })));
+    render(<CustomerDetail />);
+
+    expect(await screen.findByRole('button', { name: 'Create Ticket' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Tickets' }));
+    expect(await screen.findByRole('button', { name: 'New Ticket' })).toBeInTheDocument();
+  });
+
+  it('hides both ticket-create buttons from sales, which reads tickets but cannot create them', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'sales' })));
+    render(<CustomerDetail />);
+
+    await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+    expect(screen.queryByRole('button', { name: 'Create Ticket' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Tickets' }));
+    expect(await screen.findByText('Support Tickets')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New Ticket' })).not.toBeInTheDocument();
+  });
+});
