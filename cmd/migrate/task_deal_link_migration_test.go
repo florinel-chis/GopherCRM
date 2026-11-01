@@ -196,22 +196,27 @@ func TestTaskDealLinkMigration(t *testing.T) {
 			_, err = tdb.sql.Exec("UPDATE tasks SET deal_id = 999999 WHERE title = 'Kept one'")
 			assert.Error(t, err, "a deal_id naming no deal is refused")
 
-			// The application's own startup on top changes nothing and the
-			// migration is not applied twice.
-			got := snapshotTable(t, tdb, "tasks")
+			// The application's own startup on top leaves the three objects alone
+			// and the migration is not applied twice. Only those three are compared:
+			// the first MigrateDatabase on a SQL-built schema also relaxes
+			// assigned_to_id to NULL (the model has no not-null tag) and adds
+			// fk_users_tasks (from User.Tasks), neither of which this migration owns.
 			models.DB = appDB
 			require.NoError(t, models.MigrateDatabase())
-			assert.Equal(t, got, snapshotTable(t, tdb, "tasks"), "MigrateDatabase must not alter the migrated table")
+			assert.Equal(t, want, snapshotTaskDealObjects(t, tdb), "MigrateDatabase must not alter the deal link")
 			require.ErrorIs(t, tdb.m.Migrate(taskDealLinkVersion), migrate.ErrNoChange)
 
-			// Rollback removes exactly the three objects and keeps the rows.
+			// Rollback removes exactly the three objects and keeps the rows. The
+			// baseline is taken after the startup, so what the startup changed
+			// outside the three objects stays out of the comparison.
+			beforeRollback := snapshotTable(t, tdb, "tasks")
 			tablesBefore := listTables(t, tdb.sql, tdb.name)
 			require.NoError(t, tdb.m.Steps(-1))
 			version, dirty, err = tdb.m.Version()
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(taskDealLinkPreviousVersion), version)
-			assert.Equal(t, withoutTaskDealObjects(got), snapshotTable(t, tdb, "tasks"), "rollback removes the three objects and nothing else")
+			assert.Equal(t, withoutTaskDealObjects(beforeRollback), snapshotTable(t, tdb, "tasks"), "rollback removes the three objects and nothing else")
 			assert.Equal(t, tablesBefore, listTables(t, tdb.sql, tdb.name), "rollback drops no table")
 			assertTasksKept(t, tdb, false)
 
