@@ -26,8 +26,7 @@ gating); where the two disagree, that disagreement gets its own case.
 - `gocrm-ui/e2e/tests/admin-tickets.spec.ts`, `gocrm-ui/e2e/screenshots/05-tickets.spec.ts`,
   `gocrm-ui/e2e/pages/tickets.page.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`
-- `docs/FEATURES.md` section 5 (rows 5.1–5.9) and the Gap Summary (G18, G34); `docs/ROADMAP.md`
-  ("Sales ticket navigation")
+- `docs/FEATURES.md` section 5 (rows 5.1–5.9) and the Gap Summary (G18, G34)
 - `docs/screenshots/tickets/01-list.png` … `05-delete-confirm.png`
 
 **Constraints**
@@ -99,22 +98,19 @@ gating); where the two disagree, that disagreement gets its own case.
   `ceil(total/limit)`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
-### TC-TICK-004 — Sales user deep-links to /tickets and gets a read-only list
+### TC-TICK-004 — Sales user opens Tickets from the navigation and gets a read-only list
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** A sales user created via admin `POST /users` (faker email) and logged in.
 - **Steps:**
-  1. Confirm the left navigation shows Dashboard, Leads, Customers, Tasks, Settings — and **no**
-     Tickets item.
-  2. Navigate directly to `/tickets`.
-- **Expected:** The nav item is absent (`MainLayout.tsx` gives the Tickets entry
-  `roles: ['admin','support']`), but the deep link works: `/tickets` has no `ProtectedRoute
-  requiredRole` in `routes/index.tsx`, and `GET /tickets` returns 200 for sales
+  1. Confirm the left navigation shows a **Tickets** item.
+  2. Click it.
+- **Expected:** The nav item is present (`MainLayout.tsx` gives the Tickets entry
+  `roles: ['admin','sales','support']` since #241, matching the API) and opens `/tickets`, which has
+  no `ProtectedRoute requiredRole` in `routes/index.tsx`; `GET /tickets` returns 200 for sales
   (`TicketHandler.List` rejects only the `customer` role). The table renders every ticket. The
   "Create Ticket" button is hidden and rows expose neither Edit nor Delete
-  (`TicketList.tsx:89-91`).
-- **Known issue:** Navigation and API disagree by design-drift — see `docs/ROADMAP.md`,
-  "Sales ticket navigation": widening the nav or narrowing the read routes is an open product call.
+  (`TicketList.tsx` `canCreate`/`canEdit`/`canDelete`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
 ### TC-TICK-005 — Customer-role user reaching /tickets sees an empty table, not an error

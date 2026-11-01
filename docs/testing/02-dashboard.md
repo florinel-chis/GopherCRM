@@ -347,8 +347,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   than navigating away.
 - **Known issue:** the front end and the back end disagree: `/tickets/new` is route-guarded but
   `/leads/new`, `/tasks/new` and `/customers` are not, so three of the four Quick Actions lead a
-  customer into a page they cannot use. Related to the "Sales ticket navigation" product call in
-  `docs/ROADMAP.md`.
+  customer into a page they cannot use.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-019 — Support clicking "New Lead" reaches a form it cannot submit

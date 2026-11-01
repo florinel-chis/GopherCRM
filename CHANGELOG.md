@@ -322,6 +322,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Sales users see Tickets in the navigation.** The API already let sales read every ticket and
+  the ticket pages already showed it no create, edit or delete; only the nav item was hidden, so
+  sales reached tickets by deep link alone. The navigation now matches the API (#241).
 - Refresh-token persistence validation now uses auth/session and transaction boundary checks,
   named SQLite/MySQL rotation regressions, migrations and auth browsers; CI adds MariaDB.
   Shared repository-interface changes qualify only with proof that other declarations are

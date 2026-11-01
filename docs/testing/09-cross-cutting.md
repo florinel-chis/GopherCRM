@@ -14,7 +14,7 @@ coverage matrix.
 - `docs/FEATURES.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
   6.5, 7.5, 7.8 for the shared list conventions; Gap Summary G22, G34
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (no access-token blocklist,
-  concurrent-refresh stampede, sales ticket navigation)
+  concurrent-refresh stampede)
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`, `gocrm-ui/src/components/Breadcrumbs.tsx`,
   `gocrm-ui/src/components/DataTable.tsx`, `gocrm-ui/src/components/ErrorBoundary.tsx`,
@@ -151,22 +151,20 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   (`internal/middleware/auth.go:64`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
 
-### TC-XCUT-006 — Sales can read tickets by deep link although the nav item is hidden
+### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** Logged in as a `sales` user; at least one ticket exists (create it as admin
   first from `generateTicketData()`).
 - **Steps:**
-  1. Confirm the sidebar has no **Tickets** entry.
-  2. Navigate directly to `/tickets`.
+  1. Confirm the sidebar has a **Tickets** entry.
+  2. Click it.
   3. Open the first ticket.
 - **Expected:** Both pages render and `GET /api/v1/tickets` and `GET /api/v1/tickets/:id` return
   **200** — the ticket handler rejects only the `customer` role (`ticket_handler.go:135`, `:354`).
   The **Create Ticket** button is absent and the row Edit/Delete icons are absent (`TicketList`
-  `canCreate`/`canEdit`/`canDelete`).
-- **Known issue:** Nav gating and API gating disagree: `MainLayout.navItems` restricts the Tickets
-  entry to `['admin','support']` while the API lets sales read. Recorded in `docs/ROADMAP.md`
-  ("Sales ticket navigation") as an open product call.
+  `canCreate`/`canEdit`/`canDelete`). Nav gating and API gating agree since #241: `MainLayout`
+  lists the Tickets entry for `['admin','sales','support']`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-007 — Sales is bounced from the ticket write routes

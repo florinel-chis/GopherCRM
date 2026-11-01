@@ -231,8 +231,6 @@ renewals are not modelled.
 - Tasks have no `deal_id`. A task created by a deal rule links to the deal's customer, or its lead
   (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
 - The customer pages show a fabricated `total_revenue` of zero: #186.
-- Sales users can read tickets, but the navigation item is hidden from them (`docs/ROADMAP.md`,
-  "Sales ticket navigation"). Tracked in #241.
 
 ### Do not promise
 
@@ -425,7 +423,6 @@ planning around an issue number.
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
 | `deal_id` on tasks | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
-| Ticket navigation for sales users | 2 | `docs/ROADMAP.md`, "Sales ticket navigation" | #241 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
 | Ticket SLA fields and attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |
