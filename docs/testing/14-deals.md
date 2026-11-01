@@ -4,13 +4,14 @@ End-to-end cases for the deals area added 2026-09-30: the `/deals` list with its
 filters, the create/edit form, the detail page with its stage selector and history timeline, the
 deals sections on the company and customer detail pages, and deletion (a soft delete that keeps
 the history, not an erasure). Every **Expected** states what the build does **today**, traced to
-the handlers, service and repository; every automated case names the exact test title in
-`gocrm-ui/e2e/tests/admin-deals.spec.ts`.
+the handlers, service and repository; every automated browser case names the exact test title in
+`gocrm-ui/e2e/tests/admin-deals.spec.ts`, and the one backend case names its Go tests.
 
-34 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
-`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of them
-partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
-in Go or Vitest), 9 planned (7 against `admin-deals.spec.ts`, 2 against
+35 cases: 17 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
+`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of those
+16 partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
+in Go or Vitest) and 1 by Go tests alone (TC-DEAL-035, an endpoint the web client does not list),
+9 planned (7 against `admin-deals.spec.ts`, 2 against
 `admin-deals-board.spec.ts`), 9 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
 
