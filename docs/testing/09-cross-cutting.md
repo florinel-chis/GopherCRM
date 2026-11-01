@@ -524,16 +524,16 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** Logged in as the `customer` account.
-- **Steps:** On `/`, look at the Quick Actions panel, then click **New Lead**; go back and click
-  **New Ticket**.
-- **Expected:** All four Quick Action buttons render — the panel has no role gate at all. **New
-  Lead** is refused by the route guard: since #120 `/leads/new` sits under an admin+sales
-  `ProtectedRoute`, so the app redirects to `/unauthorized` ("Access Denied") before any form
-  renders, matching `RequireRole(admin, sales)` on the API (`routes.go:24`). **New Ticket** is
-  refused the same way (admin+support guard). **New Task** still opens a form whose save is
-  refused by the API, and **View Customers** opens a list whose request is 403.
-- **Known issue:** The dashboard offers four actions to a customer-role user and none of them
-  works; two now end on Access Denied, the task form still fails only after it has been filled in.
+- **Steps:** On `/`, look at the Quick Actions panel, then click **New Lead**.
+- **Expected:** Three Quick Action buttons render: **New Lead**, **New Task** and **View
+  Customers**. **New Ticket** is absent: since #241 it shows only to admin and support, the roles
+  ticket create admits (`Dashboard.tsx` `canCreateTicket`). **New Lead** is refused by the route
+  guard: since #120 `/leads/new` sits under an admin+sales `ProtectedRoute`, so the app redirects
+  to `/unauthorized` ("Access Denied") before any form renders, matching `RequireRole(admin,
+  sales)` on the API (`routes.go:24`). **New Task** still opens a form whose save is refused by
+  the API, and **View Customers** opens a list whose request is 403.
+- **Known issue:** The dashboard offers three actions to a customer-role user and none of them
+  works; one ends on Access Denied, the task form still fails only after it has been filled in.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ---
