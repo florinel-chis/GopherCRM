@@ -23,9 +23,11 @@ regression anchors, not endorsements.
 
 **Constraints**
 
-- `SetupTaskRoutes` (`internal/handler/routes.go:64`) installs **no** `RequireRole` guard, and the
-  `Tasks` sidebar entry (`MainLayout.tsx:77`) carries no `roles` array. Every authenticated role,
-  customer included, can open `/tasks`. Role differences are enforced inside the handlers only.
+- `SetupTaskRoutes` (`internal/handler/routes.go:64`) installs **no** `RequireRole` guard on the
+  `/tasks` group, and the `Tasks` sidebar entry (`MainLayout.tsx:77`) carries no `roles` array. Every
+  authenticated role, customer included, can open `/tasks`. Role differences on that group are
+  enforced inside the handlers only. The one guarded route it registers is the deal sub-list
+  `GET /deals/:id/tasks`, limited to admin and sales.
 - The non-admin cases need sales, support and customer accounts. They must be created through the
   admin-guarded `POST /users` with `generateUserData()` from `e2e/fixtures/admin-user.ts` (never a
   hardcoded address), and a role-login helper is required — none exists yet, which is why those
