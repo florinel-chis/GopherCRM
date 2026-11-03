@@ -22,9 +22,10 @@ Expected field still describes it and a **Known issue** line records the defect.
 - `internal/handler/user_handler.go`, `internal/handler/routes.go`, `cmd/main.go`
 - `internal/middleware/auth.go`, `internal/middleware/error_handler.go`,
   `internal/utils/password.go`, `internal/repository/erasure.go`
-- `gocrm-ui/e2e/tests/admin-users.spec.ts`, `gocrm-ui/e2e/screenshots/07-users.spec.ts`,
-  `gocrm-ui/e2e/pages/users.page.ts`, `gocrm-ui/e2e/helpers/admin-auth.ts`,
-  `gocrm-ui/e2e/fixtures/admin-user.ts`
+- `gocrm-ui/e2e/tests/admin-users.spec.ts`, `gocrm-ui/e2e/tests/settings.spec.ts`,
+  `gocrm-ui/e2e/screenshots/07-users.spec.ts`, `gocrm-ui/e2e/pages/users.page.ts`,
+  `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
+  `gocrm-ui/src/pages/settings/Profile.test.tsx`
 - Reference captures: `docs/screenshots/users/01-list.png` … `05-delete-confirm.png`
 
 **Constraints**
@@ -692,18 +693,24 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Preconditions:** Logged in as any role.
 - **Steps:**
   1. Expand "Settings" in the drawer and click "Profile" (or navigate to `/settings/profile`).
-  2. Look for the current user's email, name and any editable field.
-- **Expected:** The page renders a single `h1` reading "Profile" and nothing else —
-  `gocrm-ui/src/pages/settings/Profile.tsx` is a heading-only stub. No `GET /users/me` request is
-  made by the page (the app already calls it once at startup from `authApi.getCurrentUser` to
-  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name and
-  last name, and refuses any body carrying `password`, `current_password` or `new_password` with 400
-  `PASSWORD_FIELD_NOT_ACCEPTED` (#254; backend-automated in `tests/users_me_password_test.go`) — has
-  no caller anywhere in the frontend. The route is deliberately outside the admin-guarded layout
-  route, so every role can reach the stub.
-- **Known issue:** FEATURES.md row 7.9 is marked partial and gap G19 records the missing
-  `profile.spec.ts`. There is nothing to drive until the page is built.
-- **Automation:** blocked — the UI page is a heading-only stub; `PUT /users/me` has no UI caller
+  2. Read the "Account details" card and the "Change password" form.
+- **Expected:** `gocrm-ui/src/pages/settings/Profile.tsx` renders an `h4` reading "Profile", then
+  two sections. "Account details" shows the signed-in user's name, email, role and member-since date
+  read-only, from `AuthContext`: the page makes no `GET /users/me` request of its own (the app calls
+  it from `authApi.getCurrentUser` to populate the context). "Change password" asks for the current,
+  new and confirmation passwords and submits to `POST /auth/change-password` (TC-AUTH-038). The page
+  has no form for editing the email or the names. The backend's `PUT /users/me` — which accepts
+  email, first name and last name, and refuses any body carrying `password`, `current_password` or
+  `new_password` with 400 `PASSWORD_FIELD_NOT_ACCEPTED` (#254; backend-automated in
+  `tests/users_me_password_test.go`) — has no caller anywhere in the frontend. The route is
+  deliberately outside the admin-guarded layout route, so every role can reach the page.
+- **Known issue:** There is no profile-edit UI, so `PUT /users/me` has no browser coverage;
+  FEATURES.md row 7.9 stays partial for that reason.
+- **Automation:** automated for the page — `gocrm-ui/e2e/tests/settings.spec.ts` "shows the signed-in
+  account details" (as the seeded admin), "changes the password and the new one works on the next
+  login" and "rejects a wrong current password with the server message" (as a registered customer),
+  and Vitest `src/pages/settings/Profile.test.tsx`. Sales and support are not driven through this
+  page by these specs. `PUT /users/me` is backend-automated only.
 
 ### TC-USER-039 — Use the topbar avatar menu
 - **Priority:** P1
@@ -714,7 +721,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Read the menu contents.
   3. Click "Profile"; reopen the menu and click "Logout".
 - **Expected:** The menu shows two disabled items carrying the signed-in user's name and email, then
-  "Profile" and "Logout". "Profile" navigates to `/settings/profile` (the stub of TC-USER-038).
+  "Profile" and "Logout". "Profile" navigates to `/settings/profile` (the page of TC-USER-038).
   "Logout" calls `POST /auth/logout`, clears both `gophercrm_token` and `gophercrm_refresh_token`
   from local and session storage and returns to `/login`; navigating back to `/` afterwards
   redirects to `/login`. The menu is identical for admin, sales, support and customer.
