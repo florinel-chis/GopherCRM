@@ -184,28 +184,46 @@ func (suite *UserServiceTestSuite) TestUpdate_EmailConflict() {
 	assert.Nil(suite.T(), user)
 }
 
-func (suite *UserServiceTestSuite) TestUpdate_PasswordChange() {
-	existingUser := &models.User{
-		BaseModel: models.BaseModel{ID: 1},
-		Email:     "test@example.com",
-		Password:  "old_hash",
+// A password never changes through Update (#254): the key is ignored whether it
+// comes alone or beside other columns, so no caller can write a hash here
+// without the current-password check and the revocation of the auth service.
+func TestUserServiceUpdateIgnoresPasswordKey(t *testing.T) {
+	const storedHash = "stored-hash"
+
+	cases := []struct {
+		name    string
+		updates map[string]interface{}
+		written map[string]interface{}
+	}{
+		{
+			name:    "beside other columns",
+			updates: map[string]interface{}{"first_name": "Updated", "last_name": "Name", "password": "N3w!Passw0rd2026"},
+			written: map[string]interface{}{"first_name": "Updated", "last_name": "Name"},
+		},
+		{
+			name:    "alone",
+			updates: map[string]interface{}{"password": "N3w!Passw0rd2026"},
+			written: map[string]interface{}{},
+		},
 	}
 
-	updates := map[string]interface{}{
-		"password": "newpassword123",
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(mocks.UserRepository)
+			repo.On("GetByID", uint(1)).Return(&models.User{
+				BaseModel: models.BaseModel{ID: 1},
+				Email:     "test@example.com",
+				Password:  storedHash,
+			}, nil)
+			repo.On("UpdateFields", uint(1), tc.written).Return(nil)
+
+			user, err := NewUserService(repo).Update(1, tc.updates)
+
+			assert.NoError(t, err)
+			assert.Equal(t, storedHash, user.Password)
+			repo.AssertExpectations(t)
+		})
 	}
-
-	suite.mockRepo.On("GetByID", uint(1)).Return(existingUser, nil)
-	suite.mockRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
-		// Verify new password is properly hashed and nothing else is written
-		hash, ok := f["password"].(string)
-		return ok && len(f) == 1 && bcrypt.CompareHashAndPassword([]byte(hash), []byte("newpassword123")) == nil
-	})).Return(nil)
-
-	user, err := suite.userService.Update(1, updates)
-	assert.NoError(suite.T(), err)
-	assert.NotEqual(suite.T(), "old_hash", user.Password)
-	assert.NotEqual(suite.T(), "newpassword123", user.Password) // Should be hashed
 }
 
 // The repository hands gorm's own sentinel straight back, which matches

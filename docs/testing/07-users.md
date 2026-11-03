@@ -524,7 +524,7 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** Neither field exists — `UserForm` renders them only when `isEditMode` is false. An
   admin therefore has no UI to reset someone else's password; the only password paths are the user's
   own `POST /auth/change-password` and the self-service `/auth/password-reset` flow. `PUT /users/:id`
-  does not accept a password either (only `PUT /users/me` does).
+  ignores a `password` key, and `PUT /users/me` refuses one with 400 `PASSWORD_FIELD_NOT_ACCEPTED`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -696,10 +696,11 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** The page renders a single `h1` reading "Profile" and nothing else —
   `gocrm-ui/src/pages/settings/Profile.tsx` is a heading-only stub. No `GET /users/me` request is
   made by the page (the app already calls it once at startup from `authApi.getCurrentUser` to
-  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name, last
-  name and password, and enforces the same 10-character complexity rules — has no caller anywhere in
-  the frontend. The route is deliberately outside the admin-guarded layout route, so every role can
-  reach the stub.
+  populate `AuthContext`), and the backend's `PUT /users/me` — which accepts email, first name and
+  last name, and refuses any body carrying `password`, `current_password` or `new_password` with 400
+  `PASSWORD_FIELD_NOT_ACCEPTED` (#254; backend-automated in `tests/users_me_password_test.go`) — has
+  no caller anywhere in the frontend. The route is deliberately outside the admin-guarded layout
+  route, so every role can reach the stub.
 - **Known issue:** FEATURES.md row 7.9 is marked partial and gap G19 records the missing
   `profile.spec.ts`. There is nothing to drive until the page is built.
 - **Automation:** blocked — the UI page is a heading-only stub; `PUT /users/me` has no UI caller
