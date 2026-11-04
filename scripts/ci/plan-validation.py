@@ -1,12 +1,40 @@
 #!/usr/bin/env python3
-"""Use main's policy, or an operator-reviewed policy pinned to this exact PR head."""
+"""Use main's policy, or an operator-reviewed policy pinned to this exact PR head.
 
+The complete browser suite runs only for a release, which asks for it with
+FORCE_FULL. A change the policy cannot narrow gets the 'bounded' profile: every
+backend and database gate of full, with only the browser specs it affects.
+"""
+
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+
+SMOKE = 'e2e/tests/health-smoke.spec.ts'
+
+
+def present(specs):
+    """Keep the specs that exist; a browser job with none would run the whole suite."""
+    kept = sorted(spec for spec in specs if (Path('gocrm-ui') / spec).is_file())
+    if SMOKE not in kept:
+        raise SystemExit(f'Cannot bound this run: {SMOKE} is missing')
+    return kept
+
+
+def bounded(selected, selector):
+    """Replace a full selection, keeping its reasons so the narrower run is visible."""
+    spec = importlib.util.spec_from_file_location('trusted_validation', selector)
+    policy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    wanted = set(selected.get('affected_specs') or
+                 (f'e2e/tests/{name}.spec.ts' for feature in selected.get('features', [])
+                  for name in policy.FEATURES[feature]))
+    return {**selected, 'profile': 'bounded', 'specs': present(wanted | {SMOKE}),
+            'reasons': [*selected['reasons'], 'bounded: the full suite runs only for a release']}
 
 
 def git(*args, check=True):
@@ -50,24 +78,26 @@ def main():
                  check=False) if available else None
     if source is None or source.returncode != 0:
         selected = {
-            "profile": "full", "specs": [], "base": base, "head": head,
-            "reasons": ["no trusted selector/change base; full validation required"],
+            "profile": "full" if full else "bounded", "base": base, "head": head,
+            "specs": [] if full else present({SMOKE}),
+            "reasons": ["no trusted selector/change base" + ("" if full else "; smoke only")],
         }
-        plan_file.write_text(json.dumps(selected, indent=2) + "\n")
-        with output.open("a") as stream:
-            stream.write("profile=full\nspecs=\n")
     else:
         with tempfile.TemporaryDirectory() as folder:
             trusted = Path(folder) / "validation.py"
             trusted.write_text(source.stdout)
             args = ["python3", str(trusted), "--base", base, "--head", head,
-                    "--output", str(plan_file), "--github-output", str(output)]
+                    "--output", str(plan_file)]
             if full:
                 args.append("--full")
             subprocess.run(args, check=True)
-    selected = json.loads(plan_file.read_text())
+            selected = json.loads(plan_file.read_text())
+            if selected['profile'] == 'full' and not full:
+                selected = bounded(selected, trusted)
     selected.update(policy_commit=policy_ref, policy_origin=policy_origin)
     plan_file.write_text(json.dumps(selected, indent=2) + '\n')
+    with output.open('a') as stream:
+        stream.write(f"profile={selected['profile']}\nspecs={' '.join(selected['specs'])}\n")
     print(json.dumps(selected, indent=2))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

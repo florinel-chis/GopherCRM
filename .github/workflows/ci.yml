@@ -8,13 +8,9 @@ on:
         required: true
       full:
         type: boolean
-        default: true
+        default: false
+  # A manual run cannot ask for the complete browser suite: only a release can.
   workflow_dispatch:
-    inputs:
-      full:
-        description: Run the complete browser matrix
-        type: boolean
-        default: true
   pull_request:
   # The merge queue runs the suite on its temporary branch before merging, so
   # a pull request that went green on a stale base still has to pass on top
@@ -96,7 +92,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       db:
-        image: ${{ (needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && 'mysql:8.0' || '' }}
+        image: ${{ (needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded') && 'mysql:8.0' || '' }}
         env:
           MYSQL_ROOT_PASSWORD: transaction-test-password
         ports: ['3306:3306']
@@ -152,12 +148,12 @@ jobs:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
         run: python3 scripts/ci/check-go.py transaction
       - name: Auth persistence and full validation transaction boundaries
-        if: needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'auth-persistence'
+        if: needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded' || needs.plan.outputs.profile == 'auth-persistence'
         env:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
           VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
         run: |
-          if [ "$VALIDATION_PROFILE" = full ]; then
+          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
             python3 scripts/ci/check-go.py transaction
             # make verify-backend runs without TEST_MYSQL_DSN, so the auth MySQL
             # roots would otherwise skip on every general PR (#230).
@@ -291,12 +287,12 @@ jobs:
           TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
         run: python3 scripts/ci/check-auth.py --persistence
       - name: Transaction boundaries on MariaDB
-        if: (needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full') && matrix.db.id == 'mariadb1011'
+        if: (needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded') && matrix.db.id == 'mariadb1011'
         env:
           TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
           VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
         run: |
-          if [ "$VALIDATION_PROFILE" = full ]; then
+          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
             python3 scripts/ci/check-go.py transaction
           else
             python3 scripts/ci/check-go.py transaction --storage-only
