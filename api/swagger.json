@@ -15716,7 +15716,7 @@
                         }
                     },
                     "401": {
-                        "description": "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')",
+                        "description": "UNAUTHORIZED: the Authorization header is missing or is neither Bearer \u003cjwt\u003e nor ApiKey \u003ckey\u003e ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')",
                         "schema": {
                             "allOf": [
                                 {
