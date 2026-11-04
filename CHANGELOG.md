@@ -767,6 +767,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`PUT /users/me` no longer changes a password (#254).** It used to set a new password without
+  the current one and without revoking any refresh token. A body that carries `password`,
+  `current_password` or `new_password`, with any value (`null` included) and in any letter case,
+  is now refused with 400 `PASSWORD_FIELD_NOT_ACCEPTED` and writes nothing, not even the profile
+  fields beside it, and a correct current password does not open the route. A body that also fails
+  binding keeps its `VALIDATION_ERROR` or `BAD_REQUEST` answer. **API clients that set a password
+  on this route must move to `POST /auth/change-password`**, the only authenticated path, which
+  verifies the current password and revokes refresh tokens. `UserService.Update` ignores a
+  `password` key, and `PUT /users/{id}` still ignores one in its body. Profile updates without a
+  password field behave as before.
+
 - **SMTP delivery is bounded and validates its headers (#113).** The SMTP mailer no longer calls
   `smtp.SendMail`, which had no timeout: a relay that stalled at the greeting or any later command
   held the calling request or worker indefinitely. Each delivery now dials within 10 s and runs
