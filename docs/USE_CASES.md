@@ -53,7 +53,7 @@ These caveats apply to every recipe that takes in leads through forms.
   or its version (`FormSubmission`, `internal/models/form.go:382`). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept forever.** They hold visitor values and IP addresses,
-  and they sit outside lead erasure (`docs/DEVELOPMENT.md:901`; `docs/ROADMAP.md`, "Forms module —
+  and they sit outside lead erasure (`docs/DEVELOPMENT.md:907`; `docs/ROADMAP.md`, "Forms module —
   deliberate v1 cuts"). Decide on a purge policy and run it by hand until #217 (retention purge)
   and #214 (erasure of unlinked submissions) land.
 - **Behind a reverse proxy or CDN, set `TRUSTED_PROXIES`.** The rate limiter keys on the client
@@ -181,7 +181,7 @@ values. One shared installation does not work for several clients, for two reaso
   (`DetectMentions`, `internal/aeo/analysis.go:42`);
 - client reports built with `npm run screenshots`: the AEO screenshot suite serves fixed fictional
   fixtures, not your data (`gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15`);
-- "assign from the lead list" (#185).
+- "assign from the lead list": no screen offers it.
 
 ## 2. Consultancy or professional services
 
@@ -340,7 +340,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:898`). Whether complaint text should be scrubbed is #214.
+  (`docs/DEVELOPMENT.md:904`). Whether complaint text should be scrubbed is #214.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
 - No SLA fields and no attachments on tickets: #243.
@@ -402,11 +402,11 @@ planning around an issue number.
 
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
-| Lead reassignment from the lead list (the route exists, no screen offers it) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137`; `internal/handler/routes.go:25-36` | #185 |
+| Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1073-1135` | #220 |
 | Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1284-1294` | #216 |
 | Retention purge of spam and unconfirmed submissions | 1, 3, 6 | `docs/ROADMAP.md`, "Forms module — deliberate v1 cuts" | #217 |
-| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:898,901` | #214 |
+| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:904,907` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | The example JWT secret passes the startup check | all | `.env.example`; `internal/config/config.go` | #210 |

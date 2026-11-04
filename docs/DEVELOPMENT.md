@@ -163,11 +163,12 @@ across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCom
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
 be committed).
 
-**Request context (#107)** — lead conversion (including the handler's ownership read), the public
-form submission and confirmation, and the three routed bulk status updates run on the HTTP
-request's context: the handler passes `c.Request.Context()` to the service, the service hands it
-to `WithTransaction` / `WithTransactionAndRetry`, and the reads and writes it issues outside the
-managed callback are bound to it as well — the lead and published-form reads that precede the
+**Request context (#107)** — lead conversion (including the handler's ownership read), lead
+assignment (`LeadService.Assign`, #255), the public form submission and confirmation, and the
+three routed bulk status updates run on the HTTP request's context: the handler passes
+`c.Request.Context()` to the service, the service hands it to `WithTransaction` /
+`WithTransactionAndRetry`, and the reads and writes it issues outside the managed callback are
+bound to it as well — the lead and published-form reads that precede the
 transaction and the spam row go through `txManager.DB(ctx)` (a handle bound to the context that
 reuses the active transaction when the context carries one), and the bulk history row is written
 with `BulkOperationRepository.Create(ctx, ...)`. The reCAPTCHA call uses the same context. A request
@@ -188,11 +189,14 @@ reading or writing anything: they send mail or commit an audit row after their o
 the conversion settings are read on the root handle, so running inside an enclosing transaction
 would either announce work that transaction could still roll back or need a second connection
 (which deadlocks SQLite's single-connection pool). No production caller nests them; the handlers
-are their only callers.
+are their only callers. `LeadService.Assign` also runs on the request context but is not one of
+these roots: it sends no mail and commits no audit row after its commit, so it does not refuse an
+enclosing transaction; called inside one, it nests under a savepoint.
 
-Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every other
-service, which still passes `context.Background()`. AEO runs deliberately keep the service-owned
-lifecycle context and never take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
+Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every service
+method not named above (`LeadService.Create` and `Update` among them), which still passes
+`context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
+take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
 (one-connection pool; cancelled while the first read, the transaction or the spam write waits,
 cancelled before the call, and the bulk outcome recorded `failed` or left `pending` when its own
 bounded write cannot get the connection), `TestRequestCancellationMySQLLockWait` (queued behind
@@ -563,7 +567,9 @@ RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNo
 `TestLeadOwnerRefusalLogsOmitPersonalData` (`test/integration/lead_owner_validation_test.go`);
 `TestLeadOwnerCheckRefusedWhenUnwired`, `TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL` and
 `TestLeadAssignIsAtomicSQLite` (`internal/service/lead_owner_validation_test.go`);
-`TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`).
+`TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`). CI limit: the MySQL roots above are
+discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction and full
+profiles (full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
 
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in

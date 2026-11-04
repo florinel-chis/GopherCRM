@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-10-31). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-04). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
