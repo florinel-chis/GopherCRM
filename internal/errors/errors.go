@@ -29,6 +29,17 @@ var (
 	ErrCompletedTaskModify      = errors.New("cannot change status of completed task")
 	ErrTaskLeadCustomerConflict = errors.New("task cannot be linked to both lead and customer")
 
+	// ErrInvalidLeadOwner refuses a lead owner that is unknown, deactivated,
+	// erased or neither an admin nor a sales user. The handlers answer 400
+	// INVALID_REFERENCE with one message for every reason; the wrapped text
+	// carries the ids and the reason only, never a name or an address.
+	ErrInvalidLeadOwner = errors.New("invalid lead owner")
+	// ErrLeadOwnerCheckUnavailable refuses a lead write whose owner cannot be
+	// checked because the service was built without a user repository (or,
+	// for an assignment, without a transaction manager). Nothing is written;
+	// it is a wiring fault, answered with the generic 500.
+	ErrLeadOwnerCheckUnavailable = errors.New("lead owner check is unavailable")
+
 	// ErrValidation is the generic validation sentinel: the request was
 	// understood but describes something the domain refuses. Services wrap
 	// their own validation failures in it — including the typed ones, such as

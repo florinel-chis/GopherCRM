@@ -20,7 +20,11 @@ type leadService struct {
 	leadRepo     repository.LeadRepository
 	customerRepo repository.CustomerRepository
 	companyRepo  repository.CompanyRepository
-	txManager    *utils.TransactionManager
+	// userRepo checks the owner a lead write names. Nil refuses those writes
+	// with apperrors.ErrLeadOwnerCheckUnavailable, so a service wired without
+	// it can never skip the check.
+	userRepo  repository.UserRepository
+	txManager *utils.TransactionManager
 	// automation records the outbox events of every committed lead write
 	// (issue #164). Nil means no automation: the writes run as before.
 	automation repository.AutomationRepository
@@ -42,17 +46,18 @@ func WithLeadConversionRules(config ConfigurationService) LeadServiceOption {
 // dependencies.
 type LeadServiceOption func(*leadService)
 
-// WithLeadAutomationEvents makes Create, Update and ConvertToCustomer record
-// their automation events inside the transaction that commits the write.
+// WithLeadAutomationEvents makes Create, Update, Assign and ConvertToCustomer
+// record their automation events inside the transaction that commits the write.
 func WithLeadAutomationEvents(repo repository.AutomationRepository) LeadServiceOption {
 	return func(s *leadService) { s.automation = repo }
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, companyRepo repository.CompanyRepository, txManager *utils.TransactionManager, opts ...LeadServiceOption) LeadService {
+func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, companyRepo repository.CompanyRepository, userRepo repository.UserRepository, txManager *utils.TransactionManager, opts ...LeadServiceOption) LeadService {
 	s := &leadService{
 		leadRepo:     leadRepo,
 		customerRepo: customerRepo,
 		companyRepo:  companyRepo,
+		userRepo:     userRepo,
 		txManager:    txManager,
 	}
 	for _, opt := range opts {
@@ -61,21 +66,85 @@ func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.
 	return s
 }
 
-// writeWithEvents runs write against the lead repository inside one
-// transaction together with the automation events it produces, so an event
-// is never recorded for a write that rolled back. Without automation (or
-// without a transaction manager) the write runs directly, as it always did.
-func (s *leadService) writeWithEvents(write func(leads repository.LeadRepository, events repository.AutomationRepository) error) error {
-	if s.automation == nil || s.txManager == nil {
-		return write(s.leadRepo, nil)
+// createInTransaction runs write inside one transaction together with the
+// owner check and the automation events it produces, so an event is never
+// recorded for a write that rolled back and the insert follows a locking read
+// of its owner. Without a transaction manager the write runs directly, with a
+// plain owner read and no events.
+func (s *leadService) createInTransaction(write func(leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository) error) error {
+	if s.txManager == nil {
+		return write(s.leadRepo, s.userRepo, nil)
 	}
 	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
 		}
-		return write(s.leadRepo.WithTx(tx), s.automation.WithTx(tx))
+		return write(s.leadRepo.WithTx(tx), s.lockedUserRead(tx), automationTx(s.automation, tx))
 	})
+}
+
+// The reason an owner was refused, as logged. It tells an operator what to
+// look at; the API answer is the same for all three.
+const (
+	leadOwnerRefusalUnknown  = "unknown"
+	leadOwnerRefusalInactive = "inactive"
+	leadOwnerRefusalRole     = "role"
+)
+
+// checkLeadOwner refuses an owner that is not a live, active admin or sales
+// user with apperrors.ErrInvalidLeadOwner. leadID is 0 on a create. An erased
+// user's row still satisfies the foreign key but no scoped read finds it, so it
+// counts as unknown. A lookup that fails for any other reason is returned as it
+// is: a database fault is not a bad reference.
+//
+// The refusal logs and returns ids and the reason only: the user read here has
+// a name and an address that must reach neither.
+func checkLeadOwner(logger *logrus.Entry, users repository.UserRepository, leadID, ownerID uint) error {
+	if users == nil {
+		logger.Error("Lead owner check is unavailable: no user repository is wired")
+		return apperrors.ErrLeadOwnerCheckUnavailable
+	}
+	if ownerID == 0 {
+		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalUnknown)
+	}
+	owner, err := users.GetByID(ownerID)
+	if err != nil {
+		if isNotFound(err) {
+			return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalUnknown)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to look up lead owner")
+		return err
+	}
+	if !owner.IsActive {
+		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalInactive)
+	}
+	if owner.Role != models.RoleAdmin && owner.Role != models.RoleSales {
+		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalRole)
+	}
+	return nil
+}
+
+func refuseLeadOwner(logger *logrus.Entry, leadID, ownerID uint, reason string) error {
+	entry := logger.WithFields(logrus.Fields{"owner_id": ownerID, "reason": reason})
+	if leadID != 0 {
+		entry = entry.WithField("lead_id", leadID)
+	}
+	entry.Warn("Lead owner refused")
+	return fmt.Errorf("lead owner %d refused (%s): %w", ownerID, reason, apperrors.ErrInvalidLeadOwner)
+}
+
+// lockedUserRead returns a user repository bound to tx whose reads take a row
+// lock, or nil when no user repository is wired. The lock is what makes the
+// read current on MySQL: a plain read inside REPEATABLE READ answers from the
+// snapshot of the transaction's first plain read (a company check, for one), so
+// a deactivation committed after it would still look active. It does not stop a
+// later deactivation; a shared protocol with user writes is #183.
+func (s *leadService) lockedUserRead(tx *gorm.DB) repository.UserRepository {
+	if s.userRepo == nil {
+		return nil
+	}
+	return s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{}))
 }
 
 // checkCompanyLink rejects a company_id that matches no live company with
@@ -111,14 +180,20 @@ func (s *leadService) Create(lead *models.Lead) error {
 		return err
 	}
 
-	err := s.writeWithEvents(func(leads repository.LeadRepository, events repository.AutomationRepository) error {
+	err := s.createInTransaction(func(leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository) error {
+		if err := checkLeadOwner(logger, users, 0, lead.OwnerID); err != nil {
+			return err
+		}
 		if err := leads.Create(lead); err != nil {
 			return err
 		}
 		return automationLeadCreated(events, lead.ID, models.AutomationOriginUser, nil)
 	})
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to create lead")
+		// A refused owner was logged, as a warning, by the check.
+		if !errors.Is(err, apperrors.ErrInvalidLeadOwner) {
+			logger.WithError(utils.LogError(err)).Error("Failed to create lead")
+		}
 		return err
 	}
 
@@ -213,9 +288,11 @@ func (s *leadService) lockedLeadRead(tx *gorm.DB) repository.LeadRepository {
 // Update applies a partial update. The lead is re-read with a row lock inside
 // the transaction that writes it, so the whole-row save never carries back a
 // stale copy of what a concurrent write (a conversion setting status and
-// customer_id) committed in between. Only the lead row is locked: a new
-// company_id is checked with a plain read, so the update takes no company
-// row lock beyond what the save itself took before.
+// customer_id) committed in between. A new company_id is checked with a plain
+// read, so the update takes no company row lock beyond what the save itself
+// took before. A changed owner_id is checked with a locking read of the user
+// (see lockedUserRead); an unchanged one is not checked, so a lead whose owner
+// has since left stays editable.
 //
 // `converted` is not a status an update can set: a lead becomes converted
 // only through ConvertToCustomer, which creates the customer and enforces the
@@ -225,7 +302,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Update")
 
 	if s.txManager == nil {
-		return s.applyUpdate(logger, id, updates, s.leadRepo, s.leadRepo, s.companyRepo, nil)
+		return s.applyUpdate(logger, id, updates, s.leadRepo, s.leadRepo, s.companyRepo, s.userRepo, nil)
 	}
 	var updated *models.Lead
 	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
@@ -234,7 +311,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 			return utils.ErrNoTransaction
 		}
 		var err error
-		updated, err = s.applyUpdate(logger, id, updates, s.lockedLeadRead(tx), s.leadRepo.WithTx(tx), s.companyRepo.WithTx(tx), automationTx(s.automation, tx))
+		updated, err = s.applyUpdate(logger, id, updates, s.lockedLeadRead(tx), s.leadRepo.WithTx(tx), s.companyRepo.WithTx(tx), s.lockedUserRead(tx), automationTx(s.automation, tx))
 		return err
 	})
 	if err != nil {
@@ -244,7 +321,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 	return updated, nil
 }
 
-func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[string]interface{}, reader, writer repository.LeadRepository, companies repository.CompanyRepository, events repository.AutomationRepository) (*models.Lead, error) {
+func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[string]interface{}, reader, writer repository.LeadRepository, companies repository.CompanyRepository, users repository.UserRepository, events repository.AutomationRepository) (*models.Lead, error) {
 	lead, err := reader.GetByID(id)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Lead not found")
@@ -290,9 +367,6 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 	if notes, ok := updates["notes"].(string); ok {
 		lead.Notes = notes
 	}
-	if ownerID, ok := updates["owner_id"].(uint); ok {
-		lead.OwnerID = ownerID
-	}
 	// company_id is a *uint: a nil pointer clears the link, a non-nil one must
 	// name a live company. The key being absent leaves the link alone.
 	if raw, ok := updates["company_id"]; ok {
@@ -304,6 +378,12 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 		lead.CompanyID = companyID
 		lead.CompanyRecord = nil
 	}
+	if ownerID, ok := updates["owner_id"].(uint); ok && ownerID != lead.OwnerID {
+		if err := checkLeadOwner(logger, users, id, ownerID); err != nil {
+			return nil, err
+		}
+		lead.OwnerID = ownerID
+	}
 
 	if err := writer.Update(lead); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
@@ -313,6 +393,67 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 		return nil, err
 	}
 	return lead, nil
+}
+
+// Assign changes a lead's owner in one transaction: a locking read of the lead,
+// the visibility policy on that row (so a sales user who just handed the lead
+// over is refused), a locking read of the new owner, the write and its
+// lead_updated event. Unlike an update, it always checks the owner it names,
+// even the lead's current one: an assignment states that this user should own
+// the lead now. A converted lead can be assigned; status and customer_id stay
+// as they were.
+//
+// There is no non-transactional path: without a transaction manager or a user
+// repository it returns apperrors.ErrLeadOwnerCheckUnavailable and reads
+// nothing.
+func (s *leadService) Assign(ctx context.Context, leadID, ownerID uint, actor LeadViewer) (*models.Lead, error) {
+	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", leadID), "LeadService", "Assign")
+
+	if s.userRepo == nil || s.txManager == nil {
+		logger.Error("Lead assignment is unavailable: no user repository or transaction manager is wired")
+		return nil, apperrors.ErrLeadOwnerCheckUnavailable
+	}
+
+	var assigned *models.Lead
+	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		lead, err := s.lockedLeadRead(tx).GetByID(leadID)
+		if err != nil {
+			return err
+		}
+		if !CanViewLead(actor, lead) {
+			return fmt.Errorf("lead %d is not visible to user %d: %w", leadID, actor.UserID, apperrors.ErrForbidden)
+		}
+		if err := checkLeadOwner(logger, s.lockedUserRead(tx), leadID, ownerID); err != nil {
+			return err
+		}
+		lead.OwnerID = ownerID
+		if err := s.leadRepo.WithTx(tx).Update(lead); err != nil {
+			return err
+		}
+		if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, lead.Status, lead.Status, models.AutomationOriginUser, nil); err != nil {
+			return err
+		}
+		assigned = lead
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, apperrors.ErrInvalidLeadOwner):
+			// Logged, as a warning, by the check.
+		case errors.Is(err, apperrors.ErrForbidden), isNotFound(err):
+			logger.WithError(utils.LogError(err)).Warn("Lead assignment refused")
+		default:
+			logger.WithError(utils.LogError(err)).Error("Failed to assign lead")
+		}
+		return nil, err
+	}
+
+	logger.WithField("owner_id", ownerID).Info("Lead assigned successfully")
+	return assigned, nil
 }
 
 // Delete erases the lead's personal data and then soft-deletes the row. It is a

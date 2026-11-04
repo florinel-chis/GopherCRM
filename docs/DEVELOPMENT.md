@@ -163,11 +163,12 @@ across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCom
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
 be committed).
 
-**Request context (#107)** — lead conversion (including the handler's ownership read), the public
-form submission and confirmation, and the three routed bulk status updates run on the HTTP
-request's context: the handler passes `c.Request.Context()` to the service, the service hands it
-to `WithTransaction` / `WithTransactionAndRetry`, and the reads and writes it issues outside the
-managed callback are bound to it as well — the lead and published-form reads that precede the
+**Request context (#107)** — lead conversion (including the handler's ownership read), lead
+assignment (`LeadService.Assign`, #255), the public form submission and confirmation, and the
+three routed bulk status updates run on the HTTP request's context: the handler passes
+`c.Request.Context()` to the service, the service hands it to `WithTransaction` /
+`WithTransactionAndRetry`, and the reads and writes it issues outside the managed callback are
+bound to it as well — the lead and published-form reads that precede the
 transaction and the spam row go through `txManager.DB(ctx)` (a handle bound to the context that
 reuses the active transaction when the context carries one), and the bulk history row is written
 with `BulkOperationRepository.Create(ctx, ...)`. The reCAPTCHA call uses the same context. A request
@@ -188,11 +189,14 @@ reading or writing anything: they send mail or commit an audit row after their o
 the conversion settings are read on the root handle, so running inside an enclosing transaction
 would either announce work that transaction could still roll back or need a second connection
 (which deadlocks SQLite's single-connection pool). No production caller nests them; the handlers
-are their only callers.
+are their only callers. `LeadService.Assign` also runs on the request context but is not one of
+these roots: it sends no mail and commits no audit row after its commit, so it does not refuse an
+enclosing transaction; called inside one, it nests under a savepoint.
 
-Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every other
-service, which still passes `context.Background()`. AEO runs deliberately keep the service-owned
-lifecycle context and never take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
+Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every service
+method not named above (`LeadService.Create` and `Update` among them), which still passes
+`context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
+take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
 (one-connection pool; cancelled while the first read, the transaction or the spam write waits,
 cancelled before the call, and the bulk outcome recorded `failed` or left `pending` when its own
 bounded write cannot get the connection), `TestRequestCancellationMySQLLockWait` (queued behind
@@ -549,6 +553,36 @@ RateLimit.
 non-positive and unparseable values, and **never returns `limit=0`** — callers divide by it when
 building pagination metadata, and `?limit=0` used to panic that arithmetic and turn every list
 endpoint into a 500. Do not hand-roll query parsing in a handler; call the helper.
+
+**Lead owners (#255)** — `POST /leads`, `PUT /leads/{id}` and `POST /leads/{id}/assign` share one
+check, `checkLeadOwner` in `internal/service/lead_service.go`: the owner must be a live, active admin
+or sales user, otherwise `apperrors.ErrInvalidLeadOwner`, which the handlers answer with 400
+`INVALID_REFERENCE`, `details.field` naming the body field and one message per route whatever the
+reason, so a caller cannot probe which ids exist or what they hold. The reason (`unknown`, `inactive`,
+`role`) goes to the log with the ids and nothing else. An erased user's row still satisfies the
+foreign key, but no scoped read finds it, so it counts as unknown; a lookup that fails for a database
+reason stays a 500. The read runs inside the writing transaction and takes a row lock (the user
+repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})`): a plain read in MySQL's
+REPEATABLE READ transaction would answer from the snapshot of an earlier plain read, such as the
+company check, and miss a deactivation committed since. That makes the check current, not permanent:
+a deactivation after it can still leave an inactive owner, because lead writes and user deactivation
+share no lock protocol yet (#183). An update checks only an owner that differs from the stored one,
+so a lead whose owner has left stays editable; an assignment always checks the user it names. The
+assign route applies `service.CanViewLead` to the locked row before the owner check, so visibility
+answers first and a sales user who hands a lead over loses it at once. A service built without a user
+repository returns `ErrLeadOwnerCheckUnavailable` from these writes instead of skipping the check,
+and `Assign` also refuses without a transaction manager. Public form submissions
+(`form.DefaultOwnerID`) and the automation `assign_owner` step write `owner_id` under their own
+rules. Regression roots: `TestLeadOwner{Unknown,Deactivated,Erased,WrongRole}Rejected{SQLite,MySQL}`,
+`TestLeadOwnerValidAccepted{SQLite,MySQL}`, `TestLeadAssign{Permissions,SalesHandOff,
+RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNotRevalidatedSQLite`,
+`TestLeadOwnerRoleRulesPrecedeOwnerCheckSQLite`, `TestLeadOwnerLookupFailureIsServerErrorSQLite` and
+`TestLeadOwnerRefusalLogsOmitPersonalData` (`test/integration/lead_owner_validation_test.go`);
+`TestLeadOwnerCheckRefusedWhenUnwired`, `TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL` and
+`TestLeadAssignIsAtomicSQLite` (`internal/service/lead_owner_validation_test.go`);
+`TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`). CI limit: the MySQL roots above are
+discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded and
+full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
 
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
@@ -1073,13 +1107,13 @@ automation_engine.go` executes rules, `automation_runtime.go` owns the worker go
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
-  ConvertToCustomer`, the form submission path, the bulk lead status path and
+  Assign/ConvertToCustomer`, the form submission path, the bulk lead status path and
   `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
   option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
   transaction-bound repository, so a write that rolls back records nothing and a refused bulk
   status batch records nothing for any of its leads. A create records `*_created`; an update `*_updated` plus
   `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
-  the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
+  a lead assign `lead_updated` alone; the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
   types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a
   name or an address.
 - **Three conditional claims.** The dispatcher claims an event with `UPDATE … SET processed_at

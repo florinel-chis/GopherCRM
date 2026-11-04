@@ -26,7 +26,7 @@ func TestCustomerWebsiteValidation(t *testing.T) {
 			s := NewCustomerService(nil, nil, nil)
 			assert.ErrorIs(t, s.Create(customer), apperrors.ErrValidation)
 			assert.ErrorIs(t, s.Update(customer), apperrors.ErrValidation)
-			leadService := NewLeadService(nil, nil, nil, nil)
+			leadService := NewLeadService(nil, nil, nil, nil, nil)
 			_, err := leadService.ConvertToCustomer(context.Background(), 1, customer)
 			assert.ErrorIs(t, err, apperrors.ErrValidation)
 		})

@@ -157,8 +157,6 @@ included. Found by reading the code path unless noted.
   `POST /customers/{id}/assign` map every lookup error to not found.
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
-- **Lead `owner_id` is not checked** on create (admin) or update: an unknown id fails on the
-  foreign key as a 500, and an erased user's id is accepted.
 - **Customer update writes the whole row (`Save`)** — a request racing an erasure can write the
   stale personal data back; the user repository moved to targeted updates for the same reason.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

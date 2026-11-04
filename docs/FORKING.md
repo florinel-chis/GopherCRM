@@ -38,7 +38,7 @@ wiring is in `setupDependencies` (`cmd/main.go:182`).
 | Forms | admin `/forms` read admin+sales+support; public `/forms/public/*` | spam layers in fixed order; double opt-in claim, lead write and submission update in one transaction | `internal/service/form_service_test.go`, `form_confirmation_regression_test.go`, `internal/handler/form_public_handler_test.go` |
 | Follow-up automation | rules admin; runs admin+sales | outbox event per lead/deal write; conditional run advance; boot reconciliation | `internal/service/automation_runtime_test.go`, `cmd/automation_runtime_test.go` |
 | AEO (answer-engine tracking) | admin+sales+support; run and generate admin+sales | keys encrypted at rest; environment-only egress allowlist | `internal/service/aeo_service_test.go`, `aeo_egress_boundary_test.go`, `docs/AEO_SECURITY.md` |
-| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:516-526`) | personal fields of that identity overwritten, then soft-deleted, in one transaction. Ticket and task deletes are plain soft deletes (`internal/repository/ticket_repository.go:47`, `task_repository.go:53`), so text that names a person stays; that and unlinked form submissions are #214 | `internal/repository/identity_erasure_test.go`, `automation_erasure_test.go` |
+| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:737-745`) | personal fields of that identity overwritten, then soft-deleted, in one transaction. Ticket and task deletes are plain soft deletes (`internal/repository/ticket_repository.go:47`, `task_repository.go:53`), so text that names a person stays; that and unlinked form submissions are #214 | `internal/repository/identity_erasure_test.go`, `automation_erasure_test.go` |
 | Dashboard | admin+sales+support | activity lists scoped inside the query | `internal/repository/dashboard_queries_test.go` |
 | Configuration | `/configurations/ui` any user; the rest admin | seeding never overwrites a stored value; sensitive values encrypted and masked | `internal/repository/configuration_repository_test.go`, `internal/service/configuration_service_test.go` |
 
@@ -78,7 +78,7 @@ without `--limit`, `gh` lists at most 30):
   (#95–#121) are closed too.
 - #181–#187 — review follow-ups, among them #183 (a shared concurrency protocol for erasure,
   conversion and authentication), #184 (cross-tab token refresh) and #185
-  (`POST /leads/:id/assign` is called by the UI but not routed).
+  (`POST /leads/:id/assign`, routed now; no screen offers it yet).
 - #196 — bulk status operations whose outcome write failed stay stuck.
 - #197–#209 — improvements to the remediation runner (development tooling in
   `automation/langflow/`). They do not affect the application.

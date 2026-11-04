@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-10-31). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-04). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -23,11 +23,11 @@ blocked.
 |---|---|---|---|---|---|---|---|---|
 | [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 53 | 17 | 21 | 15 | 32 | 19 | 2 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
-| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, conversion, bulk status | 67 | 15 | 37 | 15 | 31 | 28 | 8 |
+| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, conversion, bulk status, owner validation and assignment | 68 | 16 | 37 | 15 | 33 | 27 | 8 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 45 | 16 | 16 | 13 | 17 | 19 | 9 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets | 49 | 21 | 19 | 9 | 6 | 40 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 48 | 13 | 19 | 16 | 10 | 28 | 10 |
-| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 14 | 25 | 1 |
+| [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 15 | 25 | 0 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 3 | 14 | 17 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
@@ -36,7 +36,7 @@ blocked.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 34 | 18 | 13 | 3 | 16 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **640** | **211** | **281** | **148** | **240** | **316** | **84** |
+| **Total** | | **641** | **212** | **281** | **148** | **243** | **315** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

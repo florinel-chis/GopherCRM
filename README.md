@@ -598,11 +598,12 @@ authentication and live on the moderate tier:
 - `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`;
   `external_id` returns the leads with that exact external id the caller may see, overriding the
   others; hidden leads are left out rather than refused)
-- `POST /api/v1/leads` - Create new lead
+- `POST /api/v1/leads` - Create new lead (the owner must be an active admin or sales user)
 - `GET /api/v1/leads/:id` - Get specific lead
-- `PUT /api/v1/leads/:id` - Update lead
+- `PUT /api/v1/leads/:id` - Update lead (a changed owner must be an active admin or sales user; admin only)
 - `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into and its login; converted leads admin-only)
 - `POST /api/v1/leads/:id/convert` - Convert lead to customer
+- `POST /api/v1/leads/:id/assign` - Assign lead to an active admin or sales user *(sales may only hand over leads they own)*
 - `POST /api/v1/leads/bulk/status` - Set the status of up to 100 leads at once, all-or-nothing
   *(sales may only touch leads they own)*
 

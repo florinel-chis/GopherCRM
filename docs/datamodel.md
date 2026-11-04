@@ -59,7 +59,7 @@ Represents potential customers in the sales pipeline.
 | classification | string | No | 'unclassified' | max 20, indexed | `unclassified`, `test`, `spam`, `lead`, `hot_lead` |
 | external_id | string | No | - | max 255, indexed, not unique | Identifier from an external source |
 | notes | text | No | - | - | Additional notes |
-| owner_id | uint | Yes | - | FK to users | Assigned sales user |
+| owner_id | uint | Yes | - | FK to users; the API checks a new value is an active admin or sales user | Assigned sales user |
 | customer_id | uint | No | - | FK to customers | ID when converted to customer |
 | company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
 

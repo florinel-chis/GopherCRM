@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
+  `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
+  neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body
+  field, one message per route), writing nothing and recording no event; an unknown id used to fail
+  on the foreign key as a 500 and an erased user's id was accepted. An update that leaves the owner
+  alone, or re-sends it, is not checked, so a lead whose owner has left stays editable; an assignment
+  always checks the user it names. The assign route takes the `{user_id}` body the frontend client
+  already sends and follows the lead visibility policy on the locked row: an admin on any lead, a
+  sales user on its own, which it loses at once when it hands the lead over. The check is a locking
+  read of the user, so a deactivation committed earlier is seen on MySQL too. `NewLeadService` now
+  takes the user repository; a service built without it refuses these writes
+  (`ErrLeadOwnerCheckUnavailable`) rather than skipping the check. Public form default owners, the
+  automation `assign_owner` step and leads whose owner already left are unchanged.
+
 - **Lead lookup by external id.** `GET /leads?external_id=` returns the live leads whose
   `external_id` equals the value, in the usual list shape (ascending id, owner loaded, `total` is
   their number), so integrations can correlate their records with CRM leads. It takes precedence
