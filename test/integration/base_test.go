@@ -130,7 +130,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	userService := service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(suite.db)
 	companyRepo := repository.NewCompanyRepository(suite.db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	configRepo := repository.NewConfigurationRepository(suite.db)

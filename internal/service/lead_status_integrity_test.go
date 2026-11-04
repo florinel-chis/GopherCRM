@@ -205,7 +205,8 @@ func runConversionStatusRace(t *testing.T, db *gorm.DB) {
 	txManager := utils.NewTransactionManager(db)
 	customers := repository.NewCustomerRepository(db)
 	companies := repository.NewCompanyRepository(db)
-	plain := NewLeadService(env.leads, customers, companies, txManager, WithLeadConversionRules(env.config))
+	users := repository.NewUserRepository(db)
+	plain := NewLeadService(env.leads, customers, companies, users, txManager, WithLeadConversionRules(env.config))
 
 	lead := env.newLead(models.LeadStatusQualified, nil)
 	var rival *competitor
@@ -216,7 +217,7 @@ func runConversionStatusRace(t *testing.T, db *gorm.DB) {
 			return err
 		})
 	}}
-	converting := NewLeadService(hookedLeadRepo{LeadRepository: env.leads, hook: hook}, customers, companies, txManager,
+	converting := NewLeadService(hookedLeadRepo{LeadRepository: env.leads, hook: hook}, customers, companies, users, txManager,
 		WithLeadConversionRules(env.config))
 
 	customer, convertErr := converting.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})

@@ -78,7 +78,7 @@ without `--limit`, `gh` lists at most 30):
   (#95–#121) are closed too.
 - #181–#187 — review follow-ups, among them #183 (a shared concurrency protocol for erasure,
   conversion and authentication), #184 (cross-tab token refresh) and #185
-  (`POST /leads/:id/assign` is called by the UI but not routed).
+  (`POST /leads/:id/assign`, routed now; no screen offers it yet).
 - #196 — bulk status operations whose outcome write failed stay stuck.
 - #197–#209 — improvements to the remediation runner (development tooling in
   `automation/langflow/`). They do not affect the application.

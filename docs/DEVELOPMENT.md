@@ -537,6 +537,34 @@ non-positive and unparseable values, and **never returns `limit=0`** — callers
 building pagination metadata, and `?limit=0` used to panic that arithmetic and turn every list
 endpoint into a 500. Do not hand-roll query parsing in a handler; call the helper.
 
+**Lead owners (#255)** — `POST /leads`, `PUT /leads/{id}` and `POST /leads/{id}/assign` share one
+check, `checkLeadOwner` in `internal/service/lead_service.go`: the owner must be a live, active admin
+or sales user, otherwise `apperrors.ErrInvalidLeadOwner`, which the handlers answer with 400
+`INVALID_REFERENCE`, `details.field` naming the body field and one message per route whatever the
+reason, so a caller cannot probe which ids exist or what they hold. The reason (`unknown`, `inactive`,
+`role`) goes to the log with the ids and nothing else. An erased user's row still satisfies the
+foreign key, but no scoped read finds it, so it counts as unknown; a lookup that fails for a database
+reason stays a 500. The read runs inside the writing transaction and takes a row lock (the user
+repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})`): a plain read in MySQL's
+REPEATABLE READ transaction would answer from the snapshot of an earlier plain read, such as the
+company check, and miss a deactivation committed since. That makes the check current, not permanent:
+a deactivation after it can still leave an inactive owner, because lead writes and user deactivation
+share no lock protocol yet (#183). An update checks only an owner that differs from the stored one,
+so a lead whose owner has left stays editable; an assignment always checks the user it names. The
+assign route applies `service.CanViewLead` to the locked row before the owner check, so visibility
+answers first and a sales user who hands a lead over loses it at once. A service built without a user
+repository returns `ErrLeadOwnerCheckUnavailable` from these writes instead of skipping the check,
+and `Assign` also refuses without a transaction manager. Public form submissions
+(`form.DefaultOwnerID`) and the automation `assign_owner` step write `owner_id` under their own
+rules. Regression roots: `TestLeadOwner{Unknown,Deactivated,Erased,WrongRole}Rejected{SQLite,MySQL}`,
+`TestLeadOwnerValidAccepted{SQLite,MySQL}`, `TestLeadAssign{Permissions,SalesHandOff,
+RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNotRevalidatedSQLite`,
+`TestLeadOwnerRoleRulesPrecedeOwnerCheckSQLite`, `TestLeadOwnerLookupFailureIsServerErrorSQLite` and
+`TestLeadOwnerRefusalLogsOmitPersonalData` (`test/integration/lead_owner_validation_test.go`);
+`TestLeadOwnerCheckRefusedWhenUnwired`, `TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL` and
+`TestLeadAssignIsAtomicSQLite` (`internal/service/lead_owner_validation_test.go`);
+`TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`).
+
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
 `internal/repository/duplicate_key.go`. Handlers classify it with `errors.Is` and return 409 for both

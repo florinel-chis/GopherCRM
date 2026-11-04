@@ -53,7 +53,7 @@ func TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits(t *testing.T) {
 	require.NoError(t, db.Create(&lead).Error)
 
 	leadService := service.NewLeadService(repository.NewLeadRepository(db), repository.NewCustomerRepository(db),
-		repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
+		repository.NewCompanyRepository(db), repository.NewUserRepository(db), utils.NewTransactionManager(db))
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("user_id", admin.ID)

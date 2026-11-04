@@ -158,10 +158,10 @@ values. One shared installation does not work for several clients, for two reaso
 
 ### Gaps
 
-- Reassigning a lead from the lead list: the frontend client calls `POST /leads/:id/assign`
-  (`gocrm-ui/src/api/endpoints/leads.ts:137`), which is not routed (`internal/handler/routes.go:25-35`).
-  Tracked in #185. The working paths today are `owner_id` on a lead update (only an admin may
-  reassign, `internal/handler/lead_handler.go:363`) and the automation `assign_owner` step.
+- Reassigning a lead from the lead list: `POST /leads/:id/assign` is routed (an admin on any lead, a
+  sales user on its own, #185) and `leadsApi.assignLead` calls it
+  (`gocrm-ui/src/api/endpoints/leads.ts:137`), but no screen offers it yet. The API, `owner_id` on a
+  lead update (admin only) and the automation `assign_owner` step are the working paths today.
 - Attribution: UTM parameters land in lead notes. Do not map them into `source`, which automation
   routes on. Separate attribution fields are #220.
 - No nurture email to leads: `send_email` reaches staff users only (`docs/ROADMAP.md`, "Email to
@@ -402,7 +402,7 @@ planning around an issue number.
 
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
-| Lead reassignment from the lead list (`POST /leads/:id/assign` not routed) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137`; `internal/handler/routes.go:25-35` | #185 |
+| Lead reassignment from the lead list (the route exists, no screen offers it) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137`; `internal/handler/routes.go:25-36` | #185 |
 | Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1073-1135` | #220 |
 | Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1284-1294` | #216 |
 | Retention purge of spam and unconfirmed submissions | 1, 3, 6 | `docs/ROADMAP.md`, "Forms module — deliberate v1 cuts" | #217 |

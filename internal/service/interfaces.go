@@ -71,6 +71,12 @@ type LeadService interface {
 	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
 	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)
 	Update(id uint, updates map[string]interface{}) (*models.Lead, error)
+	// Assign makes ownerID the lead's owner, for an actor CanViewLead admits on
+	// the locked row: apperrors.ErrForbidden otherwise, a not-found error for a
+	// lead that is gone, apperrors.ErrInvalidLeadOwner for an owner that is not
+	// an active admin or sales user. The owner is always checked, even when it
+	// is the lead's current one.
+	Assign(ctx context.Context, leadID, ownerID uint, actor LeadViewer) (*models.Lead, error)
 	// Delete erases the lead. Only an admin (actorRole) may erase a converted
 	// lead, because that erases the customer it became; anyone else is refused
 	// with an apperrors.ErrForbidden and nothing changes.

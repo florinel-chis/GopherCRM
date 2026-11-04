@@ -109,6 +109,7 @@ func convertLead(t *testing.T, db *gorm.DB, lead *models.Lead) *models.Customer 
 		repository.NewLeadRepository(db),
 		repository.NewCustomerRepository(db),
 		repository.NewCompanyRepository(db),
+		repository.NewUserRepository(db),
 		utils.NewTransactionManager(db),
 	)
 	customer, err := leadService.ConvertToCustomer(context.Background(), lead.ID, &models.Customer{})
@@ -440,6 +441,7 @@ func TestLeadServiceErasureOfAMissingLeadIsNotFound(t *testing.T) {
 		repository.NewLeadRepository(db),
 		repository.NewCustomerRepository(db),
 		repository.NewCompanyRepository(db),
+		repository.NewUserRepository(db),
 		utils.NewTransactionManager(db),
 	)
 
@@ -457,6 +459,7 @@ func TestLeadServiceErasureIsNotRepeatable(t *testing.T) {
 		leadRepo,
 		repository.NewCustomerRepository(db),
 		repository.NewCompanyRepository(db),
+		repository.NewUserRepository(db),
 		utils.NewTransactionManager(db),
 	)
 

@@ -72,7 +72,7 @@ func (suite *LeadIntegrationTestSuite) SetupSuite() {
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
 	txManager := utils.NewTransactionManager(db)
-	suite.leadService = service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
+	suite.leadService = service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), userRepo, txManager)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)

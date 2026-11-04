@@ -266,8 +266,8 @@ schema). A root that skipped proves nothing.
   per-item authorization (DEVELOPMENT.md line 547).
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
-  are a to-do list, not dead code: implement the route instead of deleting the function. One is
-  open now: `POST /leads/:id/assign` (#185).
+  are a to-do list, not dead code: implement the route instead of deleting the function, as
+  `POST /leads/:id/assign` was (#185).
 
 ## 5. Add a setting
 

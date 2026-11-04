@@ -71,7 +71,7 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 	fail := false
 	leadRepo := &failingLeadRepo{LeadRepository: env.leads, fail: &fail}
 	companyRepo := repository.NewCompanyRepository(db)
-	leadService := NewLeadService(leadRepo, env.customers, companyRepo, env.txManager, WithLeadAutomationEvents(env.repo))
+	leadService := NewLeadService(leadRepo, env.customers, companyRepo, env.users, env.txManager, WithLeadAutomationEvents(env.repo))
 
 	t.Run("create and update through the lead service", func(t *testing.T) {
 		lead := &models.Lead{

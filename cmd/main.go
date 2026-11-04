@@ -294,8 +294,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// transaction that commits the write (issue #164): the lead service, the
 	// deal service, the form submission path and the bulk status path all take the
 	// same outbox repository. Lead conversion enforces the administrator's
-	// lead-conversion settings (issue #104).
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager,
+	// lead-conversion settings (issue #104); every owner a lead create, update
+	// or assignment names is checked against the users (issue #255).
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager,
 		service.WithLeadAutomationEvents(automationRepo),
 		service.WithLeadConversionRules(configService))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
