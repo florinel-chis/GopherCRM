@@ -581,8 +581,8 @@ RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNo
 `TestLeadOwnerCheckRefusedWhenUnwired`, `TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL` and
 `TestLeadAssignIsAtomicSQLite` (`internal/service/lead_owner_validation_test.go`);
 `TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`). CI limit: the MySQL roots above are
-discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction and full
-profiles (full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
+discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded and
+full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
 
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
