@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the full browser suite only for a release.** Pull requests, the merge queue and
+  pushes to `main` run the smoke spec and the changed features' specs on every database, even
+  when a change touches shared code, and keep the backend and database gates. A release still
+  forces the complete suite. A manual run can no longer ask for it.
+
 ### Added
 
 - **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
