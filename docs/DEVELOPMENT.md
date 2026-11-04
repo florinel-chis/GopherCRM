@@ -318,6 +318,19 @@ about to run its locking owner read, and releases the first only once
 on two consecutive polls — i.e. blocked on the row lock. On SQLite the single pooled connection
 serialises the two requests instead, so there is no lock wait to observe.
 
+**`PUT /users/me` refuses password fields** (#254) — `POST /auth/change-password` is the only
+authenticated way to change a password. `UpdateMeRequest` declares `password`, `current_password`
+and `new_password` as `json.RawMessage`, so a non-nil field means the key was present, whatever its
+value (`null` included) and letter case. After a successful bind, any of the three is answered 400
+`PASSWORD_FIELD_NOT_ACCEPTED` with one Warn line that omits the value, and the service is not
+called, so profile fields beside it are not written either; other unknown keys stay ignored. A body
+that fails binding keeps its `VALIDATION_ERROR` or `BAD_REQUEST`. `UserService.Update` has no
+password branch and ignores a `password` key in its map, and `UpdateUserRequest` has no password
+field, so `PUT /users/{id}` ignores the key too. Roots: `TestUpdateMeRefusesPasswordFields`,
+`TestUpdateMeProfileFieldsStillApply`, `TestUpdateMeRefusalLogOmitsPassword`
+(`internal/handler/user_me_password_test.go`), `TestUserServiceUpdateIgnoresPasswordKey` and, on
+real middleware, repositories and SQLite, `tests/users_me_password_test.go`.
+
 **User writes never upsert** — `UserRepository` has no full-struct update. GORM's `Save` falls back
 to an INSERT … ON CONFLICT when its UPDATE matches no row, so a login that read an account before
 an erasure wrote the erased name, email and hash back and cleared `deleted_at`, and any stale

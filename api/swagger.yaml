@@ -6331,10 +6331,14 @@ definitions:
         example: qualified
     type: object
   internal_handler.UpdateMeRequest:
-    description: Body of PUT /users/me. Every field is optional; an omitted or empty
-      field leaves the stored value unchanged. Role and active status cannot be changed
-      here.
+    description: Body of PUT /users/me. Every profile field is optional; an omitted
+      or empty field leaves the stored value unchanged. Role and active status cannot
+      be changed here. A body that carries a password field is refused.
     properties:
+      current_password:
+        description: |-
+          Refused: this key, with any value (null included) and in any letter case, is
+          answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
       email:
         description: New login email; must be valid and not used by another account
           (409).
@@ -6349,15 +6353,14 @@ definitions:
         description: New family name; empty leaves it unchanged.
         example: Doe
         type: string
+      new_password:
+        description: |-
+          Refused: this key, with any value (null included) and in any letter case, is
+          answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
       password:
         description: |-
-          New password: at least 10 characters with an uppercase letter, a
-          lowercase letter, a digit and a special character. The current password
-          is not asked for and existing refresh tokens are NOT revoked (POST
-          /auth/change-password does both). More than 72 bytes fails with 500.
-        example: N3w!Passw0rd2026
-        minLength: 10
-        type: string
+          Refused: this key, with any value (null included) and in any letter case, is
+          answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
     type: object
   internal_handler.UpdateTaskRequest:
     description: Body of PUT /tasks/{id}. Every field is optional; absent or empty
@@ -6523,7 +6526,7 @@ info:
 
     ## Authentication
     Protected operations accept one credential in the Authorization header, either `Authorization: Bearer <jwt>` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey <key>` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED "Missing or invalid authorization header"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED "Invalid credentials".
-    Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens (a password changed through PUT /users/me revokes none), but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
+    Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens, but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
     Roles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN "Insufficient permissions". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.
 
     ## Response envelope
@@ -20342,10 +20345,10 @@ paths:
         fields are written. role and is_active are applied only for an admin caller
         and silently ignored for everyone else; unlike POST /users/{id}/deactivate,
         nothing here stops an admin from changing its own role or deactivating itself.
-        A body with nothing to apply returns the account unchanged. Passwords are
-        changed through PUT /users/me or POST /auth/change-password, not here. Changing
-        role or is_active takes effect on the account's next request (tokens are re-checked
-        against the stored account); no session is revoked.
+        A body with nothing to apply returns the account unchanged. A password key
+        in the body is ignored; passwords are changed through POST /auth/change-password,
+        not here. Changing role or is_active takes effect on the account's next request
+        (tokens are re-checked against the stored account); no session is revoked.
       parameters:
       - description: User ID
         in: path
@@ -20682,13 +20685,14 @@ paths:
     put:
       consumes:
       - application/json
-      description: Any authenticated role. Changes the caller's email, names and/or
-        password; only non-empty fields are written, and role and active status cannot
-        be changed here. A new password must meet the policy (at least 10 characters
-        with an uppercase letter, a lowercase letter, a digit and a special character);
-        unlike POST /auth/change-password the current password is not required and
-        existing refresh tokens are not revoked. A body with nothing to apply returns
-        the account unchanged.
+      description: Any authenticated role. Changes the caller's email and/or names;
+        only non-empty fields are written, and role and active status cannot be changed
+        here. This route does not change a password; a body that carries password,
+        current_password or new_password, with any value (null included) and in any
+        letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written,
+        and a correct current password does not open the route. Use POST /auth/change-password,
+        which verifies the current password and revokes refresh tokens. A body with
+        nothing to apply returns the account unchanged.
       parameters:
       - description: Fields to change
         in: body
@@ -20709,10 +20713,12 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
               type: object
         "400":
-          description: 'VALIDATION_ERROR: email is not an email address or password
-            is shorter than 10 characters (details maps the Go field name to a message).
-            BAD_REQUEST: malformed JSON (Invalid request format), or the password
-            fails the complexity policy'
+          description: 'PASSWORD_FIELD_NOT_ACCEPTED: the body carries password, current_password
+            or new_password, with any value (no details; use POST /auth/change-password).
+            VALIDATION_ERROR: email is not an email address (details maps the Go field
+            name to a message). BAD_REQUEST: malformed JSON (Invalid request format).
+            A body that fails binding keeps these answers even when it also carries
+            a password field'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -20762,8 +20768,7 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "500":
-          description: 'INTERNAL_ERROR: the account could not be updated, or the password
-            is over 72 bytes (bcrypt limit)'
+          description: 'INTERNAL_ERROR: the account could not be updated'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -55,7 +56,16 @@ type UpdateUserRequest struct {
 	IsActive *bool `json:"is_active,omitempty" example:"true"`
 }
 
-// @Description Body of PUT /users/me. Every field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here.
+// UpdateMeRequest carries the profile fields of PUT /users/me.
+//
+// The three password keys are captured raw only so the handler can refuse them:
+// a json.RawMessage receives the literal bytes of any JSON value, null included,
+// so a non-nil field means the key was present, and encoding/json matches the
+// key in any letter case. omitempty keeps a nil field out of a marshalled body.
+// The spec documents them as any JSON value (scripts/docs/swag-overrides maps
+// json.RawMessage to interface{}).
+//
+// @Description Body of PUT /users/me. Every profile field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here. A body that carries a password field is refused.
 type UpdateMeRequest struct {
 	// New login email; must be valid and not used by another account (409).
 	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"jane.doe@example.com"`
@@ -63,11 +73,15 @@ type UpdateMeRequest struct {
 	FirstName string `json:"first_name,omitempty" example:"Jane"`
 	// New family name; empty leaves it unchanged.
 	LastName string `json:"last_name,omitempty" example:"Doe"`
-	// New password: at least 10 characters with an uppercase letter, a
-	// lowercase letter, a digit and a special character. The current password
-	// is not asked for and existing refresh tokens are NOT revoked (POST
-	// /auth/change-password does both). More than 72 bytes fails with 500.
-	Password string `json:"password,omitempty" binding:"omitempty,min=10" minLength:"10" example:"N3w!Passw0rd2026"`
+	// Refused: this key, with any value (null included) and in any letter case, is
+	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
+	Password json.RawMessage `json:"password,omitempty"`
+	// Refused: this key, with any value (null included) and in any letter case, is
+	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
+	CurrentPassword json.RawMessage `json:"current_password,omitempty"`
+	// Refused: this key, with any value (null included) and in any letter case, is
+	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
+	NewPassword json.RawMessage `json:"new_password,omitempty"`
 }
 
 // Create godoc
@@ -252,7 +266,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. Passwords are changed through PUT /users/me or POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+// @Description Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -426,7 +440,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 // UpdateMe godoc
 // @Summary Update the caller's account
-// @Description Any authenticated role. Changes the caller's email, names and/or password; only non-empty fields are written, and role and active status cannot be changed here. A new password must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character); unlike POST /auth/change-password the current password is not required and existing refresh tokens are not revoked. A body with nothing to apply returns the account unchanged.
+// @Description Any authenticated role. Changes the caller's email and/or names; only non-empty fields are written, and role and active status cannot be changed here. This route does not change a password; a body that carries password, current_password or new_password, with any value (null included) and in any letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written, and a correct current password does not open the route. Use POST /auth/change-password, which verifies the current password and revokes refresh tokens. A body with nothing to apply returns the account unchanged.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -434,12 +448,12 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param request body UpdateMeRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.User} "The updated account"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: email is not an email address or password is shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), or the password fails the complexity policy"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "PASSWORD_FIELD_NOT_ACCEPTED: the body carries password, current_password or new_password, with any value (no details; use POST /auth/change-password). VALIDATION_ERROR: email is not an email address (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format). A body that fails binding keeps these answers even when it also carries a password field"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account was erased while the credential was still in use"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the account could not be updated, or the password is over 72 bytes (bcrypt limit)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the account could not be updated"
 // @Router /users/me [put]
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.UpdateMe")
@@ -452,11 +466,14 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	if req.Password != "" {
-		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
-			utils.RespondBadRequest(c, err.Error())
-			return
-		}
+	// POST /auth/change-password is the only authenticated way to change a
+	// password: it verifies the current one and revokes the refresh tokens. Only
+	// the fact of the refusal is logged, never the supplied value.
+	if req.Password != nil || req.CurrentPassword != nil || req.NewPassword != nil {
+		logger.Warn("Refused PUT /users/me: body carries a password field")
+		utils.RespondError(c, http.StatusBadRequest, "PASSWORD_FIELD_NOT_ACCEPTED",
+			"This route does not accept password fields; use POST /auth/change-password", nil)
+		return
 	}
 
 	// Build updates map
@@ -469,9 +486,6 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	}
 	if req.LastName != "" {
 		updates["last_name"] = req.LastName
-	}
-	if req.Password != "" {
-		updates["password"] = req.Password
 	}
 
 	user, err := h.userService.Update(userID, updates)

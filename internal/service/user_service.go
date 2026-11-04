@@ -102,16 +102,8 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 		fields["is_active"] = isActive
 	}
 
-	// Handle password update
-	if password, ok := updates["password"].(string); ok && password != "" {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if err != nil {
-			return nil, err
-		}
-		user.Password = string(hashedPassword)
-		fields["password"] = user.Password
-	}
-
+	// A "password" key is deliberately ignored: a password changes only through
+	// AuthService.ChangePassword or the reset, which revoke the refresh tokens.
 	if err := s.userRepo.UpdateFields(id, fields); err != nil {
 		if isNotFound(err) {
 			return nil, fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
