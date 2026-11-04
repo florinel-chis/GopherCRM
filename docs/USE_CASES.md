@@ -53,7 +53,7 @@ These caveats apply to every recipe that takes in leads through forms.
   or its version (`FormSubmission`, `internal/models/form.go:382`). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept forever.** They hold visitor values and IP addresses,
-  and they sit outside lead erasure (`docs/DEVELOPMENT.md:873`; `docs/ROADMAP.md`, "Forms module —
+  and they sit outside lead erasure (`docs/DEVELOPMENT.md:901`; `docs/ROADMAP.md`, "Forms module —
   deliberate v1 cuts"). Decide on a purge policy and run it by hand until #217 (retention purge)
   and #214 (erasure of unlinked submissions) land.
 - **Behind a reverse proxy or CDN, set `TRUSTED_PROXIES`.** The rate limiter keys on the client
@@ -73,9 +73,9 @@ These caveats apply to every recipe that takes in leads through forms.
   `qualified` (`internal/models/configuration.go:267-280`), so a fresh form lead (status `new`)
   must be worked before it can be converted. `leads.conversion.require_notes` can require notes,
   and `leads.conversion.auto_assign_owner` (on by default) makes the lead's owner the customer's
-  account manager (`ConvertToCustomer`, `internal/service/lead_service.go:578`). The UI offers
+  account manager (`ConvertToCustomer`, `internal/service/lead_service.go:736`). The UI offers
   Convert only on the allowed statuses (#192). A lead without an email cannot be converted (400),
-  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:549-553`).
+  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:850-852`).
 
 ## 1. Small agency: website forms to leads
 
@@ -196,7 +196,7 @@ lost deal.
 2. The lead is worked to `contacted` or `qualified`, then converted under the
    `leads.conversion.*` rules (shared caveats). If the lead links a company record, the link carries
    over to the customer when that company is still live; conversion does not create a company
-   (`internal/service/lead_service.go:559-569`). Companies are created and linked separately, with
+   (`internal/service/lead_service.go:837-850`). Companies are created and linked separately, with
    normalised, unique domains (`normalizeCompany`, `internal/service/company_service.go:204`).
 3. A deal moves through five stages (`qualification`, `proposal`, `negotiation`, `won`, `lost`),
    with a stage-history row per change and a `lost_reason` kept while lost
@@ -213,7 +213,7 @@ lost deal.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
   `gocrm-ui/src/routes/index.tsx:53,161`), both admin and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
-  (`internal/handler/routes.go:219`).
+  (`internal/handler/routes.go:220`).
 - The quote email subject reads "Quote Q-… from GopherCRM" (`internal/service/quote_email.go:12-15`).
   Changing it is a code edit until #221 lands.
 
@@ -275,8 +275,8 @@ engines describe its product against competitors.
 
 ### Gaps
 
-- Lead `external_id` is stored (`internal/models/lead.go:44`), and `LeadService.GetByExternalID`
-  exists (`internal/service/lead_service.go:143`), but no route calls it: #215.
+- Lead `external_id` is stored (`internal/models/lead.go:67`), and `LeadService.GetByExternalID`
+  exists (`internal/service/lead_service.go:218`), but no route calls it: #215.
 - No AEO export or alerting: #244.
 - No nurture email (recipe 1).
 
@@ -304,7 +304,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:127-135`). `GET /tickets` and `GET /tickets/my`
   refuse customers (`ticket_handler.go:153,316`), but `GET /customers/:id/tickets` lists the
   tickets of the customer record linked to the caller's account and refuses any other id
-  (`internal/handler/routes.go:148`, `ticket_handler.go:250-260`; tested in
+  (`internal/handler/routes.go:149`, `ticket_handler.go:250-260`; tested in
   `internal/integration/ticket_visibility_integration_test.go:560`). The UI has no customer
   ticket navigation, create form or comment form.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
@@ -321,7 +321,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   in #224.
 - Train staff on the difference between internal notes and public comments.
 - An integration that creates both customers and tickets **with one identity** must use an admin
-  API key: customer create is admin and sales (`internal/handler/routes.go:40`), ticket create is
+  API key: customer create is admin and sales (`internal/handler/routes.go:41`), ticket create is
   support and admin (`internal/handler/ticket_handler.go:87`), and API keys carry their owner's
   full role with no scopes (`APIKey`, `internal/models/apikey.go:5`). Two identities also work: a
   sales key creates the customer and a support key creates the ticket. The support key can then
@@ -340,7 +340,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:870`). Whether complaint text should be scrubbed is #214.
+  (`docs/DEVELOPMENT.md:898`). Whether complaint text should be scrubbed is #214.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
 - No SLA fields and no attachments on tickets: #243.
@@ -406,14 +406,14 @@ planning around an issue number.
 | Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1073-1135` | #220 |
 | Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1284-1294` | #216 |
 | Retention purge of spam and unconfirmed submissions | 1, 3, 6 | `docs/ROADMAP.md`, "Forms module — deliberate v1 cuts" | #217 |
-| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:870,873` | #214 |
+| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:898,901` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | The example JWT secret passes the startup check | all | `.env.example`; `internal/config/config.go` | #210 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
 | External identity mapping for customers, as a `(source, scope, external_id)` table rather than columns, because customer email is globally unique | 3, 4 | `internal/models/customer.go:9` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
-| Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:143` | #215 |
+| Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:218` | #215 |
 | Shared support queue and server-side ticket filters | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #218 |
 | Customer-visible ticket replies by email | 4 | no ticket path sends mail | #219 |
 | Fabricated `total_revenue` on customers | 2, 5 | customer list and detail pages | #186 |

@@ -46,8 +46,8 @@ func WithLeadConversionRules(config ConfigurationService) LeadServiceOption {
 // dependencies.
 type LeadServiceOption func(*leadService)
 
-// WithLeadAutomationEvents makes Create, Update and ConvertToCustomer record
-// their automation events inside the transaction that commits the write.
+// WithLeadAutomationEvents makes Create, Update, Assign and ConvertToCustomer
+// record their automation events inside the transaction that commits the write.
 func WithLeadAutomationEvents(repo repository.AutomationRepository) LeadServiceOption {
 	return func(s *leadService) { s.automation = repo }
 }

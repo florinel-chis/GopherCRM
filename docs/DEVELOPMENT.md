@@ -1088,13 +1088,13 @@ automation_engine.go` executes rules, `automation_runtime.go` owns the worker go
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
-  ConvertToCustomer`, the form submission path, the bulk lead status path and
+  Assign/ConvertToCustomer`, the form submission path, the bulk lead status path and
   `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
   option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
   transaction-bound repository, so a write that rolls back records nothing and a refused bulk
   status batch records nothing for any of its leads. A create records `*_created`; an update `*_updated` plus
   `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
-  the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
+  a lead assign `lead_updated` alone; the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
   types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a
   name or an address.
 - **Three conditional claims.** The dispatcher claims an event with `UPDATE … SET processed_at

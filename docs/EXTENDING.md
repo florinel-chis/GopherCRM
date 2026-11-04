@@ -29,7 +29,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
 | A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:111`, `migrations/` | [Database](DEVELOPMENT.md#database) |
-| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 540) |
+| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 568) |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
 
@@ -127,7 +127,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (`productSearchClause`).
 - A delete that matched no row returns `gorm.ErrRecordNotFound` (`productRepository.Delete`).
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
-  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 727).
+  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 755).
 - Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
   rejection of an unknown sort column and soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
@@ -166,7 +166,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 - Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Put the role guard on the group with
   `middleware.RequireRole(...)` and narrow individual routes where needed
-  (`SetupProductRoutes`, `routes.go:97-105`: group admin+sales, writes admin).
+  (`SetupProductRoutes`, `routes.go:98-106`: group admin+sales, writes admin).
 - In `cmd/main.go`, `setupDependencies` (line 182): construct the repository with `models.DB`
   (line 195), the service (line 238), the handler (line 298), and register the routes in the
   `protected` group (line 404). There is no container; the wiring is plain code.
@@ -262,8 +262,8 @@ schema). A root that skipped proves nothing.
 - **Endpoint.** Handler method with annotations, route in the entity's `Setup...Routes` with its
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
-  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:273`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 547).
+  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:274`): at most 100 ids, all or nothing,
+  per-item authorization (DEVELOPMENT.md line 575).
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
   are a to-do list, not dead code: implement the route instead of deleting the function, as
@@ -318,7 +318,7 @@ origins (lines 44-50) and six step types (lines 53-60).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 181-182, 258-263).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:47`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:51`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
