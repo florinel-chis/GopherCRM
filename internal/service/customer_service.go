@@ -127,6 +127,12 @@ func (s *customerService) Update(customer *models.Customer) error {
 	}
 
 	if err := s.customerRepo.Update(customer); err != nil {
+		// The row was read live and is gone now: the write lost to an erasure
+		// and wrote nothing. That is the request's answer, not a failure.
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Customer update lost: no live customer")
+			return fmt.Errorf("customer %d not found: %w", customer.ID, apperrors.ErrNotFound)
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
 		return err
 	}
@@ -305,6 +311,11 @@ func (s *customerService) Assign(customerID, userID uint) (*models.Customer, err
 	customer.AssignedToID = &userID
 	customer.AssignedTo = nil // let the caller re-read the association rather than persist a stale copy
 	if err := s.customerRepo.Update(customer); err != nil {
+		// As in Update: the customer was erased after the read above.
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Customer assignment lost: no live customer")
+			return nil, fmt.Errorf("customer %d not found: %w", customerID, apperrors.ErrNotFound)
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to assign customer")
 		return nil, err
 	}

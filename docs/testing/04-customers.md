@@ -355,6 +355,30 @@ depend on that are flagged.
   route itself carries no `RequireRole`; the guard is inside `CustomerHandler.Update`.
 - **Automation:** blocked — needs a role-login helper
 
+### TC-CUST-044 — A write that loses to an erasure restores nothing
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** A customer linked to a converted lead and a customer-role login, all with one
+  address; an admin token.
+- **Steps:**
+  1. Read the customer, then erase it through `DELETE` of the customer, the converted lead or the
+     login.
+  2. Let `PUT /api/v1/customers/{id}` or `POST /api/v1/customers/{id}/assign` that read it before the
+     erasure finish. Repeat with a write sent after the erasure committed.
+  3. Create a new customer with the freed address and retry a write from step 2.
+- **Expected:** Step 2 → **404** `NOT_FOUND` "Customer not found". All three rows stay soft-deleted
+  with a `.invalid` address and scrubbed personal columns, and `assigned_to_id` keeps its stored
+  value. Step 3: the erased row and the new customer are unchanged; a stale `PUT` that resends the
+  freed address answers **409**. The log records the loss at Warn with ids only. The same holds on
+  SQLite and MySQL, including an update blocked behind an uncommitted erasure and the reverse.
+- **Known issue (fixed, #256):** The write used GORM's `Save`, whose upsert fallback restored the
+  person and cleared `deleted_at`.
+- **Automation:** automated (backend) — `test/integration/erasure_atomicity_test.go`
+  (`TestCustomerUpdateLostToErasure{SQLite,MySQL}`, `TestCustomerAssignLostToErasure{SQLite,MySQL}`,
+  `TestCustomerWriteAfterErasure{SQLite,MySQL}`, `TestCustomerWriteConcurrentWithErasure{SQLite,MySQL}`,
+  `TestCustomerLostWriteLogsOmitPersonalData`); the race needs a seam between the read and the write,
+  so a browser cannot drive it.
+
 ---
 
 ## 4.4 View Customer Detail

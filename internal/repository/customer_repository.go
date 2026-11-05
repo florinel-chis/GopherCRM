@@ -73,13 +73,59 @@ func (r *customerRepository) GetByUserID(userID uint) (*models.Customer, error) 
 	return &customer, nil
 }
 
+// Update writes the customer's writable columns onto its live row and nothing
+// else. It is a conditional UPDATE (`WHERE id = ? AND deleted_at IS NULL`): it
+// never inserts, never touches an erased row, and reports
+// gorm.ErrRecordNotFound when no live row matched.
+//
+// It replaces a full-struct Save. GORM's Save falls back to an upsert when its
+// UPDATE matches no row, so a request holding a struct read before an erasure
+// wrote the erased person back and cleared deleted_at; it also wrote the
+// preloaded User and CompanyRecord back. id, created_at, user_id, deleted_at
+// and the associations are not in the column list, so a stale struct cannot
+// move them. updated_at takes the handle's clock, in the row and in the struct.
 func (r *customerRepository) Update(customer *models.Customer) error {
-	if err := r.db.Save(customer).Error; err != nil {
-		if isDuplicateKeyError(err) {
+	now := r.db.NowFunc()
+	result := r.db.Model(&models.Customer{}).
+		Where("id = ? AND deleted_at IS NULL", customer.ID).
+		Updates(map[string]interface{}{
+			"first_name":     customer.FirstName,
+			"last_name":      customer.LastName,
+			"email":          customer.Email,
+			"phone":          customer.Phone,
+			"company":        customer.Company,
+			"website":        customer.Website,
+			"position":       customer.Position,
+			"address":        customer.Address,
+			"city":           customer.City,
+			"state":          customer.State,
+			"country":        customer.Country,
+			"postal_code":    customer.PostalCode,
+			"notes":          customer.Notes,
+			"company_id":     customer.CompanyID,
+			"assigned_to_id": customer.AssignedToID,
+			"updated_at":     now,
+		})
+	if result.Error != nil {
+		if isDuplicateKeyError(result.Error) {
 			return fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail)
 		}
-		return err
+		return result.Error
 	}
+	if result.RowsAffected == 0 {
+		// MySQL reports changed rows, not matched rows, so an UPDATE that wrote
+		// the values the row already held affects zero rows. Tell that apart
+		// from a missing or erased row with a locking read: inside a REPEATABLE
+		// READ transaction a plain read answers from the snapshot, which can
+		// still show as live a row whose erasure has committed since, and the
+		// lost write would be reported as a success.
+		var live models.Customer
+		err := lockingRead(r.db).Select("id").Where("id = ? AND deleted_at IS NULL", customer.ID).Take(&live).Error
+		if err != nil {
+			return err
+		}
+	}
+	customer.UpdatedAt = now
 	return nil
 }
 

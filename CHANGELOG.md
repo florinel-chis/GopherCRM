@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a change touches shared code, and keep the backend and database gates. A release still
   forces the complete suite. A manual run can no longer ask for it.
 
+### Fixed
+
+- **A customer write can no longer restore an erased person (#256).** `PUT /customers/{id}` and
+  `POST /customers/{id}/assign` wrote the customer back with GORM's `Save`, which falls back to an
+  upsert, so a request that read the customer before an erasure could restore the personal data and
+  clear `deleted_at`. `CustomerRepository.Update` is now a conditional update of named columns on a
+  live row that never inserts. A write that loses to an erasure, through a customer, converted-lead
+  or customer-role-login delete, answers 404 `NOT_FOUND` with nothing written and logs a Warn line
+  with ids only. It no longer writes `user_id`, `created_at`, `deleted_at` or the preloaded login and
+  company. Live customers behave as before, including last-write-wins, the website and `company_id`
+  clears and the 409 on a duplicate email.
+
 ### Added
 
 - **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,

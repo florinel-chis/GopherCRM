@@ -8778,7 +8778,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. The whole row is written back.",
+                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.",
                 "consumes": [
                     "application/json"
                 ],
