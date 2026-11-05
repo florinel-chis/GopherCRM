@@ -428,7 +428,9 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** `PUT` carries the new `assigned_to_id`; 200. `ticket_service.go` Update re-validates
   the assignee (must exist and be `support` or `admin`). "Assigned To" on the detail page shows the
   second agent.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended). The backend half
+  is automated by `TestTicketReassignmentPersists{SQLite,MySQL}` and
+  `TestTicketServiceUpdateDetachesStaleAssignee`; the browser half stays planned.
 
 ### TC-TICK-023 — Clearing the agent does not unassign the ticket
 - **Priority:** P0

@@ -144,6 +144,7 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 	}
 
 	// Verify assignee if changed
+	var validatedAssignee *models.User
 	if ticket.AssignedToID != nil && (existing.AssignedToID == nil || *ticket.AssignedToID != *existing.AssignedToID) {
 		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
 		if err != nil {
@@ -154,11 +155,30 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 			logger.Warn("Invalid assignee role")
 			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
+		validatedAssignee = assignee
+	}
+
+	// The repository saves with GORM's Save, which writes a preloaded belongs-to
+	// id back over the foreign key. Compare the attached user with the foreign
+	// key, not with the change validated above: the caller's read and the read in
+	// this method are separate, so the latter may already show the requested user.
+	if ticket.AssignedTo != nil && (ticket.AssignedToID == nil || ticket.AssignedTo.ID != *ticket.AssignedToID) {
+		ticket.AssignedTo = nil
 	}
 
 	if err := s.ticketRepo.Update(ticket); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
 		return err
+	}
+
+	// Answer with the user the stored foreign key names. Without a lookup the key
+	// equals the one read above, so that read's user is the right one.
+	if ticket.AssignedToID != nil {
+		if validatedAssignee != nil {
+			ticket.AssignedTo = validatedAssignee
+		} else if ticket.AssignedTo == nil {
+			ticket.AssignedTo = existing.AssignedTo
+		}
 	}
 
 	logger.Info("Ticket updated successfully")

@@ -574,6 +574,22 @@ preloaded deal only. Regression roots: `TestTaskDealLinkWriteRules`, `TestTaskDe
 `TestTaskJSONDealSummary`, `TestTaskDealLinkSQLiteUpgradeFromV120` (`internal/models`);
 `TestTaskDealLinkMigration`, `TestTaskDealLinkMigrationFiles` (`cmd/migrate`).
 
+**The ticket assignee (#269).** `ticketService.Update` detaches the preloaded `AssignedTo` before
+`ticketRepo.Update` whenever its id differs from `AssignedToID`, because `Save` writes a preloaded
+belongs-to id back over the foreign key. It compares the attached user with the foreign key, not
+with the validated change alone, since the handler's read and the service's read are separate.
+After the write it attaches the user the foreign key names, for the response: the validated
+assignee when it looked one up, otherwise the user of its own read, and none for a nil key. The
+repository keeps `Save` and there is no transaction, so a stale `PUT` stays last-write-wins. Ticket
+assignees have no is-active check; an existing user with the support or admin role qualifies.
+Regression roots: `TestTicketServiceUpdateDetachesStaleAssignee` (`internal/service`);
+`TestTicketReassignmentPersists{SQLite,MySQL}`, `TestTicketReassignmentResponse{SQLite,MySQL}`,
+`TestTicketReassignmentBySupportAssignee{SQLite,MySQL}`, `TestTicketUpdateKeepsAssignee{SQLite,MySQL}`
+and `TestTicketReassignmentRefusedWritesNothing{SQLite,MySQL}` (`internal/integration`). CI limit:
+the MySQL roots skip in `make verify-backend`, which has no DSN, and `scripts/ci/check-go.py` does
+not discover `internal/integration`, so only the runner's acceptance checks and the release
+workflow run them.
+
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
 in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in

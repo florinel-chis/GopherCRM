@@ -53,7 +53,7 @@ These caveats apply to every recipe that takes in leads through forms.
   or its version (`FormSubmission`, `internal/models/form.go:465`). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
-  and IP addresses, and they sit outside lead erasure (`docs/DEVELOPMENT.md:970`). Set
+  and IP addresses, and they sit outside lead erasure (`docs/DEVELOPMENT.md:986`). Set
   `FORM_RETENTION_DAYS` (3 days at least, off by default) to remove them permanently at that age.
   The first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged; erasure of unlinked submissions is
@@ -345,7 +345,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:967`). Whether complaint text should be scrubbed is #214.
+  (`docs/DEVELOPMENT.md:983`). Whether complaint text should be scrubbed is #214.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
 - No SLA fields and no attachments on tickets: #243.
@@ -410,7 +410,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1134-1196` | #220 |
 | Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1345-1355` | #216 |
-| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:967,970` | #214 |
+| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:983,986` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
