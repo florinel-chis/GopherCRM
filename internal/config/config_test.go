@@ -2,11 +2,13 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // helper to clear all env vars that Load() reads and restore them after the test.
@@ -32,6 +34,9 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		// Database driver selection, so a developer shell pointing at SQLite
 		// cannot flip the default-value assertions.
 		"DB_DRIVER", "DB_PATH",
+		// The remaining settings TestLoad_DefaultValues asserts, so an environment
+		// that exports a test database (DB_HOST, DB_PORT) cannot flip them either.
+		"DB_HOST", "DB_PORT", "DB_NAME", "SERVER_PORT", "API_PREFIX", "JWT_EXPIRY_HOURS",
 		// Automation worker settings, for the same reason as the AEO ones.
 		"AUTOMATION_ENABLED", "AUTOMATION_POLL_INTERVAL_SECONDS",
 	}
@@ -202,6 +207,140 @@ func TestLoad_ShortJWTSecretRejected(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "at least 32 characters")
 	})
+}
+
+// jwtSecretRefusalPrefix is the start of the refusal message, which the runner's
+// environment-failure classifier matches.
+const jwtSecretRefusalPrefix = "JWT_SECRET cannot be the default"
+
+// envExampleJWTSecret returns the value of the active JWT_SECRET= line of the
+// repository's .env.example and the comment lines directly above that line, so
+// the tests follow the file a fork really copies rather than a duplicated literal.
+func envExampleJWTSecret(t *testing.T) (value, comment string) {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", ".env.example"))
+	require.NoError(t, err)
+
+	lines := strings.Split(string(data), "\n")
+	active := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "JWT_SECRET=") {
+			require.Equal(t, -1, active, ".env.example has more than one active JWT_SECRET= line")
+			active = i
+		}
+	}
+	require.NotEqual(t, -1, active, ".env.example has no active JWT_SECRET= line")
+
+	start := active
+	for start > 0 && strings.HasPrefix(lines[start-1], "#") {
+		start--
+	}
+
+	value = strings.TrimPrefix(lines[active], "JWT_SECRET=")
+	require.NotEmpty(t, value, "the active JWT_SECRET= line of .env.example has no value")
+	return value, strings.Join(lines[start:active], "\n")
+}
+
+// requireSecretRefused asserts that Load, under the current environment, returns
+// no config and the placeholder refusal, and returns the error text.
+func requireSecretRefused(t *testing.T) string {
+	t.Helper()
+
+	cfg, err := Load()
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Truef(t, strings.HasPrefix(err.Error(), jwtSecretRefusalPrefix),
+		"error must start with %q, got %q", jwtSecretRefusalPrefix, err.Error())
+	return err.Error()
+}
+
+func TestLoad_EnvExampleJWTSecretRejected(t *testing.T) {
+	secret, _ := envExampleJWTSecret(t)
+	withCleanEnv(t, map[string]string{"JWT_SECRET": secret}, func() {
+		requireSecretRefused(t)
+	})
+}
+
+func TestLoad_ChangeThisPrefixJWTSecretRejected(t *testing.T) {
+	const edited = "CHANGE_THIS_edited_by_hand_but_still_the_placeholder"
+	require.GreaterOrEqual(t, len(edited), 32, "the edited placeholder must clear the length check")
+
+	withCleanEnv(t, map[string]string{"JWT_SECRET": edited}, func() {
+		requireSecretRefused(t)
+	})
+
+	// The bare marker is also too short, and the placeholder message wins.
+	withCleanEnv(t, map[string]string{"JWT_SECRET": "CHANGE_THIS"}, func() {
+		msg := requireSecretRefused(t)
+		assert.NotContains(t, msg, "at least 32 characters")
+	})
+}
+
+func TestLoad_ExampleJWTSecretRejectedInEveryServerMode(t *testing.T) {
+	secret, _ := envExampleJWTSecret(t)
+
+	for _, mode := range []string{"", "development", "production"} {
+		env := map[string]string{"JWT_SECRET": secret}
+		if mode != "" {
+			env["SERVER_MODE"] = mode
+		}
+		withCleanEnv(t, env, func() {
+			if mode == "" {
+				_, set := os.LookupEnv("SERVER_MODE")
+				require.False(t, set, "SERVER_MODE must be unset for this case")
+			}
+			requireSecretRefused(t)
+		})
+	}
+}
+
+func TestLoad_ExampleJWTSecretErrorGivesRemedyAndOmitsValue(t *testing.T) {
+	const suffix = "q7Zunique9SuffixK3"
+
+	for _, secret := range []string{"CHANGE_THIS_" + suffix + "_padding_past_32_chars", "CHANGE_THIS"} {
+		withCleanEnv(t, map[string]string{"JWT_SECRET": secret}, func() {
+			msg := requireSecretRefused(t)
+			assert.Contains(t, msg, "JWT_SECRET")
+			assert.Contains(t, msg, "openssl rand -base64 32")
+			assert.NotContains(t, msg, secret)
+			assert.NotContains(t, msg, suffix)
+			assert.NotContains(t, msg, "CHANGE_THIS")
+		})
+	}
+}
+
+func TestLoad_SecretContainingChangeThisAccepted(t *testing.T) {
+	for _, secret := range []string{
+		"xCHANGE_THIS_after_the_first_character_of_the_value",
+		"a-random-looking-value-CHANGE_THIS-with-more-after-it",
+		// The match is case-sensitive.
+		"change_this_in_lower_case_is_not_the_placeholder",
+	} {
+		require.GreaterOrEqual(t, len(secret), 32, "the secret must clear the length check")
+
+		withCleanEnv(t, map[string]string{"JWT_SECRET": secret}, func() {
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Equal(t, secret, cfg.JWT.Secret)
+		})
+	}
+}
+
+func TestLoad_LegacyDefaultJWTSecretKeepsErrorPrefix(t *testing.T) {
+	withCleanEnv(t, map[string]string{"JWT_SECRET": "default-secret-change-this"}, func() {
+		msg := requireSecretRefused(t)
+		assert.NotContains(t, msg, "default-secret-change-this")
+	})
+}
+
+func TestEnvExample_JWTSecretCommentStatesRefusal(t *testing.T) {
+	_, comment := envExampleJWTSecret(t)
+
+	assert.Contains(t, comment, "refused")
+	assert.Contains(t, comment, "CHANGE_THIS")
+	assert.NotContains(t, comment, "long enough")
+	assert.NotContains(t, comment, "#210")
 }
 
 func TestLoad_ValidJWTSecretAccepted(t *testing.T) {

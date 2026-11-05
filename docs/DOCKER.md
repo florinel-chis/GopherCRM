@@ -21,9 +21,9 @@ two-container variant of the same stack backed by a SQLite file — see
 
 ## Quick start
 
-`JWT_SECRET` is required and must be at least 32 characters. Compose reads it
-from your shell or from the repo-root `.env` file (the same one
-`.env.example` documents):
+`JWT_SECRET` is required and must be at least 32 characters; the `.env.example` placeholder is
+refused, so a repo-root `.env` copied unedited stops the API container at startup. Compose reads
+it from your shell or from the repo-root `.env` file (the same one `.env.example` documents):
 
 ```bash
 # only needed if you don't already have a .env with JWT_SECRET

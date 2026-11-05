@@ -232,8 +232,8 @@ func Load() (*Config, error) {
 	if jwtSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET environment variable must be set")
 	}
-	if jwtSecret == "default-secret-change-this" {
-		return nil, fmt.Errorf("JWT_SECRET cannot be the default value 'default-secret-change-this' - please set a secure secret")
+	if jwtSecret == "default-secret-change-this" || strings.HasPrefix(jwtSecret, "CHANGE_THIS") {
+		return nil, fmt.Errorf("JWT_SECRET cannot be the default value or the .env.example placeholder - generate a secure secret with: openssl rand -base64 32")
 	}
 	if len(jwtSecret) < 32 {
 		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters long for security (current length: %d)", len(jwtSecret))

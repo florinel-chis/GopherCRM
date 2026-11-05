@@ -811,6 +811,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The example `JWT_SECRET` is refused at startup (#210).** `JWT_SECRET` values starting with
+  `CHANGE_THIS`, which includes the `.env.example` placeholder, are refused at startup in every
+  `SERVER_MODE`, by the server, `cmd/migrate` and `cmd/create-admin`. **A deployment still on the
+  placeholder stops at its next restart and must set a new secret.** Replacing `JWT_SECRET` always
+  invalidates issued access tokens. When `API_KEY_SECRET` is unset or also rotated, it also
+  invalidates API keys, refresh tokens, reset links and pending form confirmations, and leaves
+  stored AEO provider keys unreadable. With a separate, unchanged `API_KEY_SECRET`, refresh tokens
+  stay valid. See "Choices that are irreversible or easy to get wrong" in `docs/FORKING.md`,
+  section 4.2.
+
 - **`PUT /users/me` no longer changes a password (#254).** It used to set a new password without
   the current one and without revoking any refresh token. A body that carries `password`,
   `current_password` or `new_password`, with any value (`null` included) and in any letter case,
