@@ -24,12 +24,14 @@ class MigrationCoverageTests(unittest.TestCase):
                     'TestLookupIndexesMigration',
                     'TestProductsAndQuotesMigration',
                     'TestMigrationAutomationSchema',
+                    'TestTaskDealLinkMigration',
                 ],
                 'internal/models': [
                     'TestMigrateDatabase_SQLiteUpgradeFromV120',
                     'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120',
                     'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
                     'TestCustomerWebsiteUpgradeFromSQLiteFixture',
+                    'TestTaskDealLinkSQLiteUpgradeFromV120',
                 ],
                 'internal/repository': [
                     'TestLookupIndexesServeLookupsSQLite',
@@ -48,7 +50,7 @@ class MigrationCoverageTests(unittest.TestCase):
                          migrations_only=True)
 
     def test_accepts_complete_sql_and_sqlite_evidence(self):
-        self.assertEqual(len(self.check()), 15)
+        self.assertEqual(len(self.check()), 17)
 
     def test_unavailable_database_cannot_pass_as_skips(self):
         for event in self.events:
