@@ -62,14 +62,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   a fresh file of the previous release, so the chain keeps being exercised.
   Backing up before upgrading (see
   [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
-- **Customer update cannot clear optional text fields (defect)** — `CustomerHandler.Update`
-  applies `address`, `city`, `state`, `country`, `postal_code`, `notes`, `position` and the
-  name/contact fields only when the value is non-empty, so an empty string means "unchanged". The
-  customer form sends the cleared fields as `""` and the save succeeds, but the old values come
-  back on reload. Only `website` (a pointer) and `company_id` (`0` clears) can be cleared. A fix
-  needs absent-versus-empty semantics in the request (pointers or a field mask), a decision for
-  the required fields, and handler and integration tests. See TC-CUST-012 and TC-CUST-018 in
-  `docs/testing/04-customers.md`.
+- **Lead update cannot clear optional text fields (defect)** — the customer half was fixed in
+  #270: `PUT /customers/{id}` now stores a sent `""` for `phone`, `company`, `position`,
+  `address`, `city`, `state`, `country`, `postal_code` and `notes`, while an omitted key or a
+  JSON `null` keeps the stored value (`first_name`, `last_name` and `email` still ignore an empty
+  value by design). The lead handler has the same defect and was left out of that change: its
+  optional text fields still apply only when non-empty. A JSON `null` meaning "clear" (a
+  three-state wrapper) or a field mask is not offered on either entity. A browser test that
+  clears a customer field and reloads (TC-CUST-018, browser half) is still planned.
 - **Retire the unused bulk-operation schema** — since the generic bulk subsystem was removed
   (#112), nothing writes `bulk_operation_items` or the `success_count`/`failure_count` columns
   of `bulk_operations`; the status endpoints write only the parent row's type, resource, totals

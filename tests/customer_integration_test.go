@@ -18,9 +18,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -50,24 +50,24 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	}
 	err := utils.InitLogger(logConfig)
 	suite.NoError(err)
-	
+
 	// Setup test database
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	suite.NoError(err)
-	
+
 	// Migrate the schema
 	err = db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{},
 		// The erasure closure: deleting a customer erases the whole person.
 		&models.Lead{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 	suite.NoError(err)
-	
+
 	suite.db = db
-	
+
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	
+
 	// Initialize services
 	jwtConfig := config.JWTConfig{
 		Secret:      "test-secret",
@@ -76,12 +76,12 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
 	suite.customerService = service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
-	
+
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)
 	userHandler := handler.NewUserHandler(suite.userService)
 	customerHandler := handler.NewCustomerHandler(suite.customerService)
-	
+
 	// Setup Gin router
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -89,24 +89,24 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	router.Use(middleware.Logger())
 	router.Use(middleware.ErrorHandler())
 	router.Use(gin.Recovery())
-	
+
 	// Setup routes
 	api := router.Group("/api/v1")
-	
+
 	// Auth routes
 	api.POST("/auth/login", authHandler.Login)
-	
+
 	// Protected routes
 	protected := api.Group("")
 	protected.Use(middleware.Auth(suite.authService))
-	
+
 	// User routes
 	protected.POST("/users", userHandler.Create)
 	protected.GET("/users", userHandler.List)
 	protected.GET("/users/:id", userHandler.Get)
 	protected.PUT("/users/:id", userHandler.Update)
 	protected.DELETE("/users/:id", userHandler.Delete)
-	
+
 	// Customer routes
 	protected.POST("/customers", customerHandler.Create)
 	protected.GET("/customers", customerHandler.List)
@@ -119,9 +119,9 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	protected.PUT("/customers/:id", customerHandler.Update)
 	protected.POST("/customers/:id/assign", customerHandler.Assign)
 	protected.DELETE("/customers/:id", customerHandler.Delete)
-	
+
 	suite.router = router
-	
+
 	// Create test users
 	suite.createTestUsers()
 }
@@ -138,7 +138,7 @@ func (suite *CustomerIntegrationTestSuite) createTestUsers() {
 	err := suite.userService.Register(adminUser, "password123")
 	suite.NoError(err)
 	suite.adminUser = adminUser
-	
+
 	// Create sales user
 	salesUser := &models.User{
 		Email:     "sales@test.com",
@@ -150,7 +150,7 @@ func (suite *CustomerIntegrationTestSuite) createTestUsers() {
 	err = suite.userService.Register(salesUser, "password123")
 	suite.NoError(err)
 	suite.salesUser = salesUser
-	
+
 	// Create support user
 	supportUser := &models.User{
 		Email:     "support@test.com",
@@ -162,7 +162,7 @@ func (suite *CustomerIntegrationTestSuite) createTestUsers() {
 	err = suite.userService.Register(supportUser, "password123")
 	suite.NoError(err)
 	suite.supportUser = supportUser
-	
+
 	// Create customer user (not allowed to access customer endpoints)
 	customerUser := &models.User{
 		Email:     "customer@test.com",
@@ -174,7 +174,7 @@ func (suite *CustomerIntegrationTestSuite) createTestUsers() {
 	err = suite.userService.Register(customerUser, "password123")
 	suite.NoError(err)
 	suite.customerUser = customerUser
-	
+
 	// A deactivated sales account: it holds a role that could own customers, so
 	// it isolates the "inactive" rejection from the "wrong role" one.
 	inactiveUser := &models.User{
@@ -194,15 +194,15 @@ func (suite *CustomerIntegrationTestSuite) createTestUsers() {
 	adminToken, err := suite.authService.Login("admin@test.com", "password123")
 	suite.NoError(err)
 	suite.adminToken = adminToken
-	
+
 	salesToken, err := suite.authService.Login("sales@test.com", "password123")
 	suite.NoError(err)
 	suite.salesToken = salesToken
-	
+
 	supportToken, err := suite.authService.Login("support@test.com", "password123")
 	suite.NoError(err)
 	suite.supportToken = supportToken
-	
+
 	customerToken, err := suite.authService.Login("customer@test.com", "password123")
 	suite.NoError(err)
 	suite.customerToken = customerToken
@@ -221,7 +221,7 @@ func (suite *CustomerIntegrationTestSuite) makeRequestWithAuth(method, url strin
 	} else {
 		reqBody = bytes.NewBuffer(nil)
 	}
-	
+
 	req := httptest.NewRequest(method, url, reqBody)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -229,10 +229,10 @@ func (suite *CustomerIntegrationTestSuite) makeRequestWithAuth(method, url strin
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	
+
 	rec := httptest.NewRecorder()
 	suite.router.ServeHTTP(rec, req)
-	
+
 	return rec
 }
 
@@ -251,16 +251,16 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_AdminSuccess() {
 		PostalCode: "10001",
 		Notes:      "Important customer",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/customers", payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	customerData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "John", customerData["first_name"])
 	assert.Equal(suite.T(), "Doe", customerData["last_name"])
@@ -276,11 +276,11 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_SalesSuccess() {
 		Phone:     "+1234567890",
 		Company:   "Tech Corp",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/customers", payload, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -297,7 +297,7 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_DuplicateEmail() {
 	}
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	// Try to create another with same email
 	payload := handler.CreateCustomerRequest{
 		FirstName: "Jane",
@@ -305,12 +305,12 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_DuplicateEmail() {
 		Email:     "duplicate@example.com",
 		Company:   "Tech Corp",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/customers", payload, suite.adminToken)
 
 	// A duplicate email conflicts with existing state, so it is 409, not 400.
 	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -324,9 +324,9 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_SupportUserForbidd
 		LastName:  "Wilson",
 		Email:     "bob@example.com",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("POST", "/api/v1/customers", payload, suite.supportToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
@@ -344,21 +344,21 @@ func (suite *CustomerIntegrationTestSuite) TestListCustomers_AdminSeesAll() {
 		Email:     "customer2@example.com",
 		Company:   "Company2",
 	}
-	
+
 	err := suite.customerService.Create(customer1)
 	suite.NoError(err)
 	err = suite.customerService.Create(customer2)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	data := response.Data.(map[string]interface{})
 	customers := data["customers"].([]interface{})
 	assert.Len(suite.T(), customers, 2)
@@ -373,14 +373,14 @@ func (suite *CustomerIntegrationTestSuite) TestListCustomers_SalesCanSee() {
 		Email:     "sales.customer@example.com",
 		Company:   "Sales Company",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -404,19 +404,19 @@ func (suite *CustomerIntegrationTestSuite) TestGetCustomer_Success() {
 		Email:     "test@example.com",
 		Company:   "Test Company",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("GET", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	customerData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "Test", customerData["first_name"])
 	assert.Equal(suite.T(), "Customer", customerData["last_name"])
@@ -434,25 +434,26 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_AdminSuccess() {
 		Email:     "original@example.com",
 		Company:   "Original Company",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
+	company := "Updated Company"
 	payload := handler.UpdateCustomerRequest{
 		FirstName: "Updated",
 		LastName:  "Customer",
-		Company:   "Updated Company",
+		Company:   &company,
 	}
-	
+
 	rec := suite.makeRequestWithAuth("PUT", fmt.Sprintf("/api/v1/customers/%d", customer.ID), payload, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	customerData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "Updated", customerData["first_name"])
 	assert.Equal(suite.T(), "Customer", customerData["last_name"])
@@ -472,22 +473,22 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_DuplicateEmail() {
 		LastName:  "Test",
 		Email:     "customer2@example.com",
 	}
-	
+
 	err := suite.customerService.Create(customer1)
 	suite.NoError(err)
 	err = suite.customerService.Create(customer2)
 	suite.NoError(err)
-	
+
 	// Try to update customer2 with customer1's email
 	payload := handler.UpdateCustomerRequest{
 		Email: "customer1@example.com",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("PUT", fmt.Sprintf("/api/v1/customers/%d", customer2.ID), payload, suite.adminToken)
 
 	// A duplicate email conflicts with existing state, so it is 409, not 400.
 	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
-	
+
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -501,16 +502,16 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_SupportUserForbidd
 		LastName:  "Customer",
 		Email:     "test@example.com",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	payload := handler.UpdateCustomerRequest{
 		FirstName: "Updated",
 	}
-	
+
 	rec := suite.makeRequestWithAuth("PUT", fmt.Sprintf("/api/v1/customers/%d", customer.ID), payload, suite.supportToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
@@ -520,14 +521,14 @@ func (suite *CustomerIntegrationTestSuite) TestDeleteCustomer_AdminSuccess() {
 		LastName:  "Customer",
 		Email:     "delete@example.com",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
-	
+
 	// Verify customer is deleted
 	_, err = suite.customerService.GetByID(customer.ID)
 	assert.Error(suite.T(), err)
@@ -539,19 +540,19 @@ func (suite *CustomerIntegrationTestSuite) TestDeleteCustomer_SalesUserForbidden
 		LastName:  "Customer",
 		Email:     "test@example.com",
 	}
-	
+
 	err := suite.customerService.Create(customer)
 	suite.NoError(err)
-	
+
 	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.salesToken)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *CustomerIntegrationTestSuite) TestUnauthorizedAccess() {
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, "")
 	assert.Equal(suite.T(), http.StatusUnauthorized, rec.Code)
-	
+
 	rec = suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, "invalid-token")
 	assert.Equal(suite.T(), http.StatusUnauthorized, rec.Code)
 }
@@ -568,35 +569,35 @@ func (suite *CustomerIntegrationTestSuite) TestPagination() {
 		err := suite.customerService.Create(customer)
 		suite.NoError(err)
 	}
-	
+
 	// Get first page
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers?limit=2", nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
-	
+
 	data := response.Data.(map[string]interface{})
 	customers := data["customers"].([]interface{})
 	assert.Len(suite.T(), customers, 2)
 	assert.Equal(suite.T(), float64(5), data["total"])
-	
+
 	// Check metadata
 	assert.Equal(suite.T(), 1, int(response.Meta.Page))
 	assert.Equal(suite.T(), 2, response.Meta.PerPage)
 	assert.Equal(suite.T(), int64(5), response.Meta.Total)
 	assert.Equal(suite.T(), int64(3), response.Meta.TotalPages)
-	
+
 	// Get second page
 	rec = suite.makeRequestWithAuth("GET", "/api/v1/customers?offset=2&limit=2", nil, suite.adminToken)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
-	
+
 	data = response.Data.(map[string]interface{})
 	customers = data["customers"].([]interface{})
 	assert.Len(suite.T(), customers, 2)
@@ -606,6 +607,7 @@ func (suite *CustomerIntegrationTestSuite) TestPagination() {
 func TestCustomerIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(CustomerIntegrationTestSuite))
 }
+
 // --- CSV export --------------------------------------------------------------
 
 // seedCustomer inserts a customer directly, bypassing the API, so an export test

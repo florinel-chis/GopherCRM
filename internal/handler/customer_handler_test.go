@@ -59,22 +59,22 @@ func (suite *CustomerHandlerTestSuite) TearDownTest() {
 
 func (suite *CustomerHandlerTestSuite) TestCreate_Success() {
 	suite.router.POST("/customers", suite.handler.Create)
-	
+
 	payload := CreateCustomerRequest{
-		FirstName: "John",
-		LastName:  "Doe",
-		Email:     "john@example.com",
-		Phone:     "+1234567890",
-		Company:   "Acme Corp",
-		Position:  "CEO",
-		Address:   "123 Main St",
-		City:      "New York",
-		State:     "NY",
-		Country:   "USA",
-		PostalCode:"10001",
-		Notes:     "Important customer",
+		FirstName:  "John",
+		LastName:   "Doe",
+		Email:      "john@example.com",
+		Phone:      "+1234567890",
+		Company:    "Acme Corp",
+		Position:   "CEO",
+		Address:    "123 Main St",
+		City:       "New York",
+		State:      "NY",
+		Country:    "USA",
+		PostalCode: "10001",
+		Notes:      "Important customer",
 	}
-	
+
 	suite.mockService.On("Create", mock.MatchedBy(func(c *models.Customer) bool {
 		return c.FirstName == "John" &&
 			c.LastName == "Doe" &&
@@ -92,16 +92,16 @@ func (suite *CustomerHandlerTestSuite) TestCreate_Success() {
 		customer := args.Get(0).(*models.Customer)
 		customer.ID = 1
 	})
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -111,20 +111,20 @@ func (suite *CustomerHandlerTestSuite) TestCreate_Success() {
 
 func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmail() {
 	suite.router.POST("/customers", suite.handler.Create)
-	
+
 	payload := CreateCustomerRequest{
 		FirstName: "John",
 		LastName:  "Doe",
 		Email:     "john@example.com",
 	}
-	
+
 	suite.mockService.On("Create", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
 
 	// A duplicate email conflicts with existing state, so it is 409, not 400.
@@ -143,52 +143,52 @@ func (suite *CustomerHandlerTestSuite) TestCreate_ForbiddenForSupportUser() {
 	suite.router.Use(func(c *gin.Context) {
 		c.Set("user_role", "support")
 	})
-	
+
 	payload := CreateCustomerRequest{
 		FirstName: "John",
 		LastName:  "Doe",
 		Email:     "john@example.com",
 	}
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	// Create a new context with support role
 	ctx, _ := gin.CreateTestContext(rec)
 	ctx.Set("user_id", uint(1))
 	ctx.Set("user_role", "support")
 	ctx.Set("request_id", "test-request-id")
 	ctx.Request = req
-	
+
 	suite.handler.Create(ctx)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
 func (suite *CustomerHandlerTestSuite) TestList_Success() {
 	suite.router.GET("/customers", suite.handler.List)
-	
+
 	expectedCustomers := []models.Customer{
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", LastName: "Doe", Email: "john@example.com"},
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", LastName: "Smith", Email: "jane@example.com"},
 	}
-	
+
 	suite.mockService.On("List", 0, 20).Return(expectedCustomers, int64(2), nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/customers", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	data := response.Data.(map[string]interface{})
 	assert.Len(suite.T(), data["customers"], 2)
 	assert.Equal(suite.T(), float64(2), data["total"])
@@ -197,25 +197,25 @@ func (suite *CustomerHandlerTestSuite) TestList_Success() {
 
 func (suite *CustomerHandlerTestSuite) TestList_WithPagination() {
 	suite.router.GET("/customers", suite.handler.List)
-	
+
 	expectedCustomers := []models.Customer{
 		{BaseModel: models.BaseModel{ID: 3}, FirstName: "Bob", LastName: "Wilson", Email: "bob@example.com"},
 	}
-	
+
 	suite.mockService.On("List", 2, 1).Return(expectedCustomers, int64(3), nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/customers?offset=2&limit=1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	assert.Equal(suite.T(), 3, int(response.Meta.Page))
 	assert.Equal(suite.T(), 1, response.Meta.PerPage)
 	assert.Equal(suite.T(), int64(3), response.Meta.Total)
@@ -224,7 +224,7 @@ func (suite *CustomerHandlerTestSuite) TestList_WithPagination() {
 
 func (suite *CustomerHandlerTestSuite) TestGet_Success() {
 	suite.router.GET("/customers/:id", suite.handler.Get)
-	
+
 	expectedCustomer := &models.Customer{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -232,21 +232,21 @@ func (suite *CustomerHandlerTestSuite) TestGet_Success() {
 		Email:     "john@example.com",
 		Company:   "Acme Corp",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(expectedCustomer, nil)
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/customers/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), response.Success)
-	
+
 	customerData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "John", customerData["first_name"])
 	assert.Equal(suite.T(), "Doe", customerData["last_name"])
@@ -323,7 +323,7 @@ func (suite *CustomerHandlerTestSuite) TestGet_GenuineFailureIsInternalError() {
 
 func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
 	suite.router.PUT("/customers/:id", suite.handler.Update)
-	
+
 	existingCustomer := &models.Customer{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
@@ -331,13 +331,14 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
 		Email:     "john@example.com",
 		Company:   "Acme Corp",
 	}
-	
+
+	company := "Tech Corp"
 	payload := UpdateCustomerRequest{
 		FirstName: "Jane",
 		LastName:  "Smith",
-		Company:   "Tech Corp",
+		Company:   &company,
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
 	suite.mockService.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
 		return c.ID == 1 &&
@@ -346,16 +347,16 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
 			c.Email == "john@example.com" && // Email unchanged
 			c.Company == "Tech Corp"
 	})).Return(nil)
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-	
+
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
@@ -364,26 +365,26 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
 
 func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmail() {
 	suite.router.PUT("/customers/:id", suite.handler.Update)
-	
+
 	existingCustomer := &models.Customer{
 		BaseModel: models.BaseModel{ID: 1},
 		FirstName: "John",
 		LastName:  "Doe",
 		Email:     "john@example.com",
 	}
-	
+
 	payload := UpdateCustomerRequest{
 		Email: "existing@example.com",
 	}
-	
+
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
 	suite.mockService.On("Update", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
-	
+
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
 
 	// A duplicate email conflicts with existing state, so it is 409, not 400.
@@ -455,14 +456,14 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_LookupFailureIsInternalError()
 
 func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/customers/:id", suite.handler.Delete)
-	
+
 	suite.mockService.On("Delete", uint(1)).Return(nil)
-	
+
 	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	suite.router.ServeHTTP(rec, req)
-	
+
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
 }
 
@@ -520,10 +521,10 @@ func (suite *CustomerHandlerTestSuite) TestDelete_GenuineFailureIsInternalError(
 
 func (suite *CustomerHandlerTestSuite) TestDelete_ForbiddenForNonAdmin() {
 	suite.router.DELETE("/customers/:id", suite.handler.Delete)
-	
+
 	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
 	rec := httptest.NewRecorder()
-	
+
 	// Create a new context with sales role
 	ctx, _ := gin.CreateTestContext(rec)
 	ctx.Set("user_id", uint(2))
@@ -531,9 +532,9 @@ func (suite *CustomerHandlerTestSuite) TestDelete_ForbiddenForNonAdmin() {
 	ctx.Set("request_id", "test-request-id")
 	ctx.Request = req
 	ctx.Params = []gin.Param{{Key: "id", Value: "1"}}
-	
+
 	suite.handler.Delete(ctx)
-	
+
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 }
 
@@ -711,6 +712,7 @@ func assertNoDriverInternalsInBody(t *testing.T, body string) {
 func TestCustomerHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(CustomerHandlerTestSuite))
 }
+
 // --- Export ------------------------------------------------------------------
 //
 // The export deliberately does NOT answer with the utils.APIResponse envelope:

@@ -60,7 +60,7 @@ type CreateCustomerRequest struct {
 	CompanyID *uint `json:"company_id,omitempty" example:"3"`
 }
 
-// @Description Body of PUT /customers/{id}. Every field is optional. A text field that is omitted or empty leaves the stored value unchanged (it cannot be cleared this way), except website, where an empty string clears it.
+// @Description Body of PUT /customers/{id}. Every field is optional. first_name, last_name and email apply only when non-empty: omitted or empty leaves them unchanged. The other text fields (phone, company, position, address, city, state, country, postal_code, notes, website): omitted or null leaves the stored value unchanged, an empty string clears it.
 type UpdateCustomerRequest struct {
 	// Website: absent leaves the value alone; an empty string clears it.
 
@@ -75,24 +75,33 @@ type UpdateCustomerRequest struct {
 	// New email address; must be valid and not used by another customer (409).
 	// Empty leaves it unchanged.
 	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"ana.popescu@example.com"`
-	// New phone number; empty leaves it unchanged.
-	Phone string `json:"phone,omitempty" example:"+40 721 000 000"`
-	// New free-text company name; empty leaves it unchanged.
-	Company string `json:"company,omitempty" example:"Acme SRL"`
-	// New job title; empty leaves it unchanged.
-	Position string `json:"position,omitempty" example:"Purchasing manager"`
-	// New street address; empty leaves it unchanged.
-	Address string `json:"address,omitempty" example:"Strada Exemplu 1"`
-	// New city; empty leaves it unchanged.
-	City string `json:"city,omitempty" example:"Cluj-Napoca"`
-	// New state, county or region; empty leaves it unchanged.
-	State string `json:"state,omitempty" example:"Cluj"`
-	// New country; empty leaves it unchanged.
-	Country string `json:"country,omitempty" example:"Romania"`
-	// New postal code; empty leaves it unchanged.
-	PostalCode string `json:"postal_code,omitempty" example:"400000"`
-	// New notes, replacing the old ones; empty leaves them unchanged.
-	Notes string `json:"notes,omitempty" example:"Prefers email contact."`
+	// New phone number; omitted or null leaves it unchanged,
+	// "" clears it.
+	Phone *string `json:"phone,omitempty" example:"+40 721 000 000"`
+	// New free-text company name; omitted or null leaves it unchanged,
+	// "" clears it. Independent of company_id.
+	Company *string `json:"company,omitempty" example:"Acme SRL"`
+	// New job title; omitted or null leaves it unchanged,
+	// "" clears it.
+	Position *string `json:"position,omitempty" example:"Purchasing manager"`
+	// New street address; omitted or null leaves it unchanged,
+	// "" clears it.
+	Address *string `json:"address,omitempty" example:"Strada Exemplu 1"`
+	// New city; omitted or null leaves it unchanged,
+	// "" clears it.
+	City *string `json:"city,omitempty" example:"Cluj-Napoca"`
+	// New state, county or region; omitted or null leaves it unchanged,
+	// "" clears it.
+	State *string `json:"state,omitempty" example:"Cluj"`
+	// New country; omitted or null leaves it unchanged,
+	// "" clears it.
+	Country *string `json:"country,omitempty" example:"Romania"`
+	// New postal code; omitted or null leaves it unchanged,
+	// "" clears it.
+	PostalCode *string `json:"postal_code,omitempty" example:"400000"`
+	// New notes, replacing the old ones; omitted or null leaves them
+	// unchanged, "" clears them.
+	Notes *string `json:"notes,omitempty" example:"Prefers email contact."`
 	// CompanyID: absent leaves the link alone, 0 clears it, any other value
 	// must name a live company.
 
@@ -348,7 +357,7 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a customer
-// @Description Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.
+// @Description Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. first_name, last_name and email apply only when non-empty, so they cannot be cleared. phone, company, position, address, city, state, country, postal_code and notes: omitted or null leaves the stored value unchanged, an empty string clears it, any other value is stored as sent. website: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -415,33 +424,17 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	if req.Email != "" {
 		customer.Email = req.Email
 	}
-	if req.Phone != "" {
-		customer.Phone = req.Phone
-	}
-	if req.Company != "" {
-		customer.Company = req.Company
-	}
-	if req.Position != "" {
-		customer.Position = req.Position
-	}
-	if req.Address != "" {
-		customer.Address = req.Address
-	}
-	if req.City != "" {
-		customer.City = req.City
-	}
-	if req.State != "" {
-		customer.State = req.State
-	}
-	if req.Country != "" {
-		customer.Country = req.Country
-	}
-	if req.PostalCode != "" {
-		customer.PostalCode = req.PostalCode
-	}
-	if req.Notes != "" {
-		customer.Notes = req.Notes
-	}
+	// Optional text fields: an omitted key or a JSON null keeps the stored
+	// value, any sent string (the empty one included) replaces it.
+	applyOptionalText(&customer.Phone, req.Phone)
+	applyOptionalText(&customer.Company, req.Company)
+	applyOptionalText(&customer.Position, req.Position)
+	applyOptionalText(&customer.Address, req.Address)
+	applyOptionalText(&customer.City, req.City)
+	applyOptionalText(&customer.State, req.State)
+	applyOptionalText(&customer.Country, req.Country)
+	applyOptionalText(&customer.PostalCode, req.PostalCode)
+	applyOptionalText(&customer.Notes, req.Notes)
 	// The scalar counterpart of the label_ids rule: absent keeps, 0 clears.
 	if req.CompanyID != nil {
 		if *req.CompanyID == 0 {
@@ -477,6 +470,14 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, customer)
 	utils.RespondSuccess(c, http.StatusOK, customer)
+}
+
+// applyOptionalText copies a sent request value over the stored one. A nil
+// pointer (key omitted or JSON null) leaves the stored value as it is.
+func applyOptionalText(stored *string, sent *string) {
+	if sent != nil {
+		*stored = *sent
+	}
 }
 
 // Delete godoc

@@ -234,17 +234,18 @@ depend on that are flagged.
   `first_name, last_name, email, phone, company, website, address, city, state, country,
   postal_code, notes` (and `company_id` when one is linked). Step 4 *submission*: the PUT body
   carries each cleared field as an empty string and the API answers 200. Step 4 *persistence*:
-  after the reload only Website is empty; Street Address, City, State/Province, Country, Postal
-  Code and Notes come back with their previous values, because `CustomerHandler.Update` treats an
-  empty string as "unchanged" for every field except `website` (TC-CUST-018).
-- **Known issue:** Clearing an optional customer field other than Website does not persist — a
-  backend limitation recorded in `docs/ROADMAP.md` ("Customer update cannot clear optional text
-  fields"). The backend also owns a `Position` field that the form never exposes. Before #118 the
-  four controls accepted input that every save discarded.
+  after the reload Website, Street Address, City, State/Province, Country, Postal Code and Notes
+  are all empty, because `PUT /customers/{id}` stores a sent `""` for every optional text field
+  (TC-CUST-018).
+- **Known issue:** The backend also owns a `Position` field that the form never exposes. Before
+  #118 the four controls accepted input that every save discarded. Until #270 only Website could
+  be cleared; the other optional fields came back on reload.
 - **Automation:** submission half automated (Vitest) — `CustomerForm.test.tsx` "CustomerForm
   retained fields" asserts the create and update payloads and the edit-form reload from a stored
-  record, with a mocked API; nothing automated asserts persistence. The browser half (including
-  the persistence check) is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
+  record, with a mocked API. Persistence of a cleared field is asserted at the API level by
+  `tests/customer_clear_fields_integration_test.go` (`TestCustomerUpdateClearsOptionalTextFields`)
+  and, for Website, by `tests/customer_website_integration_test.go`. The browser half (including
+  the persistence check after a reload) is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-012a — Website persists through both creation paths and can be cleared
 - **Priority:** P1
@@ -323,7 +324,7 @@ depend on that are flagged.
   (`CustomerForm.tsx:96-98`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
-### TC-CUST-018 — Clearing an optional field on edit does not clear it server-side
+### TC-CUST-018 — Clearing an optional field on edit clears it server-side
 - **Priority:** P1
 - **Type:** regression
 - **Preconditions:** Admin logged in; a customer created by the test with Notes and City populated.
@@ -331,17 +332,23 @@ depend on that are flagged.
   1. Open the customer's edit form.
   2. Clear the "Notes" field and the "City" field entirely.
   3. Click "Update Customer", then reopen the record.
-- **Expected:** The form sends `notes: ""` and `city: ""` and the API answers 200, but the original
-  Notes and City are still present after the reload. `CustomerHandler.Update` applies each text
-  field only `if req.X != ""`, so an empty string is read as "leave unchanged". The UI gives no
-  indication that the clearing was ignored. Website is the exception: it is a pointer in the
-  request, so clearing it does persist (TC-CUST-012a), and `company_id: 0` clears the company link.
-- **Known issue:** Address, city, state, country, postal code and notes cannot be blanked through
-  the API or the UI; website and the company link can. The behaviour is documented in the
-  handler's swagger `@Description` ("empty fields leave the stored value unchanged"), listed as a
-  gap in FEATURES.md row 4.3 and recorded as a defect in `docs/ROADMAP.md` ("Customer update
-  cannot clear optional text fields"). TC-CUST-012 shows the same split for the full form.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+- **Expected:** The form sends `notes: ""` and `city: ""`, the API answers 200 with both fields
+  empty, and both are still empty after the reload. In `PUT /customers/{id}` the optional text
+  fields `phone`, `company`, `position`, `address`, `city`, `state`, `country`, `postal_code` and
+  `notes` are pointers: an omitted key or a JSON `null` keeps the stored value, a sent `""` is
+  stored. `first_name`, `last_name` and `email` still ignore an empty value (the stored value
+  stays), website keeps its own rule (TC-CUST-012a) and `company_id: 0` clears the company link. A
+  sales user may clear a field; a support user's `PUT` answers 403 and changes nothing.
+- **Known issue (fixed, #270):** The handler applied each text field only `if req.X != ""`, so a
+  cleared field came back on reload with no indication that the clearing was ignored. The lead
+  update has the same defect and is still open (`docs/ROADMAP.md`).
+- **Automation:** API half automated — `tests/customer_clear_fields_integration_test.go`
+  (`TestCustomerUpdateClearsOptionalTextFields`, `TestCustomerUpdateOmittedOrNullFieldsUnchanged`,
+  `TestCustomerUpdateEmptyRequiredFieldsUnchanged`, `TestCustomerUpdateClearRoles`: SQLite, the
+  routes of `SetupCustomerRoutes` behind the real JWT middleware, every value read back from the
+  database), with the handler unit roots `TestCustomerHandlerUpdateClearsOptionalFields` and
+  `TestCustomerHandlerUpdateKeepsOmittedOrNull` (`internal/handler/customer_clear_fields_test.go`).
+  Browser half planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-019 — Support user cannot update a customer
 - **Priority:** P0
