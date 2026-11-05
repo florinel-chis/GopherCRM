@@ -365,7 +365,10 @@ of these restores anything on an erased row, and `customerService` still has no 
 `TestCustomerUpdateLiveRow{SQLite,MySQL}`, `TestCustomerUpdateDuplicateEmail{SQLite,MySQL}` and
 `TestCustomerLostWriteLogsOmitPersonalData`; `TestCustomerHandlerUpdateMapsServiceErrors`
 (`internal/handler/customer_update_errors_test.go`). The MySQL roots use a disposable schema on
-`TEST_MYSQL_DSN`, skip without it and fail when it is unreachable.
+`TEST_MYSQL_DSN`, skip without it and fail when it is unreachable. CI limit: those MySQL roots are
+discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded
+and full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN
+and skips them, so a `contextual` PR's CI does not execute them.
 
 **Web client session** (#115, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the stored
 session. Every operation — a request, a refresh, a password change, a logout — captures a session
