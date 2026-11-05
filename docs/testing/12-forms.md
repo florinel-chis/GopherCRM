@@ -195,8 +195,9 @@ same outcomes in sequence.
 - **TC-FORM-090 — `FORM_RETENTION_DAYS` keeps the purge off unless it is a positive number, and
   lands inside 3..36500** · automated · `internal/config/config_test.go`
   `TestLoadFormRetentionDays`; `cmd/form_retention_runtime_test.go`
-  `TestFormRetentionProductionWiring` proves off and on through `setupRouter`. The first boot with
-  the setting removes the backlog without any request.
+  `TestFormRetentionProductionWiring` proves off and on through `setupRouter`, and that the drain
+  handle `main` receives waits for a chunk parked in flight. The first boot with the setting removes
+  the backlog without any request.
 - **TC-FORM-091 — only old spam and never-confirmed rows with no lead go, with their tokens; every
   other row is byte-for-byte unchanged** · automated ·
   `internal/repository/form_submission_purge_test.go`

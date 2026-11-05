@@ -551,6 +551,7 @@ test --list` reports 100.
 | `mailer/smtp_transport_test.go` | 4 (+ subtests) | Mailer |
 | `repository/quote_repository_test.go` | 7 | Repository |
 | `repository/product_repository_test.go` | 3 | Repository |
+| `repository/form_submission_purge_test.go` | 6 (SQLite and MySQL roots, + subtests) | Repository |
 | `middleware/rate_limit_test.go` | 7 (+ subtests) | Middleware |
 | `middleware/auth_test.go` | 12 | Middleware |
 | `middleware/error_handler_test.go` | 6 | Middleware |
@@ -579,6 +580,8 @@ test --list` reports 100.
 | `test/integration/erasure_atomicity_test.go` | 19 (SQLite and MySQL roots, + subtests) | Erasure atomicity and rollback; customer writes racing an erasure |
 | `test/integration/erasure_pii_sweep_test.go` | 9 | Cross-table PII sweep (quote tables included) |
 | `test/integration/quote_integration_test.go` | 5 | Quotes over HTTP (create, lines, lock, visibility, delete) |
+| `tests/form_retention_api_test.go` | 1 | Form retention purge over HTTP (lists, count, 404, invalid-link page) |
+| `cmd/form_retention_runtime_test.go` | 1 (+ subtests) | Form retention purge through `setupRouter` (off, on, drain joins a chunk in flight) |
 | `test/integration/product_integration_test.go` | 3 | Products over HTTP (roles, list, delete) |
 | `cmd/migrate/products_quotes_migration_test.go` | 1 (MySQL/MariaDB, + subtests) | Products and quotes migration |
 | `cmd/migrate/automation_migration_test.go` | 2 (one MySQL/MariaDB, + subtests) | Follow-up automation migration |

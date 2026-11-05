@@ -6,11 +6,14 @@ package main
 import (
 	"context"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -115,11 +118,6 @@ func TestFormRetentionProductionWiring(t *testing.T) {
 		require.NoError(t, stop(ctx))
 		stopped = true
 
-		// The runtime has stopped: a row that is due stays until the next boot.
-		later := seedOldSpamRow(t)
-		time.Sleep(100 * time.Millisecond)
-		assert.True(t, formSubmissionExists(t, later))
-
 		// A live context on purpose: the combined handle also holds the AEO drain,
 		// which may report an ended context even with nothing left to drain. The
 		// ended-context case belongs to FormRetentionRuntime alone and is pinned by
@@ -128,6 +126,71 @@ func TestFormRetentionProductionWiring(t *testing.T) {
 		defer cancelAgain()
 		require.NoError(t, stop(again), "the handle main receives can be called twice")
 		assert.Equal(t, 1, boot.logs.count(formRetentionEnabledLine))
+	})
+
+	// Between ticks the runtime is idle, so only a chunk parked in flight can tell
+	// a handle that joins the purge from one that never stops it: the handle must
+	// still be waiting at its deadline, and must return nil once the chunk ends.
+	t.Run("set to 3: the handle main receives joins a chunk in flight", func(t *testing.T) {
+		t.Setenv("FORM_RETENTION_DAYS", "3")
+		days := formRetentionDaysFromEnv(t)
+		require.Equal(t, 3, days)
+
+		boot := bootAutomation(t, false)
+		boot.cfg.Forms.RetentionDays = days
+		id := seedOldSpamRow(t)
+
+		entered := make(chan struct{}, 1)
+		release := make(chan struct{})
+		releaseChunk := sync.OnceFunc(func() { close(release) })
+		var parked atomic.Int32
+		require.NoError(t, models.DB.Callback().Delete().Before("gorm:delete").Register("form_retention_wiring:park", func(tx *gorm.DB) {
+			if tx.Statement.Table != "form_submissions" {
+				return
+			}
+			parked.Add(1)
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+		}))
+
+		backgroundCtx, stopBackground := context.WithCancel(context.Background())
+		t.Cleanup(stopBackground)
+		_, stop := setupRouter(backgroundCtx, boot.cfg)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+			defer cancel()
+			_ = stop(ctx)
+		})
+		// Registered last so it runs first: the drain above and the database close
+		// must not wait on a chunk this root still holds.
+		t.Cleanup(releaseChunk)
+
+		select {
+		case <-entered:
+		case <-time.After(automationBootTimeout):
+			t.Fatal("the boot sweep never reached the submission delete")
+		}
+
+		short, cancelShort := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancelShort()
+		err := stop(short)
+		require.Error(t, err, "the handle does not return nil with a chunk in flight")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorContains(t, err, "form retention runtime did not stop")
+
+		releaseChunk()
+		ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+		defer cancel()
+		require.NoError(t, stop(ctx), "the handle returns nil once the chunk has ended")
+
+		// The drain cancelled the chunk before its delete ran: it rolled back, was
+		// not replayed, and the sweep went no further.
+		assert.True(t, formSubmissionExists(t, id), "the cancelled chunk rolled back")
+		assert.EqualValues(t, 1, parked.Load(), "no further delete starts after the drain")
+		assert.Equal(t, 1, boot.logs.count(`"msg":"form retention sweep interrupted"`))
 	})
 
 	t.Run("the wiring helper uses the daily interval and builds nothing when off", func(t *testing.T) {

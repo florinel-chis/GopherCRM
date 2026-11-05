@@ -1374,7 +1374,7 @@ LateConfirmationLink,CutoffClockBasis,ConcurrentResubmission}{SQLite,MySQL}`,
 `TestFormSubmissionPurgeRefusesShortRetention`, `TestFormSubmissionPurgeLogsOmitPersonalData`,
 `TestFormRetentionRuntimeLifecycle` and `TestFormRetentionRuntimeStopDuringChunk`
 (`internal/service`); `TestFormRetentionAPISQLite` (`tests`); `TestFormRetentionProductionWiring`
-(`cmd`); `TestLoadFormRetentionDays` (`internal/config`). The MySQL concurrency roots confirm each
+(`cmd`, which parks a chunk to prove the drain handle joins it); `TestLoadFormRetentionDays` (`internal/config`). The MySQL concurrency roots confirm each
 wait in `information_schema.PROCESSLIST` on two consecutive polls; SQLite's single connection cannot
 overlap two transactions, so its roots prove the same outcomes in sequence. CI limit: the MySQL roots
 are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`, which CI runs only on

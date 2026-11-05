@@ -108,7 +108,8 @@ func (r *FormRetentionRuntime) sweep(ctx context.Context) {
 	}
 }
 
-// Wake asks for a sweep now. It does nothing when no goroutine runs.
+// Wake asks for a sweep now. A Wake before Start is buffered and causes one extra
+// sweep after the first; after the goroutine has ended it does nothing.
 func (r *FormRetentionRuntime) Wake() {
 	select {
 	case r.wake <- struct{}{}:

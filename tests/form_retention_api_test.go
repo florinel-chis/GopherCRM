@@ -121,7 +121,7 @@ func TestFormRetentionAPISQLite(t *testing.T) {
 	bearer, err := authService.Login(admin.Email, "password123")
 	require.NoError(t, err)
 
-	get := func(path string) formRetentionEnvelope {
+	getWithStatus := func(path string) (int, formRetentionEnvelope) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
 		req.Header.Set("Authorization", "Bearer "+bearer)
@@ -129,6 +129,11 @@ func TestFormRetentionAPISQLite(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		var envelope formRetentionEnvelope
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), rec.Body.String())
+		return rec.Code, envelope
+	}
+	get := func(path string) formRetentionEnvelope {
+		t.Helper()
+		_, envelope := getWithStatus(path)
 		return envelope
 	}
 	listIDs := func(path string) ([]uint, int64) {
@@ -212,7 +217,11 @@ func TestFormRetentionAPISQLite(t *testing.T) {
 	assert.ElementsMatch(t, []uint{purgedSpam, keptSpam}, ids)
 	assert.EqualValues(t, 2, total)
 	assert.EqualValues(t, 4, submissionCount(form.ID))
-	assert.True(t, get(fmt.Sprintf("/forms/submissions/%d", purgedSpam)).Success)
+	for _, id := range []uint{purgedSpam, purgedPending.ID} {
+		status, envelope := getWithStatus(fmt.Sprintf("/forms/submissions/%d", id))
+		assert.Equal(t, http.StatusOK, status)
+		assert.True(t, envelope.Success)
+	}
 
 	result, err := service.NewFormSubmissionPurger(formRepo, txManager, 72*time.Hour).Sweep(context.Background())
 	require.NoError(t, err)
@@ -229,7 +238,8 @@ func TestFormRetentionAPISQLite(t *testing.T) {
 	assert.EqualValues(t, 2, submissionCount(form.ID), "the form list reports the reduced count")
 
 	for _, id := range []uint{purgedSpam, purgedPending.ID} {
-		envelope := get(fmt.Sprintf("/forms/submissions/%d", id))
+		status, envelope := getWithStatus(fmt.Sprintf("/forms/submissions/%d", id))
+		assert.Equal(t, http.StatusNotFound, status)
 		assert.False(t, envelope.Success)
 		require.NotNil(t, envelope.Error)
 		assert.Equal(t, utils.ErrCodeNotFound, envelope.Error.Code)
