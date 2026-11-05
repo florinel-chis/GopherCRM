@@ -8778,7 +8778,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.",
+                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. first_name, last_name and email apply only when non-empty, so they cannot be cleared. phone, company, position, address, city, state, country, postal_code and notes: omitted or null leaves the stored value unchanged, an empty string clears it, any other value is stored as sent. website: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -29727,21 +29727,21 @@
             }
         },
         "internal_handler.UpdateCustomerRequest": {
-            "description": "Body of PUT /customers/{id}. Every field is optional. A text field that is omitted or empty leaves the stored value unchanged (it cannot be cleared this way), except website, where an empty string clears it.",
+            "description": "Body of PUT /customers/{id}. Every field is optional. first_name, last_name and email apply only when non-empty: omitted or empty leaves them unchanged. The other text fields (phone, company, position, address, city, state, country, postal_code, notes, website): omitted or null leaves the stored value unchanged, an empty string clears it.",
             "type": "object",
             "properties": {
                 "address": {
-                    "description": "New street address; empty leaves it unchanged.",
+                    "description": "New street address; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "Strada Exemplu 1"
                 },
                 "city": {
-                    "description": "New city; empty leaves it unchanged.",
+                    "description": "New city; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "Cluj-Napoca"
                 },
                 "company": {
-                    "description": "New free-text company name; empty leaves it unchanged.",
+                    "description": "New free-text company name; omitted or null leaves it unchanged,\n\"\" clears it. Independent of company_id.",
                     "type": "string",
                     "example": "Acme SRL"
                 },
@@ -29751,7 +29751,7 @@
                     "example": 3
                 },
                 "country": {
-                    "description": "New country; empty leaves it unchanged.",
+                    "description": "New country; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "Romania"
                 },
@@ -29772,27 +29772,27 @@
                     "example": "Popescu"
                 },
                 "notes": {
-                    "description": "New notes, replacing the old ones; empty leaves them unchanged.",
+                    "description": "New notes, replacing the old ones; omitted or null leaves them\nunchanged, \"\" clears them.",
                     "type": "string",
                     "example": "Prefers email contact."
                 },
                 "phone": {
-                    "description": "New phone number; empty leaves it unchanged.",
+                    "description": "New phone number; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "+40 721 000 000"
                 },
                 "position": {
-                    "description": "New job title; empty leaves it unchanged.",
+                    "description": "New job title; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "Purchasing manager"
                 },
                 "postal_code": {
-                    "description": "New postal code; empty leaves it unchanged.",
+                    "description": "New postal code; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "400000"
                 },
                 "state": {
-                    "description": "New state, county or region; empty leaves it unchanged.",
+                    "description": "New state, county or region; omitted or null leaves it unchanged,\n\"\" clears it.",
                     "type": "string",
                     "example": "Cluj"
                 },

@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PUT /customers/{id}` can clear the optional text fields (#270).** `phone`, `company`,
+  `position`, `address`, `city`, `state`, `country`, `postal_code` and `notes` used to apply only
+  when non-empty, so the customer form's cleared fields answered 200 and came back on reload. A
+  sent `""` is now stored; an omitted key or a JSON `null` still keeps the stored value.
+  `first_name`, `last_name` and `email` still ignore an empty value, and `website` and `company_id`
+  keep their own rules. The lead update still has the same limitation.
 - **`PUT /tickets/{id}` stores a new assignee (#269).** On a ticket that already had an assignee the
   request validated the new user, answered 200 and kept the old one, because GORM wrote the
   preloaded `AssignedTo` id back over the foreign key. The service now detaches a preloaded user
