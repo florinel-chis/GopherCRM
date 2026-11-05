@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PUT /tickets/{id}` stores a new assignee (#269).** On a ticket that already had an assignee the
+  request validated the new user, answered 200 and kept the old one, because GORM wrote the
+  preloaded `AssignedTo` id back over the foreign key. The service now detaches a preloaded user
+  that differs from the foreign key before the write and attaches the user the key names afterwards,
+  so `assigned_to_id` and `assigned_to` both name the new assignee. Assigning an unassigned ticket
+  now also fills `assigned_to` in the response. A support user who reassigns a ticket loses access
+  to it at once, as the assignee rule already implied.
 - **A customer write can no longer restore an erased person (#256).** `PUT /customers/{id}` and
   `POST /customers/{id}/assign` wrote the customer back with GORM's `Save`, which falls back to an
   upsert, so a request that read the customer before an erasure could restore the personal data and

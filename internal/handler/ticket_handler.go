@@ -50,7 +50,7 @@ type UpdateTicketRequest struct {
 	Status models.TicketStatus `json:"status,omitempty" binding:"omitempty,oneof=open in_progress resolved closed" example:"resolved"`
 	// New priority; absent or empty leaves it unchanged.
 	Priority models.TicketPriority `json:"priority,omitempty" binding:"omitempty,oneof=low medium high urgent" example:"urgent"`
-	// New assignee, which must exist and hold the support or admin role (400 otherwise). Absent or null leaves it unchanged; the assignee cannot be removed. On a ticket that already has an assignee the new value is currently not stored (see the operation description).
+	// New assignee, which must exist and hold the support or admin role (400 otherwise). Absent or null leaves it unchanged; the assignee cannot be removed.
 	AssignedToID *uint `json:"assigned_to_id,omitempty" example:"5"`
 	// Resolution text; absent or empty leaves it unchanged (it cannot be cleared).
 	Resolution string `json:"resolution,omitempty" example:"Rolled the printer back to the previous firmware."`
@@ -458,7 +458,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a ticket
-// @Description Partially update a ticket: absent or empty fields are left unchanged, and nothing can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. Known limitation: on a ticket that already has an assignee, a different assigned_to_id is validated but not stored; the previous assignee is kept and returned (a ticket without an assignee can be assigned). customer_id cannot be changed. The response carries the customer, assignee and comments (including internal notes).
+// @Description Partially update a ticket: absent or empty fields are left unchanged, and nothing can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. The response carries the customer, assignee and comments (including internal notes).
 // @Tags tickets
 // @Accept json
 // @Produce json

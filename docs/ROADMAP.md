@@ -138,11 +138,6 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 Recorded while writing the API reference; the spec documents the current behaviour, warts
 included. Found by reading the code path unless noted.
 
-- **Ticket reassignment is ignored** — `PUT /tickets/{id}` with a new `assigned_to_id` on a ticket
-  that already has an assignee validates the new user, answers 200 and keeps the old assignee
-  (reproduced with a probe test). The update saves the ticket read with its `AssignedTo`
-  association preloaded, and GORM writes the preloaded association's id back over the foreign
-  key. The task service already avoids this; the ticket service needs the same targeted update.
 - **Changing the login email needs no current password** — `PUT /users/me` and `PUT /users/{id}`
   change the address a password reset is mailed to without asking for the current password, so
   whoever holds a live access token or API key can redirect the reset to their own address. Whether
