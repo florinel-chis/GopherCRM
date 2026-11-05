@@ -450,11 +450,12 @@ workflow if you never intend to use it.
 
 Run the automation worker on exactly one instance. Every other replica sets
 `AUTOMATION_ENABLED=false` (README "Known Limitations"). Rate limits are per process, so they are
-not shared between replicas either.
+not shared between replicas either. The form retention purge (`FORM_RETENTION_DAYS`) needs no such
+rule: it is safe on every replica, because extra sweeps only compete for the same rows.
 
 That does not make the whole application safe to scale. Every process, whatever its
 `AUTOMATION_ENABLED` and `AEO_SCHEDULE_ENABLED`, marks every AEO run still `running` as failed at
-startup (`cmd/main.go:431`, `internal/service/aeo_service.go:847-853`,
+startup (`cmd/main.go:418`, `internal/service/aeo_service.go:847-853`,
 `internal/repository/aeo_repository.go:310-320`), so starting a second replica fails a run the
 first one is executing. The AEO overlap guard and the daily scheduler are process-local too
 (`docs/ROADMAP.md`, "Cross-process AEO coordination"). Run one API process, or coordinate AEO across

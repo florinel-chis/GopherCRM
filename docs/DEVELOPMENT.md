@@ -1158,7 +1158,8 @@ Follow-up automation (#164) is the second owner of background work. `internal/se
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
 (`combineStops`) that `main` runs — automation first, then the form retention purge, then AEO —
-before `models.CloseDatabase`.
+before `models.CloseDatabase`. That order describes the code and is not a contract: no handle
+depends on another, all three share one deadline, and no test asserts the order.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
@@ -1330,8 +1331,9 @@ the setting is off, so no goroutine runs and no row is read.
   `WithTransactionAndRetry` transaction. A chunk (`FormRepository.PurgeSubmissionChunk`) reads its
   candidates and token ids with plain reads, locks the tokens by primary key, locks the submissions
   by primary key, re-checks the rule on what those locking reads return, and only then deletes tokens
-  and submissions. Locking by primary key alone keeps InnoDB off the secondary indexes, whose
-  next-key locks would block a new submission's insert. A failure rolls back that chunk only, and
+  and submissions. Locking by primary key keeps the locking reads off the secondary indexes, whose
+  next-key locks would block a new submission's insert; the deletes still reach those indexes (see
+  *Re-submissions*). A failure rolls back that chunk only, and
   the next sweep picks up what is left. The walk never selects a row twice, so a row that survives
   the re-check cannot keep a sweep busy.
 - **Lock order.** Token first, submission second, the order a confirmation uses. A confirmation that
@@ -1341,10 +1343,15 @@ the setting is off, so no goroutine runs and no row is read.
   row. Two sweeps at once are safe: the loser of a chunk locks nothing that is left and counts
   nothing.
 - **Re-submissions.** `storePendingSubmission` spends the older tokens of the same form and address
-  inside its transaction, which can deadlock with a chunk removing one of those older rows, so it
-  now runs under `WithTransactionAndRetry`. Each attempt inserts its row with a fresh id and mints a
-  fresh token, and the confirmation mail goes out once, after the commit. `storeReceivedSubmission`,
-  `recordSpam` and `ConfirmSubmission` have no such conflict and still have no retry.
+  inside its transaction, which deadlocks with a chunk removing one of those older rows. This was
+  observed, not theoretical: on MySQL 8.0 the forced purge-first ordering deadlocked 9 times out of
+  9 at repository level and InnoDB rolled back the re-submission. The purge's primary-key locks do
+  not cover the `deleted_at` index, so holding them does not keep the re-submission out of the way
+  of its deletes. The function therefore now runs under `WithTransactionAndRetry`. Each attempt
+  inserts its row with a fresh id and mints a fresh token, and the confirmation mail goes out once,
+  after the commit. `storeReceivedSubmission` and `recordSpam` also insert rows but are not
+  replayed, and what a purge costs them is unmeasured; `ConfirmSubmission` has no retry either.
+  MariaDB was not probed for any of this.
 - **The drain.** `FormRetentionRuntime.Stop` cancels the sweep's context, so a chunk in flight rolls
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
@@ -1369,7 +1376,10 @@ LateConfirmationLink,CutoffClockBasis,ConcurrentResubmission}{SQLite,MySQL}`,
 (`internal/service`); `TestFormRetentionAPISQLite` (`tests`); `TestFormRetentionProductionWiring`
 (`cmd`); `TestLoadFormRetentionDays` (`internal/config`). The MySQL concurrency roots confirm each
 wait in `information_schema.PROCESSLIST` on two consecutive polls; SQLite's single connection cannot
-overlap two transactions, so its roots prove the same outcomes in sequence.
+overlap two transactions, so its roots prove the same outcomes in sequence. CI limit: the MySQL roots
+are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`, which CI runs only on
+the transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
+`make verify-backend` has no DSN and skips them, so a `contextual` PR's CI does not execute them.
 
 ### AEO runtime validation and candidate inspection
 

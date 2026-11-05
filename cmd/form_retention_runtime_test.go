@@ -120,9 +120,13 @@ func TestFormRetentionProductionWiring(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		assert.True(t, formSubmissionExists(t, later))
 
-		ended, cancelEnded := context.WithCancel(context.Background())
-		cancelEnded()
-		require.NoError(t, stop(ended), "the handle main receives can be called twice")
+		// A live context on purpose: the combined handle also holds the AEO drain,
+		// which may report an ended context even with nothing left to drain. The
+		// ended-context case belongs to FormRetentionRuntime alone and is pinned by
+		// TestFormRetentionRuntimeLifecycle.
+		again, cancelAgain := context.WithTimeout(context.Background(), automationBootTimeout)
+		defer cancelAgain()
+		require.NoError(t, stop(again), "the handle main receives can be called twice")
 		assert.Equal(t, 1, boot.logs.count(formRetentionEnabledLine))
 	})
 

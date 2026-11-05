@@ -84,7 +84,7 @@ func (e *formPurgeRepoEnv) token(t *testing.T, submissionID uint, expiresIn time
 	e.seq++
 	row := &models.FormConfirmationToken{
 		SubmissionID: submissionID,
-		TokenHash:    fmt.Sprintf("hash-%060d", e.seq),
+		TokenHash:    fmt.Sprintf("hash-%059d", e.seq), // 64 characters: token_hash is varchar(64) on MySQL
 		ExpiresAt:    e.now.Add(expiresIn),
 	}
 	if used {

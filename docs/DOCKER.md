@@ -133,10 +133,12 @@ Notes on the wiring:
   are recovered when the next worker container boots. This does not make the
   backend safe to scale as a whole: every backend container marks all AEO runs
   still `running` as failed when it starts, whatever its `AUTOMATION_ENABLED`
-  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:431`,
+  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:418`,
   `internal/repository/aeo_repository.go:310-320`), so a second replica fails
   the first one's AEO run, and the AEO scheduler and overlap guard are
-  per process. Keep one backend container (#229).
+  per process. Keep one backend container (#229). The form retention purge
+  (`FORM_RETENTION_DAYS`) is not part of this limit: it is safe on every
+  replica, because extra sweeps only compete for the same rows.
 
 ## Running Compose beyond localhost
 
