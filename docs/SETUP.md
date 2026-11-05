@@ -37,8 +37,8 @@ cp .env.example .env
 Then edit `.env`. The settings that matter for a first run (all read in `internal/config/config.go`):
 
 - `JWT_SECRET`: required, at least 32 characters. Generate one with `openssl rand -base64 32`. The
-  placeholder in `.env.example` is long enough to pass the startup check, so the application **starts with
-  it**; replace it before anything else (#210).
+  application refuses the placeholder in `.env.example` and any value starting with `CHANGE_THIS`, so
+  replace it before anything else.
 - `DB_DRIVER`: `mysql` (default) or `sqlite`. Any other value stops startup.
 - MySQL: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`.
 - SQLite: `DB_PATH` (default `gophercrm.db`; it must not contain `?`).
@@ -160,8 +160,9 @@ The two schemes are parsed in `internal/middleware/auth.go`.
 
 ### Backend
 
-1. **Startup refuses the configuration.** `JWT_SECRET` is missing or shorter than 32 characters, or
-   `DB_DRIVER` has an unknown value. The error names the variable.
+1. **Startup refuses the configuration.** `JWT_SECRET` is missing, shorter than 32 characters or the
+   `.env.example` placeholder (a value starting with `CHANGE_THIS`), or `DB_DRIVER` has an unknown
+   value. The error names the variable.
 2. **Database connection failed.** Check that MySQL is running, the credentials in `.env`, and that
    `DB_NAME` matches the database you created (see step 2).
 3. **Port already in use.** Change `SERVER_PORT` in `.env`, or find the process with `lsof -ti:8080`.

@@ -148,11 +148,11 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret starts the app.** The placeholder in `.env.example` is 60 characters,
-   and `internal/config/config.go:230-240` rejects only an empty value, the literal
-   `default-secret-change-this` and values shorter than 32 characters. A copied `.env.example`
-   therefore runs with a secret anyone can read. Replace it. Refusing the placeholder at startup
-   is #210.
+1. **The example JWT secret stops the app.** `internal/config/config.go:230-240` rejects an empty
+   value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
+   placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
+   `.env.example` does not start. Replace the secret with the output of
+   `openssl rand -base64 32`.
 2. **CORS.** The backend accepts browser requests from `localhost`/`127.0.0.1` on 5173 and 3000,
    and `localhost:8080` (`internal/middleware/cors.go:14-20`). Any other cross-origin UI needs
    `CORS_ALLOWED_ORIGINS`. An unlisted origin gets a bare 403, which the login page shows as a

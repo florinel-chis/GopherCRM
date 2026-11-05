@@ -126,8 +126,8 @@ and turns some into deals and quotes.
 ### Setup
 
 1. Deploy with TLS in front and replace every secret ([FORKING.md](FORKING.md)). The example
-   `JWT_SECRET` in `.env.example` passes the startup check, so a copied example runs with a public
-   secret until #210 lands.
+   `JWT_SECRET` in `.env.example` is refused at startup, so a copied example does not start until
+   the secret is replaced.
 2. Set `SMTP_*`, `PUBLIC_BASE_URL` (confirmation links), `APP_BASE_URL` (password-reset links),
    `TRUSTED_PROXIES` and `CORS_ALLOWED_ORIGINS`. The shipped Compose files do not forward SMTP,
    `PUBLIC_BASE_URL`, automation or reCAPTCHA variables, and they hard-code localhost URLs
@@ -410,7 +410,6 @@ planning around an issue number.
 | Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:963,966` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
-| The example JWT secret passes the startup check | all | `.env.example`; `internal/config/config.go` | #210 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
 | External identity mapping for customers, as a `(source, scope, external_id)` table rather than columns, because customer email is globally unique | 3, 4 | `internal/models/customer.go:9` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |

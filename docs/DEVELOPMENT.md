@@ -847,7 +847,7 @@ settings:
 - `DB_PATH` — SQLite database file (default `gophercrm.db`), read only when
   `DB_DRIVER=sqlite`; must not contain `?`, because the connector appends its own pragma query string
 - `DB_*` — MySQL connection settings, ignored when `DB_DRIVER=sqlite`
-- `JWT_SECRET` — required, minimum 32 characters
+- `JWT_SECRET` — required, minimum 32 characters; values starting with `CHANGE_THIS` are refused
 - `API_KEY_SECRET` — optional, falls back to `JWT_SECRET`
 - `SERVER_PORT` (default 8080), `SERVER_MODE` (`development` / `production`)
 - `SERVER_HOST` — interface to bind; empty (default) listens on every interface, `127.0.0.1`
