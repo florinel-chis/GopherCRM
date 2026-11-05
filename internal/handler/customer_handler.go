@@ -348,7 +348,7 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a customer
-// @Description Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. The whole row is written back.
+// @Description Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. Text fields apply only when non-empty, so they cannot be cleared here; website is the exception: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -453,6 +453,14 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.customerService.Update(customer); err != nil {
+		// The customer was live at the read above and is not any more: the
+		// write lost to an erasure and wrote nothing. Only this sentinel means
+		// that; any other failure stays a 500.
+		if errors.Is(err, apperrors.ErrNotFound) {
+			logger.WithError(utils.LogError(err)).WithField("customer_id", customer.ID).Warn("Customer update lost: no live customer")
+			utils.RespondNotFound(c, "Customer not found")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
 		switch {
 		case errors.Is(err, apperrors.ErrValidation):

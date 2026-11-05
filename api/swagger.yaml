@@ -11821,8 +11821,8 @@ paths:
         it, otherwise it is trimmed and must be an absolute http or https URL with
         a host, at most 255 characters. company_id: omitted or null leaves the link
         unchanged, 0 clears it, any other value must name a live company. The account
-        manager is changed through POST /customers/{id}/assign. The whole row is written
-        back.'
+        manager is changed through POST /customers/{id}/assign. A write that loses
+        to an erasure answers 404 and writes nothing.'
       parameters:
       - description: Customer ID
         in: path
