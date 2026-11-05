@@ -369,7 +369,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open `/tasks/{id}/edit`, remove the chip with its delete icon, save.
   2. Open the task detail page.
-- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`task_handler.go:47`) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
+- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`task_handler.go:49`) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "editing a task replaces its label set"
 
 ### TC-LABEL-033 — An unknown label id rejects the whole write

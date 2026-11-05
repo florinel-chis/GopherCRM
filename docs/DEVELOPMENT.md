@@ -343,6 +343,33 @@ re-checked). Login bookkeeping, `UpdateLastLogin`, the reset, the password chang
 `internal/service/auth_login_erasure_regression_test.go`). Re-verifying the password under the
 owner lock when a login issues its session is tracked in #183.
 
+**Customer writes never upsert (#256)** — `CustomerRepository.Update` is one `UPDATE … WHERE id = ?
+AND deleted_at IS NULL` of named columns: the names, email, phone, company, website, position,
+address, city, state, country, postal code, notes, `company_id`, `assigned_to_id` and `updated_at`
+(the handle's `NowFunc`, copied to the struct). `id`, `created_at`, `user_id`, `deleted_at` and the
+preloaded `User` and `CompanyRecord` are not written, and it never inserts. A zero count is
+re-checked with a locking read, not a plain one: MySQL reports changed rows, so an identical write
+affects zero rows and returns nil, while a plain read in a REPEATABLE READ transaction could still
+show a row whose erasure has committed and turn the lost write into a false success. No live row
+returns `gorm.ErrRecordNotFound`; `CustomerService.Update` and `Assign` log one Warn line with ids
+only and return `apperrors.ErrNotFound`, which `PUT /customers/{id}` and
+`POST /customers/{id}/assign` answer with 404 `NOT_FOUND`. An update that commits before an erasure
+is scrubbed by it, whichever of the customer, converted-lead or customer-role-login deletes it came
+through. Live customers stay last-write-wins on purpose: two edits, a stale `PUT` undoing an assign
+or the reverse, and a stale write putting back a `company_id` that `UnlinkCustomers` cleared. None
+of these restores anything on an erased row, and `customerService` still has no transaction. Roots
+(`test/integration/erasure_atomicity_test.go`):
+`TestCustomerUpdateLostToErasure{SQLite,MySQL}`, `TestCustomerAssignLostToErasure{SQLite,MySQL}`,
+`TestCustomerWriteAfterErasure{SQLite,MySQL}`, `TestCustomerWriteConcurrentWithErasure{SQLite,MySQL}`
+(the MySQL root confirms both blocked orderings in `information_schema.PROCESSLIST`),
+`TestCustomerUpdateLiveRow{SQLite,MySQL}`, `TestCustomerUpdateDuplicateEmail{SQLite,MySQL}` and
+`TestCustomerLostWriteLogsOmitPersonalData`; `TestCustomerHandlerUpdateMapsServiceErrors`
+(`internal/handler/customer_update_errors_test.go`). The MySQL roots use a disposable schema on
+`TEST_MYSQL_DSN`, skip without it and fail when it is unreachable. CI limit: those MySQL roots are
+discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded
+and full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN
+and skips them, so a `contextual` PR's CI does not execute them.
+
 **Web client session** (#115, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the stored
 session. Every operation — a request, a refresh, a password change, a logout — captures a session
 snapshot when it is requested (before waiting for any lock): this tab's generation, the account of

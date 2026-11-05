@@ -157,8 +157,6 @@ included. Found by reading the code path unless noted.
   `POST /customers/{id}/assign` map every lookup error to not found.
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
-- **Customer update writes the whole row (`Save`)** — a request racing an erasure can write the
-  stale personal data back; the user repository moved to targeted updates for the same reason.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON
   name for service-level field errors; Gin's validator has no tag-name function registered.
 - **Zero-valued nested objects** — `Lead.owner`, `Ticket.customer` and `Task.assigned_to` are
