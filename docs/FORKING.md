@@ -21,7 +21,7 @@ moves faster than this page.
 
 Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:182`).
+wiring is in `setupDependencies` (`cmd/main.go:257`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -109,7 +109,7 @@ go run ./cmd                     # or: make run
 ```
 
 The backend listens on `http://localhost:8080` and creates `gophercrm.db` in the working
-directory (`DB_PATH`, `internal/config/config.go:245`). The schema is created by auto-migration at
+directory (`DB_PATH`, `internal/config/config.go:285`). The schema is created by auto-migration at
 startup. `cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
 
 In a second terminal, create the first admin. Self-service registration only ever creates
@@ -148,7 +148,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret stops the app.** `internal/config/config.go:230-240` rejects an empty
+1. **The example JWT secret stops the app.** `internal/config/config.go:270-280` rejects an empty
    value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
    placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
    `.env.example` does not start. Replace the secret with the output of
@@ -295,23 +295,24 @@ Configuration comes from three places:
 
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | none (required) | `config.go:231` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:278`, `internal/service/form_service.go:277` | see the rotation callout below |
-| `DB_DRIVER` | `mysql` | `config.go:244` | `mysql` or `sqlite`; anything else stops startup |
-| `DB_PATH` | `gophercrm.db` | `config.go:245` | SQLite only; no `?`; local filesystem (WAL) |
-| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:246-250` | MySQL only |
-| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:254-255` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:256` | `production` switches Gin to release mode (`cmd/main.go:143-145`). It also defaults the unused cookie `Secure` flag (`config.go:435-440`); no shipped route sets an auth cookie |
-| `TRUSTED_PROXIES` | trust none | `config.go:257` | see below |
-| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:258` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `config.go:288` | the UI origin; password-reset links |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:316` | this backend's public origin; form confirmation links |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:281-285` | empty host means log-only mail |
-| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:317-318` | both or the layer is skipped |
-| `AUTOMATION_ENABLED` | `true` | `config.go:322` | true on exactly one instance |
-| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:310-311` | daily AEO run |
-| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:313` | environment only; see `docs/AEO_SECURITY.md` |
-| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:273-274` | SQL statements only at debug/trace |
+| `JWT_SECRET` | none (required) | `config.go:271` | at least 32 characters; replace the example (section 2.3) |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:318`, `internal/service/form_service.go:328` | see the rotation callout below |
+| `DB_DRIVER` | `mysql` | `config.go:284` | `mysql` or `sqlite`; anything else stops startup |
+| `DB_PATH` | `gophercrm.db` | `config.go:285` | SQLite only; no `?`; local filesystem (WAL) |
+| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:286-290` | MySQL only |
+| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:294-295` | `127.0.0.1` behind a proxy on the same host |
+| `SERVER_MODE` | `development` | `config.go:296` | `production` switches Gin to release mode (`cmd/main.go:217-219`). It also defaults the unused cookie `Secure` flag (`config.go:476-481`); no shipped route sets an auth cookie |
+| `TRUSTED_PROXIES` | trust none | `config.go:297` | see below |
+| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:298` | every browser origin of your UI |
+| `APP_BASE_URL` | `http://localhost:5173` | `config.go:328` | the UI origin; password-reset links |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:356` | this backend's public origin; form confirmation links |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:321-325` | empty host means log-only mail |
+| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:357-358` | both or the layer is skipped |
+| `FORM_RETENTION_DAYS` | off | `config.go:360` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
+| `AUTOMATION_ENABLED` | `true` | `config.go:363` | true on exactly one instance |
+| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:350-351` | daily AEO run |
+| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:353` | environment only; see `docs/AEO_SECURITY.md` |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:313-314` | SQL statements only at debug/trace |
 
 The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
 environment. `docs/AEO_SECURITY.md` explains why.
@@ -319,9 +320,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:233`), refresh and password-reset tokens (`cmd/main.go:216`), form confirmation
->   tokens and time-trap signatures (`internal/service/form_service.go:271-282`), and the
->   encryption of sensitive settings (`cmd/main.go:219`, `internal/utils/secretbox.go`). Rotating
+>   (`cmd/main.go:309`), refresh and password-reset tokens (`cmd/main.go:291`), form confirmation
+>   tokens and time-trap signatures (`internal/service/form_service.go:322-333`), and the
+>   encryption of sensitive settings (`cmd/main.go:294`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
@@ -355,19 +356,21 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:107-110`).
-- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:262`, used at
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:302`, used at
   `internal/service/auth_service.go:344`) and the refresh-token lifetime from
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:267`). `JWT_ACCESS_TOKEN_MINUTES` is read
-  (`config.go:263`) but only feeds the unused cookie helper.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:307`). `JWT_ACCESS_TOKEN_MINUTES` is read
+  (`config.go:303`) but only feeds the unused cookie helper.
 
 The company name and colour settings are covered in
 section 3.1.
 
 ### 4.4 Module switches
 
-Only two exist: `AUTOMATION_ENABLED` (`config.go:322`) turns the automation worker off on an
-instance, and `AEO_SCHEDULE_ENABLED` (`config.go:310`) turns off the daily AEO run. Forms and AEO
+Only two exist: `AUTOMATION_ENABLED` (`config.go:363`) turns the automation worker off on an
+instance, and `AEO_SCHEDULE_ENABLED` (`config.go:350`) turns off the daily AEO run. Forms and AEO
 as a whole have no switch; removing a module is described in [EXTENDING.md](EXTENDING.md).
+`FORM_RETENTION_DAYS` (`config.go:360`) is the opposite kind of setting: the form retention purge
+stays off until you set it.
 
 ## 5. Deployment shapes
 
@@ -451,7 +454,7 @@ not shared between replicas either.
 
 That does not make the whole application safe to scale. Every process, whatever its
 `AUTOMATION_ENABLED` and `AEO_SCHEDULE_ENABLED`, marks every AEO run still `running` as failed at
-startup (`cmd/main.go:338`, `internal/service/aeo_service.go:847-853`,
+startup (`cmd/main.go:431`, `internal/service/aeo_service.go:847-853`,
 `internal/repository/aeo_repository.go:310-320`), so starting a second replica fails a run the
 first one is executing. The AEO overlap guard and the daily scheduler are process-local too
 (`docs/ROADMAP.md`, "Cross-process AEO coordination"). Run one API process, or coordinate AEO across
@@ -527,7 +530,7 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:182` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` in `cmd/main.go:257` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
 | the AutoMigrate list in `internal/models/database.go:111-150` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |

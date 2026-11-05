@@ -37,7 +37,9 @@ const (
 // A submission is `received` when it is final on arrival, `pending` while a
 // double-opt-in confirmation is outstanding, `confirmed` once that
 // confirmation is spent, and `spam` when one of the protection layers rejected
-// it. Spam rows are kept so admins can see what the filters catch.
+// it. Spam rows are kept so admins can see what the filters catch, until the
+// retention purge (FORM_RETENTION_DAYS, off by default) removes old spam and
+// never-confirmed pending rows that have no linked lead.
 type FormSubmissionStatus string
 
 const (

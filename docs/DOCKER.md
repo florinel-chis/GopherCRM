@@ -133,7 +133,7 @@ Notes on the wiring:
   are recovered when the next worker container boots. This does not make the
   backend safe to scale as a whole: every backend container marks all AEO runs
   still `running` as failed when it starts, whatever its `AUTOMATION_ENABLED`
-  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:338`,
+  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:431`,
   `internal/repository/aeo_repository.go:310-320`), so a second replica fails
   the first one's AEO run, and the AEO scheduler and overlap guard are
   per process. Keep one backend container (#229).
@@ -169,13 +169,17 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
 - `PUBLIC_BASE_URL` (default `http://localhost:8080`): form confirmation links
   point at localhost.
 - `RECAPTCHA_*`: the reCAPTCHA spam layer is skipped.
+- `FORM_RETENTION_DAYS`: the form retention purge stays off, so spam and
+  never-confirmed submissions are kept. To enable it, add the variable to the
+  backend environment; the first boot with it set permanently removes the
+  existing backlog, so take a backup first (see the backup section below).
 - `AUTOMATION_ENABLED`, `AUTOMATION_POLL_INTERVAL_SECONDS`: the worker runs
   with its defaults.
 - `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR`, `AEO_EGRESS_*`, the
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
 - `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:262-267`.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:302-307`.
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 
@@ -295,7 +299,7 @@ Restore with the backend stopped, and match the restore to the backup:
 - **Offline copy (option 1):** put back `gophercrm.db` together with the
   `gophercrm.db-wal` and `gophercrm.db-shm` copied with it, replacing all
   three. The WAL can hold committed transactions that are not yet in the main
-  file — the backend can exit without a final checkpoint (`cmd/main.go:120-127`)
+  file — the backend can exit without a final checkpoint (`cmd/main.go:194-204`)
   — so deleting it, or mixing it with another backup's main file, loses data.
 - **`VACUUM INTO` snapshot (option 2):** it is one self-contained file. Put it
   back as `/data/gophercrm.db` and delete any `-wal`/`-shm` left in the

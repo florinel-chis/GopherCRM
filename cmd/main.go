@@ -176,12 +176,13 @@ func main() {
 
 	utils.Logger.Info("Shutting down server...")
 
-	// Stop the background workers and drain the automation worker and the
-	// AEO runtime first: admission closes, so no new run starts while the
-	// server is draining, an automation step in flight finishes or rolls
-	// back, and every scheduled, manual or single-prompt AEO run already in
-	// flight is cancelled and joined under aeoDrainTimeout. A request that
-	// asks for an AEO run from here on is answered 503.
+	// Stop the background workers and drain the automation worker, the form
+	// retention purge and the AEO runtime first: admission closes, so no new
+	// run starts while the server is draining, an automation step or purge
+	// chunk in flight finishes or rolls back, and every scheduled, manual or
+	// single-prompt AEO run already in flight is cancelled and joined under
+	// aeoDrainTimeout. A request that asks for an AEO run from here on is
+	// answered 503.
 	stopBackground()
 	drainErr := drainAEO(stopAEO, aeoDrainTimeout)
 
@@ -250,8 +251,9 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 }
 
 // setupDependencies wires every repository, service and handler onto the API
-// group and returns the function that drains the automation worker and the
-// AEO runtime at shutdown, in that order, before main closes the database.
+// group and returns the function that drains the automation worker, the form
+// retention purge and the AEO runtime at shutdown, in that order, before main
+// closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
@@ -360,6 +362,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	}
 	automation := newAutomationBackground(automationRuntime)
 
+	// The form retention purge removes old spam and never-confirmed submissions.
+	// It stays off until FORM_RETENTION_DAYS is configured.
+	formRetention := newFormRetentionBackground(cfg.Forms, formRepo, txManager)
+
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
 	leadHandler := handler.NewLeadHandler(leadService)
@@ -439,6 +445,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		utils.Logger.Info("Automation worker not started")
 	}
 
+	formRetention.start(backgroundCtx)
+
 	// Public routes with strict rate limiting for auth endpoints
 	public := router.Group("")
 	{
@@ -496,7 +504,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		}
 	}
 
-	// One drain handle for both runtimes: the automation worker first (its
-	// step transactions are short), then the AEO runs.
-	return combineStops(automation.Stop, aeoRuntime.Stop)
+	// One drain handle for every runtime: the automation worker first (its step
+	// transactions are short), then the form retention purge (a chunk in flight
+	// rolls back), then the AEO runs.
+	return combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)
 }

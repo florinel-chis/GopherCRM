@@ -537,6 +537,8 @@ test --list` reports 100.
 | `service/auth_service_cookie_test.go` | 5 | Service |
 | `service/auth_service_test.go` | 4 (16 subtests) | Service |
 | `service/form_confirmation_regression_test.go` | 6 (SQLite and MySQL roots, + subtests) | Service |
+| `service/form_submission_purge_test.go` | 16 (SQLite and MySQL roots, + subtests) | Service |
+| `service/form_retention_runtime_test.go` | 2 (+ subtests) | Service |
 | `service/quote_service_test.go` | 3 (+ subtests, on SQLite) | Service |
 | `service/quote_status_regression_test.go` | 2 (SQLite and MySQL roots, + subtests) | Service |
 | `service/quote_email_test.go` | 3 (+ subtests, on SQLite) | Service |

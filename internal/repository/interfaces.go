@@ -730,8 +730,9 @@ type NotificationRepository interface {
 // Everything here is deliberately status-blind. Whether a form may be served
 // publicly, whether a submission counts as spam and whether a token has already
 // been spent are service decisions; this layer only reports what is stored —
-// with the one exception of GetConfirmationTokenByHash, whose filter is a
-// disclosure guarantee rather than a business rule.
+// with two exceptions: GetConfirmationTokenByHash, whose filter is a disclosure
+// guarantee rather than a business rule, and PurgeSubmissionChunk, whose
+// eligibility rule has to be re-checked under the row locks it takes.
 type FormRepository interface {
 	Create(form *models.Form) error
 	GetByID(id uint) (*models.Form, error)
@@ -768,5 +769,44 @@ type FormRepository interface {
 	// confirmation link keeps working.
 	InvalidatePendingTokens(formID uint, email string) error
 
+	// PurgeSubmissionChunk permanently removes one chunk of submissions past
+	// their retention, with their confirmation tokens. It must run on a
+	// transaction-bound repository, and that transaction is what makes the
+	// chunk atomic; called on the root handle it returns an error and touches
+	// nothing.
+	PurgeSubmissionChunk(q FormSubmissionPurgeQuery) (FormSubmissionPurgeChunk, error)
+
 	WithTx(tx *gorm.DB) FormRepository
+}
+
+// FormSubmissionPurgeQuery selects one chunk for PurgeSubmissionChunk.
+type FormSubmissionPurgeQuery struct {
+	// Status is the status this chunk walks: spam or pending.
+	Status models.FormSubmissionStatus
+	// Cutoff removes rows created strictly before it. It is compared in UTC,
+	// the clock GORM's NowFunc stamps created_at with.
+	Cutoff time.Time
+	// Now decides whether a token is still spendable. It is bound exactly as
+	// given, because SQLite compares timestamps as text and expires_at is
+	// written from the process's local clock: it must carry that same zone.
+	Now time.Time
+	// AfterID continues a walk: only ids above it are candidates. Every chunk
+	// of a pass moves forward, so a row that survives the re-check under lock
+	// cannot be selected again and keep a sweep busy forever.
+	AfterID uint
+	// Limit is the most submissions the chunk selects. It must be positive.
+	Limit int
+}
+
+// FormSubmissionPurgeChunk reports what one chunk did.
+type FormSubmissionPurgeChunk struct {
+	// Selected is how many candidates the chunk read; fewer than the limit
+	// means the walk is finished.
+	Selected int
+	// LastID is the highest selected id, the next chunk's AfterID.
+	LastID uint
+	// Submissions and Tokens are the rows actually removed. They can be below
+	// Selected when a competing sweep or a confirmation got there first.
+	Submissions int64
+	Tokens      int64
 }

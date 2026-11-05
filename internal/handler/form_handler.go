@@ -313,7 +313,7 @@ func (h *FormHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a form
-// @Description Soft-delete a form. The public endpoints stop serving it at once (its definition and submissions answer 404, and outstanding double opt-in links stop working), its submission list is no longer reachable through GET /forms/{id}/submissions, while single submissions stay readable through GET /forms/submissions/{id} and the leads they produced are untouched.
+// @Description Soft-delete a form. The public endpoints stop serving it at once (its definition and submissions answer 404, and outstanding double opt-in links stop working), its submission list is no longer reachable through GET /forms/{id}/submissions, while single submissions stay readable through GET /forms/submissions/{id} and the leads they produced are untouched. Its spam and never-confirmed submissions with no linked lead are still removed once they pass FORM_RETENTION_DAYS, when that setting is configured.
 // @Description Roles: admin only.
 // @Tags forms
 // @Produce json
@@ -393,7 +393,7 @@ func (h *FormHandler) ListSubmissions(c *gin.Context) {
 
 // GetSubmission godoc
 // @Summary Get a submission
-// @Description A single submission with the values it carried, where it came from and the lead it produced, if any. Works for submissions of soft-deleted forms too.
+// @Description A single submission with the values it carried, where it came from and the lead it produced, if any. Works for submissions of soft-deleted forms too. A spam or never-confirmed submission with no linked lead answers 404 once FORM_RETENTION_DAYS, when configured, has removed it.
 // @Description Roles: admin, sales, support.
 // @Tags forms
 // @Produce json

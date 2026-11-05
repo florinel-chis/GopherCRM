@@ -64,7 +64,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 `make run`):
 
 - **Replace the example `JWT_SECRET`.** The placeholder is refused at startup, so a copied
-  `.env.example` does not start until the secret is replaced (`internal/config/config.go:230-240`).
+  `.env.example` does not start until the secret is replaced (`internal/config/config.go:270-280`).
 - **Set `CORS_ALLOWED_ORIGINS`** for any cross-origin UI other than localhost on 5173, 3000 or 8080
   (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
 - **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
@@ -972,6 +972,11 @@ gophercrm/
   [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 - **Bulk operations are status-only.** Only `POST /leads|tickets|tasks/bulk/status` exist (see
   *Bulk operations* above); there is no bulk create, update or delete.
+- **Spam and unconfirmed form submissions are kept until you set a retention.** With
+  `FORM_RETENTION_DAYS` set (3 days at least, off by default), those with no linked lead are removed
+  permanently at that age, at boot and then every 24 hours, so the first boot removes the existing
+  backlog. Until a separate frontend task merges, the form-delete dialogs still say "Collected
+  submissions are retained", which is wrong for those rows.
 - **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and
   search fields; shared helpers omit argument/result/response payloads, and HTTP logs omit query
   strings. Quoted values in logged errors are redacted, and SMTP errors retain only the protocol

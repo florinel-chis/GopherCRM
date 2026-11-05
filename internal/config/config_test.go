@@ -31,6 +31,7 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"AEO_EGRESS_ALLOWED_ORIGINS", "AEO_EGRESS_LOCAL_ORIGINS",
 		// Forms keys, for the same reason as the AEO ones.
 		"PUBLIC_BASE_URL", "RECAPTCHA_SITE_KEY", "RECAPTCHA_SECRET_KEY", "RECAPTCHA_MIN_SCORE",
+		"FORM_RETENTION_DAYS",
 		// Database driver selection, so a developer shell pointing at SQLite
 		// cannot flip the default-value assertions.
 		"DB_DRIVER", "DB_PATH",
@@ -175,6 +176,51 @@ func TestLoad_AutomationDefaultsAndClamp(t *testing.T) {
 			assert.NoError(t, err)
 			assert.False(t, cfg.Automation.Enabled)
 			assert.Equalf(t, tc.want, cfg.Automation.PollIntervalSeconds, "AUTOMATION_POLL_INTERVAL_SECONDS=%s", tc.raw)
+		})
+	}
+}
+
+// TestLoadFormRetentionDays pins FORM_RETENTION_DAYS: anything that is not a
+// positive number leaves the purge off, and a positive number lands inside the
+// 3..36500 bounds.
+func TestLoadFormRetentionDays(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.Equal(t, 0, cfg.Forms.RetentionDays)
+		})
+	})
+
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", 0},
+		{"0", 0},
+		{"-1", 0},
+		{"-99999999999999999999999", 0},
+		{"garbage", 0},
+		{"3.5", 0},
+		{"90d", 0},
+		{"1", 3},
+		{"2", 3},
+		{"3", 3},
+		{"4", 4},
+		{"90", 90},
+		{"36500", 36500},
+		{"36501", 36500},
+		{"99999999999999999999999", 36500},
+	} {
+		t.Run("value "+tc.raw, func(t *testing.T) {
+			withCleanEnv(t, map[string]string{
+				"JWT_SECRET":          validSecret(),
+				"FORM_RETENTION_DAYS": tc.raw,
+			}, func() {
+				cfg, err := Load()
+				assert.NoError(t, err)
+				assert.Equalf(t, tc.want, cfg.Forms.RetentionDays, "FORM_RETENTION_DAYS=%q", tc.raw)
+			})
 		})
 	}
 }

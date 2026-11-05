@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -202,6 +203,45 @@ type FormsConfig struct {
 	// RecaptchaMinScore is the lowest v3 score still treated as human,
 	// clamped to [0,1] so a mistyped value cannot disable or block everything.
 	RecaptchaMinScore float64
+
+	// RetentionDays is the age in days after which a spam or never-confirmed
+	// submission with no linked lead is permanently removed, from
+	// FORM_RETENTION_DAYS. 0 means the purge is off. See parseFormRetentionDays.
+	RetentionDays int
+}
+
+// Bounds of FORM_RETENTION_DAYS. The floor protects a confirmation link, which
+// stays clickable for 48 hours, and a form an admin is still reviewing; the
+// ceiling keeps the age inside what a time.Duration can hold.
+const (
+	FormRetentionDaysMin = 3
+	FormRetentionDaysMax = 36500
+)
+
+// parseFormRetentionDays reads FORM_RETENTION_DAYS. An unset, empty, zero,
+// negative or unparseable value turns the purge off, because deleting data must
+// never be the result of a typo. A positive value below the floor is raised to
+// it and one above the ceiling, including one too large for an int, is lowered
+// to it.
+func parseFormRetentionDays(raw string) int {
+	raw = strings.TrimSpace(raw)
+	days, err := strconv.Atoi(raw)
+	if err != nil {
+		if errors.Is(err, strconv.ErrRange) && !strings.HasPrefix(raw, "-") {
+			return FormRetentionDaysMax
+		}
+		return 0
+	}
+	switch {
+	case days <= 0:
+		return 0
+	case days < FormRetentionDaysMin:
+		return FormRetentionDaysMin
+	case days > FormRetentionDaysMax:
+		return FormRetentionDaysMax
+	default:
+		return days
+	}
 }
 
 // RecaptchaActive reports whether the reCAPTCHA check can run at all. Both
@@ -317,6 +357,7 @@ func Load() (*Config, error) {
 			RecaptchaSiteKey:  getEnv("RECAPTCHA_SITE_KEY", ""),
 			RecaptchaSecret:   getEnv("RECAPTCHA_SECRET_KEY", ""),
 			RecaptchaMinScore: clampUnitInterval(getEnvAsFloat("RECAPTCHA_MIN_SCORE", 0.5)),
+			RetentionDays:     parseFormRetentionDays(os.Getenv("FORM_RETENTION_DAYS")),
 		},
 		Automation: AutomationConfig{
 			Enabled:             getEnvAsBool("AUTOMATION_ENABLED", true),

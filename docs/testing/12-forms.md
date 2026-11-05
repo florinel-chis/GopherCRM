@@ -9,7 +9,9 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 
 - `internal/models/form.go`, `internal/models/database.go`
 - `internal/repository/form_repository.go`, `internal/repository/erasure_cascade.go`
-- `internal/service/form_service.go`, `internal/service/interfaces.go`
+- `internal/service/form_service.go`, `internal/service/interfaces.go`,
+  `internal/service/form_submission_purge.go`, `internal/service/form_retention_runtime.go`,
+  `cmd/form_retention_runtime.go`
 - `internal/forms/challenge.go`, `internal/forms/recaptcha.go`
 - `internal/handler/form_handler.go`, `form_routes.go`, `form_public_handler.go`,
   `form_public_routes.go`, `form_public_html.go`, `assets/form_embed.js`
@@ -149,8 +151,7 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   tokens, in both directions of the conversion cascade** · automated ·
   `test/integration/form_submission_erasure_test.go`.
 - **TC-FORM-083 — unlinked spam/pending submissions are untouched by lead erasure** · automated ·
-  same file. **Known issue:** their eventual clean-up is a retention sweep that does not exist
-  yet (ROADMAP).
+  same file. Their clean-up is the retention purge, cases TC-FORM-090 onward.
 - **TC-FORM-084 — repeated large submissions from one address keep that lead's notes within the
   TEXT column (65,535 bytes).**
   - Each submission block is capped at 16 KiB.
@@ -184,3 +185,34 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
     submissions erased the staff note.
   · automated · `lead_notes_test.go` `TestAppendLeadNotesKeepsStaffTextWrittenAfterABlock`, and on
   MySQL and MariaDB by `forms-public-api.spec.ts`.
+
+## Retention purge
+
+The MySQL roots use a disposable schema on `TEST_MYSQL_DSN`, and confirm every lock wait in
+`information_schema.PROCESSLIST` on two consecutive polls. SQLite's single connection proves the
+same outcomes in sequence.
+
+- **TC-FORM-090 — `FORM_RETENTION_DAYS` keeps the purge off unless it is a positive number, and
+  lands inside 3..36500** · automated · `internal/config/config_test.go`
+  `TestLoadFormRetentionDays`; `cmd/form_retention_runtime_test.go`
+  `TestFormRetentionProductionWiring` proves off and on through `setupRouter`. The first boot with
+  the setting removes the backlog without any request.
+- **TC-FORM-091 — only old spam and never-confirmed rows with no lead go, with their tokens; every
+  other row is byte-for-byte unchanged** · automated ·
+  `internal/repository/form_submission_purge_test.go`
+  `TestFormSubmissionPurge{RemovesEligible,KeepsIneligible}{SQLite,MySQL}`;
+  `form_submission_purge_test.go` `TestFormSubmissionPurgeCutoffClockBasis{SQLite,MySQL}` and
+  `TestFormSubmissionPurgeRefusesShortRetention`.
+- **TC-FORM-092 — a backlog goes in chunks of 500, each atomic, and competing sweeps count each row
+  once** · automated · `form_submission_purge_test.go`
+  `TestFormSubmissionPurge{BacklogChunks,ChunkAtomic,CompetingSweeps}{SQLite,MySQL}`.
+- **TC-FORM-093 — a purge never loses a confirmation or a re-submission, and a late link gets the
+  generic rejection** · automated · `form_submission_purge_test.go`
+  `TestFormSubmissionPurge{ConcurrentConfirmation,ConcurrentResubmission,LateConfirmationLink}{SQLite,MySQL}`;
+  `tests/form_retention_api_test.go` `TestFormRetentionAPISQLite` covers the lists, the count, the
+  404 and the invalid-link page over HTTP.
+- **TC-FORM-094 — the runtime sweeps at start and on every tick, drains a chunk in flight, and logs
+  counts only** · automated · `form_retention_runtime_test.go`
+  `TestFormRetentionRuntime{Lifecycle,StopDuringChunk}`; `form_submission_purge_test.go`
+  `TestFormSubmissionPurgeLogsOmitPersonalData`. **Known issue:** both form-delete dialogs still say
+  "Collected submissions are retained" until a separate frontend task merges.
