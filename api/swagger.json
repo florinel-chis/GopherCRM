@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens (a password changed through PUT /users/me revokes none), but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
+        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens, but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
         "title": "GopherCRM API",
         "contact": {},
         "version": "1.2.0"
@@ -15104,7 +15104,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a lead. Roles: admin and sales (the /leads group guard).\nChecks, in order: the binding rules (first_name and last_name required, email well-formed, status and classification from their sets); notes at most 65535 bytes; status converted is refused (only POST /leads/{id}/convert converts); an email or a non-blank phone is required. Owner: an admin must send owner_id; a sales user may omit it (the lead becomes its own) or send its own id. company_id links a company record independently of the free-text company field: 0 or absent means no link, an id that names no live company is 400 INVALID_REFERENCE. created_at may backdate an imported lead; a value in no accepted layout is ignored and the current time is used.\nSide effect: the lead_created automation event is recorded in the same transaction as the insert.\nThe response is the stored lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
+                "description": "Create a lead. Roles: admin and sales (the /leads group guard).\nChecks, in order: the binding rules (first_name and last_name required, email well-formed, status and classification from their sets); notes at most 65535 bytes; status converted is refused (only POST /leads/{id}/convert converts); an email or a non-blank phone is required. Owner: an admin must send owner_id; a sales user may omit it (the lead becomes its own) or send its own id. The owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. company_id links a company record independently of the free-text company field: 0 or absent means no link, an id that names no live company is 400 INVALID_REFERENCE. created_at may backdate an imported lead; a value in no accepted layout is ignored and the current time is used.\nSide effect: the lead_created automation event is recorded in the same transaction as the insert.\nThe response is the stored lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15146,7 +15146,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: notes over 65535 bytes, neither email nor phone ('Provide an email address or a phone number'), or an admin without owner_id ('Owner ID is required for admin users'). VALIDATION_ERROR: status converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company",
+                        "description": "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: notes over 65535 bytes, neither email nor phone ('Provide an email address or a phone number'), or an admin without owner_id ('Owner ID is required for admin users'). VALIDATION_ERROR: status converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company, or owner_id names no active admin or sales user ('owner_id must name an active admin or sales user', error.details {'field': 'owner_id'})",
                         "schema": {
                             "allOf": [
                                 {
@@ -15218,7 +15218,7 @@
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR: unexpected failure, including a database rejection (for example an owner_id that names no user, or a value longer than its column on MySQL/MariaDB)",
+                        "description": "INTERNAL_ERROR: unexpected failure, including a failed owner lookup or a database rejection (for example a value longer than its column on MySQL/MariaDB)",
                         "schema": {
                             "allOf": [
                                 {
@@ -15547,7 +15547,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id); the new owner is not checked against the users table by the handler. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.\nSide effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
+                "description": "Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.\nSide effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15596,7 +15596,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID') or notes over 65535 bytes. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). VALIDATION_ERROR: status converted for a lead that is not converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company",
+                        "description": "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID') or notes over 65535 bytes. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). VALIDATION_ERROR: status converted for a lead that is not converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company, or a changed owner_id names no active admin or sales user ('owner_id must name an active admin or sales user', error.details {'field': 'owner_id'})",
                         "schema": {
                             "allOf": [
                                 {
@@ -15827,6 +15827,175 @@
                     },
                     "500": {
                         "description": "INTERNAL_ERROR: the erasure failed (nothing is written when it failed before the commit; a failed COMMIT is ambiguous and the erasure may have been applied) or the lead vanished between the lookup and the erasure",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/leads/{id}/assign": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Make user_id the lead's owner. Roles: admin (any lead) and sales (only the leads it owns, so a sales user can hand its own lead to a colleague and loses access to it at once). Visibility is decided on the row locked by the writing transaction.\nThe new owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. Unlike PUT /leads/{id} this holds for the current owner too: naming a current owner who has been deactivated is refused. A converted lead can be assigned; its status and customer_id stay as they are.\nSide effect: lead_updated is recorded in the same transaction; assigning the current owner again records it too.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "leads"
+                ],
+                "summary": "Assign a lead to an owner",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Lead ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new owner",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AssignLeadRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated lead",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.Lead"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID'), or the body is not valid JSON for the schema ('Invalid request format', an empty body included). VALIDATION_ERROR (message 'Validation failed'): user_id is missing or 0; error.details maps the Go field name (UserID) to a message. INVALID_REFERENCE: user_id names no active admin or sales user ('user_id must name an active admin or sales user', error.details {'field': 'user_id'})",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED: the Authorization header is missing or is neither Bearer \u003cjwt\u003e nor ApiKey \u003ckey\u003e ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: no live lead has this id ('Lead not found')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: unexpected failure, including a failed owner lookup; nothing is written unless the COMMIT itself failed, which is ambiguous",
                         "schema": {
                             "allOf": [
                                 {
@@ -22365,7 +22534,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Any authenticated role. Changes the caller's email, names and/or password; only non-empty fields are written, and role and active status cannot be changed here. A new password must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character); unlike POST /auth/change-password the current password is not required and existing refresh tokens are not revoked. A body with nothing to apply returns the account unchanged.",
+                "description": "Any authenticated role. Changes the caller's email and/or names; only non-empty fields are written, and role and active status cannot be changed here. This route does not change a password; a body that carries password, current_password or new_password, with any value (null included) and in any letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written, and a correct current password does not open the route. Use POST /auth/change-password, which verifies the current password and revokes refresh tokens. A body with nothing to apply returns the account unchanged.",
                 "consumes": [
                     "application/json"
                 ],
@@ -22407,7 +22576,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR: email is not an email address or password is shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), or the password fails the complexity policy",
+                        "description": "PASSWORD_FIELD_NOT_ACCEPTED: the body carries password, current_password or new_password, with any value (no details; use POST /auth/change-password). VALIDATION_ERROR: email is not an email address (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format). A body that fails binding keeps these answers even when it also carries a password field",
                         "schema": {
                             "allOf": [
                                 {
@@ -22497,7 +22666,7 @@
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR: the account could not be updated, or the password is over 72 bytes (bcrypt limit)",
+                        "description": "INTERNAL_ERROR: the account could not be updated",
                         "schema": {
                             "allOf": [
                                 {
@@ -22664,7 +22833,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. Passwords are changed through PUT /users/me or POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.",
+                "description": "Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.",
                 "consumes": [
                     "application/json"
                 ],
@@ -25993,7 +26162,7 @@
                     "type": "object"
                 },
                 "owner_id": {
-                    "description": "Staff user who owns the lead. A sales user sees and edits only the\nleads it owns; only an admin may reassign a lead.",
+                    "description": "Staff user who owns the lead. A sales user sees and edits only the\nleads it owns; an admin may reassign any lead through PUT /leads/{id},\nand POST /leads/{id}/assign also lets a sales user hand over its own.",
                     "type": "integer",
                     "example": 7
                 },
@@ -27348,6 +27517,19 @@
                 }
             }
         },
+        "internal_handler.AssignLeadRequest": {
+            "type": "object",
+            "required": [
+                "user_id"
+            ],
+            "properties": {
+                "user_id": {
+                    "description": "The user who becomes the owner. Required and not 0 (400\nVALIDATION_ERROR); must name an active admin or sales user (400\nINVALID_REFERENCE otherwise), even when it is the current owner.",
+                    "type": "integer",
+                    "example": 9
+                }
+            }
+        },
         "internal_handler.AuthResponse": {
             "description": "Session credentials returned by login, refresh and registration.",
             "type": "object",
@@ -28347,7 +28529,7 @@
                     "example": "Met at the trade fair."
                 },
                 "owner_id": {
-                    "description": "Owner of the lead. Required for admins (400 without it); a sales user\nmay omit it (the lead is then its own) or send its own id, any other id\nis 403. Not checked against the users table by the handler.",
+                    "description": "Owner of the lead. Required for admins (400 without it); a sales user\nmay omit it (the lead is then its own) or send its own id, any other id\nis 403. Must name an active admin or sales user (400 INVALID_REFERENCE\notherwise).",
                     "type": "integer",
                     "example": 7
                 },
@@ -29829,7 +30011,7 @@
                     "example": "Demo booked for Tuesday."
                 },
                 "owner_id": {
-                    "description": "New owner. Admin only: any owner_id from another role, even the\ncaller's own id, is 403.",
+                    "description": "New owner. Admin only: any owner_id from another role, even the\ncaller's own id, is 403. A changed owner must name an active admin or\nsales user (400 INVALID_REFERENCE otherwise); the current owner_id is\naccepted as it is.",
                     "type": "integer",
                     "example": 9
                 },
@@ -29867,9 +30049,12 @@
             }
         },
         "internal_handler.UpdateMeRequest": {
-            "description": "Body of PUT /users/me. Every field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here.",
+            "description": "Body of PUT /users/me. Every profile field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here. A body that carries a password field is refused.",
             "type": "object",
             "properties": {
+                "current_password": {
+                    "description": "Refused: this key, with any value (null included) and in any letter case, is\nanswered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password."
+                },
                 "email": {
                     "description": "New login email; must be valid and not used by another account (409).",
                     "type": "string",
@@ -29886,11 +30071,11 @@
                     "type": "string",
                     "example": "Doe"
                 },
+                "new_password": {
+                    "description": "Refused: this key, with any value (null included) and in any letter case, is\nanswered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password."
+                },
                 "password": {
-                    "description": "New password: at least 10 characters with an uppercase letter, a\nlowercase letter, a digit and a special character. The current password\nis not asked for and existing refresh tokens are NOT revoked (POST\n/auth/change-password does both). More than 72 bytes fails with 500.",
-                    "type": "string",
-                    "minLength": 10,
-                    "example": "N3w!Passw0rd2026"
+                    "description": "Refused: this key, with any value (null included) and in any letter case, is\nanswered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password."
                 }
             }
         },

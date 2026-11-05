@@ -334,9 +334,10 @@ the frontend gating.
 - **Steps:**
   1. Issue `PUT /api/v1/leads/{ownLeadId}` with `{"owner_id": <admin id>}`.
 - **Expected:** **403** `{"error":{"message":"Only administrators can reassign leads"}}`
-  (`lead_handler.go:394`). The same call as admin returns 200 and moves the lead.
-- **Known issue:** The edit form has no Owner control at all, so reassignment — which the backend
-  supports for admins — is unreachable from the UI. The endpoint client used to drop `owner_id`
+  (`lead_handler.go:394`). The same call as admin returns 200 and moves the lead. A sales user hands
+  over its own lead through `POST /leads/{id}/assign` instead (TC-LEAD-055).
+- **Known issue:** The edit form has no Owner control at all, so reassignment is unreachable from
+  the UI. The endpoint client used to drop `owner_id`
   from updates as well; since #119 `leadsApi.updateLead` forwards it when given and omits it
   otherwise (`src/api/endpoints/leads.test.ts` "updateLead owner_id").
 - **Automation:** blocked — needs a sales role-login helper
@@ -964,25 +965,53 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 
 ---
 
-## Frontend contract with no backend route
+## Lead owner and assignment (API only)
 
-### TC-LEAD-055 — Lead assignment endpoint does not exist
+### TC-LEAD-055 — Assign a lead through POST /leads/{id}/assign
 - **Priority:** P1
-- **Type:** negative
-- **Preconditions:** Admin JWT; a lead created by the test; a second user id.
+- **Type:** functional
+- **Preconditions:** Admin and sales JWTs; a lead the sales user owns; a second active sales user.
 - **Steps:**
-  1. `POST /api/v1/leads/{id}/assign` with `{"user_id": <other id>}` — the call
-     `leadsApi.assignLead` makes.
-- **Expected:** **404** from Gin's no-route handler: the leads group registers only `POST ""`,
-  `GET ""`, `GET/PUT/DELETE "/:id"` and `POST "/:id/convert"` (`routes.go:26-31`). No lead is
-  reassigned. The equivalent customer route, `POST /customers/{id}/assign`, *does* exist
-  (`docs/FEATURES.md` section 10b), which is why the frontend function was written.
-- **Known issue:** `leadsApi.assignLead` is an unimplemented intended contract, not dead code —
-  per the repository directive the backend route should be built rather than the function deleted.
-  Reassignment is currently possible only through `PUT /leads/{id}` with `owner_id`, admin-only
-  (TC-LEAD-019).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new API-level block); revisit
-  as a functional case once the route exists
+  1. `POST /api/v1/leads/{id}/assign` with `{"user_id": <other sales id>}` and the sales token — the
+     call `leadsApi.assignLead` makes.
+  2. With the same token, `GET /api/v1/leads/{id}` and repeat the assignment.
+- **Expected:** Step 1 is **200**, the committed `owner_id` is the new user and one `lead_updated`
+  event is recorded. Step 2 is **403** twice: the policy is `service.CanViewLead` on the locked row,
+  so the previous owner has lost the lead. An admin may assign any lead, a converted one included
+  (status and `customer_id` stay). No credential is 401; support and customer callers are 403; a
+  sales user on another owner's lead is 403 whatever `user_id` it sends; a missing or erased lead is
+  404; a non-numeric id or a missing or malformed body is 400.
+- **Known issue:** No screen calls `leadsApi.assignLead` yet; the route is reachable through the API
+  only.
+- **Automation:** automated — `test/integration/lead_owner_validation_test.go`:
+  `TestLeadAssignPermissionsSQLite`, `TestLeadAssignSalesHandOffSQLite`,
+  `TestLeadAssignConvertedLeadSQLite`
+
+### TC-LEAD-068 — A lead owner must be an active admin or sales user
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** Admin JWT; a lead; an id that names nobody; a deactivated user; a user erased
+  through `DELETE /users/{id}`; an active support user and an active customer-role user.
+- **Steps:**
+  1. Send each id as `owner_id` to `POST /api/v1/leads` and `PUT /api/v1/leads/{id}`, and as
+     `user_id` to `POST /api/v1/leads/{id}/assign`.
+  2. On a lead whose owner has since been deactivated or erased, `PUT` other fields with and without
+     the current `owner_id`, then assign that same deactivated user.
+- **Expected:** Step 1 is **400** `INVALID_REFERENCE` with `details.field` naming the body field and
+  one message per route whatever the reason; no lead row, owner change or automation event. `owner_id`
+  0 is the same refusal; `user_id` 0 is 400 `VALIDATION_ERROR`. In step 2 both updates are 200 and
+  apply the other fields (only a changed owner is checked), while the assignment is 400 and writes
+  nothing (an assignment always checks the user it names). Role rules answer first: a sales user
+  naming anyone else on create, or any `owner_id` on update, is 403. A failed owner lookup is 500
+  `INTERNAL_ERROR`, never `INVALID_REFERENCE`.
+- **Automation:** automated — `test/integration/lead_owner_validation_test.go`:
+  `TestLeadOwner{Unknown,Deactivated,Erased,WrongRole}Rejected{SQLite,MySQL}`,
+  `TestLeadOwnerValidAccepted{SQLite,MySQL}`, `TestLeadUpdateUnchangedOwnerNotRevalidatedSQLite`,
+  `TestLeadAssignRevalidatesUnchangedOwnerSQLite`, `TestLeadOwnerRoleRulesPrecedeOwnerCheckSQLite`,
+  `TestLeadOwnerLookupFailureIsServerErrorSQLite`, `TestLeadOwnerRefusalLogsOmitPersonalData`;
+  `internal/service/lead_owner_validation_test.go`; `cmd/lead_owner_wiring_test.go`
+
+## Other lead API rules
 
 ### TC-LEAD-056 — Notes larger than the column are a 400, not a 500
 - **Priority:** P1

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the full browser suite only for a release.** Pull requests, the merge queue and
+  pushes to `main` run the smoke spec and the changed features' specs on every database, even
+  when a change touches shared code, and keep the backend and database gates. A release still
+  forces the complete suite. A manual run can no longer ask for it.
+
 ### Added
 
 - **Tasks can link a deal (#240).** A task gains a nullable `deal_id`, additive to the
@@ -20,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
   rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
   created by earlier runs are not backfilled, and the web client does not show the link yet.
+- **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
+  `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
+  neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body
+  field, one message per route), writing nothing and recording no event; an unknown id used to fail
+  on the foreign key as a 500 and an erased user's id was accepted. An update that leaves the owner
+  alone, or re-sends it, is not checked, so a lead whose owner has left stays editable; an assignment
+  always checks the user it names. The assign route takes the `{user_id}` body the frontend client
+  already sends and follows the lead visibility policy on the locked row: an admin on any lead, a
+  sales user on its own, which it loses at once when it hands the lead over. The check is a locking
+  read of the user, so a deactivation committed earlier is seen on MySQL too. `NewLeadService` now
+  takes the user repository; a service built without it refuses these writes
+  (`ErrLeadOwnerCheckUnavailable`) rather than skipping the check. Public form default owners, the
+  automation `assign_owner` step and leads whose owner already left are unchanged.
 
 - **Lead lookup by external id.** `GET /leads?external_id=` returns the live leads whose
   `external_id` equals the value, in the usual list shape (ascending id, owner loaded, `total` is
@@ -778,6 +798,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attempt; MySQL and MariaDB are unchanged.
 
 ### Security
+
+- **`PUT /users/me` no longer changes a password (#254).** It used to set a new password without
+  the current one and without revoking any refresh token. A body that carries `password`,
+  `current_password` or `new_password`, with any value (`null` included) and in any letter case,
+  is now refused with 400 `PASSWORD_FIELD_NOT_ACCEPTED` and writes nothing, not even the profile
+  fields beside it, and a correct current password does not open the route. A body that also fails
+  binding keeps its `VALIDATION_ERROR` or `BAD_REQUEST` answer. **API clients that set a password
+  on this route must move to `POST /auth/change-password`**, the only authenticated path, which
+  verifies the current password and revokes refresh tokens. `UserService.Update` ignores a
+  `password` key, and `PUT /users/{id}` still ignores one in its body. Profile updates without a
+  password field behave as before.
 
 - **SMTP delivery is bounded and validates its headers (#113).** The SMTP mailer no longer calls
   `smtp.SendMail`, which had no timeout: a relay that stalled at the greeting or any later command

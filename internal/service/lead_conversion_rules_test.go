@@ -82,6 +82,7 @@ func newLeadConversionEnv(t *testing.T, db *gorm.DB) *leadConversionEnv {
 	leads := repository.NewLeadRepository(db)
 	customers := repository.NewCustomerRepository(db)
 	companies := repository.NewCompanyRepository(db)
+	users := repository.NewUserRepository(db)
 	txManager := utils.NewTransactionManager(db)
 
 	env := &leadConversionEnv{
@@ -89,8 +90,8 @@ func newLeadConversionEnv(t *testing.T, db *gorm.DB) *leadConversionEnv {
 		db:     db,
 		config: config,
 		leads:  leads,
-		svc:    NewLeadService(leads, customers, companies, txManager, WithLeadConversionRules(config)),
-		failing: NewLeadService(failingConvertLeadRepo{leads}, customers, companies, txManager,
+		svc:    NewLeadService(leads, customers, companies, users, txManager, WithLeadConversionRules(config)),
+		failing: NewLeadService(failingConvertLeadRepo{leads}, customers, companies, users, txManager,
 			WithLeadConversionRules(config)),
 		sequence: new(int),
 	}
@@ -381,7 +382,7 @@ func (brokenConversionSettings) GetLeadConversionStatuses() ([]string, error) {
 func TestLeadConversionSettingsReadFailureWritesNothing(t *testing.T) {
 	db := openQuoteTestSQLite(t)
 	env := newLeadConversionEnv(t, db)
-	svc := NewLeadService(env.leads, repository.NewCustomerRepository(db), repository.NewCompanyRepository(db),
+	svc := NewLeadService(env.leads, repository.NewCustomerRepository(db), repository.NewCompanyRepository(db), repository.NewUserRepository(db),
 		utils.NewTransactionManager(db), WithLeadConversionRules(brokenConversionSettings{}))
 	lead := env.newLead(models.LeadStatusQualified, nil)
 

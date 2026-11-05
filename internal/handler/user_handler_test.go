@@ -426,7 +426,6 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 
 	payload := UpdateMeRequest{
 		FirstName: "Updated",
-		Password:  "NewStr0ng!Pass",
 	}
 
 	expectedUser := &models.User{
@@ -436,9 +435,8 @@ func (suite *UserHandlerTestSuite) TestUpdateMe_Success() {
 		LastName:  "User",
 	}
 
-	suite.mockService.On("Update", uint(1), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		return updates["first_name"] == "Updated" && updates["password"] == "NewStr0ng!Pass"
-	})).Return(expectedUser, nil)
+	suite.mockService.On("Update", uint(1), map[string]interface{}{"first_name": "Updated"}).
+		Return(expectedUser, nil)
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/users/me", bytes.NewBuffer(body))

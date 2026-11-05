@@ -34,7 +34,7 @@ func TestLeadConversionTransaction(t *testing.T) {
 
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), repository.NewUserRepository(db), txManager)
 
 	// Create a test user for lead ownership
 	user := &models.User{
@@ -157,7 +157,7 @@ func TestLeadConversionTransactionEdgeCases(t *testing.T) {
 
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, repository.NewCompanyRepository(db), repository.NewUserRepository(db), txManager)
 
 	t.Run("conversion with partial customer data", func(t *testing.T) {
 		// Create test user

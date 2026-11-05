@@ -20,17 +20,17 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 |---|---|---|
 | Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:484,537`), and deletes that answer an empty 204 (`customer_handler.go:465`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
-| Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 374) |
-| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 534), "Paginated reads walk a total order" (line 498) |
-| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:212`) | line 482 |
+| Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 391) |
+| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 551), "Paginated reads walk a total order" (line 515) |
+| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:212`) | line 499 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
-| A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 224 onwards |
+| A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
 | Lead visibility has one policy: admin sees all leads, sales its own, every other role none | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
 | A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
 | A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:111`, `migrations/` | [Database](DEVELOPMENT.md#database) |
-| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 540) |
+| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 587) |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
 
@@ -128,7 +128,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (`productSearchClause`).
 - A delete that matched no row returns `gorm.ErrRecordNotFound` (`productRepository.Delete`).
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
-  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 727).
+  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 774).
 - Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
   rejection of an unknown sort column and soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
@@ -145,7 +145,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   `internal/errors/errors.go` next to the existing ones.
 - Multi-step writes take `*utils.TransactionManager` and run inside `WithTransaction`, using the
   `WithTx` repositories. `QuoteService` is the reference for conditional claims in one transaction
-  (DEVELOPMENT.md line 377).
+  (DEVELOPMENT.md line 394).
 - Record-level visibility (who sees which row) belongs here or in the repository query, applied
   **before** pagination, so counts and pages agree. If the entity can link a lead, apply
   `CanViewLead` on write and redact on every read; never write a separate role check for a lead
@@ -167,7 +167,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 - Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Put the role guard on the group with
   `middleware.RequireRole(...)` and narrow individual routes where needed
-  (`SetupProductRoutes`, `routes.go:97-105`: group admin+sales, writes admin).
+  (`SetupProductRoutes`, `routes.go:98-106`: group admin+sales, writes admin).
 - In `cmd/main.go`, `setupDependencies` (line 182): construct the repository with `models.DB`
   (line 195), the service (line 238), the handler (line 298), and register the routes in the
   `protected` group (line 404). There is no container; the wiring is plain code.
@@ -263,12 +263,12 @@ schema). A root that skipped proves nothing.
 - **Endpoint.** Handler method with annotations, route in the entity's `Setup...Routes` with its
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
-  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:273`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 547).
+  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:274`): at most 100 ids, all or nothing,
+  per-item authorization (DEVELOPMENT.md line 594).
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
-  are a to-do list, not dead code: implement the route instead of deleting the function. One is
-  open now: `POST /leads/:id/assign` (#185).
+  are a to-do list, not dead code: implement the route instead of deleting the function, as
+  `POST /leads/:id/assign` was (#185).
 
 ## 5. Add a setting
 
@@ -319,7 +319,7 @@ origins (lines 44-50) and six step types (lines 53-60).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 181-182, 258-263).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:47`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:51`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but

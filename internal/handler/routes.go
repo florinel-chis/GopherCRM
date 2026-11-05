@@ -31,6 +31,7 @@ func SetupLeadRoutes(router *gin.RouterGroup, handler *LeadHandler) {
 		leads.PUT("/:id", handler.Update)
 		leads.DELETE("/:id", handler.Delete)
 		leads.POST("/:id/convert", handler.ConvertToCustomer)
+		leads.POST("/:id/assign", handler.Assign)
 	}
 }
 

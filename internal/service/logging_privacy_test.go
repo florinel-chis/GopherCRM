@@ -41,15 +41,18 @@ func TestServiceLoggingPrivacy_SuccessAndSearch(t *testing.T) {
 	t.Run("lead creation retains its ID", func(t *testing.T) {
 		output, hook := capturePrivacyLogs(t)
 		repo := new(mocks.LeadRepository)
-		lead := &models.Lead{Email: email, Notes: text}
+		users := new(mocks.UserRepository)
+		lead := &models.Lead{Email: email, Notes: text, OwnerID: 7}
+		users.On("GetByID", uint(7)).Return(&models.User{Role: models.RoleSales, IsActive: true}, nil)
 		repo.On("Create", lead).Return(nil).Run(func(mock.Arguments) { lead.ID = 41 })
-		require.NoError(t, NewLeadService(repo, nil, nil, nil).Create(lead))
+		require.NoError(t, NewLeadService(repo, nil, nil, users, nil).Create(lead))
 		assert.NotContains(t, output.String(), email)
 		assert.NotContains(t, output.String(), text)
 		assert.Equal(t, "LeadService", hook.LastEntry().Data["service"])
 		assert.Equal(t, "Create", hook.LastEntry().Data["method"])
 		assert.Equal(t, uint(41), hook.LastEntry().Data["lead_id"])
 		repo.AssertExpectations(t)
+		users.AssertExpectations(t)
 	})
 
 	t.Run("task creation omits title on both events", func(t *testing.T) {

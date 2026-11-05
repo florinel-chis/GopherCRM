@@ -615,6 +615,9 @@ def plan(paths, *, full=False, refresh_interface=False, rotation_roots=False, ae
         "changed_paths": paths,
         "features": sorted(features),
         "specs": [] if reasons else sorted(specs),
+        # What the change affects, kept when reasons empty the list. CI runs these
+        # outside a release instead of every browser test.
+        "affected_specs": sorted(specs),
     }
 
 

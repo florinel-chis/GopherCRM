@@ -16,9 +16,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -68,7 +68,7 @@ func (suite *UserIntegrationTestSuite) SetupSuite() {
 func (suite *UserIntegrationTestSuite) setupRouter() {
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
-	
+
 	// Add middleware
 	suite.router.Use(middleware.RequestID())
 	suite.router.Use(middleware.Logger())
@@ -127,7 +127,7 @@ func (suite *UserIntegrationTestSuite) SetupTest() {
 	// Clean up database before each test
 	suite.db.Exec("DELETE FROM users WHERE email != ?", "admin@example.com")
 	suite.db.Exec("DELETE FROM api_keys")
-	
+
 	// Refresh admin user reference to ensure we have the correct ID
 	suite.db.Where("email = ?", "admin@example.com").First(&suite.adminUser)
 }
@@ -240,7 +240,7 @@ func (suite *UserIntegrationTestSuite) TestUserCRUD() {
 	var createResponse utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &createResponse)
 	assert.NoError(suite.T(), err)
-	
+
 	userData := createResponse.Data.(map[string]interface{})
 	userID := int(userData["id"].(float64))
 
@@ -273,7 +273,7 @@ func (suite *UserIntegrationTestSuite) TestUserCRUD() {
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), updateResponse.Success)
 	assert.NotNil(suite.T(), updateResponse.Data)
-	
+
 	updatedData, ok := updateResponse.Data.(map[string]interface{})
 	assert.True(suite.T(), ok, "Response data should be a map")
 	assert.Equal(suite.T(), "Updated", updatedData["first_name"])
@@ -409,14 +409,14 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 	var response utils.APIResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
-	
+
 	userData := response.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "metest@example.com", userData["email"])
 
 	// Test PUT /users/me
 	updatePayload := map[string]interface{}{
 		"first_name": "UpdatedMe",
-		"password":   "NewPassword123!",
+		"last_name":  "UpdatedTest",
 	}
 	body, _ := json.Marshal(updatePayload)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewBuffer(body))
@@ -434,11 +434,12 @@ func (suite *UserIntegrationTestSuite) TestMeEndpoints() {
 
 	updatedData := updateResponse.Data.(map[string]interface{})
 	assert.Equal(suite.T(), "UpdatedMe", updatedData["first_name"])
+	assert.Equal(suite.T(), "UpdatedTest", updatedData["last_name"])
 
-	// Verify password was changed by attempting login with new password
+	// A profile update leaves the password alone: the original one still logs in
 	loginPayload := map[string]string{
 		"email":    "metest@example.com",
-		"password": "NewPassword123!",
+		"password": "Password123!",
 	}
 	body, _ = json.Marshal(loginPayload)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
@@ -499,7 +500,7 @@ func (suite *UserIntegrationTestSuite) TestEmailUniqueness() {
 
 	// Create admin user's token to test email conflict on update
 	// (Using admin token to ensure we have permission to update other users)
-	
+
 	// Create a second user
 	user2 := &models.User{
 		Email:     "different@example.com",

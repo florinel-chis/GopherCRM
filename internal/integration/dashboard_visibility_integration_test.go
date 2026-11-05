@@ -98,7 +98,7 @@ func newDashboardEnv(t *testing.T, useMySQL bool) *dashboardEnv {
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
 	companyRepo := repository.NewCompanyRepository(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, utils.NewTransactionManager(db))
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, utils.NewTransactionManager(db))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
 	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db), repository.NewDealRepository(db))

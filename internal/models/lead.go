@@ -71,7 +71,8 @@ type Lead struct {
 	// bytes (UTF-8 bytes, not characters).
 	Notes string `gorm:"type:text" json:"notes" example:"Met at the trade fair; wants a demo."`
 	// Staff user who owns the lead. A sales user sees and edits only the
-	// leads it owns; only an admin may reassign a lead.
+	// leads it owns; an admin may reassign any lead through PUT /leads/{id},
+	// and POST /leads/{id}/assign also lets a sales user hand over its own.
 	OwnerID uint `json:"owner_id" example:"7"`
 	// The owner's account. Always present in the JSON. GET /leads/{id}, the
 	// admin GET /leads (except with the classification filter),

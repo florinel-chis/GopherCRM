@@ -71,7 +71,7 @@ func newTaskDealEnv(t *testing.T, useMySQL bool) *taskDealEnv {
 	companyRepo := repository.NewCompanyRepository(db)
 	dealRepo := repository.NewDealRepository(db)
 	txManager := utils.NewTransactionManager(db)
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, txManager)
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager)
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
 	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db), dealRepo)

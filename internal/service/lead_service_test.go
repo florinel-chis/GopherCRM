@@ -24,6 +24,7 @@ type LeadServiceTestSuite struct {
 	mockLeadRepo     *mocks.LeadRepository
 	mockCustomerRepo *mocks.CustomerRepository
 	mockCompanyRepo  *mocks.CompanyRepository
+	mockUserRepo     *mocks.UserRepository
 	leadService      LeadService
 	db               *gorm.DB
 	txManager        *utils.TransactionManager
@@ -48,13 +49,17 @@ func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockLeadRepo = new(mocks.LeadRepository)
 	suite.mockCustomerRepo = new(mocks.CustomerRepository)
 	suite.mockCompanyRepo = new(mocks.CompanyRepository)
-	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockCompanyRepo, suite.txManager)
-	// Update and ConvertToCustomer bind every repository to their
+	suite.mockUserRepo = new(mocks.UserRepository)
+	suite.leadService = NewLeadService(suite.mockLeadRepo, suite.mockCustomerRepo, suite.mockCompanyRepo, suite.mockUserRepo, suite.txManager)
+	// Create, Update and ConvertToCustomer bind every repository to their
 	// transaction (the lead read with a row lock); the mocks stand in for
 	// the bound copies too.
 	suite.mockLeadRepo.On("WithTx", mock.Anything).Return(suite.mockLeadRepo).Maybe()
 	suite.mockCustomerRepo.On("WithTx", mock.Anything).Return(suite.mockCustomerRepo).Maybe()
 	suite.mockCompanyRepo.On("WithTx", mock.Anything).Return(suite.mockCompanyRepo).Maybe()
+	suite.mockUserRepo.On("WithTx", mock.Anything).Return(suite.mockUserRepo).Maybe()
+	// User 1 owns the leads these cases create: an active sales user.
+	suite.mockUserRepo.On("GetByID", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}, Role: models.RoleSales, IsActive: true}, nil).Maybe()
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {

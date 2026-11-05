@@ -143,19 +143,20 @@ included. Found by reading the code path unless noted.
   (reproduced with a probe test). The update saves the ticket read with its `AssignedTo`
   association preloaded, and GORM writes the preloaded association's id back over the foreign
   key. The task service already avoids this; the ticket service needs the same targeted update.
-- **`PUT /users/me` changes the password without the current one** and revokes no refresh token,
-  while `POST /auth/change-password` requires the current password and revokes them.
+- **Changing the login email needs no current password** — `PUT /users/me` and `PUT /users/{id}`
+  change the address a password reset is mailed to without asking for the current password, so
+  whoever holds a live access token or API key can redirect the reset to their own address. Whether
+  to guard it is an owner decision (found with #254, which closed the password path of
+  `PUT /users/me` only).
 - **`PUT /users/{id}` lets an admin deactivate or demote itself**, which
   `POST /users/{id}/deactivate` refuses.
 - **Registration and `POST /users` answer 400 with the raw service error text** for any failure,
   database errors included. A password over bcrypt's 72-byte limit is a 400 there but a 500 on
-  change-password, reset confirm and `PUT /users/me`; no endpoint checks the byte length first.
+  change-password and reset confirm; no endpoint checks the byte length first.
 - **Database failures reported as 404** — `GET /users/{id}`, `GET /users/me` and the user lookup of
   `POST /customers/{id}/assign` map every lookup error to not found.
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
-- **Lead `owner_id` is not checked** on create (admin) or update: an unknown id fails on the
-  foreign key as a 500, and an erased user's id is accepted.
 - **Customer update writes the whole row (`Save`)** — a request racing an erasure can write the
   stale personal data back; the user repository moved to targeted updates for the same reason.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

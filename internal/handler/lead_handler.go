@@ -62,7 +62,8 @@ type CreateLeadRequest struct {
 	Notes string `json:"notes,omitempty" example:"Met at the trade fair."`
 	// Owner of the lead. Required for admins (400 without it); a sales user
 	// may omit it (the lead is then its own) or send its own id, any other id
-	// is 403. Not checked against the users table by the handler.
+	// is 403. Must name an active admin or sales user (400 INVALID_REFERENCE
+	// otherwise).
 	OwnerID *uint `json:"owner_id,omitempty" example:"7"`
 
 	// CompanyID links the lead to a company record; 0 or absent means none.
@@ -108,7 +109,9 @@ type UpdateLeadRequest struct {
 	// BAD_REQUEST above). Empty or absent keeps the stored notes.
 	Notes string `json:"notes,omitempty" example:"Demo booked for Tuesday."`
 	// New owner. Admin only: any owner_id from another role, even the
-	// caller's own id, is 403.
+	// caller's own id, is 403. A changed owner must name an active admin or
+	// sales user (400 INVALID_REFERENCE otherwise); the current owner_id is
+	// accepted as it is.
 	OwnerID *uint `json:"owner_id,omitempty" example:"9"`
 
 	// CompanyID: absent leaves the link alone, 0 clears it, any other value
@@ -117,6 +120,14 @@ type UpdateLeadRequest struct {
 	// Company link: absent keeps it, 0 clears it, any other value must name
 	// a live company (400 INVALID_REFERENCE otherwise).
 	CompanyID *uint `json:"company_id,omitempty" example:"12"`
+}
+
+// AssignLeadRequest is the body of POST /leads/:id/assign.
+type AssignLeadRequest struct {
+	// The user who becomes the owner. Required and not 0 (400
+	// VALIDATION_ERROR); must name an active admin or sales user (400
+	// INVALID_REFERENCE otherwise), even when it is the current owner.
+	UserID uint `json:"user_id" binding:"required" example:"9"`
 }
 
 // LeadListData is the data object of GET /leads. It documents the response
@@ -134,6 +145,15 @@ type LeadListData struct {
 // 400 VALIDATION_ERROR, the rule's message and the field it is about.
 func respondLeadRuleError(c *gin.Context, ruleErr *service.LeadConversionRuleError) {
 	utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, ruleErr.Message, ruleErr.Details())
+}
+
+// respondInvalidLeadOwner answers an owner the service refused. The answer is
+// the same whatever the reason, so it does not tell a caller which user ids
+// exist, are deactivated or hold which role; the log line has the reason. field
+// is the body field that named the owner.
+func respondInvalidLeadOwner(c *gin.Context, field string) {
+	utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference,
+		field+" must name an active admin or sales user", gin.H{"field": field})
 }
 
 type ConvertLeadRequest struct {
@@ -159,7 +179,7 @@ type ConvertLeadRequest struct {
 // Create godoc
 // @Summary Create a lead
 // @Description Create a lead. Roles: admin and sales (the /leads group guard).
-// @Description Checks, in order: the binding rules (first_name and last_name required, email well-formed, status and classification from their sets); notes at most 65535 bytes; status converted is refused (only POST /leads/{id}/convert converts); an email or a non-blank phone is required. Owner: an admin must send owner_id; a sales user may omit it (the lead becomes its own) or send its own id. company_id links a company record independently of the free-text company field: 0 or absent means no link, an id that names no live company is 400 INVALID_REFERENCE. created_at may backdate an imported lead; a value in no accepted layout is ignored and the current time is used.
+// @Description Checks, in order: the binding rules (first_name and last_name required, email well-formed, status and classification from their sets); notes at most 65535 bytes; status converted is refused (only POST /leads/{id}/convert converts); an email or a non-blank phone is required. Owner: an admin must send owner_id; a sales user may omit it (the lead becomes its own) or send its own id. The owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. company_id links a company record independently of the free-text company field: 0 or absent means no link, an id that names no live company is 400 INVALID_REFERENCE. created_at may backdate an imported lead; a value in no accepted layout is ignored and the current time is used.
 // @Description Side effect: the lead_created automation event is recorded in the same transaction as the insert.
 // @Description The response is the stored lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
 // @Tags leads
@@ -169,11 +189,11 @@ type ConvertLeadRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateLeadRequest true "The lead to create"
 // @Success 201 {object} utils.APIResponse{data=models.Lead} "Lead created"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: notes over 65535 bytes, neither email nor phone ('Provide an email address or a phone number'), or an admin without owner_id ('Owner ID is required for admin users'). VALIDATION_ERROR: status converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: notes over 65535 bytes, neither email nor phone ('Provide an email address or a phone number'), or an admin without owner_id ('Owner ID is required for admin users'). VALIDATION_ERROR: status converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company, or owner_id names no active admin or sales user ('owner_id must name an active admin or sales user', error.details {'field': 'owner_id'})"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user sent another user's owner_id ('You can only assign leads to yourself')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure, including a database rejection (for example an owner_id that names no user, or a value longer than its column on MySQL/MariaDB)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure, including a failed owner lookup or a database rejection (for example a value longer than its column on MySQL/MariaDB)"
 // @Router /leads [post]
 func (h *LeadHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.Create")
@@ -257,6 +277,11 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.leadService.Create(lead); err != nil {
+		if errors.Is(err, apperrors.ErrInvalidLeadOwner) {
+			logger.WithField("owner_id", lead.OwnerID).WithError(utils.LogError(err)).Warn("Lead owner refused")
+			respondInvalidLeadOwner(c, "owner_id")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to create lead")
 		if errors.Is(err, apperrors.ErrCompanyNotFound) {
 			// A bad company id is a bad reference in the body, not a missing
@@ -480,7 +505,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a lead
-// @Description Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id); the new owner is not checked against the users table by the handler. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
+// @Description Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
 // @Description Side effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.
 // @Description The response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
 // @Tags leads
@@ -491,7 +516,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Param id path int true "Lead ID"
 // @Param request body UpdateLeadRequest true "Fields to change; empty strings and absent fields are left unchanged"
 // @Success 200 {object} utils.APIResponse{data=models.Lead} "The updated lead"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID') or notes over 65535 bytes. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). VALIDATION_ERROR: status converted for a lead that is not converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID') or notes over 65535 bytes. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). VALIDATION_ERROR: status converted for a lead that is not converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company, or a changed owner_id names no active admin or sales user ('owner_id must name an active admin or sales user', error.details {'field': 'owner_id'})"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; a sales user asked for another owner's lead ('You can only update your own leads'); a non-admin sent owner_id ('Only administrators can reassign leads')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live lead has this id ('Lead not found')"
@@ -596,6 +621,11 @@ func (h *LeadHandler) Update(c *gin.Context) {
 			respondLeadRuleError(c, ruleErr)
 			return
 		}
+		if errors.Is(err, apperrors.ErrInvalidLeadOwner) {
+			logger.WithField("lead_id", uint(id)).WithError(utils.LogError(err)).Warn("Lead owner refused")
+			respondInvalidLeadOwner(c, "owner_id")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
 		if errors.Is(err, apperrors.ErrCompanyNotFound) {
 			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, err.Error(), nil)
@@ -607,6 +637,65 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, updatedLead)
 	utils.RespondSuccess(c, http.StatusOK, updatedLead)
+}
+
+// Assign godoc
+// @Summary Assign a lead to an owner
+// @Description Make user_id the lead's owner. Roles: admin (any lead) and sales (only the leads it owns, so a sales user can hand its own lead to a colleague and loses access to it at once). Visibility is decided on the row locked by the writing transaction.
+// @Description The new owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. Unlike PUT /leads/{id} this holds for the current owner too: naming a current owner who has been deactivated is refused. A converted lead can be assigned; its status and customer_id stay as they are.
+// @Description Side effect: lead_updated is recorded in the same transaction; assigning the current owner again records it too.
+// @Description The response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
+// @Tags leads
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Lead ID"
+// @Param request body AssignLeadRequest true "The new owner"
+// @Success 200 {object} utils.APIResponse{data=models.Lead} "The updated lead"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID'), or the body is not valid JSON for the schema ('Invalid request format', an empty body included). VALIDATION_ERROR (message 'Validation failed'): user_id is missing or 0; error.details maps the Go field name (UserID) to a message. INVALID_REFERENCE: user_id names no active admin or sales user ('user_id must name an active admin or sales user', error.details {'field': 'user_id'})"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads')"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live lead has this id ('Lead not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure, including a failed owner lookup; nothing is written unless the COMMIT itself failed, which is ambiguous"
+// @Router /leads/{id}/assign [post]
+func (h *LeadHandler) Assign(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "LeadHandler.Assign")
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.RespondBadRequest(c, "Invalid lead ID")
+		return
+	}
+
+	var req AssignLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	lead, err := h.leadService.Assign(c.Request.Context(), uint(id), req.UserID, leadViewer(c))
+	if err != nil {
+		switch {
+		case errors.Is(err, apperrors.ErrInvalidLeadOwner):
+			logger.WithField("lead_id", uint(id)).WithError(utils.LogError(err)).Warn("Lead owner refused")
+			respondInvalidLeadOwner(c, "user_id")
+		case errors.Is(err, apperrors.ErrForbidden):
+			logger.WithField("lead_id", uint(id)).Warn("Lead assignment refused: the lead is not the caller's")
+			utils.RespondForbidden(c, "You can only assign your own leads")
+		case apperrors.IsNotFound(err):
+			logger.WithField("lead_id", uint(id)).Warn("Lead not found")
+			utils.RespondNotFound(c, "Lead not found")
+		default:
+			logger.WithField("lead_id", uint(id)).WithError(utils.LogError(err)).Error("Failed to assign lead")
+			utils.RespondInternalError(c)
+		}
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, lead)
+	utils.RespondSuccess(c, http.StatusOK, lead)
 }
 
 // Delete godoc

@@ -234,7 +234,8 @@ class ValidationSelectionTests(unittest.TestCase):
                                    cwd=root, env=env, check=True, capture_output=True)
                     selected = json.loads((root / 'validation-plan.json').read_text())
                     self.assertEqual(selected['changed_paths'], ['internal/repository/interfaces.go'])
-                    self.assertEqual(selected['profile'], 'auth-persistence' if expected else 'full')
+                    self.assertEqual(selected['profile'], 'auth-persistence' if expected else 'bounded')
+                    self.assertIn(SMOKE, selected['specs'])
             file.unlink(); git('add', 'internal/repository/interfaces.go'); git('commit', '-m', 'deleted')
             self.assertFalse(refresh_interface_only(base, git('rev-parse', 'HEAD'), cwd=root))
             self.assertFalse(refresh_interface_only(base, base, cwd=root))
@@ -317,6 +318,9 @@ class ValidationSelectionTests(unittest.TestCase):
             selector = root / "automation/langflow/gophercrm_runner/validation.py"
             selector.parent.mkdir(parents=True)
             selector.write_text((ROOT / "automation/langflow/gophercrm_runner/validation.py").read_text())
+            smoke = root / "gocrm-ui" / SMOKE
+            smoke.parent.mkdir(parents=True)
+            smoke.write_text("// fixture\n")
             git("add", ".")
             git("commit", "-m", "trusted base")
             base = git("rev-parse", "HEAD")
@@ -332,9 +336,9 @@ class ValidationSelectionTests(unittest.TestCase):
             subprocess.run([sys.executable, str(ROOT / "scripts/ci/plan-validation.py")],
                            cwd=root, env=env, check=True, capture_output=True, text=True)
             selected = json.loads((root / "validation-plan.json").read_text())
-            # The fixture has no smoke spec, so the trusted selector falls back
-            # to full rather than executing the candidate's throwing module.
-            self.assertEqual(selected["profile"], "full")
+            # Selector changes are runner work, and the candidate's throwing
+            # module is never executed.
+            self.assertEqual(selected["profile"], "runner")
             self.assertEqual(selected['policy_origin'], 'base')
 
     def test_policy_rollout_pin_applies_only_to_exact_head_and_never_weakens_full(self):
@@ -403,19 +407,131 @@ class ValidationSelectionTests(unittest.TestCase):
                 result = json.loads((root / 'validation-plan.json').read_text())
                 self.assertEqual(result['policy_version'], version)
 
-    def test_ci_without_trusted_base_falls_back_to_full(self):
+    def plan_in(self, root, event, kind, full='false'):
+        (root / 'event.json').write_text(json.dumps(event))
+        env = dict(os.environ, GITHUB_EVENT_PATH=str(root / 'event.json'), GITHUB_EVENT_NAME=kind,
+                   GITHUB_OUTPUT=str(root / 'output'), RUNNER_TEMP=str(root),
+                   REVIEWED_VALIDATION_POLICY_SHA='', FORCE_FULL=full)
+        env.pop('GITHUB_STEP_SUMMARY', None)
+        return subprocess.run([sys.executable, str(ROOT / 'scripts/ci/plan-validation.py')], cwd=root,
+                              env=env, capture_output=True, text=True)
+
+    def shared_change(self, root, *, specs=(SMOKE,)):
+        """A repository with the real selector and a candidate touching shared code."""
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=root, text=True,
+                                           stderr=subprocess.DEVNULL).strip()
+        git('init', '-b', 'main')
+        git('config', 'user.email', 'test@example.test')
+        git('config', 'user.name', 'Validation Test')
+        selector = root / 'automation/langflow/gophercrm_runner/validation.py'
+        selector.parent.mkdir(parents=True)
+        selector.write_text((ROOT / 'automation/langflow/gophercrm_runner/validation.py').read_text())
+        for spec in specs:
+            target = root / 'gocrm-ui' / spec
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('// fixture\n')
+        shared = root / 'internal/models/lead.go'
+        shared.parent.mkdir(parents=True)
+        shared.write_text('package models\n')
+        (root / '.gitignore').write_text('event.json\noutput\nvalidation-plan.json\n')
+        git('add', '.')
+        git('commit', '-m', 'base')
+        base = git('rev-parse', 'HEAD')
+        shared.write_text('package models\n\ntype Lead struct{}\n')
+        git('add', '.')
+        git('commit', '-m', 'candidate')
+        return base
+
+    def test_shared_code_never_selects_full_outside_a_release(self):
+        events = {'pull_request': lambda base: {'pull_request': {'base': {'sha': base}}},
+                  'merge_group': lambda base: {'merge_group': {'base_sha': base}},
+                  'push': lambda base: {'before': base, 'ref': 'refs/heads/main'}}
+        for kind, event in events.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                base = self.shared_change(root)
+                self.assertEqual(self.plan_in(root, event(base), kind).returncode, 0)
+                selected = json.loads((root / 'validation-plan.json').read_text())
+                self.assertEqual(selected['profile'], 'bounded')
+                self.assertEqual(selected['specs'], [SMOKE])
+                self.assertTrue(any('shared or validation code' in r for r in selected['reasons']))
+                self.assertIn('only for a release', selected['reasons'][-1])
+                self.assertIn(f'profile=bounded\nspecs={SMOKE}\n', (root / 'output').read_text())
+
+    def test_bounded_run_keeps_the_changed_features_specs_and_drops_missing_ones(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            event = root / "event.json"
-            event.write_text(json.dumps({"before": "0" * 40}))
-            output = root / "output"
-            env = dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME="push",
-                       GITHUB_OUTPUT=str(output), RUNNER_TEMP=folder)
-            env.pop("GITHUB_STEP_SUMMARY", None)
-            subprocess.run([sys.executable, str(ROOT / "scripts/ci/plan-validation.py")],
-                           cwd=ROOT, env=env, check=True, capture_output=True, text=True)
-            self.assertIn("profile=full", output.read_text())
-            self.assertEqual(json.loads((root / "validation-plan.json").read_text())["specs"], [])
+            present_spec = 'e2e/tests/admin-leads.spec.ts'
+            base = self.shared_change(root, specs=(SMOKE, present_spec))
+            handler = root / 'internal/handler/lead_handler.go'
+            handler.parent.mkdir(parents=True)
+            handler.write_text('package handler\n')
+            subprocess.check_call(['git', 'add', '.'], cwd=root)
+            subprocess.check_call(['git', 'commit', '-qm', 'lead feature'], cwd=root)
+            self.assertEqual(self.plan_in(root, {'pull_request': {'base': {'sha': base}}}, 'pull_request').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual(selected['profile'], 'bounded')
+            self.assertIn('lead', selected['features'])
+            self.assertEqual(selected['specs'], sorted([SMOKE, present_spec]))
+
+    def test_a_release_still_selects_the_complete_suite(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = self.shared_change(root)
+            self.assertEqual(self.plan_in(root, {'before': base, 'ref': 'refs/heads/main'}, 'push', full='true').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual((selected['profile'], selected['specs']), ('full', []))
+            self.assertIn('profile=full\nspecs=\n', (root / 'output').read_text())
+
+    def test_selection_fails_rather_than_run_everything_when_smoke_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = self.shared_change(root, specs=())
+            result = self.plan_in(root, {'pull_request': {'base': {'sha': base}}}, 'pull_request')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Cannot bound this run', result.stderr)
+            self.assertFalse((root / 'output').exists())
+
+    def test_no_trusted_base_runs_smoke_outside_a_release_and_full_for_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.shared_change(root)
+            event = {'before': '0' * 40}
+            self.assertEqual(self.plan_in(root, event, 'push').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual((selected['profile'], selected['specs']), ('bounded', [SMOKE]))
+            self.assertEqual(self.plan_in(root, event, 'push', full='true').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual((selected['profile'], selected['specs']), ('full', []))
+
+    def test_only_a_release_asks_ci_for_the_full_suite(self):
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertNotIn('default: true', ci)
+        dispatch = ci.split('workflow_dispatch:')[1].split('pull_request:')[0]
+        self.assertNotIn('full', dispatch)
+        # A bounded run keeps the database gates a full run has.
+        for line in [l for l in ci.splitlines() if "profile == 'full'" in l]:
+            self.assertIn("profile == 'bounded'", line)
+        self.assertEqual(ci.count('[ "$VALIDATION_PROFILE" = full ]'), ci.count('[ "$VALIDATION_PROFILE" = bounded ]'))
+        self.assertIn('[ "$VALIDATION_PROFILE" = bounded ]', ci)
+
+    def test_bounded_run_keeps_specs_recorded_outside_features(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            login = 'e2e/tests/login.spec.ts'
+            base = self.shared_change(root, specs=(SMOKE, login))
+            for name, text in [('internal/service/auth_service.go', 'package service\n'), ('go.mod', 'module x\n')]:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text)
+            subprocess.check_call(['git', 'add', '.'], cwd=root)
+            subprocess.check_call(['git', 'commit', '-qm', 'auth and shared'], cwd=root)
+            self.assertEqual(self.plan_in(root, {'pull_request': {'base': {'sha': base}}}, 'pull_request').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual(selected['profile'], 'bounded')
+            self.assertIn(login, selected['specs'])
+        self.assertIn('full: true', (ROOT / '.github/workflows/release.yml').read_text())
 
 
 if __name__ == "__main__":
