@@ -59,8 +59,8 @@ and the `/prompts/generate` vs `/prompts/:id` route clash (TC-AEO-039). TC-AEO-0
 over-long citation URL rolling back its whole answer on MySQL only.
 
 [13-companies.md](13-companies.md) was added 2026-09-29 with the companies feature (`12-forms.md`
-is the forms catalog and is not in this table: its 34 cases are one-line entries without
-priorities, 31 automated, 2 planned and 1 blocked). Its cases are written against the backend contract
+is the forms catalog and is not in this table: its 39 cases are one-line entries without
+priorities, 36 automated, 2 planned and 1 blocked). Its cases are written against the backend contract
 that ships with the feature and the frontend pages the same change introduces. Eight cases are
 automated by `gocrm-ui/e2e/tests/admin-companies.spec.ts` (six of them *automated (partial)*, as
 in 10-labels: the spec asserts the core outcome, the rest is pinned in Go) and TC-COMP-024 by the

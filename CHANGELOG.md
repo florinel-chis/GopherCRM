@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pushes to `main` run the smoke spec and the changed features' specs on every database, even
   when a change touches shared code, and keep the backend and database gates. A release still
   forces the complete suite. A manual run can no longer ask for it.
+- **The double opt-in submission replays on a deadlock (#217).** Spending the older tokens of a
+  re-submission can deadlock with the retention purge, so `storePendingSubmission` now runs under
+  `WithTransactionAndRetry`, with a fresh submission id on each attempt and one confirmation mail
+  after the commit.
 
 ### Fixed
 
@@ -28,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Retention purge for spam and unconfirmed form submissions (#217).** With the new
+  `FORM_RETENTION_DAYS` set, spam and never-confirmed submissions with no linked lead are permanently
+  removed with their confirmation tokens once they pass that age. It is off by default. 1 and 2 are
+  raised to a 3-day floor, and anything above 36500 is lowered to it. The purge runs at boot and then
+  every 24 hours, so **the first boot with the setting removes the whole existing backlog**: take a
+  backup first if you may want those rows. A pending row that still holds a spendable token stays
+  until the token is spent or expires, and received, confirmed and lead-linked rows are never touched.
+  The drain is now automation, then the purge, then AEO. Both form-delete dialogs still say "Collected
+  submissions are retained" until a separate frontend task merges, which is wrong for purged rows.
+  No schema change.
 - **Tasks can link a deal (#240).** A task gains a nullable `deal_id`, additive to the
   lead-or-customer link: migration `20261101120000_add_task_deal_link` on MySQL/MariaDB, AutoMigrate
   on SQLite (the first start rebuilds `tasks`). `POST /tasks` and `PUT /tasks/{id}` accept `deal_id`

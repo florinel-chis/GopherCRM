@@ -175,8 +175,9 @@ candidate follow-up, not an accident:
 - **CSV export of submissions, webhooks** — submissions are viewable in the UI and via the API.
 - **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing
   else.
-- **Retention sweep for unlinked submissions** — spam and never-confirmed pending rows carry
-  visitor data (values, IP) and are outside lead erasure; they currently live forever.
+- **Per-form or per-status retention, and a settings screen** — the retention purge has one age,
+  `FORM_RETENTION_DAYS`, off by default, and it removes only spam and never-confirmed rows with no
+  linked lead. Received rows from forms that create no lead are kept.
 - **Field-definition migrations** — editing a form's fields does not rewrite historical
   submission data; renamed fields simply start a new key in `data`.
 

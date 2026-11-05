@@ -14517,7 +14517,7 @@ paths:
   /forms/{id}:
     delete:
       description: |-
-        Soft-delete a form. The public endpoints stop serving it at once (its definition and submissions answer 404, and outstanding double opt-in links stop working), its submission list is no longer reachable through GET /forms/{id}/submissions, while single submissions stay readable through GET /forms/submissions/{id} and the leads they produced are untouched.
+        Soft-delete a form. The public endpoints stop serving it at once (its definition and submissions answer 404, and outstanding double opt-in links stop working), its submission list is no longer reachable through GET /forms/{id}/submissions, while single submissions stay readable through GET /forms/submissions/{id} and the leads they produced are untouched. Its spam and never-confirmed submissions with no linked lead are still removed once they pass FORM_RETENTION_DAYS, when that setting is configured.
         Roles: admin only.
       parameters:
       - description: Form ID
@@ -15179,7 +15179,7 @@ paths:
   /forms/submissions/{id}:
     get:
       description: |-
-        A single submission with the values it carried, where it came from and the lead it produced, if any. Works for submissions of soft-deleted forms too.
+        A single submission with the values it carried, where it came from and the lead it produced, if any. Works for submissions of soft-deleted forms too. A spam or never-confirmed submission with no linked lead answers 404 once FORM_RETENTION_DAYS, when configured, has removed it.
         Roles: admin, sales, support.
       parameters:
       - description: Submission ID

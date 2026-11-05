@@ -38,24 +38,27 @@ These caveats apply to every recipe that takes in leads through forms.
 
 - **Repeat enquiries do not create a new lead.** The newest live lead with the same email gets a
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
-  were (`applySubmissionLead`, `internal/service/form_service.go:1073-1135`). Matching is
+  were (`applySubmissionLead`, `internal/service/form_service.go:1134-1196`). Matching is
   installation-wide, not per form (`GetLatestByEmail`,
   `internal/repository/lead_repository.go:300`). Automation rules that should act on every enquiry
   must listen to `lead_updated` as well as `lead_created`, or they miss the repeats. A rule that
   routes on `source` sees the form that created the lead, not the form just submitted.
 - **Form mail is best effort.** Confirmation, follow-up and team notification mail is sent after
   the submission is stored. A delivery failure is logged and swallowed, with no retry
-  (`send`, `internal/service/form_service.go:1284-1294`). Without `SMTP_HOST`, every send
+  (`send`, `internal/service/form_service.go:1345-1355`). Without `SMTP_HOST`, every send
   "succeeds" into a redacted log line (`docs/ROADMAP.md`, "Production SMTP"). Tracked in #216.
 - **Double opt-in confirms an email address. It does not record consent.** A form with consent
   text refuses a submission without the consent flag
-  (`internal/service/form_service.go:763-765`). The submission row does not store the consent text
-  or its version (`FormSubmission`, `internal/models/form.go:382`). Keep your own record of what
+  (`internal/service/form_service.go:814-816`). The submission row does not store the consent text
+  or its version (`FormSubmission`, `internal/models/form.go:465`). Keep your own record of what
   the consent text said and when it changed.
-- **Spam and unconfirmed submissions are kept forever.** They hold visitor values and IP addresses,
-  and they sit outside lead erasure (`docs/DEVELOPMENT.md:966`; `docs/ROADMAP.md`, "Forms module —
-  deliberate v1 cuts"). Decide on a purge policy and run it by hand until #217 (retention purge)
-  and #214 (erasure of unlinked submissions) land.
+- **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
+  and IP addresses, and they sit outside lead erasure (`docs/DEVELOPMENT.md:970`). Set
+  `FORM_RETENTION_DAYS` (3 days at least, off by default) to remove them permanently at that age.
+  The first boot with it set removes the existing backlog, so take a backup first if you may want
+  those rows. Received and confirmed submissions are not purged; erasure of unlinked submissions is
+  #214. Until a separate frontend task merges, the form-delete dialogs still say "Collected
+  submissions are retained", which is wrong for purged rows.
 - **Behind a reverse proxy or CDN, set `TRUSTED_PROXIES`.** The rate limiter keys on the client
   IP, and the stored submission IP comes from the same source. With no trusted proxies, every
   visitor shares the proxy's address and one rate-limit bucket.
@@ -65,7 +68,7 @@ These caveats apply to every recipe that takes in leads through forms.
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
   before the response is written (`storeReceivedSubmission` and `ConfirmSubmission`,
-  `internal/service/form_service.go:856-881,950-987`), so a disconnect after the commit leaves the
+  `internal/service/form_service.go:907-933,1011-1051`), so a disconnect after the commit leaves the
   submission stored and the token spent. A client that sees no response cannot conclude that
   nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
@@ -88,9 +91,9 @@ and turns some into deals and quotes.
 
 1. An admin builds a form: fields (exactly one email field, named `email`), consent text, notify
    emails, a default lead owner, allowed origins, double opt-in, and a follow-up mail that can carry
-   a content link (`Form`, `internal/models/form.go:151-192`; screens in `gocrm-ui/src/pages/forms/`).
+   a content link (`Form`, `internal/models/form.go:172-276`; screens in `gocrm-ui/src/pages/forms/`).
    The default owner must be an active admin or sales user (`checkLeadOwner`,
-   `internal/service/form_service.go:464`).
+   `internal/service/form_service.go:515`).
 2. The site embeds the snippet served from `GET /api/v1/forms/public/embed.js`
    (`internal/handler/form_public_routes.go:26`; usage comment at the top of
    `internal/handler/assets/form_embed.js`). The alternatives are the hosted page at
@@ -98,22 +101,22 @@ and turns some into deals and quotes.
    has an allowlist and you use the hosted page, the CRM's own host must be in the allowed origins,
    because the hosted page submits from the CRM origin (`requestOrigin`,
    `internal/handler/form_public_handler.go:250-257`; `originAllowed`,
-   `internal/service/form_service.go:588`). Test both embed paths from a real browser.
+   `internal/service/form_service.go:639`). Test both embed paths from a real browser.
 3. Spam layers run in a fixed order: validation, then the HMAC time trap (3 seconds to 24 hours),
    origin, honeypot, and optional reCAPTCHA v3 (`SubmitPublic`,
-   `internal/service/form_service.go:642-703`; `internal/forms/`). A spam verdict gets the same
+   `internal/service/form_service.go:693-756`; `internal/forms/`). A spam verdict gets the same
    response as a genuine submission and is stored with `status=spam`.
 4. With double opt-in, `GET /forms/public/confirm` renders a button and only the POST spends the
    token. The token claim, the lead write and the submission update are one transaction, and mail
-   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:950`;
+   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1011`;
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
    every lead (`CanViewLead`, `internal/service/lead_visibility.go:23`). A form that creates
    leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
-   (`internal/models/form.go:273-275`, called from `internal/service/form_service.go:455`). A form
+   (`internal/models/form.go:356-358`, called from `internal/service/form_service.go:506`). A form
    with lead creation turned off may have no owner; its submissions are stored and no lead is
-   written (`internal/service/form_service.go:867-869`).
+   written (`internal/service/form_service.go:918-920`).
 6. Automation reacts to `lead_created` (and `lead_updated` for repeats). Typical steps: a condition
    on `source`, `create_task`, `notify`, `wait`, a condition `status == new`, and a staff
    `send_email` (event and step names in `internal/models/automation.go:31-59`; condition fields in
@@ -138,7 +141,7 @@ and turns some into deals and quotes.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
    opt-in. Embed it and submit once from a real browser.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
-   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:322`) and assumes
+   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:363`) and assumes
    one replica (`docs/ROADMAP.md`, "Multi-replica leases"). If you run more than one API instance,
    set `AUTOMATION_ENABLED=false` on all but one.
 6. Decide whether `contacted` and `qualified` are the right conversion statuses for your team, and
@@ -166,7 +169,8 @@ values. One shared installation does not work for several clients, for two reaso
   routes on. Separate attribution fields are #220.
 - No nurture email to leads: `send_email` reaches staff users only (`docs/ROADMAP.md`, "Email to
   leads and customers"). Tracked in #238.
-- Form mail retry: #216. Submission retention purge: #217.
+- Form mail retry: #216. Old spam and unconfirmed submissions: set `FORM_RETENTION_DAYS` (see the
+  shared caveats).
 - Branding: mail subjects are hard-coded (`internal/mailer/smtp.go:84`,
   `internal/service/quote_email.go:12-15`), and the `general.company_name` and
   `ui.theme.primary_color` settings have no consumer in the UI
@@ -248,7 +252,7 @@ engines describe its product against competitors.
 
 - **Demo and gated-content forms.** The follow-up mail replaces `{content_link}` with the form's
   content URL, and is sent only when the form has a follow-up subject (`sendFollowUpMail`,
-  `internal/service/form_service.go:1242-1254`). With double opt-in, the follow-up goes out after
+  `internal/service/form_service.go:1303-1315`). With double opt-in, the follow-up goes out after
   confirmation, so the link reaches only a confirmed address.
 - **Routing.** Automation conditions can test a lead's `source`, `classification`, `company`,
   `status` and `owner_id` (`internal/service/automation_condition.go:43-50`).
@@ -267,10 +271,10 @@ engines describe its product against competitors.
   `API_KEY_SECRET` (or `JWT_SECRET`, which it falls back to) orphans them
   (`docs/ROADMAP.md`, "Sensitive settings — follow-ups").
 - Review the scheduler: `AEO_SCHEDULE_ENABLED` defaults to `true` and `AEO_SCHEDULE_HOUR` to 6
-  (`internal/config/config.go:310-311`). Scheduled runs spend provider credit.
+  (`internal/config/config.go:350-351`). Scheduled runs spend provider credit.
 - `AEO_QUERY_TIMEOUT_SECONDS` (default 60) needs raising for a slow self-hosted engine. A model
   server on your LAN needs an `AEO_EGRESS_LOCAL_ORIGINS` entry (`docs/AEO_SECURITY.md`).
-- Review the default model IDs (`internal/config/config.go:290-308`). Pinned IDs get retired, so
+- Review the default model IDs (`internal/config/config.go:330-348`). Pinned IDs get retired, so
   prefer rolling aliases where the provider offers them.
 - Add reCAPTCHA keys if the forms attract spam (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`).
 
@@ -341,7 +345,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:963`). Whether complaint text should be scrubbed is #214.
+  (`docs/DEVELOPMENT.md:967`). Whether complaint text should be scrubbed is #214.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
 - No SLA fields and no attachments on tickets: #243.
@@ -404,10 +408,9 @@ planning around an issue number.
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
-| Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1073-1135` | #220 |
-| Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1284-1294` | #216 |
-| Retention purge of spam and unconfirmed submissions | 1, 3, 6 | `docs/ROADMAP.md`, "Forms module — deliberate v1 cuts" | #217 |
-| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:963,966` | #214 |
+| Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1134-1196` | #220 |
+| Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1345-1355` | #216 |
+| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:967,970` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |

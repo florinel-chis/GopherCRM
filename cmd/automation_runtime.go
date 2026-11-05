@@ -10,8 +10,9 @@ import (
 
 // automationBackground owns the follow-up automation worker of this process.
 // Stop is what main calls at shutdown, through the combined handle
-// setupDependencies returns (combineStops: automation first, then AEO), under
-// the one drain deadline main passes, aeoDrainTimeout (15 s). A step
+// setupDependencies returns (combineStops: automation first, then the form
+// retention purge, then AEO), under the one drain deadline main passes,
+// aeoDrainTimeout (15 s). A step
 // transaction is a handful of statements, so an honest drain takes well under
 // that; when the deadline passes anyway, main does not close the database
 // under the work still using it (see main) and the next boot's reconciliation

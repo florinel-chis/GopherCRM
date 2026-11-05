@@ -47,6 +47,10 @@ const (
 	// keyboard, and an expired link costs them the content they asked for.
 	formConfirmationTTL = 48 * time.Hour
 
+	// formPendingSubmissionRetries is how many times a double-opt-in submission
+	// that lost a deadlock or timed out on a lock is replayed.
+	formPendingSubmissionRetries = 5
+
 	// formPublicIDBytes is the entropy of a form's public identifier (128 bits,
 	// 22 characters once base64url-encoded), and formPublicIDAttempts bounds
 	// the search for an unused one.
@@ -932,16 +936,26 @@ func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.
 // its single-use token. Prior outstanding tokens for the same form and address
 // are spent first, so re-submitting leaves exactly one working link. No lead is
 // created and no notification is sent until the address is confirmed.
+//
+// Spending the old tokens can deadlock with the retention purge removing an
+// older pending row of the same address, and InnoDB may pick this transaction as
+// the victim. It is replayed so the visitor neither loses the new row nor gets a
+// server error. Each attempt inserts its row afresh, because the rollback
+// discarded the id GORM copied onto the struct, and mail goes out once, after
+// the attempt that committed.
 func (s *formService) storePendingSubmission(ctx context.Context, form *models.Form, submission *models.FormSubmission) error {
 	var rawToken string
 
-	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
+	err := s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
 		}
 		txFormRepo := s.repo.WithTx(tx)
 
+		submission.ID = 0
+		submission.CreatedAt = time.Time{}
+		submission.UpdatedAt = time.Time{}
 		if err := txFormRepo.CreateSubmission(submission); err != nil {
 			return err
 		}
@@ -964,7 +978,7 @@ func (s *formService) storePendingSubmission(ctx context.Context, form *models.F
 
 		rawToken = raw
 		return nil
-	})
+	}, formPendingSubmissionRetries)
 	if err != nil {
 		return err
 	}

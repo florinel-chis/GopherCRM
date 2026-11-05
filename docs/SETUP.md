@@ -170,7 +170,7 @@ The two schemes are parsed in `internal/middleware/auth.go`.
    `Origin` header and the backend answers 403 for origins it does not list, unless the `Origin` is
    the request's own scheme and `Host` (same-origin; `github.com/gin-contrib/cors` v1.7.5, `go.mod:7`).
    `http://localhost:5173`, `:3000` and `:8080` are allowed by default (`internal/middleware/cors.go`);
-   add any other origin to `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:258`).
+   add any other origin to `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:298`).
    Do not edit the source.
 
 ### Frontend
@@ -183,7 +183,7 @@ The two schemes are parsed in `internal/middleware/auth.go`.
 ## Production
 
 Production configuration (`SERVER_MODE=production`, TLS in front, `TRUSTED_PROXIES`,
-`CORS_ALLOWED_ORIGINS`, SMTP, `PUBLIC_BASE_URL` and `APP_BASE_URL`) and the deploy options are covered in
+`CORS_ALLOWED_ORIGINS`, SMTP, `PUBLIC_BASE_URL`, `APP_BASE_URL` and `FORM_RETENTION_DAYS`) and the deploy options are covered in
 [FORKING.md](FORKING.md) (sections 4 and 5) and [DOCKER.md](DOCKER.md). To serve the frontend yourself,
 run `npm run build` and serve `gocrm-ui/dist` with a web server that falls back to `index.html` for
 client-side routes.

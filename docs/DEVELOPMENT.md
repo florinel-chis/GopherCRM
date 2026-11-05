@@ -861,6 +861,10 @@ settings:
   resumes and no stranded run is touched. Enable it on exactly one replica.
 - `AUTOMATION_POLL_INTERVAL_SECONDS` (default 30, clamped to 1..3600) — how often the worker
   polls for events, due runs and schedule passes; also the granularity of every wait
+- `FORM_RETENTION_DAYS` (default off) — age in days after which spam and never-confirmed form
+  submissions with no linked lead are permanently removed. Unset, empty, 0, negative or unparseable
+  keeps it off; 1 and 2 become the 3-day floor; above 36500 becomes 36500. The first boot with it
+  set removes the existing backlog (see *Form retention purge*)
 
 Frontend configuration lives in `gocrm-ui/.env` (see `gocrm-ui/.env.example`); `VITE_API_BASE_URL`
 points the Axios client at the backend.
@@ -963,7 +967,7 @@ What the erasure touches, and what it keeps on purpose:
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content) |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
-| `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) | not touched | Not linked to any person the CRM can erase; a retention concern (roadmap) |
+| `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) | not touched by erasure | Not linked to any person the CRM can erase. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
@@ -1026,7 +1030,11 @@ Known limits of the erasure, in one place:
   above); fully soft-deleted graphs have no supported path yet.
 - **Retained content.** Business free text (tickets, tasks, deals, quotes, quote lines, company
   notes, staff-written comments), legacy `bulk_operation_items` payloads and unlinked form
-  submissions are kept by design (see the matrix); logs and issued JWTs are out of reach.
+  submissions, except the rows the retention purge removes, are kept by design (see the matrix);
+  logs and issued JWTs are out of reach.
+- **Form-delete dialogs.** Both form-delete dialogs still say "Collected submissions are retained"
+  until a separate frontend task merges. Once `FORM_RETENTION_DAYS` is set that is wrong for spam
+  and never-confirmed rows, which the purge removes from soft-deleted forms too.
 
 The sample configuration defaults to `LOG_LEVEL=info`. Service logs keep operation names, entity
 IDs, validated statuses and counts, and omit email, name, title, search and raw sort fields. Shared
@@ -1149,7 +1157,9 @@ while the count is non-zero. Tests substitute `aeoSchedulerClock` to deliver a d
 Follow-up automation (#164) is the second owner of background work. `internal/service/
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
-(`combineStops`) that `main` runs — automation first, then AEO — before `models.CloseDatabase`.
+(`combineStops`) that `main` runs — automation first, then the form retention purge, then AEO —
+before `models.CloseDatabase`. That order describes the code and is not a contract: no handle
+depends on another, all three share one deadline, and no test asserts the order.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
@@ -1231,7 +1241,8 @@ The pieces, and why each is shaped the way it is:
   run), closes admission, cancels the owned context and waits for every admitted step to release —
   a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
   afterwards — then joins the goroutine, all under the one deadline main passes to the combined
-  handle (`aeoDrainTimeout`, 15 s, shared with the AEO drain that runs after it). A drained
+  handle (`aeoDrainTimeout`, 15 s, shared with the form retention and AEO drains that run after
+  it). A drained
   runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
   even on a context that has already ended: the join and the admission drain check their
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
@@ -1293,6 +1304,82 @@ repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 reconciles and runs, a replica with the worker off leaves a stranded run untouched);
 `TestMigrationAutomationSchema` and `TestMigrationAutomationTablesListed` (`cmd/migrate`). The MySQL
 roots skip without the variable and fail when it points at an unreachable server.
+
+### Form retention purge
+
+Spam and never-confirmed submissions hold visitor values and IP addresses. With
+`FORM_RETENTION_DAYS` set, `service.FormSubmissionPurger` hard-deletes those rows and their
+confirmation tokens once they pass that age. `cmd/form_retention_runtime.go` builds nothing while
+the setting is off, so no goroutine runs and no row is read.
+
+- **What goes.** A `spam` or `pending` row with a null `lead_id` and `created_at` before the cutoff,
+  with all its tokens, soft-deleted rows and rows of soft-deleted forms included. A pending row that
+  still holds a spendable token stays until the token is spent or expires; a spam row cannot be
+  confirmed, so a token does not protect it. `received` and `confirmed` rows and lead-linked rows are
+  never touched: lead erasure owns the latter.
+- **The floor.** Config raises 1 and 2 days to 3. `Sweep` also returns `ErrFormRetentionTooShort`
+  before reading or writing anything for a retention below 72 hours, the 48-hour link lifetime plus
+  a margin, so a wiring mistake cannot delete.
+- **First run.** The runtime sweeps immediately on start and then every
+  `service.FormRetentionSweepInterval` (24 hours). The first boot with the setting therefore removes
+  the whole existing backlog, permanently, without any request. Take a backup first if you may want
+  those rows.
+- **Clocks.** `created_at` comes from GORM's `NowFunc`, which is UTC in production, and is compared
+  with a UTC cutoff. `expires_at` is written from the process's local clock and compared with that
+  same clock, unconverted: SQLite compares timestamps as text, so the two sides must share a zone.
+- **Chunks.** `Sweep` walks spam and then pending by ascending id, at most 500 rows per
+  `WithTransactionAndRetry` transaction. A chunk (`FormRepository.PurgeSubmissionChunk`) reads its
+  candidates and token ids with plain reads, locks the tokens by primary key, locks the submissions
+  by primary key, re-checks the rule on what those locking reads return, and only then deletes tokens
+  and submissions. Locking by primary key keeps the locking reads off the secondary indexes, whose
+  next-key locks would block a new submission's insert; the deletes still reach those indexes (see
+  *Re-submissions*). A failure rolls back that chunk only, and
+  the next sweep picks up what is left. The walk never selects a row twice, so a row that survives
+  the re-check cannot keep a sweep busy.
+- **Lock order.** Token first, submission second, the order a confirmation uses. A confirmation that
+  claimed its token makes the chunk wait; the chunk then sees the row confirmed and leaves it. A
+  confirmation that read its token before a purge finds nothing to claim and gets
+  `ErrInvalidConfirmationToken`, so it can never reach `UpdateSubmission`'s `Save` and restore the
+  row. Two sweeps at once are safe: the loser of a chunk locks nothing that is left and counts
+  nothing.
+- **Re-submissions.** `storePendingSubmission` spends the older tokens of the same form and address
+  inside its transaction, which deadlocks with a chunk removing one of those older rows. This was
+  observed, not theoretical: on MySQL 8.0 the forced purge-first ordering deadlocked 9 times out of
+  9 at repository level and InnoDB rolled back the re-submission. The purge's primary-key locks do
+  not cover the `deleted_at` index, so holding them does not keep the re-submission out of the way
+  of its deletes. The function therefore now runs under `WithTransactionAndRetry`. Each attempt
+  inserts its row with a fresh id and mints a fresh token, and the confirmation mail goes out once,
+  after the commit. `storeReceivedSubmission` and `recordSpam` also insert rows but are not
+  replayed, and what a purge costs them is unmeasured; `ConfirmSubmission` has no retry either.
+  MariaDB was not probed for any of this.
+- **The drain.** `FormRetentionRuntime.Stop` cancels the sweep's context, so a chunk in flight rolls
+  back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
+  `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
+  guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
+  drains after the automation worker and before AEO:
+  `combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)`.
+- **Replicas.** The purge is safe on every replica, unlike the automation worker: extra sweeps only
+  compete for the same rows.
+- **Logs.** A sweep logs `spam_removed`, `pending_removed`, `tokens_removed` and `chunks`, and a
+  failure adds the error through `utils.LogError`. The boot line `form retention purge enabled`
+  carries `retention_days` alone. The purge's statements bind ids and timestamps only.
+
+There is no new index: selection reads `status`, `lead_id` and `created_at` without a lock, so a
+large table costs read time, not lock time.
+
+Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestFormSubmissionPurge{RemovesEligible,KeepsIneligible}{SQLite,MySQL}` (`internal/repository`);
+`TestFormSubmissionPurge{BacklogChunks,ChunkAtomic,ConcurrentConfirmation,CompetingSweeps,
+LateConfirmationLink,CutoffClockBasis,ConcurrentResubmission}{SQLite,MySQL}`,
+`TestFormSubmissionPurgeRefusesShortRetention`, `TestFormSubmissionPurgeLogsOmitPersonalData`,
+`TestFormRetentionRuntimeLifecycle` and `TestFormRetentionRuntimeStopDuringChunk`
+(`internal/service`); `TestFormRetentionAPISQLite` (`tests`); `TestFormRetentionProductionWiring`
+(`cmd`, which parks a chunk to prove the drain handle joins it); `TestLoadFormRetentionDays` (`internal/config`). The MySQL concurrency roots confirm each
+wait in `information_schema.PROCESSLIST` on two consecutive polls; SQLite's single connection cannot
+overlap two transactions, so its roots prove the same outcomes in sequence. CI limit: the MySQL roots
+are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`, which CI runs only on
+the transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
+`make verify-backend` has no DSN and skips them, so a `contextual` PR's CI does not execute them.
 
 ### AEO runtime validation and candidate inspection
 

@@ -350,6 +350,7 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 | 9.2 | **Update Configuration** | Admin can change configuration values; a save on Settings > Configuration refreshes the app-wide UI configuration | -- | -- | `ConfigurationSettings.test.tsx`: refreshes the app-wide configuration after a save, not after a failed one | `configuration_integration_test.go`: TestSetConfiguration, _InvalidValue, _ReadOnly, TestBooleanConfiguration, TestArrayConfiguration | **partial** | No E2E test of the settings page |
 | 9.3 | **Reset Configuration** | Admin can reset to defaults; a reset refreshes the app-wide UI configuration | -- | -- | `ConfigurationSettings.test.tsx`: refreshes the app-wide configuration after a reset | `configuration_integration_test.go`: TestResetConfiguration | **partial** | No E2E test of the settings page |
 | 9.4 | **Configuration Transactions** | Multi-step configuration writes are atomic | -- | -- | -- | -- | **untested** | The previous version of this document listed `test/integration/configuration_transaction_test.go`. **That file does not exist** — no test covers configuration transactionality |
+| 9.5 | **Form retention purge** | `FORM_RETENTION_DAYS` (environment only, off by default; 1 and 2 are raised to the 3-day floor, the ceiling is 36500). When set, spam and never-confirmed form submissions with no linked lead, and their confirmation tokens, are permanently removed at that age, at boot and then every 24 hours. A pending row that still holds a spendable token stays. The first boot with it set removes the existing backlog | -- | `config_test.go`: TestLoadFormRetentionDays; `form_submission_purge_test.go` (repository and service); `form_retention_runtime_test.go`: TestFormRetentionRuntimeLifecycle, TestFormRetentionRuntimeStopDuringChunk | -- | `tests/form_retention_api_test.go`: TestFormRetentionAPISQLite; `cmd/form_retention_runtime_test.go`: TestFormRetentionProductionWiring | **covered** (API level) | No settings screen and no browser test. Both form-delete dialogs still say "Collected submissions are retained" until a separate frontend task merges |
 
 ---
 
@@ -537,6 +538,8 @@ test --list` reports 100.
 | `service/auth_service_cookie_test.go` | 5 | Service |
 | `service/auth_service_test.go` | 4 (16 subtests) | Service |
 | `service/form_confirmation_regression_test.go` | 6 (SQLite and MySQL roots, + subtests) | Service |
+| `service/form_submission_purge_test.go` | 16 (SQLite and MySQL roots, + subtests) | Service |
+| `service/form_retention_runtime_test.go` | 2 (+ subtests) | Service |
 | `service/quote_service_test.go` | 3 (+ subtests, on SQLite) | Service |
 | `service/quote_status_regression_test.go` | 2 (SQLite and MySQL roots, + subtests) | Service |
 | `service/quote_email_test.go` | 3 (+ subtests, on SQLite) | Service |
@@ -548,6 +551,7 @@ test --list` reports 100.
 | `mailer/smtp_transport_test.go` | 4 (+ subtests) | Mailer |
 | `repository/quote_repository_test.go` | 7 | Repository |
 | `repository/product_repository_test.go` | 3 | Repository |
+| `repository/form_submission_purge_test.go` | 6 (SQLite and MySQL roots, + subtests) | Repository |
 | `middleware/rate_limit_test.go` | 7 (+ subtests) | Middleware |
 | `middleware/auth_test.go` | 12 | Middleware |
 | `middleware/error_handler_test.go` | 6 | Middleware |
@@ -576,6 +580,8 @@ test --list` reports 100.
 | `test/integration/erasure_atomicity_test.go` | 19 (SQLite and MySQL roots, + subtests) | Erasure atomicity and rollback; customer writes racing an erasure |
 | `test/integration/erasure_pii_sweep_test.go` | 9 | Cross-table PII sweep (quote tables included) |
 | `test/integration/quote_integration_test.go` | 5 | Quotes over HTTP (create, lines, lock, visibility, delete) |
+| `tests/form_retention_api_test.go` | 1 | Form retention purge over HTTP (lists, count, 404, invalid-link page) |
+| `cmd/form_retention_runtime_test.go` | 1 (+ subtests) | Form retention purge through `setupRouter` (off, on, drain joins a chunk in flight) |
 | `test/integration/product_integration_test.go` | 3 | Products over HTTP (roles, list, delete) |
 | `cmd/migrate/products_quotes_migration_test.go` | 1 (MySQL/MariaDB, + subtests) | Products and quotes migration |
 | `cmd/migrate/automation_migration_test.go` | 2 (one MySQL/MariaDB, + subtests) | Follow-up automation migration |

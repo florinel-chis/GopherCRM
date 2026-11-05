@@ -274,7 +274,7 @@ schema). A root that skipped proves nothing.
 
 - Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:264`) with key, type,
   category, default and description. `configRepo.InitializeDefaults()` runs at every start
-  (`cmd/main.go:73`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
+  (`cmd/main.go:146`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
   value (`BulkUpsert`, `internal/repository/configuration_repository.go:62`). Changing a default
   therefore does not touch existing installations.
 - A secret gets `IsSensitive: true` (the AEO keys, `configuration.go:367-404`): encrypted at rest by
@@ -344,9 +344,9 @@ attribution fields (#220).
 
 ## 7. Add a form field type
 
-Constant and `validateFieldType` in `internal/models/form.go:52-60,282`; submitted-value validation
-in `validateValues` (`internal/service/form_service.go:711`, called from `SubmitPublic` at line
-657); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
+Constant and `validateFieldType` in `internal/models/form.go:54-62,365`; submitted-value validation
+in `validateValues` (`internal/service/form_service.go:762`, called from `SubmitPublic` at line
+708); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
@@ -371,7 +371,7 @@ If a new named engine is still required:
 2. Register it in `LoadProvidersWithGuard` and `ProviderStatusesFor` in the same file.
 3. Add an egress key in `internal/config/aeo_egress.go` (constants and `aeoEgressKeys`, lines
    17-28) and the engine's official HTTPS origin in `officialOrigins` (`internal/aeo/egress.go:50`).
-4. Environment variables in `AEOConfig` (`internal/config/config.go:144`, defaults at line 290).
+4. Environment variables in `AEOConfig` (`internal/config/config.go:145`, defaults at line 330).
 5. Admin settings: the sensitive key in `DefaultConfigurations()` (next to the five existing keys),
    the model/base-URL overrides via `aeoConfigProviders` (`internal/models/aeo_configuration.go:11`),
    and the overlay in `EffectiveAEOConfig` (`internal/service/aeo_credentials.go:41`).
@@ -461,8 +461,8 @@ it is the cleanest removal.
 | Layer | Remove or change |
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
-| Wiring | `cmd/main.go` (import line 12; construction lines 245-270; handler line 304; reconcile and scheduler lines 338-357; route line 413); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, aeoRuntime.Stop)` (line 427) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker |
-| Configuration | `AEOConfig` and its block (`internal/config/config.go:144,290`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
+| Wiring | `cmd/main.go` (import line 12; construction lines 321-346; handler line 384; reconcile and scheduler lines 418-438; route line 495); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)` (line 510) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker and the form retention purge |
+| Configuration | `AEOConfig` and its block (`internal/config/config.go:145,330`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:134-138`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:319-346`), the AEO nav group (`MainLayout.tsx`, from line 161), the AEO case in `ConfigurationSettings.test.tsx` |
@@ -473,9 +473,9 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:322`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:226-273`). Erasure skips the automation tables if they are absent (`erasure.go:329-365`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:195-196,238-239,298-299,404-405`; AutoMigrate `database.go:120-123`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:161-162`), `cfg.Forms`, `WithFormAutomationEvents`, and `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,103`) |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:302-349`). Erasure skips the automation tables if they are absent (`erasure.go:329-365`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,486-487`; AutoMigrate `database.go:120-123`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`) and `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,103`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.
