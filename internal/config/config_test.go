@@ -34,6 +34,9 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		// Database driver selection, so a developer shell pointing at SQLite
 		// cannot flip the default-value assertions.
 		"DB_DRIVER", "DB_PATH",
+		// The remaining settings TestLoad_DefaultValues asserts, so an environment
+		// that exports a test database (DB_HOST, DB_PORT) cannot flip them either.
+		"DB_HOST", "DB_PORT", "DB_NAME", "SERVER_PORT", "API_PREFIX", "JWT_EXPIRY_HOURS",
 		// Automation worker settings, for the same reason as the AEO ones.
 		"AUTOMATION_ENABLED", "AUTOMATION_POLL_INTERVAL_SECONDS",
 	}
