@@ -400,7 +400,7 @@ type AutomationRunStep struct {
 	// When the step was executed (RFC 3339). Read-only.
 	ExecutedAt time.Time `gorm:"not null" json:"executed_at" example:"2026-10-30T08:00:02Z" readonly:"true"`
 
-	// Ids and statuses the step touched, never names or addresses. Keys by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id and task_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id, plus notification_id for notify. Always an object, possibly empty. Read-only.
+	// Ids and statuses the step touched, never names or addresses. Keys by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id, deal_id on a deal run, and task_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id, plus notification_id for notify. Always an object, possibly empty. Read-only.
 	Details map[string]interface{} `gorm:"-" json:"details" readonly:"true"`
 }
 
@@ -443,7 +443,7 @@ type AutomationDryRunStep struct {
 	ErrorCode string `json:"error_code,omitempty" enums:"recipient_unavailable" example:"recipient_unavailable"`
 	// The simulated time the step would run at (RFC 3339, UTC): the dry run's start plus every earlier wait.
 	SimulatedAt time.Time `json:"simulated_at" example:"2026-10-31T08:00:00Z"`
-	// What the step would touch, by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date and lead_id or customer_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id. Always an object, possibly empty.
+	// What the step would touch, by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id, and deal_id on a deal rule; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id. Always an object, possibly empty.
 	Details map[string]interface{} `json:"details"`
 }
 

@@ -190,7 +190,11 @@ Things to know before relying on it:
   The deals release adds the `deals` and `deal_stage_changes` tables only: it
   rebuilds no existing table, and the previous binary still opens the file.
   The quotes release does the same with `products`, `quotes`, `quote_lines` and
-  `quote_status_changes`: four new tables, no existing table touched.
+  `quote_status_changes`: four new tables, no existing table touched. The
+  task-to-deal link release rebuilds `tasks` (drop and copy) to add
+  `fk_tasks_deal`, so its first start needs free disk for a full copy of that
+  table; every existing task keeps `deal_id` NULL, and the previous binary still
+  opens the file, ignoring the extra column.
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 
@@ -734,6 +738,8 @@ authentication and live on the moderate tier:
 - `GET /api/v1/tasks/:id` - Get specific task
 - `PUT /api/v1/tasks/:id` - Update task *(only admins may reassign)*
 - `DELETE /api/v1/tasks/:id` - Delete task *(admin; ordinary soft delete)*
+- `GET /api/v1/deals/:id/tasks` - The deal's live tasks, paginated *(admin all of them; the sales
+  owner only those assigned to it; 403 for anybody else)*
 - `POST /api/v1/tasks/bulk/status` - Set the status of up to 100 tasks, all-or-nothing *(non-admins
   only their own assignments; completed tasks cannot change status)*
 

@@ -139,8 +139,8 @@ func (m *MockTaskService) CreateWithLabels(task *models.Task, labelIDs []uint, a
 	return args.Error(0)
 }
 
-func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent bool, actorID uint) error {
-	args := m.Called(task, labelIDs, leadIDSent, actorID)
+func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error {
+	args := m.Called(task, labelIDs, leadIDSent, dealIDSent, actorID)
 	return args.Error(0)
 }
 
@@ -154,6 +154,14 @@ func (m *MockTaskService) ListByLabel(labelID uint, offset, limit int, sortBy, s
 
 func (m *MockTaskService) ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
 	args := m.Called(assigneeID, labelID, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockTaskService) ListByDeal(viewer service.LeadViewer, dealID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(viewer, dealID, offset, limit, sortBy, sortOrder)
 	if args.Get(0) == nil {
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
@@ -457,7 +465,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_Success() {
 	existingTask.ID = taskID
 
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
-	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil), false, uint(1)).Return(nil)
+	suite.mockService.On("UpdateWithLabels", mock.AnythingOfType("*models.Task"), (*[]uint)(nil), false, false, uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":  "Updated Task",
@@ -529,7 +537,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_NonAdminSameAssignee_Success()
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
 	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.Title == "Updated Task" && t.AssignedToID == uint(1)
-	}), (*[]uint)(nil), false, uint(1)).Return(nil)
+	}), (*[]uint)(nil), false, false, uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"title":          "Updated Task",
@@ -597,7 +605,7 @@ func (suite *TaskHandlerTestSuite) TestUpdateTask_AdminReassign_Success() {
 	suite.mockService.On("GetByID", taskID).Return(existingTask, nil)
 	suite.mockService.On("UpdateWithLabels", mock.MatchedBy(func(t *models.Task) bool {
 		return t.ID == taskID && t.AssignedToID == uint(2)
-	}), (*[]uint)(nil), false, uint(1)).Return(nil)
+	}), (*[]uint)(nil), false, false, uint(1)).Return(nil)
 
 	updateData := map[string]interface{}{
 		"assigned_to_id": 2, // Admin reassigns to a different user

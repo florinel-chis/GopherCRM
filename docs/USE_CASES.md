@@ -53,7 +53,7 @@ These caveats apply to every recipe that takes in leads through forms.
   or its version (`FormSubmission`, `internal/models/form.go:382`). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept forever.** They hold visitor values and IP addresses,
-  and they sit outside lead erasure (`docs/DEVELOPMENT.md:947`; `docs/ROADMAP.md`, "Forms module —
+  and they sit outside lead erasure (`docs/DEVELOPMENT.md:966`; `docs/ROADMAP.md`, "Forms module —
   deliberate v1 cuts"). Decide on a purge policy and run it by hand until #217 (retention purge)
   and #214 (erasure of unlinked submissions) land.
 - **Behind a reverse proxy or CDN, set `TRUSTED_PROXIES`.** The rate limiter keys on the client
@@ -213,7 +213,7 @@ lost deal.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
   `gocrm-ui/src/routes/index.tsx:53,161`), both admin and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
-  (`internal/handler/routes.go:220`).
+  (`internal/handler/routes.go:224`).
 - The quote email subject reads "Quote Q-… from GopherCRM" (`internal/service/quote_email.go:12-15`).
   Changing it is a code edit until #221 lands.
 
@@ -228,8 +228,9 @@ renewals are not modelled.
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:88-91`); no PDF, only browser print
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
-- Tasks have no `deal_id`. A task created by a deal rule links to the deal's customer, or its lead
-  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
+- A task's `deal_id` (set by a deal rule or through the API, listed by `GET /deals/{id}/tasks`) has
+  no screen yet: the web client does not show it. Tasks created by a deal rule before #240 are not
+  backfilled (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
 - The customer pages show a fabricated `total_revenue` of zero: #186.
 
 ### Do not promise
@@ -340,7 +341,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:944`). Whether complaint text should be scrubbed is #214.
+  (`docs/DEVELOPMENT.md:963`). Whether complaint text should be scrubbed is #214.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
 - No SLA fields and no attachments on tickets: #243.
@@ -388,7 +389,7 @@ Each of these would need a different core model, not a recipe.
 
 | Business | Why it does not fit |
 |---|---|
-| Field-service dispatch | No dispatch calendar, no offline mode, no attachments, and tasks have no `deal_id` (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts") |
+| Field-service dispatch | No dispatch calendar, no offline mode and no attachments |
 | Recruiting | No attachments for CVs, and the pipeline links one deal to one customer, where recruiting needs many candidates per opening |
 | Nonprofit donor CRM | No recurring gifts, campaigns or nurture email to contacts |
 | Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`internal/models/aeo.go:28-31`) |
@@ -406,7 +407,7 @@ planning around an issue number.
 | Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1073-1135` | #220 |
 | Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1284-1294` | #216 |
 | Retention purge of spam and unconfirmed submissions | 1, 3, 6 | `docs/ROADMAP.md`, "Forms module — deliberate v1 cuts" | #217 |
-| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:944,947` | #214 |
+| Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:963,966` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | The example JWT secret passes the startup check | all | `.env.example`; `internal/config/config.go` | #210 |
@@ -422,7 +423,7 @@ planning around an issue number.
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
-| `deal_id` on tasks | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
+| No screen for a task's deal link | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
 | Ticket SLA fields and attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

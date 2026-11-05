@@ -101,7 +101,7 @@ func newDashboardEnv(t *testing.T, useMySQL bool) *dashboardEnv {
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, utils.NewTransactionManager(db))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
-	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db))
+	taskService := service.NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db), repository.NewDealRepository(db))
 
 	router := gin.New()
 	// Stands in for the auth middleware: the caller is a stored user, and its

@@ -251,16 +251,22 @@ Priorities: 20 P0, 15 P1, 1 P2.
   `TestAutomationStepExecutionSQLite`, `TestAutomationStepExecutionMySQL` ("a lead run performs
   every effect once in order").
 
-### TC-AUT-012 — A deal run links the task to the customer, else the lead, never both
+### TC-AUT-012 — A deal run links the task to the deal and to the customer, else the lead, never both
 - **Priority:** P1
 - **Type:** functional
-- **Preconditions:** A `deal_created` rule with a `create_task` step; three deals: with a
-  customer and a lead, with a lead only, with neither.
-- **Steps:** Dispatch and execute.
-- **Expected:** The first task carries `customer_id` only, the second `lead_id` only, the third
-  neither; every run completes.
+- **Preconditions:** A `deal_created` rule with a `create_task` step assigned to a user other than
+  the deal owner; deals with a customer and a lead, with a lead only, with neither, and won and lost
+  ones.
+- **Steps:** Dispatch and execute; dry-run the rule on the same deals; run a lead rule's
+  `create_task`.
+- **Expected:** Every task of a deal run carries `deal_id`, closed deals included. The first task
+  carries `customer_id` only, the second `lead_id` only, the third neither; every run completes and
+  each step's details hold `deal_id`. The dry run reports `deal_id` beside `customer_id` or `lead_id`
+  and writes no row. A lead run's task has no `deal_id`. A fault after the effect rolls the task back
+  and the retry creates exactly one.
 - **Automation:** automated — `TestAutomationStepExecution{SQLite,MySQL}` ("a deal run links the
-  task to the customer, else the lead, never both").
+  task to the customer, else the lead, never both"); `TestAutomationDealTaskLink{SQLite,MySQL}`,
+  `TestAutomationDryRunReportsDealLink` (`internal/service/automation_deal_task_test.go`).
 
 ### TC-AUT-013 — A fault after the effect rolls the step back and the retry performs it once
 - **Priority:** P0

@@ -16,20 +16,20 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/suite"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
 
 type TaskIntegrationTestSuite struct {
 	suite.Suite
-	db          *gorm.DB
-	router      *gin.Engine
-	adminToken  string
-	salesToken  string
-	adminUser   *models.User
-	salesUser   *models.User
-	testLead    *models.Lead
+	db           *gorm.DB
+	router       *gin.Engine
+	adminToken   string
+	salesToken   string
+	adminUser    *models.User
+	salesUser    *models.User
+	testLead     *models.Lead
 	testCustomer *models.Customer
 }
 
@@ -40,7 +40,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 		Format: "json",
 	}
 	utils.InitLogger(&logConfig)
-	
+
 	gin.SetMode(gin.TestMode)
 
 	// Setup in-memory SQLite database
@@ -117,7 +117,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 		ExpiryHours: 24,
 	}
 	authService := service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
-	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
+	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, repository.NewDealRepository(suite.db))
 
 	// Generate test tokens
 	suite.adminToken, err = authService.GenerateJWT(suite.adminUser)
@@ -141,7 +141,7 @@ func (suite *TaskIntegrationTestSuite) SetupSuite() {
 			}
 		}
 	})
-	
+
 	// Setup routes with auth middleware
 	api := suite.router.Group("/api/v1")
 	protected := api.Group("")
@@ -520,7 +520,7 @@ func (suite *TaskIntegrationTestSuite) TestTaskBusinessRules() {
 
 func (suite *TaskIntegrationTestSuite) TestTaskWithDueDate() {
 	dueDate := time.Now().Add(24 * time.Hour)
-	
+
 	createReq := handler.CreateTaskRequest{
 		Title:        "Task with Due Date",
 		Description:  "Task that has a due date",

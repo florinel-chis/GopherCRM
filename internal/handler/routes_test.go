@@ -154,6 +154,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/quotes/1/history"},
 		{http.MethodPost, "/api/v1/quotes/1/email"},
 		{http.MethodGet, "/api/v1/deals/1/quotes"},
+		{http.MethodGet, "/api/v1/deals/1/tasks"},
 		{http.MethodGet, "/api/v1/customers/1/quotes"},
 		// Automation: two groups under one static prefix, three POST
 		// sub-resources next to /:id on three verbs, and the runs group's
@@ -201,6 +202,7 @@ func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
 	})
 	SetupDealRoutes(group, &DealHandler{})
 	SetupQuoteRoutes(group, &QuoteHandler{})
+	SetupTaskRoutes(group, &TaskHandler{})
 	SetupDashboardRoutes(group, &DashboardHandler{})
 	SetupNotificationRoutes(group, &NotificationHandler{})
 
@@ -209,6 +211,7 @@ func TestStaticDealRoutesWinOverTheIDParameter(t *testing.T) {
 		"/api/v1/deals/7":                    "/api/v1/deals/:id",
 		"/api/v1/deals/7/history":            "/api/v1/deals/:id/history",
 		"/api/v1/deals/7/quotes":             "/api/v1/deals/:id/quotes",
+		"/api/v1/deals/7/tasks":              "/api/v1/deals/:id/tasks",
 		"/api/v1/quotes/7/history":           "/api/v1/quotes/:id/history",
 		"/api/v1/dashboard/pipeline":         "/api/v1/dashboard/pipeline",
 		"/api/v1/notifications/unread-count": "/api/v1/notifications/unread-count",

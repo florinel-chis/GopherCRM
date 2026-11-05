@@ -13,11 +13,12 @@ import (
 )
 
 // #224: 20261031120000_retire_inert_configurations deletes the two seeded
-// settings nothing read. It is the newest migration, so the fresh and upgrade
-// roots in main_test.go also check that it ran.
+// settings nothing read. The fresh and upgrade roots in main_test.go also check
+// that it ran. latestMigrationVersion is the newest migration of the directory,
+// 20261101120000_add_task_deal_link (#240).
 
 const (
-	latestMigrationVersion      = 20261031120000
+	latestMigrationVersion      = 20261101120000
 	retireConfigurationsMigName = "20261031120000_retire_inert_configurations"
 )
 

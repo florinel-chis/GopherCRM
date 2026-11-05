@@ -11851,7 +11851,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a deal. Role: admin. The stage history rows stay, and quotes keep their deal_id (their deal summary is then omitted). Deals hold no personal data, so this is not an erasure. No automation event is recorded.",
+                "description": "Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). Deals hold no personal data, so this is not an erasure. No automation event is recorded.",
                 "produces": [
                     "application/json"
                 ],
@@ -12505,6 +12505,213 @@
                     },
                     "500": {
                         "description": "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/deals/{id}/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One page of the live tasks linked to the deal, with their assignee, labels, lead and deal loaded. Roles: admin (every task of any deal) and sales (only on a deal it owns, and only the tasks assigned to it, filtered in the query, so total and meta.total count only those; another owner's deal is 403). Support and customer roles are refused. The unsorted order is ascending id; with sort_by the order is that column, then id in the same direction, and a sort_order other than asc or desc becomes desc. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own), decided again on every read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "List a deal's tasks",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Deal ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of rows to skip; negative or non-numeric values fall back to 0",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "id",
+                            "title",
+                            "status",
+                            "priority",
+                            "due_date",
+                            "assigned_to_id",
+                            "created_at",
+                            "updated_at"
+                        ],
+                        "type": "string",
+                        "description": "Sort column",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort direction, applied only with sort_by; any other value becomes desc",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "One page of the deal's tasks",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_handler.TaskListData"
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID') or sort_by is not an allowed column ('Invalid sort column')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or 'You can only view your own deals': a sales user asked about a deal it does not own",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: no live deal has this id ('Deal not found')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; details are logged, never returned",
                         "schema": {
                             "allOf": [
                                 {
@@ -19496,7 +19703,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a task. Roles: admin, sales and support (customers get 403 before the body is read). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. The task always starts in status pending, whatever the body says, and priority defaults to medium. A task may link a lead or a customer, but not both. lead_id must name a lead the caller may see (admins any lead, sales users only the leads they own, every other role none); a hidden lead is answered with 404 exactly like a missing one. label_ids attaches existing labels (a repeated id is attached once); any id that matches no label rejects the whole request. The checks run in this order: role, body binding, self-assignment, assignee (exists, active), lead, customer, lead-and-customer conflict, labels. No automation event and no notification is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
+                "description": "Create a task. Roles: admin, sales and support (customers get 403 before the body is read). Non-admin callers may only assign the task to themselves; admins may assign it to any active user. The task always starts in status pending, whatever the body says, and priority defaults to medium. A task may link a lead or a customer, but not both. lead_id must name a lead the caller may see (admins any lead, sales users only the leads they own, every other role none); a hidden lead is answered with 404 exactly like a missing one. label_ids attaches existing labels (a repeated id is attached once); any id that matches no label rejects the whole request. deal_id links a deal the caller may see under the same rule of roles (0 means no link), beside a lead or a customer. The checks run in this order: role, body binding, self-assignment, assignee (exists, active), lead, customer, lead-and-customer conflict, deal, labels. No automation event and no notification is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
                 "consumes": [
                     "application/json"
                 ],
@@ -19592,7 +19799,7 @@
                         }
                     },
                     "404": {
-                        "description": "NOT_FOUND - the assignee, the lead (missing or hidden from the caller) or the customer does not exist",
+                        "description": "NOT_FOUND - the assignee, the lead or the deal (missing or hidden from the caller) or the customer does not exist",
                         "schema": {
                             "allOf": [
                                 {
@@ -20202,7 +20409,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partially update a task: absent or empty fields are left unchanged (title, description, due_date and the links cannot be cleared this way). Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Only admins may change assigned_to_id; sending the current assignee back is not a reassignment. A completed task cannot be moved to another status. A task cannot link both a lead and a customer. A lead_id that is sent must name a lead the caller may see (a hidden lead is 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link set after validation, whether or not the caller could see the old lead. label_ids, when present, replaces the whole label set (an empty array clears it); absent leaves the labels untouched; any id that matches no label rejects the whole request. The order of checks: id, body binding, task lookup, ownership, reassignment permission, then assignee, lead, customer, conflict, completed status, labels; any failure leaves the task unchanged. No automation event is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
+                "description": "Partially update a task: absent or empty fields are left unchanged (title, description, due_date, lead_id and customer_id cannot be cleared this way). Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Only admins may change assigned_to_id; sending the current assignee back is not a reassignment. A completed task cannot be moved to another status. A task cannot link both a lead and a customer. A lead_id that is sent must name a lead the caller may see (a hidden lead is 404 like a missing one), even when it equals the stored link, so sending lead ids cannot reveal a hidden link; a stored link is kept unchecked when both link fields are absent. Sending customer_id without lead_id replaces the association: the lead link is cleared and the customer link set after validation, whether or not the caller could see the old lead. deal_id is independent of those links: absent keeps the stored link unchecked; an id must name a live deal the caller may see, closed deals included (a hidden deal is 404 like a missing one), even when it equals the stored link; 0 clears the link when the caller may see the stored deal (an admin also when that deal was deleted), and answers 200 and keeps the link when it is hidden from the caller, so a clear can neither reveal nor sever it. label_ids, when present, replaces the whole label set (an empty array clears it); absent leaves the labels untouched; any id that matches no label rejects the whole request. The order of checks: id, body binding, task lookup, ownership, reassignment permission, then assignee, lead, customer, conflict, completed status, deal, labels; any failure leaves the task unchanged. No automation event is produced. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
                 "consumes": [
                     "application/json"
                 ],
@@ -20305,7 +20512,7 @@
                         }
                     },
                     "404": {
-                        "description": "NOT_FOUND - the task, the new assignee, the lead (missing or hidden from the caller) or the customer does not exist",
+                        "description": "NOT_FOUND - the task, the new assignee, the lead or the deal (missing or hidden from the caller) or the customer does not exist",
                         "schema": {
                             "allOf": [
                                 {
@@ -24149,7 +24356,7 @@
             "type": "object",
             "properties": {
                 "details": {
-                    "description": "What the step would touch, by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date and lead_id or customer_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id. Always an object, possibly empty.",
+                    "description": "What the step would touch, by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id, and deal_id on a deal rule; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id. Always an object, possibly empty.",
                     "type": "object",
                     "additionalProperties": true
                 },
@@ -24467,7 +24674,7 @@
             "type": "object",
             "properties": {
                 "details": {
-                    "description": "Ids and statuses the step touched, never names or addresses. Keys by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id and task_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id, plus notification_id for notify. Always an object, possibly empty. Read-only.",
+                    "description": "Ids and statuses the step touched, never names or addresses. Keys by step type: wait resume_at; condition result, branch (next, jump or stop) and next_position for a jump; create_task assignee_id, due_date, lead_id or customer_id, deal_id on a deal run, and task_id; assign_owner from_owner_id and to_owner_id; send_email and notify recipient_id, plus notification_id for notify. Always an object, possibly empty. Read-only.",
                     "type": "object",
                     "additionalProperties": true,
                     "readOnly": true
@@ -26517,7 +26724,7 @@
             }
         },
         "github_com_florinel-chis_gophercrm_internal_models.Task": {
-            "description": "A to-do item assigned to one user, optionally linked to a lead or a customer (never both) and carrying labels.",
+            "description": "A to-do item assigned to one user, optionally linked to a lead or a customer (never both) and to a deal, and carrying labels.",
             "type": "object",
             "properties": {
                 "assigned_to": {
@@ -26547,6 +26754,19 @@
                     "description": "ID of the linked customer. Omitted when the task has no customer link. A task links a lead or a customer, never both.",
                     "type": "integer",
                     "example": 3
+                },
+                "deal": {
+                    "description": "Summary of the linked deal, under the same visibility rule as deal_id: omitted whenever deal_id is omitted, and also when the deal was deleted.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteDealSummary"
+                        }
+                    ]
+                },
+                "deal_id": {
+                    "description": "ID of the linked deal, independent of the lead or customer link. Omitted when the task has no deal link, and also when the caller may not see that deal (admins see every deal, sales users only the deals they own, every other role none); this is decided on every read. An admin still receives it after the deal was deleted; every other role does not.",
+                    "type": "integer",
+                    "example": 88
                 },
                 "deleted_at": {
                     "description": "Soft-deletion time (RFC 3339 date-time) or null. Always present in the JSON. Reads exclude soft-deleted rows, so records returned by the API carry null here. Read-only.",
@@ -28359,6 +28579,11 @@
                     "type": "integer",
                     "example": 3
                 },
+                "deal_id": {
+                    "description": "ID of a deal to link; 0 or absent means no link. The deal must be live, closed deals included, and visible to the caller (admins any deal, sales users only the deals they own, every other role none), otherwise 404. May be combined with lead_id or customer_id, and is not cross-checked against them.",
+                    "type": "integer",
+                    "example": 88
+                },
                 "description": {
                     "description": "Free-text details.",
                     "type": "string",
@@ -29867,6 +30092,11 @@
                     "description": "Customer to link. When present without lead_id it replaces the association: the lead link is cleared and this customer (which must exist) is linked. Absent (or null) keeps the stored link.",
                     "type": "integer",
                     "example": 3
+                },
+                "deal_id": {
+                    "description": "Deal to link. Absent (or null) keeps the stored link unchecked. An id must name a live deal the caller may see, closed deals included (404 otherwise), even when it equals the stored link; it replaces a link hidden from the caller too. 0 clears the link when the caller may see the stored deal; a clear of a link hidden from the caller answers 200 and leaves the link in place.",
+                    "type": "integer",
+                    "example": 88
                 },
                 "description": {
                     "description": "New description; an absent or empty value leaves it unchanged (it cannot be cleared).",

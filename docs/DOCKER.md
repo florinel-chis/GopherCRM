@@ -335,7 +335,14 @@ schema is not. The deals release adds the `deals` and `deal_stage_changes`
 tables only: it rebuilds no existing table, and the previous image still opens
 the file. The quotes release does the same with `products`, `quotes`,
 `quote_lines` and `quote_status_changes`: four new tables, no existing table
-touched, and the previous image still opens the file.
+touched, and the previous image still opens the file. The task-to-deal link
+release does touch one: it adds `tasks.deal_id` and rebuilds `tasks` — drop and
+copy, in one transaction with enforcement off — to add `fk_tasks_deal`, so the
+first start needs free space in the `/data` volume for a full copy of `tasks`,
+and the WAL file holds that copy until the next checkpoint. Every existing task
+keeps `deal_id` NULL. The previous image still opens the upgraded file: it
+ignores the extra column, so it neither shows nor removes a stored link, and
+the link is back when the newer image returns.
 
 ## Rebuilding after code changes
 

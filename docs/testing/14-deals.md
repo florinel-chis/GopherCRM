@@ -4,13 +4,14 @@ End-to-end cases for the deals area added 2026-09-30: the `/deals` list with its
 filters, the create/edit form, the detail page with its stage selector and history timeline, the
 deals sections on the company and customer detail pages, and deletion (a soft delete that keeps
 the history, not an erasure). Every **Expected** states what the build does **today**, traced to
-the handlers, service and repository; every automated case names the exact test title in
-`gocrm-ui/e2e/tests/admin-deals.spec.ts`.
+the handlers, service and repository; every automated browser case names the exact test title in
+`gocrm-ui/e2e/tests/admin-deals.spec.ts`, and the one backend case names its Go tests.
 
-34 cases: 16 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
-`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of them
-partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
-in Go or Vitest), 9 planned (7 against `admin-deals.spec.ts`, 2 against
+35 cases: 17 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
+`gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of those
+16 partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
+in Go or Vitest) and 1 by Go tests alone (TC-DEAL-035, an endpoint the web client does not list),
+9 planned (7 against `admin-deals.spec.ts`, 2 against
 `admin-deals-board.spec.ts`), 9 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
 
@@ -626,3 +627,17 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   `deal_lead_visibility_test.go`
   `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy`; `deal_lead_visibility_handler_test.go`
   `TestDealRoutes_HideALeadTheOwnerMayNotSee`, `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink`.
+
+### TC-DEAL-035 — GET /deals/{id}/tasks lists a deal's tasks under the deal rule
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Admin, sales A (owns a deal), sales B, support and a customer-role user. The deal has tasks assigned to A and to B, plus a soft-deleted task; A also has a task on another deal.
+- **Steps:**
+  1. `GET /api/v1/deals/{id}/tasks` as admin and as A; again with `limit=2`, and with `sort_by=status`.
+  2. As B, support and the customer.
+  3. As admin and as A on an unknown deal and on a soft-deleted deal.
+  4. As admin with a bad id and with `sort_by=description`.
+- **Expected:** Step 1: **200** with `data.tasks`, `data.total` and pagination `meta`. The admin gets every live task of the deal; A only the tasks assigned to A, narrowed before the limit, with `total` counting only those. Tied sort values end in the id, so pages neither repeat nor lose a row. Step 2: **403**. Step 3: **404** "Deal not found". Step 4: **400**. A task never carries the deal's amount or notes.
+- **Automation:** automated (backend) — `internal/integration/task_deal_integration_test.go`
+  `TestDealTasksEndpoint{SQLite,MySQL}`; `internal/repository/task_deal_link_test.go`
+  `TestTaskDealLinkRepository{SQLite,MySQL}`. No browser case: the web client does not list these.

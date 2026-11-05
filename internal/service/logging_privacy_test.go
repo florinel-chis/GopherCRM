@@ -62,7 +62,7 @@ func TestServiceLoggingPrivacy_SuccessAndSearch(t *testing.T) {
 		task := &models.Task{Title: text, AssignedToID: 9}
 		users.On("GetByID", uint(9)).Return(&models.User{IsActive: true}, nil)
 		repo.On("Create", task).Return(nil).Run(func(mock.Arguments) { task.ID = 42 })
-		require.NoError(t, NewTaskService(repo, users, nil, nil, nil).Create(task))
+		require.NoError(t, NewTaskService(repo, users, nil, nil, nil, nil).Create(task))
 		assert.NotContains(t, output.String(), text)
 		assert.Equal(t, uint(42), hook.LastEntry().Data["task_id"])
 		repo.AssertExpectations(t)

@@ -14,6 +14,7 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestLookupIndexesMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestProductsAndQuotesMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationAutomationSchema'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestTaskDealLinkMigration'),
     }
     migration_roots = len(required)
     if migrations_only:
@@ -22,6 +23,7 @@ def check(output, root, *, migrations_only=False):
             'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120',
             'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
             'TestCustomerWebsiteUpgradeFromSQLiteFixture',
+            'TestTaskDealLinkSQLiteUpgradeFromV120',
         ))
         required.update(('github.com/florinel-chis/gophercrm/internal/repository', name) for name in (
             'TestLookupIndexesServeLookupsSQLite',

@@ -302,7 +302,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
-	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo)
+	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,

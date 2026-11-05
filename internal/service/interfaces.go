@@ -183,12 +183,27 @@ type TaskService interface {
 	// actor and so cannot set a lead link at all. Reads return the stored link
 	// as is: callers answering a user pass the result through RedactTaskLead /
 	// RedactTaskLeads.
+	//
+	// A deal link follows CanViewDeal. A deal_id the write sets must name a live
+	// deal the actor may see, closed deals included; a missing or hidden one
+	// yields apperrors.ErrDealNotFound, and a lookup that fails for any other
+	// reason returns that error. On an update dealIDSent says whether the
+	// request named deal_id: absent keeps the stored link unchecked, a sent id
+	// is checked even when it equals the stored one, and nil or 0 clears the
+	// link when the actor may see the stored deal. A clear of a hidden link
+	// returns no error and keeps it. Reads go through RedactTaskDeal /
+	// RedactTaskDeals as well.
 	CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error
-	UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent bool, actorID uint) error
+	UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error
 	// ListByLabel and the ByAssignee variant back the ?label_id= filter, with
 	// the same admin/non-admin split as the rest of the task listings.
 	ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
+	// ListByDeal backs GET /deals/{id}/tasks: apperrors.ErrDealNotFound for a
+	// missing or soft-deleted deal, apperrors.ErrForbidden for a deal the viewer
+	// may not see, every live task of the deal for an admin and only the tasks
+	// assigned to the caller for the sales owner.
+	ListByDeal(viewer LeadViewer, dealID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 }
 
 type LabelService interface {

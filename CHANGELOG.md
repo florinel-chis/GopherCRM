@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tasks can link a deal (#240).** A task gains a nullable `deal_id`, additive to the
+  lead-or-customer link: migration `20261101120000_add_task_deal_link` on MySQL/MariaDB, AutoMigrate
+  on SQLite (the first start rebuilds `tasks`). `POST /tasks` and `PUT /tasks/{id}` accept `deal_id`
+  when it names a live deal the caller may see, closed deals included: admin any, sales its own, and
+  a hidden deal is 404 like a missing one. On update an absent `deal_id` keeps the link, 0 clears it,
+  and a clear of a link hidden from the caller answers 200 and keeps it. Every task the API returns
+  carries `deal_id` and a `deal` summary of id, title and stage only when the caller may see that
+  deal, decided on every read. `GET /deals/{id}/tasks` lists a deal's live tasks: every task for an
+  admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
+  rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
+  created by earlier runs are not backfilled, and the web client does not show the link yet.
 - **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
   `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
   neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body

@@ -92,6 +92,9 @@ func (e *AutomationEngine) DryRun(rule *models.AutomationRule, entityType string
 			if task.CustomerID != nil {
 				entry.Details["customer_id"] = *task.CustomerID
 			}
+			if task.DealID != nil {
+				entry.Details["deal_id"] = *task.DealID
+			}
 		case models.AutomationStepAssignOwner:
 			assignCfg := cfg
 			assignCfg.Recipient = models.AutomationRecipientUser

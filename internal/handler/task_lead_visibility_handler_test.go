@@ -141,7 +141,7 @@ func TestTaskUpdate_ResponseHidesALeadTheCallerMayNotSee(t *testing.T) {
 		// The stored link travels to the service untouched; only the response
 		// is redacted.
 		return task.LeadID != nil && *task.LeadID == 30 && task.Title == "Renamed"
-	}), (*[]uint)(nil), false, uint(2)).Return(nil)
+	}), (*[]uint)(nil), false, false, uint(2)).Return(nil)
 
 	w := serveJSON(newTaskLeadRouter(svc, models.RoleSales, 2), http.MethodPut, "/tasks/5", gin.H{"title": "Renamed"})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -159,7 +159,7 @@ func TestTaskUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink(t *testing.T) {
 		svc.On("GetByID", uint(5)).Return(taskLinkedToLead(2, 9), nil)
 		svc.On("UpdateWithLabels", mock.MatchedBy(func(task *models.Task) bool {
 			return task.LeadID != nil && *task.LeadID == sent
-		}), (*[]uint)(nil), true, uint(2)).Return(fmt.Errorf("unknown lead_id %d: %w", sent, apperrors.ErrLeadNotFound))
+		}), (*[]uint)(nil), true, false, uint(2)).Return(fmt.Errorf("unknown lead_id %d: %w", sent, apperrors.ErrLeadNotFound))
 
 		w := serveJSON(newTaskLeadRouter(svc, models.RoleSales, 2), http.MethodPut, "/tasks/5", gin.H{"lead_id": sent})
 		assert.Equal(t, http.StatusNotFound, w.Code, "lead %d: %s", sent, w.Body.String())

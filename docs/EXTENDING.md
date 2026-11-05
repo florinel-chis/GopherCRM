@@ -21,15 +21,16 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:484,537`), and deletes that answer an empty 204 (`customer_handler.go:465`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 418) |
-| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 578), "Paginated reads walk a total order" (line 542) |
+| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 597), "Paginated reads walk a total order" (line 542) |
 | Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:258`) | line 526 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
 | A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
 | Lead visibility has one policy: admin sees all leads, sales its own, every other role none | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
+| A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
 | A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:111`, `migrations/` | [Database](DEVELOPMENT.md#database) |
-| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 614) |
+| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 633) |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
 
@@ -127,7 +128,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (`productSearchClause`).
 - A delete that matched no row returns `gorm.ErrRecordNotFound` (`productRepository.Delete`).
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
-  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 801).
+  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 820).
 - Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
   rejection of an unknown sort column and soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
@@ -262,8 +263,8 @@ schema). A root that skipped proves nothing.
 - **Endpoint.** Handler method with annotations, route in the entity's `Setup...Routes` with its
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
-  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:274`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 621).
+  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:278`): at most 100 ids, all or nothing,
+  per-item authorization (DEVELOPMENT.md line 640).
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
   are a to-do list, not dead code: implement the route instead of deleting the function, as
@@ -304,7 +305,7 @@ origins (lines 44-50) and six step types (lines 53-60).
 4. Execution in `planStep` (`internal/service/automation_engine.go:690`): build a `stepPlan` whose
    `effect` writes through the transaction-bound repositories, so it commits or rolls back with the
    run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`,
-   called from `executeStep` at line 860); copy that path for any external side effect.
+   called from `executeStep` at line 867); copy that path for any external side effect.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
    (`internal/repository/erasure.go:350`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,

@@ -735,7 +735,7 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 	if tasks == nil {
 		tasks = []models.Task{}
 	}
-	service.RedactTaskLeads(leadViewer(c), tasks)
+	redactTaskLinksOfPage(c, tasks)
 
 	utils.LogHandlerResponse(logger, http.StatusOK, tasks)
 	utils.RespondSuccess(c, http.StatusOK, tasks)
