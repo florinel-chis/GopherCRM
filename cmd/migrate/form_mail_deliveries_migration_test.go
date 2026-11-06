@@ -28,8 +28,7 @@ const (
 )
 
 // TestFormMailDeliveriesMigrationFiles needs no database: the pair exists,
-// creates and drops the table with its indexes, is the newest migration, and
-// the completeness and CI lists name it.
+// creates and drops the table with its indexes, and the completeness and CI lists name it.
 func TestFormMailDeliveriesMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, formMailDeliveriesName+".up.sql"))
@@ -63,17 +62,6 @@ func TestFormMailDeliveriesMigrationFiles(t *testing.T) {
 	assert.Contains(t, downSQL, "drop table if exists form_mail_deliveries;")
 	assert.NotContains(t, downSQL, "alter table")
 	assert.Equal(t, 1, strings.Count(downSQL, "drop table"), "rollback drops one table")
-
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, formMailDeliveriesName+".up.sql", newest, "the newest migration")
-	assert.Equal(t, formMailDeliveriesVersion, latestMigrationVersion)
 
 	source, err := os.ReadFile("main_test.go")
 	require.NoError(t, err)

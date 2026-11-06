@@ -62,6 +62,17 @@ func TestFormAttributionMigrationFiles(t *testing.T) {
 	assert.NotContains(t, upSQL, "create table", "no new table")
 	assert.NotContains(t, upSQL, "\nupdate ", "existing rows are not backfilled")
 	assert.NotContains(t, downSQL, "drop table", "rollback keeps the rows")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	newest := ""
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
+			newest = entry.Name()
+		}
+	}
+	assert.Equal(t, formAttributionName+".up.sql", newest, "the newest migration")
+	assert.Equal(t, formAttributionVersion, latestMigrationVersion)
 }
 
 // formAttributionObjects is the part of the two tables the migration owns.
