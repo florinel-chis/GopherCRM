@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Form mail delivery records and manual retry (#216).** Every form mail (double-opt-in
+  confirmation, follow-up, one notification per `notify_emails` address) gets a
+  `form_mail_deliveries` row in the submission or confirmation transaction, stamped `sent`,
+  `failed` (with `mail_failed`, `timeout` or `invalid_recipient`), `log_only` (no `SMTP_HOST`) or
+  `skipped` after the send. Failures used to be logged and swallowed, and the log-only fallback
+  looked like success. The rows appear as `deliveries` on `GET /forms/submissions/{id}` and
+  `GET /forms/{id}/submissions` and in the new attention list `GET /forms/deliveries`; admin and
+  sales retry a failed, log-only or stuck row with `POST /forms/deliveries/{id}/retry`. A
+  confirmation retry re-arms the submission's single token with a new 48-hour link. The rows hold
+  no address or content and are removed with purged and erased submissions. MySQL installs run
+  `20261106120000_add_form_mail_deliveries`; SQLite gets the table through AutoMigrate. The public
+  submit and confirm answers are unchanged, and nothing retries automatically.
+
 ### Changed
 
 - **CI runs the full browser suite only for a release.** Pull requests, the merge queue and

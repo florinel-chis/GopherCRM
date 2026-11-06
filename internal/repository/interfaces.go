@@ -776,7 +776,74 @@ type FormRepository interface {
 	// nothing.
 	PurgeSubmissionChunk(q FormSubmissionPurgeQuery) (FormSubmissionPurgeChunk, error)
 
+	// Mail delivery records (#216), implemented in form_mail_delivery_repository.go.
+
+	// CreateDelivery inserts one delivery row; the caller runs it in the
+	// submission or confirmation transaction.
+	CreateDelivery(d *models.FormMailDelivery) error
+	// GetDeliveryByID is a plain read; gorm.ErrRecordNotFound when absent.
+	GetDeliveryByID(id uint) (*models.FormMailDelivery, error)
+	// ClaimPendingDelivery moves only a pending row to sending (attempts+1,
+	// last_attempt_at = now). Exactly one affected row, else
+	// gorm.ErrRecordNotFound.
+	ClaimPendingDelivery(id uint, now time.Time) error
+	// ClaimDeliveryForRetry moves only a failed or log_only row, or a pending
+	// or sending row whose updated_at is before stuckBefore, to sending.
+	// Exactly one affected row, else gorm.ErrRecordNotFound.
+	ClaimDeliveryForRetry(id uint, now, stuckBefore time.Time) error
+	// FinishDelivery stamps only a sending row with the outcome. Exactly one
+	// affected row, else gorm.ErrRecordNotFound.
+	FinishDelivery(id uint, outcome FormMailDeliveryOutcome) error
+	// ListAttentionDeliveries returns one page, id descending, plus the total
+	// matching the same filter.
+	ListAttentionDeliveries(q FormMailDeliveryQuery) ([]models.FormMailDelivery, int64, error)
+	// ListDeliveriesForSubmissions returns the rows of the given submissions in
+	// id order.
+	ListDeliveriesForSubmissions(submissionIDs []uint) ([]models.FormMailDelivery, error)
+	// LockSubmissionByID reads a live submission by primary key with FOR
+	// UPDATE on MySQL (a plain read on SQLite).
+	LockSubmissionByID(id uint) (*models.FormSubmission, error)
+	// GetFormIncludingDeleted reads a form whether or not it is soft-deleted.
+	GetFormIncludingDeleted(id uint) (*models.Form, error)
+	// HasNewerSubmission reports whether the form holds a live submission with
+	// an id above afterID, the same email and a status other than spam. It is a
+	// locking read on MySQL and a plain read on SQLite.
+	HasNewerSubmission(formID uint, email string, afterID uint) (bool, error)
+	// ListConfirmationTokenIDs returns the ids of the submission's
+	// non-deleted confirmation tokens, spent or not.
+	ListConfirmationTokenIDs(submissionID uint) ([]uint, error)
+	// ReArmConfirmationToken rewrites one token in place by primary key: new
+	// hash, new expiry, used_at NULL. Exactly one affected row, else
+	// gorm.ErrRecordNotFound; it never inserts.
+	ReArmConfirmationToken(id uint, tokenHash string, expiresAt time.Time) error
+
 	WithTx(tx *gorm.DB) FormRepository
+}
+
+// FormMailDeliveryOutcome is the stamp FinishDelivery writes.
+type FormMailDeliveryOutcome struct {
+	// Status is sent, failed, log_only or skipped.
+	Status string
+	// ErrorCode is empty for sent and log_only.
+	ErrorCode string
+	// SentAt is set for sent only.
+	SentAt *time.Time
+	// Now is written to updated_at.
+	Now time.Time
+}
+
+// FormMailDeliveryQuery selects one page of ListAttentionDeliveries.
+type FormMailDeliveryQuery struct {
+	// FormID and Kind narrow the list when non-zero.
+	FormID uint
+	Kind   string
+	// Status, when set, selects exactly that stored status. Empty selects the
+	// attention set: failed, log_only, and pending or sending rows whose
+	// updated_at is before StuckBefore.
+	Status      string
+	StuckBefore time.Time
+	Offset      int
+	Limit       int
 }
 
 // FormSubmissionPurgeQuery selects one chunk for PurgeSubmissionChunk.
@@ -809,4 +876,7 @@ type FormSubmissionPurgeChunk struct {
 	// Selected when a competing sweep or a confirmation got there first.
 	Submissions int64
 	Tokens      int64
+	// Deliveries is the number of form_mail_deliveries rows of the removed
+	// submissions that were deleted with them.
+	Deliveries int64
 }

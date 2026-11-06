@@ -33,6 +33,8 @@ type formPurgeRepoEnv struct {
 func newFormPurgeRepoEnv(t *testing.T, useMySQL bool) *formPurgeRepoEnv {
 	t.Helper()
 	db := openAutomationRepoDB(t, useMySQL, 2)
+	// The purge deletes the submissions' mail delivery rows (#216) too.
+	require.NoError(t, db.AutoMigrate(&models.FormMailDelivery{}))
 	now := time.Now().Truncate(time.Second)
 	cutoff := now.UTC().Add(-90 * 24 * time.Hour)
 	return &formPurgeRepoEnv{

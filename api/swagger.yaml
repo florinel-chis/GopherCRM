@@ -2380,6 +2380,112 @@ definitions:
         example: email
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery:
+    properties:
+      attempts:
+        description: Number of claims (first send and every retry).
+        example: 1
+        readOnly: true
+        type: integer
+      created_at:
+        description: |-
+          When the row was written (RFC 3339), in the submission or confirmation
+          transaction. Read-only.
+        example: "2026-11-06T09:30:00Z"
+        readOnly: true
+        type: string
+      error_code:
+        description: |-
+          Why a delivery failed or was skipped: mail_failed, timeout,
+          invalid_recipient, no_mailer or no_recipient. Empty otherwise.
+        enum:
+        - ""
+        - mail_failed
+        - timeout
+        - invalid_recipient
+        - no_mailer
+        - no_recipient
+        example: mail_failed
+        readOnly: true
+        type: string
+      form_id:
+        description: Form the submission came through.
+        example: 4
+        readOnly: true
+        type: integer
+      id:
+        description: Unique identifier, assigned by the server. Read-only.
+        example: 17
+        readOnly: true
+        type: integer
+      kind:
+        description: |-
+          Which mail: confirmation (double opt-in link), follow_up (to the
+          submitter) or notification (one per notify_emails address).
+        enum:
+        - confirmation
+        - follow_up
+        - notification
+        example: notification
+        readOnly: true
+        type: string
+      last_attempt_at:
+        description: When the last claim was made (RFC 3339); null before the first.
+        example: "2026-11-06T09:30:01Z"
+        readOnly: true
+        type: string
+        x-nullable: true
+      retryable:
+        description: |-
+          Computed on read: the status allows a retry (failed, log_only or stuck).
+          A retry may still be refused (409) or not found (404) for reasons that
+          depend on the submission, the form or its notify_emails.
+        example: true
+        readOnly: true
+        type: boolean
+      sent_at:
+        description: |-
+          When the relay accepted the message (RFC 3339); null unless status is
+          sent.
+        example: "2026-11-06T09:30:01Z"
+        readOnly: true
+        type: string
+        x-nullable: true
+      status:
+        description: |-
+          Delivery state: pending (written with the submission), sending (claimed),
+          sent (accepted by the relay), failed, log_only (logged by the development
+          mailer, nothing delivered) or skipped (no mailer or no recipient).
+        enum:
+        - pending
+        - sending
+        - sent
+        - failed
+        - log_only
+        - skipped
+        example: failed
+        readOnly: true
+        type: string
+      stuck:
+        description: |-
+          Computed on read: a pending or sending row last updated more than 15
+          minutes ago.
+        example: false
+        readOnly: true
+        type: boolean
+      submission_id:
+        description: Submission the mail belongs to.
+        example: 42
+        readOnly: true
+        type: integer
+      updated_at:
+        description: |-
+          When the row last changed state (RFC 3339). A pending or sending row
+          whose updated_at is more than 15 minutes old is stuck. Read-only.
+        example: "2026-11-06T09:30:01Z"
+        readOnly: true
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.FormStatus:
     enum:
     - draft
@@ -2421,6 +2527,16 @@ definitions:
         readOnly: true
         type: string
         x-nullable: true
+      deliveries:
+        description: |-
+          Outcome of every mail of this submission (confirmation, follow-up and
+          one notification per address), oldest first. Always an array: [] when
+          none was recorded, for example for spam or for submissions stored before
+          delivery recording existed. Carries no address.
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery'
+        readOnly: true
+        type: array
       email:
         description: |-
           Submitted address, lower-cased. After erasure of the linked lead it is
@@ -14910,6 +15026,234 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: List the submissions of a form
+      tags:
+      - forms
+  /forms/deliveries:
+    get:
+      description: |-
+        One page of form mail delivery records across every form, newest first (id descending). Each record is one mail of one submission: the double opt-in confirmation, the follow-up or one notification per notify_emails address. It carries ids, the kind, the status, an error code and attempt timestamps; never an address or message content.
+        Without status the list holds the rows that need attention: failed, log_only (logged by the development mailer because SMTP_HOST is not set, nothing delivered) and stuck (pending or sending for more than 15 minutes). With status it holds exactly the rows stored with that status. form_id and kind narrow either list.
+        Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages.
+        Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details names form_id, status or kind) for a form_id that is not a positive integer or an unknown status or kind.
+        Roles: admin, sales, support.
+      parameters:
+      - default: 0
+        description: Pagination offset
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Only deliveries of this form (positive integer; otherwise 400)
+        in: query
+        minimum: 1
+        name: form_id
+        type: integer
+      - description: 'Only rows stored with this status instead of the attention set
+          (unknown value: 400)'
+        enum:
+        - pending
+        - sending
+        - sent
+        - failed
+        - log_only
+        - skipped
+        in: query
+        name: status
+        type: string
+      - description: 'Only this kind of mail (unknown value: 400)'
+        enum:
+        - confirmation
+        - follow_up
+        - notification
+        in: query
+        name: kind
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deliveries retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - form_id is not a positive integer, or status
+            or kind is unknown
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin, sales or support (the customer
+            role is always refused)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List form mail deliveries that need attention
+      tags:
+      - forms
+  /forms/deliveries/{id}/retry:
+    post:
+      description: |-
+        Send one form mail again: a delivery whose status is failed, log_only or stuck (pending or sending for more than 15 minutes; see retryable). The message is rendered from the form as it is now, to the submitter's address for a confirmation or follow-up, or to the notification address the row was written for, which must still be in notify_emails. Retrying a confirmation re-arms the submission's single confirmation token with a new 48-hour link (the previous link stops working) and is refused once the submission is no longer pending or a newer submission of the same form and address exists. The call claims the row in one transaction, sends once after the commit and answers with the updated record; two concurrent retries of one row send once.
+        Errors: 400 BAD_REQUEST for an id that is not a positive integer ("Invalid delivery ID"); 404 NOT_FOUND for an unknown delivery or one whose submission is gone (purged or erased); 409 FORM_DELIVERY_NOT_RETRYABLE when the status does not allow a retry (sent, skipped, or pending or sending and not yet stuck), the form is deleted, a follow-up's form no longer has a follow-up subject or its submission is neither received nor confirmed, a notification's address is no longer in notify_emails, a confirmation's submission is no longer pending or has a newer submission, or another retry claimed the row first; 502 MAIL_DELIVERY_FAILED when the mailer refused or failed (the row is stamped failed; the transport's message is not echoed).
+        Roles: admin, sales.
+      parameters:
+      - description: Delivery ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Delivery retried; status is sent, log_only or skipped
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery'
+              type: object
+        "400":
+          description: BAD_REQUEST - the id is not a positive integer ('Invalid delivery
+            ID')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin or sales
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - delivery not found, or its submission is gone (message
+            'Delivery not found')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: FORM_DELIVERY_NOT_RETRYABLE - the delivery cannot be retried
+            (see description)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "502":
+          description: MAIL_DELIVERY_FAILED - the mailer refused or failed to deliver
+            ('The form mail could not be delivered')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Retry a form mail delivery
       tags:
       - forms
   /forms/public/{key}:

@@ -56,6 +56,7 @@ func migrateCancellationSchema(t *testing.T, db *gorm.DB) {
 		&models.User{}, &models.Company{}, &models.Customer{}, &models.Lead{},
 		&models.Configuration{},
 		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{},
+		&models.FormMailDelivery{},
 		&models.BulkOperation{},
 	))
 }

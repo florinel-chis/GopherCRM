@@ -38,18 +38,18 @@ These caveats apply to every recipe that takes in leads through forms.
 
 - **Repeat enquiries do not create a new lead.** The newest live lead with the same email gets a
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
-  were (`applySubmissionLead`, `internal/service/form_service.go:1134-1196`). Matching is
+  were (`applySubmissionLead`, `internal/service/form_service.go:1148-1210`). Matching is
   installation-wide, not per form (`GetLatestByEmail`,
   `internal/repository/lead_repository.go:300`). Automation rules that should act on every enquiry
   must listen to `lead_updated` as well as `lead_created`, or they miss the repeats. A rule that
   routes on `source` sees the form that created the lead, not the form just submitted.
-- **Form mail is best effort.** Confirmation, follow-up and team notification mail is sent after
-  the submission is stored. A delivery failure is logged and swallowed, with no retry
-  (`send`, `internal/service/form_service.go:1345-1355`). Without `SMTP_HOST`, every send
-  "succeeds" into a redacted log line (`docs/ROADMAP.md`, "Production SMTP"). Tracked in #216.
+- **Form mail failures are recorded, not hidden.** Confirmation, follow-up and each team notification
+  get their own delivery row, sent after the submission is stored and stamped `sent`, `failed`,
+  `log_only` (no `SMTP_HOST`) or `skipped` (`sendAndStamp`, `internal/service/form_mail_delivery.go:237-289`).
+  Staff see the rows on the submission and in `GET /forms/deliveries`; admin and sales retry by hand.
 - **Double opt-in confirms an email address. It does not record consent.** A form with consent
   text refuses a submission without the consent flag
-  (`internal/service/form_service.go:814-816`). The submission row does not store the consent text
+  (`internal/service/form_service.go:819-821`). The submission row does not store the consent text
   or its version (`FormSubmission`, `internal/models/form.go:465`). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
@@ -68,7 +68,7 @@ These caveats apply to every recipe that takes in leads through forms.
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
   before the response is written (`storeReceivedSubmission` and `ConfirmSubmission`,
-  `internal/service/form_service.go:907-933,1011-1051`), so a disconnect after the commit leaves the
+  `internal/service/form_service.go:913-943,1021-1065`), so a disconnect after the commit leaves the
   submission stored and the token spent. A client that sees no response cannot conclude that
   nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
@@ -93,7 +93,7 @@ and turns some into deals and quotes.
    emails, a default lead owner, allowed origins, double opt-in, and a follow-up mail that can carry
    a content link (`Form`, `internal/models/form.go:172-276`; screens in `gocrm-ui/src/pages/forms/`).
    The default owner must be an active admin or sales user (`checkLeadOwner`,
-   `internal/service/form_service.go:515`).
+   `internal/service/form_service.go:520`).
 2. The site embeds the snippet served from `GET /api/v1/forms/public/embed.js`
    (`internal/handler/form_public_routes.go:26`; usage comment at the top of
    `internal/handler/assets/form_embed.js`). The alternatives are the hosted page at
@@ -101,22 +101,22 @@ and turns some into deals and quotes.
    has an allowlist and you use the hosted page, the CRM's own host must be in the allowed origins,
    because the hosted page submits from the CRM origin (`requestOrigin`,
    `internal/handler/form_public_handler.go:250-257`; `originAllowed`,
-   `internal/service/form_service.go:639`). Test both embed paths from a real browser.
+   `internal/service/form_service.go:644`). Test both embed paths from a real browser.
 3. Spam layers run in a fixed order: validation, then the HMAC time trap (3 seconds to 24 hours),
    origin, honeypot, and optional reCAPTCHA v3 (`SubmitPublic`,
-   `internal/service/form_service.go:693-756`; `internal/forms/`). A spam verdict gets the same
+   `internal/service/form_service.go:698-761`; `internal/forms/`). A spam verdict gets the same
    response as a genuine submission and is stored with `status=spam`.
 4. With double opt-in, `GET /forms/public/confirm` renders a button and only the POST spends the
    token. The token claim, the lead write and the submission update are one transaction, and mail
-   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1011`;
+   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1021`;
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
    every lead (`CanViewLead`, `internal/service/lead_visibility.go:23`). A form that creates
    leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
-   (`internal/models/form.go:356-358`, called from `internal/service/form_service.go:506`). A form
+   (`internal/models/form.go:356-358`, called from `internal/service/form_service.go:511`). A form
    with lead creation turned off may have no owner; its submissions are stored and no lead is
-   written (`internal/service/form_service.go:918-920`).
+   written (`internal/service/form_service.go:925-932`).
 6. Automation reacts to `lead_created` (and `lead_updated` for repeats). Typical steps: a condition
    on `source`, `create_task`, `notify`, `wait`, a condition `status == new`, and a staff
    `send_email` (event and step names in `internal/models/automation.go:31-59`; condition fields in
@@ -169,8 +169,9 @@ values. One shared installation does not work for several clients, for two reaso
   routes on. Separate attribution fields are #220.
 - No nurture email to leads: `send_email` reaches staff users only (`docs/ROADMAP.md`, "Email to
   leads and customers"). Tracked in #238.
-- Form mail retry: #216. Old spam and unconfirmed submissions: set `FORM_RETENTION_DAYS` (see the
-  shared caveats).
+- Form mail: `GET /forms/deliveries` lists failed, log-only and stuck mails; admin and sales retry
+  one with `POST /forms/deliveries/{id}/retry`. Old spam and unconfirmed submissions: set
+  `FORM_RETENTION_DAYS` (see the shared caveats).
 - Branding: mail subjects are hard-coded (`internal/mailer/smtp.go:84`,
   `internal/service/quote_email.go:12-15`), and the `general.company_name` and
   `ui.theme.primary_color` settings have no consumer in the UI
@@ -251,9 +252,9 @@ engines describe its product against competitors.
 ### Existing flow
 
 - **Demo and gated-content forms.** The follow-up mail replaces `{content_link}` with the form's
-  content URL, and is sent only when the form has a follow-up subject (`sendFollowUpMail`,
-  `internal/service/form_service.go:1303-1315`). With double opt-in, the follow-up goes out after
-  confirmation, so the link reaches only a confirmed address.
+  content URL, and is sent only when the form has a follow-up subject (`recordAcceptedMail` and
+  `renderFormFollowUp`, `internal/service/form_mail_delivery.go:124-148,350-356`). With double
+  opt-in, the follow-up goes out after confirmation, so the link reaches only a confirmed address.
 - **Routing.** Automation conditions can test a lead's `source`, `classification`, `company`,
   `status` and `owner_id` (`internal/service/automation_condition.go:43-50`).
 - **AEO.** One brand profile with aliases, owned domains and competitors
@@ -408,8 +409,8 @@ planning around an issue number.
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
-| Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1134-1196` | #220 |
-| Form mail failures are swallowed, with no delivery status or retry | 1, 3, 6 | `internal/service/form_service.go:1345-1355` | #216 |
+| Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1148-1210` | #220 |
+| Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
 | Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:983,986` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |

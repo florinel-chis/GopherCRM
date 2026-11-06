@@ -465,6 +465,26 @@ Hard-deleted with the lead it refers to and with its recipient.
 | run_id | uint | No | no FK | The run that created it |
 | read_at | datetime | No | - | Set by `POST /notifications/{id}/read` and `read-all` |
 
+## Form Mail Delivery
+
+`form_mail_deliveries` (#216) — the outcome of one form mail: the double-opt-in confirmation, the
+follow-up or one notification per `notify_emails` address. Written `pending` in the submission or
+confirmation transaction, claimed (`sending`) and stamped after the commit. No foreign keys: the
+rows are hard-deleted with their submission by the retention purge and by lead erasure. They hold no
+address and no message content. `stuck` and `retryable` are computed on read, not stored.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| submission_id | uint | Yes | indexed | The submission the mail belongs to |
+| form_id | uint | Yes | indexed | |
+| kind | string | Yes | `confirmation`, `follow_up`, `notification`, max 20 | |
+| status | string | Yes | `pending`, `sending`, `sent`, `failed`, `log_only`, `skipped`, max 20, indexed | `sent` means accepted by the relay |
+| error_code | string | No | `mail_failed`, `timeout`, `invalid_recipient`, `no_mailer`, `no_recipient`, max 50 | |
+| recipient_hash | string | No | HMAC-SHA256 hex, max 64; never serialised | A notification's recipient, so a retry can find it in the current `notify_emails` |
+| attempts | int | Yes | default 0 | Claims: the first send and every retry |
+| last_attempt_at | datetime | No | UTC | |
+| sent_at | datetime | No | UTC; set for `sent` only | |
+
 ## Customer Model
 
 Represents confirmed customers in the system.

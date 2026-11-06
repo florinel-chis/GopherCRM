@@ -501,6 +501,22 @@ type FormSubmission struct {
 	Referrer string `gorm:"type:varchar(512)" json:"referrer" example:"https://www.example.com/pricing" readonly:"true"`
 	// When the double opt-in link was confirmed (RFC 3339); null otherwise.
 	ConfirmedAt *time.Time `json:"confirmed_at" example:"2026-10-30T09:15:00Z" extensions:"x-nullable" readonly:"true"`
+	// Outcome of every mail of this submission (confirmation, follow-up and
+	// one notification per address), oldest first. Always an array: [] when
+	// none was recorded, for example for spam or for submissions stored before
+	// delivery recording existed. Carries no address.
+	Deliveries []FormMailDelivery `gorm:"-" json:"deliveries" readonly:"true"`
+}
+
+// MarshalJSON serialises the submission with deliveries as [] rather than null
+// when none are loaded.
+func (s FormSubmission) MarshalJSON() ([]byte, error) {
+	type plain FormSubmission
+	out := plain(s)
+	if out.Deliveries == nil {
+		out.Deliveries = []FormMailDelivery{}
+	}
+	return json.Marshal(out)
 }
 
 // BeforeSave serializes the submitted values into their TEXT column.

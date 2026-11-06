@@ -944,8 +944,14 @@ gophercrm/
   password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
   automation rule — goes to the application log instead of a mailbox, and the sending code cannot
   tell: `POST /api/v1/quotes/:id/email` still answers `200` and stamps `last_emailed_at`, and an
-  automation email step is logged as `succeeded`, although nothing was delivered. Fine for
-  development, useless in production.
+  automation email step is logged as `succeeded`, although nothing was delivered. Form mail is the
+  exception: each delivery is recorded `log_only`, not `sent`. Fine for development, useless in
+  production.
+- **Form mail is retried by hand only.** Every form mail (confirmation, follow-up, one notification
+  per address) is recorded and shown on the submission and in `GET /api/v1/forms/deliveries`;
+  admin and sales retry a failed, log-only or stuck one with
+  `POST /api/v1/forms/deliveries/{id}/retry`. Nothing retries automatically, and `sent` means the
+  relay accepted the message: bounces are not tracked.
 - **The automation worker assumes a single API replica.** Runs are claimed by conditional updates
   and recovered only at boot of the worker process (`AUTOMATION_ENABLED`, see `.env.example`);
   there is no lease timeout, so a run left `running` by a crashed worker is handed back only

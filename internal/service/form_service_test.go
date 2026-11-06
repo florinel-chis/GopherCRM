@@ -134,6 +134,7 @@ func migrateFormTestSchema(t *testing.T, db *gorm.DB) {
 		&models.Form{},
 		&models.FormSubmission{},
 		&models.FormConfirmationToken{},
+		&models.FormMailDelivery{},
 	))
 }
 

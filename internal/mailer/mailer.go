@@ -55,6 +55,14 @@ type Mailer interface {
 	Send(to, subject, body string) error
 }
 
+// LogOnlyReporter is an optional interface a Mailer implements to say that a
+// nil error from Send means the message was only logged, not delivered. The
+// form delivery records use it to stamp such a mail log_only instead of sent.
+// SMTPMailer does not implement it.
+type LogOnlyReporter interface {
+	LogsOnly() bool
+}
+
 // NewFromConfig picks the implementation from configuration: SMTP when
 // SMTP_HOST is set, otherwise the logging fallback.
 func NewFromConfig(cfg config.SMTPConfig) Mailer {

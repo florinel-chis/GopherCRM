@@ -296,7 +296,7 @@ Configuration comes from three places:
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
 | `JWT_SECRET` | none (required) | `config.go:271` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:318`, `internal/service/form_service.go:328` | see the rotation callout below |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:318`, `internal/service/form_service.go:333` | see the rotation callout below |
 | `DB_DRIVER` | `mysql` | `config.go:284` | `mysql` or `sqlite`; anything else stops startup |
 | `DB_PATH` | `gophercrm.db` | `config.go:285` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:286-290` | MySQL only |
@@ -321,7 +321,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
 >   (`cmd/main.go:309`), refresh and password-reset tokens (`cmd/main.go:291`), form confirmation
->   tokens and time-trap signatures (`internal/service/form_service.go:322-333`), and the
+>   tokens and time-trap signatures (`internal/service/form_service.go:327-338`), and the
 >   encryption of sensitive settings (`cmd/main.go:294`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
@@ -344,9 +344,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   confirmation links; the second is the UI's, used in password-reset links. Left at their
 >   defaults, both send recipients to `localhost`.
 > - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
->   reports success (README "Known Limitations"). Even with SMTP configured, form acknowledgement
->   and notification failures are logged and swallowed after the submission is stored, with no
->   retry; making them visible and retryable is #216.
+>   reports success (README "Known Limitations"); form mail is then recorded `log_only`. A form mail
+>   that fails is recorded per mail and shown to staff (`GET /forms/deliveries`), and admin and
+>   sales retry it by hand; nothing retries automatically.
 
 ### 4.3 Settings
 
@@ -533,7 +533,7 @@ it from `go.mod` instead is #223.
 |---|---|
 | `setupDependencies` in `cmd/main.go:257` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
-| the AutoMigrate list in `internal/models/database.go:111-150` | append your models at the end, in one block |
+| the AutoMigrate list in `internal/models/database.go:111-151` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
 | seeded settings in `internal/models/configuration.go` | a fork-specific key prefix, appended at the end |
 | `CHANGELOG.md` | a separate fork section, or a separate file |

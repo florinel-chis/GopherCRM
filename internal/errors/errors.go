@@ -99,6 +99,10 @@ var (
 	ErrQuoteChangedDuringSend = errors.New("quote was revised while the email was being sent")
 	// ErrMailDelivery wraps a mailer failure (502 MAIL_DELIVERY_FAILED).
 	ErrMailDelivery = errors.New("mail delivery failed")
+	// ErrFormDeliveryNotRetryable refuses a retry of a form mail delivery
+	// whose status, submission, form or recipient no longer allows one, and
+	// the loser of two concurrent retries (409 FORM_DELIVERY_NOT_RETRYABLE).
+	ErrFormDeliveryNotRetryable = errors.New("form mail delivery cannot be retried")
 
 	// AEO errors. The two conflict sentinels are answered with 409;
 	// ErrProfileNotConfigured is the exception that is answered with 404 on

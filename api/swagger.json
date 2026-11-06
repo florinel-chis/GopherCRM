@@ -13063,6 +13063,386 @@
                 }
             }
         },
+        "/forms/deliveries": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One page of form mail delivery records across every form, newest first (id descending). Each record is one mail of one submission: the double opt-in confirmation, the follow-up or one notification per notify_emails address. It carries ids, the kind, the status, an error code and attempt timestamps; never an address or message content.\nWithout status the list holds the rows that need attention: failed, log_only (logged by the development mailer because SMTP_HOST is not set, nothing delivered) and stuck (pending or sending for more than 15 minutes). With status it holds exactly the rows stored with that status. form_id and kind narrow either list.\nPagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages.\nErrors: 400 VALIDATION_ERROR (message \"Validation failed\", error.details names form_id, status or kind) for a form_id that is not a positive integer or an unknown status or kind.\nRoles: admin, sales, support.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "forms"
+                ],
+                "summary": "List form mail deliveries that need attention",
+                "parameters": [
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size, capped at 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Only deliveries of this form (positive integer; otherwise 400)",
+                        "name": "form_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "pending",
+                            "sending",
+                            "sent",
+                            "failed",
+                            "log_only",
+                            "skipped"
+                        ],
+                        "type": "string",
+                        "description": "Only rows stored with this status instead of the attention set (unknown value: 400)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "confirmation",
+                            "follow_up",
+                            "notification"
+                        ],
+                        "type": "string",
+                        "description": "Only this kind of mail (unknown value: 400)",
+                        "name": "kind",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deliveries retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - form_id is not a positive integer, or status or kind is unknown",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/forms/deliveries/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Send one form mail again: a delivery whose status is failed, log_only or stuck (pending or sending for more than 15 minutes; see retryable). The message is rendered from the form as it is now, to the submitter's address for a confirmation or follow-up, or to the notification address the row was written for, which must still be in notify_emails. Retrying a confirmation re-arms the submission's single confirmation token with a new 48-hour link (the previous link stops working) and is refused once the submission is no longer pending or a newer submission of the same form and address exists. The call claims the row in one transaction, sends once after the commit and answers with the updated record; two concurrent retries of one row send once.\nErrors: 400 BAD_REQUEST for an id that is not a positive integer (\"Invalid delivery ID\"); 404 NOT_FOUND for an unknown delivery or one whose submission is gone (purged or erased); 409 FORM_DELIVERY_NOT_RETRYABLE when the status does not allow a retry (sent, skipped, or pending or sending and not yet stuck), the form is deleted, a follow-up's form no longer has a follow-up subject or its submission is neither received nor confirmed, a notification's address is no longer in notify_emails, a confirmation's submission is no longer pending or has a newer submission, or another retry claimed the row first; 502 MAIL_DELIVERY_FAILED when the mailer refused or failed (the row is stamped failed; the transport's message is not echoed).\nRoles: admin, sales.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "forms"
+                ],
+                "summary": "Retry a form mail delivery",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Delivery ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Delivery retried; status is sent, log_only or skipped",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "BAD_REQUEST - the id is not a positive integer ('Invalid delivery ID')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin or sales",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND - delivery not found, or its submission is gone (message 'Delivery not found')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "FORM_DELIVERY_NOT_RETRYABLE - the delivery cannot be retried (see description)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "502": {
+                        "description": "MAIL_DELIVERY_FAILED - the mailer refused or failed to deliver ('The form mail could not be delivered')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/forms/public/confirm": {
             "get": {
                 "description": "The page the link in a double opt-in confirmation mail opens (PUBLIC_BASE_URL + API prefix + /forms/public/confirm?token=...). It renders an HTML page with a \"Confirm email\" button that POSTs the token to /forms/public/confirm. A GET never spends or even checks the token, so mail scanners and link previews cannot confirm on the visitor's behalf; any non-empty token gets the button page, a missing or blank one gets the generic \"This link is no longer valid\" page. The handler always answers 200 text/html, never the JSON envelope; only the rate limiter in front of it answers in JSON (429 TOO_MANY_REQUESTS).\nUnauthenticated.",
@@ -25890,6 +26270,112 @@
                 }
             }
         },
+        "github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "description": "Number of claims (first send and every retry).",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 1
+                },
+                "created_at": {
+                    "description": "When the row was written (RFC 3339), in the submission or confirmation\ntransaction. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-06T09:30:00Z"
+                },
+                "error_code": {
+                    "description": "Why a delivery failed or was skipped: mail_failed, timeout,\ninvalid_recipient, no_mailer or no_recipient. Empty otherwise.",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "mail_failed",
+                        "timeout",
+                        "invalid_recipient",
+                        "no_mailer",
+                        "no_recipient"
+                    ],
+                    "readOnly": true,
+                    "example": "mail_failed"
+                },
+                "form_id": {
+                    "description": "Form the submission came through.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 4
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 17
+                },
+                "kind": {
+                    "description": "Which mail: confirmation (double opt-in link), follow_up (to the\nsubmitter) or notification (one per notify_emails address).",
+                    "type": "string",
+                    "enum": [
+                        "confirmation",
+                        "follow_up",
+                        "notification"
+                    ],
+                    "readOnly": true,
+                    "example": "notification"
+                },
+                "last_attempt_at": {
+                    "description": "When the last claim was made (RFC 3339); null before the first.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-06T09:30:01Z"
+                },
+                "retryable": {
+                    "description": "Computed on read: the status allows a retry (failed, log_only or stuck).\nA retry may still be refused (409) or not found (404) for reasons that\ndepend on the submission, the form or its notify_emails.",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "example": true
+                },
+                "sent_at": {
+                    "description": "When the relay accepted the message (RFC 3339); null unless status is\nsent.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-06T09:30:01Z"
+                },
+                "status": {
+                    "description": "Delivery state: pending (written with the submission), sending (claimed),\nsent (accepted by the relay), failed, log_only (logged by the development\nmailer, nothing delivered) or skipped (no mailer or no recipient).",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "sending",
+                        "sent",
+                        "failed",
+                        "log_only",
+                        "skipped"
+                    ],
+                    "readOnly": true,
+                    "example": "failed"
+                },
+                "stuck": {
+                    "description": "Computed on read: a pending or sending row last updated more than 15\nminutes ago.",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "example": false
+                },
+                "submission_id": {
+                    "description": "Submission the mail belongs to.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 42
+                },
+                "updated_at": {
+                    "description": "When the row last changed state (RFC 3339). A pending or sending row\nwhose updated_at is more than 15 minutes old is stuck. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-06T09:30:01Z"
+                }
+            }
+        },
         "github_com_florinel-chis_gophercrm_internal_models.FormStatus": {
             "type": "string",
             "enum": [
@@ -25932,6 +26418,14 @@
                     "type": "string",
                     "format": "date-time",
                     "x-nullable": true,
+                    "readOnly": true
+                },
+                "deliveries": {
+                    "description": "Outcome of every mail of this submission (confirmation, follow-up and\none notification per address), oldest first. Always an array: [] when\nnone was recorded, for example for spam or for submissions stored before\ndelivery recording existed. Carries no address.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.FormMailDelivery"
+                    },
                     "readOnly": true
                 },
                 "email": {

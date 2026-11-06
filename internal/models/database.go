@@ -139,6 +139,7 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&Form{},
 		&FormSubmission{},
 		&FormConfirmationToken{},
+		&FormMailDelivery{},
 		// Follow-up automation: rules before steps and runs (both reference
 		// the rule), runs before run steps, notifications last.
 		&AutomationRule{},

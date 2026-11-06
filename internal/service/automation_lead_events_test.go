@@ -112,6 +112,8 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 	})
 
 	t.Run("form submission creates and then updates the lead", func(t *testing.T) {
+		// A submission records its mail deliveries (#216) in its transaction.
+		require.NoError(t, db.AutoMigrate(&models.FormMailDelivery{}))
 		f := newFormFixtureOn(t, config.FormsConfig{PublicBaseURL: formTestPublicBase}, db)
 		f.service = NewFormService(f.repo, f.leadRepo, f.userRepo, f.mailer, env.txManager, f.cfg, formTestAPIPrefix,
 			WithFormAutomationEvents(env.repo))

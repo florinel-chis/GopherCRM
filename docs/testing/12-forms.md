@@ -7,14 +7,15 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 
 **Sources**
 
-- `internal/models/form.go`, `internal/models/database.go`
-- `internal/repository/form_repository.go`, `internal/repository/erasure_cascade.go`
-- `internal/service/form_service.go`, `internal/service/interfaces.go`,
-  `internal/service/form_submission_purge.go`, `internal/service/form_retention_runtime.go`,
-  `cmd/form_retention_runtime.go`
+- `internal/models/form.go`, `internal/models/form_mail_delivery.go`, `internal/models/database.go`
+- `internal/repository/form_repository.go`, `internal/repository/form_mail_delivery_repository.go`,
+  `internal/repository/erasure_cascade.go`
+- `internal/service/form_service.go`, `internal/service/form_mail_delivery.go`,
+  `internal/service/interfaces.go`, `internal/service/form_submission_purge.go`,
+  `internal/service/form_retention_runtime.go`, `cmd/form_retention_runtime.go`
 - `internal/forms/challenge.go`, `internal/forms/recaptcha.go`
-- `internal/handler/form_handler.go`, `form_routes.go`, `form_public_handler.go`,
-  `form_public_routes.go`, `form_public_html.go`, `assets/form_embed.js`
+- `internal/handler/form_handler.go`, `form_delivery_handler.go`, `form_routes.go`,
+  `form_public_handler.go`, `form_public_routes.go`, `form_public_html.go`, `assets/form_embed.js`
 - `internal/middleware/cors.go`, `internal/config/config.go`, `internal/mailer/`
 - `gocrm-ui/src/pages/forms/`, `gocrm-ui/src/api/endpoints/forms.ts`
 - `scripts/forms_live_smoke.sh` (manual, needs a running backend and an admin JWT)
@@ -31,9 +32,9 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   per-route rate limits (generous on reads, strict on submits/confirms). E2E against them must
   send an `Origin` header to prove the cross-origin path, and must respect that the strict tier
   (10/min, burst 5) throttles rapid submits unless `DISABLE_RATE_LIMIT=true`.
-- **Mail is log-only without `SMTP_HOST`**, and the log redacts tokenised links, so the opt-in
-  confirm flow can only be end-to-end tested with a mail sink; the token path itself is pinned in
-  Go tests.
+- **Mail is log-only without `SMTP_HOST`** (each delivery is recorded `log_only`), and the log
+  redacts tokenised links, so the opt-in confirm flow can only be end-to-end tested with a mail
+  sink; the token path itself is pinned in Go tests.
 - **The confirmation regressions run on real SQL.** `form_confirmation_regression_test.go` runs
   every scenario on in-memory SQLite with the production one-connection pool and, when
   `TEST_MYSQL_DSN` points at a disposable server, on a uniquely named MySQL schema that is created
@@ -217,3 +218,46 @@ same outcomes in sequence.
   `TestFormRetentionRuntime{Lifecycle,StopDuringChunk}`; `form_submission_purge_test.go`
   `TestFormSubmissionPurgeLogsOmitPersonalData`. **Known issue:** both form-delete dialogs still say
   "Collected submissions are retained" until a separate frontend task merges.
+
+## Mail delivery records
+
+Every form mail gets a `form_mail_deliveries` row (#216). The service and repository roots run on
+in-memory SQLite and, with `TEST_MYSQL_DSN`, on a disposable MySQL schema. The SPA does not show the
+rows yet (a later frontend task).
+
+- **TC-FORM-100 — every mail is recorded in the submission or confirmation transaction and stamped
+  with its outcome** (one notification row per address plus the follow-up for a received
+  submission, the confirmation for a pending one, notifications and follow-up on confirmation;
+  `sent`, `failed` with `mail_failed`/`timeout`/`invalid_recipient`, `skipped` with
+  `no_mailer`/`no_recipient`; no row for spam or a rolled-back transaction; a slow `Send` or a
+  request cancelled after the commit never leaves a row `sending`; the public answers are
+  unchanged) · automated · `internal/service/form_mail_delivery_test.go`
+  `TestFormMailDeliveryRecorded{SQLite,MySQL}`.
+- **TC-FORM-101 — without `SMTP_HOST` the LogMailer's deliveries read `log_only`, never `sent`** ·
+  automated · `TestFormMailDeliveryLogOnlyRecorded`; `internal/mailer/log_only_test.go`
+  `TestLogMailerReportsLogOnly`.
+- **TC-FORM-102 — a failed, log-only or stuck follow-up or notification is retried once, from the
+  current form, and every refusal writes nothing** (sent, skipped and fresh pending/sending rows; a
+  form without follow-up subject; a submission neither received nor confirmed; an address no longer
+  in `notify_emails`; a soft-deleted form; the loser of two concurrent retries; 404 for an unknown
+  row or a vanished submission; a send failure stamps `failed`) · automated ·
+  `TestFormMailDeliveryRetry{SQLite,MySQL}`.
+- **TC-FORM-103 — a confirmation retry re-arms the single token in place and the new link confirms**
+  (the old link is dead; refused, with every token unchanged, for a confirmed or lead-linked
+  submission, a newer non-spam submission of the same address, or zero or two token rows; an old
+  expired submission survives the following purge) · automated ·
+  `TestFormMailDeliveryConfirmationRetry{SQLite,MySQL}`.
+- **TC-FORM-104 — pending or sending rows become stuck and retryable after 15 minutes** · automated
+  · `TestFormMailDeliveryStuckRows`.
+- **TC-FORM-105 — delivery log lines carry ids, kind, status and error code only** · automated ·
+  `TestFormMailDeliveryLogsOmitPersonalData`.
+- **TC-FORM-106 — the purge and lead erasure remove the rows of the submissions they remove** ·
+  automated · `internal/repository/form_mail_delivery_repository_test.go`
+  `TestFormMailDeliveryPurgedWithSubmission{SQLite,MySQL}`;
+  `internal/service/form_mail_delivery_test.go` `TestFormMailDeliveryErasedWithLead{SQLite,MySQL}`.
+- **TC-FORM-107 — staff reads and the retry route over HTTP** (`deliveries` on the submission reads,
+  `[]` when none, no address field; `GET /forms/deliveries` filters and pagination; retry 200, 409,
+  404, 502; support reads but gets 403 on retry; customer 403 everywhere) · automated ·
+  `tests/form_mail_delivery_api_test.go` `TestFormMailDeliveryAPISQLite`;
+  `internal/handler/form_delivery_handler_test.go`; `TestFormMailDeliveryRepository{SQLite,MySQL}`;
+  `TestFormMailDeliveryJSON`.

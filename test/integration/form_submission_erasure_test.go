@@ -33,6 +33,7 @@ func setupFormErasureDB(t *testing.T) *gorm.DB {
 		&models.Form{},
 		&models.FormSubmission{},
 		&models.FormConfirmationToken{},
+		&models.FormMailDelivery{},
 	))
 	return db
 }

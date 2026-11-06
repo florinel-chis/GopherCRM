@@ -94,7 +94,7 @@ func TestFormRetentionAPISQLite(t *testing.T) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.APIKey{}, &models.Company{}, &models.Customer{}, &models.Lead{},
-		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{},
+		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}, &models.FormMailDelivery{},
 	))
 
 	userRepo := repository.NewUserRepository(db)
