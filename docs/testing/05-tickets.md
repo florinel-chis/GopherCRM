@@ -894,3 +894,152 @@ therefore API-level, driven from a Playwright `request` context with a UI verifi
   `required,oneof=open in_progress resolved closed`). Step 4 returns **404** with the missing id
   listed in `error.details`, and the valid ticket is *not* updated.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-bulk-status.spec.ts` (new)
+
+---
+
+## Ticket SLA fields (#278)
+
+A ticket carries `due_at` (nullable, set by admin and support callers), `first_responded_at`
+(nullable, set by the server only) and `overdue` (computed at read time, never stored). The UI does
+not show them yet; these cases are API and backend level. Sources: `internal/models/ticket.go`
+(`IsOverdue`, `MarshalJSON`), `internal/handler/ticket_handler.go` (`parseDueAt`),
+`internal/service/ticket_service.go` (`CreateComment`), `internal/repository/ticket_repository.go`
+(`CreateCommentWithFirstResponse`, `Create`, `Update`) and
+`migrations/20261108120000_add_ticket_sla_fields`.
+
+### TC-TICK-050 — Set, change, keep and clear due_at
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** An admin and a support user; a customer.
+- **Steps:**
+  1. `POST /tickets` with `"due_at":"2026-12-01T10:00:00.123456789+02:00"`; then without `due_at`
+     and with `"due_at":null`.
+  2. `PUT /tickets/{id}` with a `due_at`, then another one, then bodies with only `title`, only
+     `status`, an empty body, and finally `"due_at":null`.
+  3. After each call, `GET /tickets/{id}` and read the row.
+- **Expected:** The first create stores and returns `"2026-12-01T08:00:00.123Z"` (UTC, truncated to
+  milliseconds); the others return `null`. A `PUT` with a `due_at` changes it; one without the key
+  keeps the stored value; `null` clears the column to NULL. Every answer and every fresh `GET` show
+  the stored value as UTC RFC 3339 with three fractional digits. Admin and the assigned support user
+  behave alike.
+- **Automation:** automated — `TestTicketDueAtLifecycleSQLite` (`internal/integration`)
+
+### TC-TICK-051 — An invalid due_at is 400 INVALID_DUE_AT and writes nothing
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** An admin and a support user; a ticket assigned to the support user, with and
+  without a stored due date.
+- **Steps:**
+  1. `POST /tickets` with `due_at` set to `"2026-13-01"`, `"tomorrow"`, `"2026-12-01"`, a value
+     without an offset, an empty string, a number, a boolean, an object and an array.
+  2. `PUT /tickets/{id}` with each of those values beside a valid `title`, `status`, `priority`,
+     `description` and `resolution`.
+- **Expected:** Every call is **400** with `error.code` `INVALID_DUE_AT` and
+  `error.details.field` `"due_at"`. The tickets row count does not change, and the updated ticket's
+  `due_at`, title, status, priority, description, resolution and `updated_at` equal their values
+  before the request.
+- **Automation:** automated — `TestTicketDueAtInvalidWritesNothingSQLite` (`internal/integration`)
+
+### TC-TICK-052 — The handler decodes due_at before the service is called
+- **Priority:** P1
+- **Type:** validation
+- **Preconditions:** The ticket handler over a mock service.
+- **Steps:**
+  1. Send create and update bodies with `due_at` absent, `null`, in UTC, with positive and negative
+     offsets and sub-millisecond digits, and with `first_responded_at` and `overdue` keys.
+  2. Send invalid values, and invalid values from a sales or customer caller.
+- **Expected:** Absent and `null` mean no due date on create; on update absent keeps the stored
+  value and `null` clears it. A string becomes UTC truncated to milliseconds. An invalid value is
+  400 `INVALID_DUE_AT` and neither `TicketService.Create` nor `Update` (nor the ticket read) is
+  called. `first_responded_at` and `overdue` in a body never reach the ticket handed to the service.
+  Role refusals still answer 403 first, and a binding error keeps its own code.
+- **Automation:** automated — `TestTicketDueAtHandlerParsing` (`internal/handler`)
+
+### TC-TICK-053 — first_responded_at is the first non-internal staff reply, set once
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** An admin, the assigned support user, another support user, a sales user and the
+  customer's user; a ticket created with `first_responded_at` and `overdue` in the body.
+- **Steps:**
+  1. Add internal notes as admin and as the assigned support user; try comments as sales, the
+     customer and the other agent; change the status, reassign and reassign back, change `due_at`,
+     `PUT` a `first_responded_at`, and run `POST /tickets/bulk/status`.
+  2. Read the ticket, then post the first non-internal comment as the assigned support user (and, on
+     a second ticket, as the admin).
+  3. Post later comments and notes, then `PUT` a body built from the read taken in step 2, and
+     `PUT`/bulk-update again.
+- **Expected:** A new ticket answers `first_responded_at: null`, and nothing in step 1 sets it (the
+  refused comments are 403). The first non-internal staff comment sets it to that comment's
+  `created_at`. Nothing afterwards changes it, including the stale `PUT`, whose answer carries the
+  stored stamp; a neighbouring ticket stays unstamped.
+- **Automation:** automated — `TestTicketFirstResponseSQLite` (`internal/integration`) and, for the
+  routing in the service, `TestTicketCreateCommentFirstResponse` (`internal/service`)
+
+### TC-TICK-054 — The stamp and its comment commit together
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A SQLite database and, with `TEST_MYSQL_DSN`, a disposable MySQL schema.
+- **Steps:**
+  1. Call `CreateCommentWithFirstResponse` twice; once on a soft-deleted ticket; once with a failure
+     injected after the comment insert; once through `WithTx` inside a transaction that rolls back.
+  2. `Update` a ticket struct loaded before the stamp, with the field nil and with a forged value;
+     `Create` a ticket with `FirstRespondedAt` set.
+- **Expected:** The first call stamps the comment's `created_at`, the second keeps it, and a deleted
+  ticket is not stamped. The injected failure and the caller's rollback leave neither comment nor
+  stamp. `Update` never overwrites or clears the column and fills the struct with the stored value;
+  `Create` stores NULL.
+- **Automation:** automated — `TestTicketFirstResponseRepository{SQLite,MySQL}` (`internal/repository`)
+
+### TC-TICK-055 — overdue compares due_at with now in UTC on open tickets only
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** None (model level).
+- **Steps:**
+  1. Evaluate `Ticket.IsOverdue(now)` for a past, equal, future and nil `due_at`, every status, and
+     `due_at`/`now` in non-UTC locations.
+  2. `json.Marshal` a `Ticket` value, a pointer and a slice.
+- **Expected:** True only for a non-nil `due_at` strictly before `now` on an `open` or `in_progress`
+  ticket, whatever the locations. The JSON always carries `due_at` and `first_responded_at` (RFC 3339
+  strings or `null`) and a boolean `overdue` from the wall clock: true for an open ticket due in
+  2000, false for one due in 2999.
+- **Automation:** automated — `TestTicketOverdue`, `TestTicketJSONSLAFields` (`internal/models`)
+
+### TC-TICK-056 — Every ticket read path carries the fields under the same visibility
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** An open ticket with a past `due_at` assigned to a support user and answered by
+  them; a hidden ticket of another agent and customer.
+- **Steps:**
+  1. Read the ticket through `GET /tickets`, `GET /tickets/my`, `GET /tickets/{id}`,
+     `GET /customers/{id}/tickets` and `GET /dashboard/recent-tickets` as each permitted role, and
+     note the `POST` and `PUT` answers.
+  2. Resolve it, then close it, and read again.
+  3. Repeat the reads as callers who could not see it before.
+- **Expected:** Each route returns `due_at`, `first_responded_at` and `overdue: true` while the
+  ticket is open or in progress, and `overdue: false` once it is resolved or closed. Callers without
+  access still get the same 403/404, or do not find the ticket in their list.
+- **Automation:** automated — `TestTicketSLAFieldsOnEveryReadPathSQLite` (`internal/integration`)
+
+### TC-TICK-057 — The migration adds both columns cleanly
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A disposable MySQL/MariaDB schema; the SQLite v1.2.0 fixture.
+- **Steps:**
+  1. Apply `20261108120000_add_ticket_sla_fields` on a fresh schema and on one holding a ticket,
+     with and without AutoMigrate first; roll back and reapply.
+  2. Run `MigrateDatabase` twice on the SQLite fixture.
+- **Expected:** `due_at` and `first_responded_at` are `datetime(3) NULL`, identical to AutoMigrate's
+  columns; existing rows keep every value and read NULL; rollback drops exactly the two columns and
+  keeps the rows. On SQLite both columns are added as nullable and a second run changes nothing.
+- **Automation:** automated — `TestTicketSLAFieldsMigration`, `TestTicketSLAFieldsMigrationFiles`
+  (`cmd/migrate`) and `TestTicketSLAFieldsSQLiteUpgrade` (`internal/models`)
+
+### TC-TICK-058 — The ticket answers only gained three keys
+- **Priority:** P2
+- **Type:** regression
+- **Preconditions:** The ticket handler over a mock service.
+- **Steps:**
+  1. Record `POST /tickets`, `PUT /tickets/{id}` and `GET /tickets/{id}` answers.
+- **Expected:** Each payload has exactly the previous key set plus `due_at`, `first_responded_at`
+  and `overdue`, and every previous key holds the value it held before #278.
+- **Automation:** automated — `TestTicketResponseShapeUnchanged` (`internal/handler`)

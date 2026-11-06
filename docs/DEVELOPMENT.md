@@ -590,6 +590,32 @@ the MySQL roots skip in `make verify-backend`, which has no DSN, and `scripts/ci
 not discover `internal/integration`, so only the runner's acceptance checks and the release
 workflow run them.
 
+**Ticket SLA fields (#278).** `tickets.due_at` and `tickets.first_responded_at` are nullable
+timestamps; `overdue` is computed by `Ticket.IsOverdue(now)` and never stored (true
+when `due_at` is strictly before now in UTC and the status is `open` or `in_progress`).
+`Ticket.MarshalJSON` writes both timestamps in UTC with millisecond precision, or `null`, and
+`overdue` from the wall clock, on every route that returns a ticket. The handler decodes `due_at`
+(a `json.RawMessage`) before calling the service: absent keeps it on `PUT /tickets/{id}`, `null`
+clears it, an RFC 3339 string with any offset is stored in UTC truncated to milliseconds, and any
+other value is 400 `INVALID_DUE_AT` (`error.details.field` `due_at`) with nothing read or written.
+Only `TicketRepository.CreateCommentWithFirstResponse` writes `first_responded_at`: it inserts the
+comment and runs `UPDATE tickets SET first_responded_at = <created_at> WHERE id = ? AND
+first_responded_at IS NULL AND deleted_at IS NULL` in one transaction (a savepoint through
+`WithTx`). `ticketService.CreateComment` calls it for a non-internal comment whose author, as the
+service reads it, is admin or support, and the plain `CreateComment` otherwise. `Create` and
+`Update` omit the column, so a body or a ticket read before the stamp can neither set nor clear
+it, and `Update` refills the struct with the stored value. MySQL and MariaDB get the columns from
+`20261108120000_add_ticket_sla_fields` (`datetime(3) NULL`, each only when missing, no backfill);
+SQLite from `MigrateDatabase`. Regression roots: `TestTicketOverdue`, `TestTicketJSONSLAFields`,
+`TestTicketSLAFieldsSQLiteUpgrade` (`internal/models`); `TestTicketDueAtHandlerParsing`,
+`TestTicketResponseShapeUnchanged` (`internal/handler`); `TestTicketCreateCommentFirstResponse`
+(`internal/service`); `TestTicketFirstResponseRepository{SQLite,MySQL}` (`internal/repository`);
+`TestTicketDueAtLifecycleSQLite`, `TestTicketDueAtInvalidWritesNothingSQLite`,
+`TestTicketFirstResponseSQLite`, `TestTicketSLAFieldsOnEveryReadPathSQLite`
+(`internal/integration`); `TestTicketSLAFieldsMigration`, `TestTicketSLAFieldsMigrationFiles`
+(`cmd/migrate`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in
+the Database migrations workflow is an operator follow-up.
+
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
 in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in

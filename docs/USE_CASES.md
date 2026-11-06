@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:979`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:987`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1005`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1013`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -358,12 +358,13 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:984`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1010`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
   cuts"): #242.
-- No SLA fields and no attachments on tickets: #243.
+- Tickets now carry `due_at`, `first_responded_at` and a computed `overdue` flag (#278); there are
+  still no attachments on tickets: #243.
 
 ### Do not promise
 
@@ -426,7 +427,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:979,984,987` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1005,1010,1013` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
@@ -442,5 +443,5 @@ planning around an issue number.
 | Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
 | No screen for a task's deal link | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
-| Ticket SLA fields and attachments | 4 | `internal/models/ticket.go` | #243 |
+| Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

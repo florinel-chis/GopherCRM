@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
 )
@@ -13,8 +15,18 @@ func NewTicketRepository(db *gorm.DB) TicketRepository {
 	return &ticketRepository{db: db}
 }
 
+// ticketFirstResponseColumn is written only by CreateCommentWithFirstResponse.
+// Create and Update leave it out of their statements, so no struct a caller
+// filled in, or read before the stamp, can set, overwrite or clear it.
+const ticketFirstResponseColumn = "first_responded_at"
+
 func (r *ticketRepository) Create(ticket *models.Ticket) error {
-	return r.db.Create(ticket).Error
+	if err := r.db.Omit(ticketFirstResponseColumn).Create(ticket).Error; err != nil {
+		return err
+	}
+	// The column was not written, so the new row holds NULL.
+	ticket.FirstRespondedAt = nil
+	return nil
 }
 
 func (r *ticketRepository) GetByID(id uint) (*models.Ticket, error) {
@@ -40,8 +52,22 @@ func (r *ticketRepository) GetByAssignedToID(assignedToID uint, offset, limit in
 	return tickets, err
 }
 
+// Update saves the ticket with GORM's Save, except first_responded_at: a ticket
+// read before the first staff reply would otherwise write its NULL back over
+// the stamp. The struct then carries the stored value.
 func (r *ticketRepository) Update(ticket *models.Ticket) error {
-	return r.db.Save(ticket).Error
+	if err := r.db.Omit(ticketFirstResponseColumn).Save(ticket).Error; err != nil {
+		return err
+	}
+	var stored struct {
+		FirstRespondedAt *time.Time
+	}
+	if err := r.db.Model(&models.Ticket{}).Select(ticketFirstResponseColumn).
+		Where("id = ?", ticket.ID).Scan(&stored).Error; err != nil {
+		return err
+	}
+	ticket.FirstRespondedAt = stored.FirstRespondedAt
+	return nil
 }
 
 func (r *ticketRepository) Delete(id uint) error {
@@ -209,6 +235,23 @@ func (r *ticketRepository) ListRecentlyResolved(assignedToID *uint, limit int) (
 
 func (r *ticketRepository) CreateComment(comment *models.TicketComment) error {
 	return r.db.Create(comment).Error
+}
+
+// CreateCommentWithFirstResponse inserts a staff reply and, in the same
+// transaction, stamps the ticket's first_responded_at with the comment's
+// created_at when it is still NULL. A ticket that already carries a stamp
+// keeps it. Through WithTx the pair runs under a savepoint of the caller's
+// transaction, so a caller that rolls back keeps neither.
+func (r *ticketRepository) CreateCommentWithFirstResponse(comment *models.TicketComment) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(comment).Error; err != nil {
+			return err
+		}
+		return tx.Exec(
+			"UPDATE tickets SET first_responded_at = ? WHERE id = ? AND first_responded_at IS NULL AND deleted_at IS NULL",
+			comment.CreatedAt, comment.TicketID,
+		).Error
+	})
 }
 
 func (r *ticketRepository) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {

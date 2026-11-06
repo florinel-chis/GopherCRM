@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -38,9 +40,11 @@ type CreateTicketRequest struct {
 	CustomerID uint `json:"customer_id" binding:"required" example:"3"`
 	// ID of the support or admin user to assign. Omitted or null assigns the caller. An unknown user or a user of another role is 400.
 	AssignedToID *uint `json:"assigned_to_id,omitempty" example:"5"`
+	// Due date and time as an RFC 3339 timestamp with any offset; stored in UTC, truncated to milliseconds. Omitted or null means no due date. Any other value (a date without a time, a number, a boolean, an object, an impossible date) is 400 INVALID_DUE_AT and nothing is written.
+	DueAt json.RawMessage `json:"due_at,omitempty" swaggertype:"string" format:"date-time" example:"2026-11-20T17:00:00Z" extensions:"x-nullable"`
 }
 
-// @Description Body of PUT /tickets/{id}. Every field is optional; absent or empty fields are left unchanged.
+// @Description Body of PUT /tickets/{id}. Every field is optional; absent or empty fields are left unchanged, and a null due_at clears the due date.
 type UpdateTicketRequest struct {
 	// New title; absent or empty leaves it unchanged.
 	Title string `json:"title,omitempty" example:"Printer offline after firmware update"`
@@ -54,6 +58,46 @@ type UpdateTicketRequest struct {
 	AssignedToID *uint `json:"assigned_to_id,omitempty" example:"5"`
 	// Resolution text; absent or empty leaves it unchanged (it cannot be cleared).
 	Resolution string `json:"resolution,omitempty" example:"Rolled the printer back to the previous firmware."`
+	// New due date as an RFC 3339 timestamp with any offset; stored in UTC, truncated to milliseconds. Absent leaves it unchanged and null clears it. Any other value is 400 INVALID_DUE_AT and nothing is written, including the other fields of the body.
+	DueAt json.RawMessage `json:"due_at,omitempty" swaggertype:"string" format:"date-time" example:"2026-11-20T17:00:00Z" extensions:"x-nullable"`
+}
+
+// The error code and message answered for a due_at that is not an RFC 3339
+// timestamp; error.details.field names due_at.
+const (
+	invalidDueAtCode    = "INVALID_DUE_AT"
+	invalidDueAtMessage = "due_at must be an RFC 3339 timestamp or null"
+)
+
+// parseDueAt decodes the raw due_at of a ticket body. present is false when
+// the key was absent; a JSON null gives present with a nil value. A string
+// holding an RFC 3339 timestamp is converted to UTC and truncated to
+// milliseconds. Anything else is reported as not ok.
+func parseDueAt(raw json.RawMessage) (present bool, value *time.Time, ok bool) {
+	if raw == nil {
+		return false, nil, true
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "null" {
+		return true, nil, true
+	}
+	if !strings.HasPrefix(trimmed, `"`) {
+		return true, nil, false
+	}
+	var text string
+	if err := json.Unmarshal([]byte(trimmed), &text); err != nil {
+		return true, nil, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return true, nil, false
+	}
+	parsed = parsed.UTC().Truncate(time.Millisecond)
+	return true, &parsed, true
+}
+
+func respondInvalidDueAt(c *gin.Context) {
+	utils.RespondError(c, http.StatusBadRequest, invalidDueAtCode, invalidDueAtMessage, gin.H{"field": "due_at"})
 }
 
 // CreateTicketCommentRequest is the body of POST /tickets/:id/comments. The
@@ -95,7 +139,7 @@ func (r CreateTicketCommentRequest) GetBody() string {
 
 // Create godoc
 // @Summary Create a new ticket
-// @Description Create a support ticket. Roles: support and admin (sales and customers get 403 before the body is read). The ticket always starts in status open, whatever the body says, and priority defaults to medium. When assigned_to_id is omitted the ticket is assigned to the caller; a given assignee must exist and hold the support or admin role. The customer must exist. No notification or email is sent.
+// @Description Create a support ticket. Roles: support and admin (sales and customers get 403 before the body is read). The ticket always starts in status open, whatever the body says, and priority defaults to medium. When assigned_to_id is omitted the ticket is assigned to the caller; a given assignee must exist and hold the support or admin role. The customer must exist. due_at is optional (an RFC 3339 timestamp, stored in UTC with millisecond precision); first_responded_at and overdue in the body are ignored, and a new ticket always has first_responded_at null. No notification or email is sent.
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -103,7 +147,7 @@ func (r CreateTicketCommentRequest) GetBody() string {
 // @Security ApiKeyAuth
 // @Param request body CreateTicketRequest true "Ticket to create"
 // @Success 201 {object} utils.APIResponse{data=models.Ticket} "Ticket created; customer is a zero-valued object and assigned_to is omitted in this response"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the assignee does not exist or is not a support or admin user"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_DUE_AT (error.details.field is due_at) when due_at is neither null nor an RFC 3339 timestamp, nothing is created; BAD_REQUEST when the assignee does not exist or is not a support or admin user"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - support or admin role required"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the customer does not exist"
@@ -128,6 +172,13 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		return
 	}
 
+	_, dueAt, ok := parseDueAt(req.DueAt)
+	if !ok {
+		logger.Warn("Invalid due_at")
+		respondInvalidDueAt(c)
+		return
+	}
+
 	ticket := &models.Ticket{
 		Title:        req.Title,
 		Description:  req.Description,
@@ -135,6 +186,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		CustomerID:   req.CustomerID,
 		AssignedToID: req.AssignedToID,
 		Status:       models.TicketStatusOpen,
+		DueAt:        dueAt,
 	}
 
 	// If no assignee specified, assign to current user
@@ -458,7 +510,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a ticket
-// @Description Partially update a ticket: absent or empty fields are left unchanged, and nothing can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. The response carries the customer, assignee and comments (including internal notes).
+// @Description Partially update a ticket: absent or empty fields are left unchanged, and nothing but due_at can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. due_at follows its own rule: absent leaves it unchanged, null clears it, an RFC 3339 timestamp sets it (stored in UTC with millisecond precision). first_responded_at and overdue in the body are ignored; first_responded_at is never changed by this route. The response carries the customer, assignee and comments (including internal notes).
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -467,7 +519,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 // @Param id path int true "Ticket ID"
 // @Param request body UpdateTicketRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.Ticket} "The updated ticket"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), a closed ticket would change status, or the new assignee does not exist or is not a support or admin user; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), a closed ticket would change status, or the new assignee does not exist or is not a support or admin user; INVALID_DUE_AT (error.details.field is due_at) when due_at is neither null nor an RFC 3339 timestamp, and then no field of the body is written; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - customers and sales cannot update tickets; support only tickets assigned to them"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
@@ -501,6 +553,15 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	var req UpdateTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	// due_at is decoded before anything is read or written: an invalid value
+	// refuses the whole body.
+	dueAtSent, dueAt, ok := parseDueAt(req.DueAt)
+	if !ok {
+		logger.Warn("Invalid due_at")
+		respondInvalidDueAt(c)
 		return
 	}
 
@@ -542,6 +603,10 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	}
 	if req.Resolution != "" {
 		ticket.Resolution = req.Resolution
+	}
+	// Absent keeps the stored due date; null clears it.
+	if dueAtSent {
+		ticket.DueAt = dueAt
 	}
 
 	if err := h.ticketService.Update(ticket); err != nil {
@@ -680,7 +745,7 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 
 // CreateComment godoc
 // @Summary Create a comment on a ticket
-// @Description Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. No notification or email is sent.
+// @Description Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. No notification or email is sent.
 // @Tags tickets
 // @Accept json
 // @Produce json

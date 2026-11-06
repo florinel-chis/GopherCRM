@@ -384,6 +384,12 @@ func (_m *TicketRepository) CreateComment(comment *models.TicketComment) error {
 	return ret.Error(0)
 }
 
+// CreateCommentWithFirstResponse provides a mock function with given fields: comment
+func (_m *TicketRepository) CreateCommentWithFirstResponse(comment *models.TicketComment) error {
+	ret := _m.Called(comment)
+	return ret.Error(0)
+}
+
 // ListComments provides a mock function with given fields: ticketID, includeInternal
 func (_m *TicketRepository) ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error) {
 	ret := _m.Called(ticketID, includeInternal)
