@@ -79,4 +79,16 @@ describe('customer read model', () => {
       expect(customer).not.toHaveProperty(field);
     }
   });
+
+  // The API returns no revenue; the adapter used to default it to 0 (#186).
+  it('does not fabricate a total revenue on detail and list reads', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ data: backendCustomer });
+    expect(await customersApi.getCustomer(7)).not.toHaveProperty('total_revenue');
+    vi.mocked(api.get).mockResolvedValueOnce({
+      data: { customers: [backendCustomer], total: 1 },
+    });
+    const list = await customersApi.getCustomers();
+    expect(list.data).toHaveLength(1);
+    expect(list.data[0]).not.toHaveProperty('total_revenue');
+  });
 });

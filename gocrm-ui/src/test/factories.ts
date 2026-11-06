@@ -60,7 +60,6 @@ export const createMockCustomer = (overrides?: Partial<Customer>): Customer => (
   country: 'USA',
   postal_code: '10001',
   website: 'https://customer.com',
-  total_revenue: 500000,
   notes: 'Important customer',
   owner_id: 1,
   owner: createMockUser(),

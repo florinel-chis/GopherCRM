@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@/test/test-utils';
+import { render, screen, fireEvent, within, requireElement } from '@/test/test-utils';
 import { Component as CustomerDetail } from './CustomerDetail';
 import { customersApi, dealsApi, ticketsApi } from '@/api/endpoints';
 import { createMockCustomer, createMockCompany, createMockDeal, createMockUser } from '@/test/factories';
@@ -150,6 +150,16 @@ describe('CustomerDetail fields', () => {
     expect(screen.queryByText('Employees')).not.toBeInTheDocument();
     expect(screen.queryByText('Active')).not.toBeInTheDocument();
     expect(screen.queryByText('Inactive')).not.toBeInTheDocument();
+  });
+
+  // The API returns no revenue; the field used to show a fabricated $0 (#186).
+  it('shows no total revenue field', async () => {
+    render(<CustomerDetail />);
+
+    await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+    expect(screen.queryByText(/total revenue/i)).not.toBeInTheDocument();
+    const business = requireElement(screen.getByText('Business Information').parentElement);
+    expect(within(business).getByText('Customer Since')).toBeInTheDocument();
   });
 });
 

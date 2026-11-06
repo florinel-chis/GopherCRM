@@ -46,8 +46,8 @@ export const transformCustomerFromBackend = (backendCustomer: BackendCustomer): 
     ...backendCustomer,
     company_name: backendCustomer.company || '',
     contact_name: `${backendCustomer.first_name || ''} ${backendCustomer.last_name || ''}`.trim(),
-    // Provide defaults for optional and UI-only fields.
-    total_revenue: 0,
+    // Default for responses from servers that predate the website field. Do
+    // not invent fields the API does not return (#118, #186).
     website: backendCustomer.website ?? '',
   };
 };

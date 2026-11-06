@@ -93,15 +93,6 @@ export const Component: React.FC = () => {
       minWidth: 150,
     },
     {
-      id: 'total_revenue',
-      label: 'Total Revenue',
-      minWidth: 120,
-      // Not in the customers sort allowlist (internal/utils/sort.go): the API
-      // rejects the column, so offering the header would fail the list request.
-      sortable: false,
-      format: (value: number) => `$${value.toLocaleString()}`,
-    },
-    {
       id: 'created_at',
       label: 'Customer Since',
       minWidth: 120,
