@@ -254,7 +254,7 @@ rows yet (a later frontend task).
 - **TC-FORM-106 — the purge and lead erasure remove the rows of the submissions they remove** ·
   automated · `internal/repository/form_mail_delivery_repository_test.go`
   `TestFormMailDeliveryPurgedWithSubmission{SQLite,MySQL}`;
-  `TestFormMailDeliveryErasedWithLead{SQLite,MySQL}`.
+  `internal/service/form_mail_delivery_test.go` `TestFormMailDeliveryErasedWithLead{SQLite,MySQL}`.
 - **TC-FORM-107 — staff reads and the retry route over HTTP** (`deliveries` on the submission reads,
   `[]` when none, no address field; `GET /forms/deliveries` filters and pagination; retry 200, 409,
   404, 502; support reads but gets 403 on retry; customer 403 everywhere) · automated ·

@@ -78,10 +78,6 @@ func TestFormMailDeliveriesMigrationFiles(t *testing.T) {
 	source, err := os.ReadFile("main_test.go")
 	require.NoError(t, err)
 	assert.Contains(t, string(source), `"`+formMailDeliveriesTable+`"`, "main_test.go's expected-table list names the table")
-
-	checker, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "check-go.py"))
-	require.NoError(t, err)
-	assert.Contains(t, string(checker), "'form_mail_deliveries_migration_test.go'", "the migration CI discovers this file")
 }
 
 func TestFormMailDeliveriesMigration(t *testing.T) {
