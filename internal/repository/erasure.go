@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -150,9 +151,17 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 		erased[column] = value
 	}
 
+	// The original address is read before the scrub overwrites it: the
+	// unlinked form submissions of the person are found by it (#214), and
+	// AfterScrub only ever sees the placeholder. A plain read; the UPDATE
+	// below takes the row lock.
+	var original, placeholder string
 	if plan.EmailColumn != "" {
-		placeholder, err := newAnonymizedEmail()
-		if err != nil {
+		var err error
+		if original, err = readErasedEmail(tx, plan, id); err != nil {
+			return err
+		}
+		if placeholder, err = newAnonymizedEmail(); err != nil {
 			return err
 		}
 		erased[plan.EmailColumn] = placeholder
@@ -175,7 +184,119 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 		}
 	}
 
+	if plan.EmailColumn != "" {
+		if err := scrubUnlinkedSubmissions(tx, scrub.Statement.Table, id, original, placeholder); err != nil {
+			return err
+		}
+	}
+
 	return tx.Delete(plan.newModel(), id).Error
+}
+
+// readErasedEmail returns the address stored on the row about to be erased,
+// soft-deleted rows included, or "" when the row or the value is absent. The
+// error names the row by id only.
+func readErasedEmail(tx *gorm.DB, plan erasurePlan, id uint) (string, error) {
+	var emails []sql.NullString
+	if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).
+		Pluck(plan.EmailColumn, &emails).Error; err != nil {
+		return "", fmt.Errorf("reading the address of row %d before erasure: %w", id, err)
+	}
+	if len(emails) == 0 || !emails[0].Valid {
+		return "", nil
+	}
+	return emails[0].String, nil
+}
+
+// unlinkedSubmissionAddresses returns the values form_submissions.email is
+// matched against for an erased row's original address: the address as
+// stored and its lower-cased form (form intake stores the address
+// lower-cased). Nothing is matched for a blank address or one that is already
+// a placeholder: those identify nobody, and a blank would match every
+// submission without an address.
+func unlinkedSubmissionAddresses(original string) []string {
+	if strings.TrimSpace(original) == "" {
+		return nil
+	}
+	lower := strings.ToLower(original)
+	if strings.HasSuffix(strings.TrimSpace(lower), "@"+anonymizedEmailDomain) {
+		return nil
+	}
+	if lower == original {
+		return []string{original}
+	}
+	return []string{original, lower}
+}
+
+// scrubUnlinkedSubmissions extends an erasure to the form submissions that
+// no lead owns (lead_id IS NULL: spam, never-confirmed opt-ins, forms with
+// create_lead off) but that carry the erased person's address (#214). The
+// match is on the email column only, `email IN (original, lower(original))`:
+// exact or lower-cased on SQLite, and decided by the utf8mb4_unicode_ci
+// collation on MySQL/MariaDB (case- and accent-insensitive, trailing spaces
+// ignored), the same rule form intake's lead linking uses. The submitted data
+// is not searched. Every submission from that address is affected, a shared
+// inbox's included.
+//
+// Unscoped reads and writes: live and soft-deleted submissions, rows of
+// soft-deleted forms and every status. Each matched row gets the erased row's
+// placeholder and empty values, and keeps its form, status, null lead_id and
+// own deletion state. Its confirmation tokens and mail delivery rows are
+// hard-deleted.
+//
+// A schema without form_submissions (fixtures that migrate users, customers
+// and credentials only) skips the scrub through the migrator probe; when the
+// table exists every failure propagates and rolls the erasure back. Errors
+// name the erased row by table and id, never by address.
+func scrubUnlinkedSubmissions(tx *gorm.DB, table string, id uint, original, placeholder string) error {
+	addresses := unlinkedSubmissionAddresses(original)
+	if len(addresses) == 0 {
+		return nil
+	}
+	if !tx.Migrator().HasTable(&models.FormSubmission{}) {
+		return nil
+	}
+
+	var submissionIDs []uint
+	if err := tx.Unscoped().Model(&models.FormSubmission{}).
+		Where("lead_id IS NULL AND email IN ?", addresses).
+		Order("id").Pluck("id", &submissionIDs).Error; err != nil {
+		return fmt.Errorf("listing unlinked form submissions of %s %d: %w", table, id, err)
+	}
+	if len(submissionIDs) == 0 {
+		return nil
+	}
+
+	err := tx.Unscoped().Model(&models.FormSubmission{}).
+		Where("id IN ?", submissionIDs).
+		Updates(map[string]interface{}{
+			"data":          "{}",
+			"email":         placeholder,
+			"ip_address":    "",
+			"user_agent":    "",
+			"referrer":      "",
+			"utm_source":    "",
+			"utm_medium":    "",
+			"utm_campaign":  "",
+			"utm_term":      "",
+			"utm_content":   "",
+			"referrer_host": "",
+		}).Error
+	if err != nil {
+		return fmt.Errorf("scrubbing unlinked form submissions of %s %d: %w", table, id, err)
+	}
+
+	if err := tx.Unscoped().Where("submission_id IN ?", submissionIDs).
+		Delete(&models.FormConfirmationToken{}).Error; err != nil {
+		return fmt.Errorf("purging confirmation tokens of unlinked submissions of %s %d: %w", table, id, err)
+	}
+	if tx.Migrator().HasTable(&models.FormMailDelivery{}) {
+		if err := tx.Unscoped().Where("submission_id IN ?", submissionIDs).
+			Delete(&models.FormMailDelivery{}).Error; err != nil {
+			return fmt.Errorf("purging form mail deliveries of unlinked submissions of %s %d: %w", table, id, err)
+		}
+	}
+	return nil
 }
 
 // erasureSavepointSeq numbers the savepoints of erasure units so that two

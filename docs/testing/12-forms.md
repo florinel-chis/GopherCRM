@@ -151,8 +151,11 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 - **TC-FORM-082 — erasing a lead scrubs its submissions and hard-deletes their confirmation
   tokens, in both directions of the conversion cascade** · automated ·
   `test/integration/form_submission_erasure_test.go`.
-- **TC-FORM-083 — unlinked spam/pending submissions are untouched by lead erasure** · automated ·
-  same file. Their clean-up is the retention purge, cases TC-FORM-090 onward.
+- **TC-FORM-083 — unlinked spam/pending submissions of other addresses are untouched by lead
+  erasure** · automated · same file. Unlinked rows whose email matches the erased lead, customer or
+  user are scrubbed by the erasure itself (#214; `TestUnlinkedSubmissionErasure{SQLite,MySQL}` in
+  `internal/repository/unlinked_submission_erasure_test.go`). The clean-up of the others is the
+  retention purge, cases TC-FORM-090 onward.
 - **TC-FORM-084 — repeated large submissions from one address keep that lead's notes within the
   TEXT column (65,535 bytes).**
   - Each submission block is capped at 16 KiB.

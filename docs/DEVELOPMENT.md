@@ -976,20 +976,54 @@ What the erasure touches, and what it keeps on purpose:
 | `leads` | `email` → placeholder; names, `phone`, `company`, `position`, `notes`, `external_id` | `source`, `status`, `classification`, `owner_id`, `customer_id`, `company_id` |
 | `form_submissions` linked by `lead_id` (live and soft-deleted) | `data` → `{}`; `email` → the lead's placeholder; `ip_address`, `user_agent`, `referrer`; the six attribution columns `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `referrer_host` (#220) | form, status, `lead_id` |
 | `form_confirmation_tokens` and `form_mail_deliveries` of those submissions | hard-deleted | — |
+| `form_submissions` with no `lead_id` whose `email` matches the erased lead, customer or user (#214; live and soft-deleted, rows of soft-deleted forms, every status) | `email` → the erased row's placeholder; `data` → `{}`; `ip_address`, `user_agent`, `referrer` and the six attribution columns → `''`; their `form_confirmation_tokens` and `form_mail_deliveries` hard-deleted. Matched on the `email` column only, `email IN (original, lower(original))`: exact or lower-cased on SQLite; on MySQL/MariaDB the `utf8mb4_unicode_ci` collation decides (case- and accent-insensitive, trailing spaces ignored), the rule form intake's lead linking uses. The `data` JSON is not searched. Every submission from that address is affected, a shared inbox's included; a blank or placeholder original matches nothing | `form_id`, `status`, `lead_id` (NULL), the row's own deletion state |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
 | `notifications` addressed to an erased user, or whose entity is an erased lead | hard-deleted | notifications about deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
 | `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only) |
-| `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content) |
+| `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*) |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
-| `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) | not touched by erasure | Not linked to any person the CRM can erase. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
+| `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
 `internal/repository/identity_erasure_test.go`) seed the person into every scrubbed target above
 first and assert the sweep can see each copy before the erasure; an empty table would prove
 nothing.
+
+**Unlinked submissions (#214).** `eraseRecord` reads the row's original address before it writes
+the placeholder (the plan's `AfterScrub` sees only the placeholder) and, after `AfterScrub` and
+before the soft delete, runs `scrubUnlinkedSubmissions` for every plan with an email column — leads,
+customers, staff and customer-role users alike. It is skipped when the original is blank or already
+ends in `@anonymized.invalid`, and when `form_submissions` is absent from the schema
+(`tx.Migrator().HasTable`; the `internal/service` fixtures migrate only users, customers and
+credentials); `form_mail_deliveries` keeps its own probe. When the table exists every failure
+propagates and rolls the unit back, and returned errors carry table names and ids, never an address.
+Regression roots: `TestUnlinkedSubmissionErasure{SQLite,MySQL}`
+(`internal/repository/unlinked_submission_erasure_test.go`: the four roots, mixed-case addresses,
+every status, soft-deleted rows and forms, a spendable confirmation token found by
+`GetConfirmationTokenByHash` before and not after, untouched rows of other addresses and of a
+namesake lead, blank and placeholder originals, an injected failure after the scrub, a caller
+rollback, and a schema without `form_submissions`) and
+`TestUnlinkedSubmissionErasureLeavesNoPersonalDataInAnyTable` (`test/integration`).
+
+**Operator procedure for ticket text.** `tickets.title`, `description` and `resolution` stay as
+business records; the erasure does not scrub them. When a customer's tickets name the person,
+redact them before the erasure:
+
+1. List the customer's tickets with `GET /customers/{id}/tickets` (admin or sales see all of them).
+2. For each ticket, `PUT /tickets/{id}` with `title`, `description` and `resolution` set to
+   `[redacted]` and `status` omitted, as an admin or as the assigned support user (sales,
+   customers and other support users get 403). A closed ticket stays closed. Empty strings are
+   ignored by the handler, so a field cannot be cleared, only overwritten.
+3. Consider whether an Article 17(3) exemption (a legal obligation, or the establishment, exercise
+   or defence of legal claims) requires keeping some of the text, and keep it if so.
+4. Run `DELETE /customers/{id}`. The redacted tickets survive with their `customer_id`.
+
+Comments the person wrote through their login are redacted by the erasure itself; staff-written
+comments are not, and have no update route. Regression root: `TestTicketRedactionProcedureSQLite`
+(`tests/ticket_redaction_procedure_test.go`).
 
 Two consequences worth knowing:
 
@@ -1040,14 +1074,17 @@ Known limits of the erasure, in one place:
 - **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
   lead conversion, customer/login linking, login, refresh rotation, password reset or API-key
   creation. A conversion, link or credential committed while an erasure is in flight can escape
-  the cascade; opposite entry points can deadlock (an error, never a partial commit). Tracked in
+  the cascade; opposite entry points can deadlock (an error, never a partial commit). The read of
+  the original address and the read of the matching unlinked submission ids are plain snapshot
+  reads, so a submission from the same address inserted concurrently can survive. Tracked in
   #183.
 - **History.** Deploying a new erasure rule does not repair graphs erased under an older one (see
   above); fully soft-deleted graphs have no supported path yet.
 - **Retained content.** Business free text (tickets, tasks, deals, quotes, quote lines, company
-  notes, staff-written comments), legacy `bulk_operation_items` payloads and unlinked form
-  submissions, except the rows the retention purge removes, are kept by design (see the matrix);
-  logs and issued JWTs are out of reach.
+  notes, staff-written comments) and legacy `bulk_operation_items` payloads are kept by design
+  (see the matrix); ticket text can be redacted first (see *Operator procedure for ticket text*).
+  Unlinked form submissions are erased only when their `email` matches the erased row; others
+  stay until the retention purge removes them. Logs and issued JWTs are out of reach.
 - **Form-delete dialogs.** Both form-delete dialogs still say "Collected submissions are retained"
   until a separate frontend task merges. Once `FORM_RETENTION_DAYS` is set that is wrong for spam
   and never-confirmed rows, which the purge removes from soft-deleted forms too.
@@ -1336,7 +1373,7 @@ the setting is off, so no goroutine runs and no row is read.
   confirmation retry (see *Form mail delivery*) re-arms a 48 h token, which keeps that pending
   submission out of the `FORM_RETENTION_DAYS` purge until the token is spent or expires.
   `received` and `confirmed` rows and lead-linked rows are never touched: lead erasure owns the
-  latter.
+  latter, and identity erasure scrubs unlinked rows of an erased address in place (#214).
 - **The floor.** Config raises 1 and 2 days to 3. `Sweep` also returns `ErrFormRetentionTooShort`
   before reading or writing anything for a retention below 72 hours, the 48-hour link lifetime plus
   a margin, so a wiring mistake cannot delete.
@@ -1458,6 +1495,9 @@ lives in `internal/service/form_mail_delivery.go` and `internal/repository/form_
 - **Purge and erasure.** `PurgeSubmissionChunk` deletes the rows of the submissions it purges (see
   *Form retention purge*), and a lead erasure hard-deletes the rows of the lead's submissions right
   after their confirmation tokens (`scrubLeadFormSubmissions`), so a retry of such an id is 404.
+  The erasure of a lead, customer or user does the same for the unlinked submissions whose `email`
+  matches the erased row's original address (`scrubUnlinkedSubmissions`, #214; see *Deleting
+  personal data*).
 - **Privacy.** A row holds ids, the kind, the status, an error code, counts and timestamps; no
   address, subject or body. Delivery log lines carry `form_id`, `submission_id`, `delivery_id`, the
   `mail` kind, `status` and `error_code`, plus the error through `utils.LogError`.
@@ -1514,7 +1554,9 @@ The parsing lives in `internal/service/form_attribution.go`.
   and in every dry run, the fields read empty. Two enquiries to the same lead therefore branch on
   their own values.
 - **Erasure and logs.** The lead erasure empties the six columns on every linked row, live and
-  soft-deleted (`scrubLeadFormSubmissions`); the event rows keep their ids. No log line of the
+  soft-deleted (`scrubLeadFormSubmissions`), and the erasure of a lead, customer or user empties
+  them on the unlinked rows of the erased address (`scrubUnlinkedSubmissions`, #214); the event
+  rows keep their ids. No log line of the
   submission, confirmation, dispatch or step paths carries an attribution value, the host or the
   page URL.
 - **Schema.** `MigrateDatabase` adds the eight columns on SQLite; MySQL and MariaDB get them from
