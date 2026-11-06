@@ -152,15 +152,25 @@ describe('CustomerList', () => {
     });
   });
 
-
-  it('formats total revenue correctly', async () => {
+  // The API returns no revenue; the column used to show a fabricated $0 for
+  // every customer (#186).
+  it('has no total revenue column or revenue sort', async () => {
     render(<CustomerList />);
 
-    await waitFor(() => {
-      // Check if revenue is formatted with commas
-      // All three mock customers have the same total_revenue of 500000
-      const revenueElements = screen.getAllByText('$500,000');
-      expect(revenueElements).toHaveLength(3);
-    });
+    await screen.findByText('Customer A');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toEqual([
+      'Company',
+      'Primary Contact',
+      'Email',
+      'Phone',
+      'Customer Since',
+      'Actions',
+    ]);
+    expect(
+      screen.queryByRole('columnheader', { name: /total revenue/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /revenue/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/total revenue/i)).not.toBeInTheDocument();
   });
 });

@@ -246,7 +246,6 @@ renewals are not modelled.
 - A task's `deal_id` (set by a deal rule or through the API, listed by `GET /deals/{id}/tasks`) has
   no screen yet: the web client does not show it. Tasks created by a deal rule before #240 are not
   backfilled (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
-- The customer pages show a fabricated `total_revenue` of zero: #186.
 
 ### Do not promise
 
@@ -436,7 +435,6 @@ planning around an issue number.
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:218` | #215 |
 | Shared support queue and server-side ticket filters | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #218 |
 | Customer-visible ticket replies by email | 4 | no ticket path sends mail | #219 |
-| Fabricated `total_revenue` on customers | 2, 5 | customer list and detail pages | #186 |
 | A bulk status outcome row can stay `pending` after its write fails | 4 | `internal/service/bulk_status_service.go` | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |

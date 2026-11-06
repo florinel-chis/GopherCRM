@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Customers no longer show a fabricated Total Revenue (#186).** The API has never returned a
+  revenue value; the web client's adapter defaulted `total_revenue` to 0, so the customer list and
+  detail pages showed `$0` for every customer. The "Total Revenue" column is gone from the
+  customer list and the "Total Revenue" entry from the detail page's Business Information, and
+  `total_revenue` is removed from the frontend `Customer` type, the adapter and the test factory.
+  No revenue is computed; that would be a separate feature. Frontend only: the API is unchanged.
 - **Erasure reaches unlinked form submissions of the erased address (#214).** Erasing a lead, a
   customer, a staff user or a customer-role user now also scrubs, in the same erasure unit, every
   `form_submissions` row with no `lead_id` (spam, never-confirmed opt-ins, `create_lead=false`

@@ -25,7 +25,6 @@ import {
   Business as BusinessIcon,
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
-  AttachMoney as MoneyIcon,
   Language as WebIcon,
   LocationOn as LocationIcon,
   History as HistoryIcon,
@@ -250,15 +249,6 @@ export const Component: React.FC = () => {
                   Business Information
                 </Typography>
                 <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <MoneyIcon color="action" />
-                    <Box>
-                      <Typography variant="caption" color="text.secondary">
-                        Total Revenue
-                      </Typography>
-                      <Typography>${customer.total_revenue.toLocaleString()}</Typography>
-                    </Box>
-                  </Box>
                   <Box display="flex" alignItems="center" gap={1}>
                     <CalendarIcon color="action" />
                     <Box>

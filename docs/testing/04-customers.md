@@ -49,27 +49,26 @@ depend on that are flagged.
   1. Navigate to `/customers`.
   2. Wait for the `GET /api/v1/customers` response.
 - **Expected:** 200. The `h4` heading reads "Customers", the "Add Customer" button is visible, and a
-  `table` renders with the columns Company, Primary Contact, Email, Phone, Total Revenue, Status,
-  Customer Since, Actions. The request carries `page=1&limit=10&search=`; the response body is
+  `table` renders with the columns Company, Primary Contact, Email, Phone, Customer Since, Actions. The request carries `page=1&limit=10&search=`; the response body is
   `{success:true,data:{customers:[…],total:N},meta:{…}}`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can view customers list page"
 
-### TC-CUST-002 — Total Revenue is a client-side constant; there is no Status column
+### TC-CUST-002 — There is no Total Revenue or Status column
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Admin logged in; at least one customer exists.
 - **Steps:**
   1. Navigate to `/customers`.
-  2. Read the column headers and the "Total Revenue" cell of every visible row.
+  2. Read the column headers and look for a revenue sort control.
   3. Inspect the `GET /api/v1/customers` response body.
 - **Expected:** There is no "Status" column and no Active/Inactive chip (removed in #118: customers
-  have no activation concept). Every Total Revenue cell reads `$0` regardless of the data; the
-  response body contains no `total_revenue` field.
-- **Known issue:** `transformCustomerFromBackend()` in `gocrm-ui/src/api/endpoints/customers.ts`
-  still hardcodes `total_revenue: 0`; `models.Customer` (`internal/models/customer.go`) has no such
-  column. It no longer invents `is_active`, `industry`, `annual_revenue` or `employee_count`.
-- **Automation:** automated (Vitest, status half) — `CustomerList.test.tsx` "has no status column";
-  the revenue half is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
+  have no activation concept), and no "Total Revenue" column or revenue sort (removed in #186: the
+  API has no revenue value, and the page used to show a fabricated `$0`). The response body
+  contains no `total_revenue` field, and `transformCustomerFromBackend()` in
+  `gocrm-ui/src/api/endpoints/customers.ts` no longer invents one, nor `is_active`, `industry`,
+  `annual_revenue` or `employee_count`.
+- **Automation:** automated (Vitest) — `CustomerList.test.tsx` "has no status column" and "has no
+  total revenue column or revenue sort"; `customers.test.ts` "customer read model" pins the adapter
 
 ### TC-CUST-003 — Sales user can read the customers list
 - **Priority:** P0
@@ -409,11 +408,11 @@ depend on that are flagged.
   1. Open the customer's detail page, Details tab.
   2. Read the heading and the Contact Information and Business Information blocks.
 - **Expected:** No Active/Inactive chip next to the heading and no Industry, Annual Revenue or
-  Employees entries (removed in #118). Business Information shows Total Revenue "$0" and Customer
-  Since. The Website row displays the saved URL as a link; it is absent when the saved website is
-  empty.
-- **Known issue:** Total Revenue is still a client-side constant (TC-CUST-002).
-- **Automation:** automated (Vitest) — `CustomerDetail.test.tsx` "CustomerDetail fields"; browser
+  Employees entries (removed in #118), and no Total Revenue entry (removed in #186). Business
+  Information shows only Customer Since. The Website row displays the saved URL as a link; it is
+  absent when the saved website is empty.
+- **Automation:** automated (Vitest) — `CustomerDetail.test.tsx` "CustomerDetail fields", including
+  "shows no total revenue field"; browser
   case planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
 
 ### TC-CUST-022 — History tab renders two synthetic entries
@@ -581,20 +580,19 @@ depend on that are flagged.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new), mirroring
   `leads-sorting-search.spec.ts`
 
-### TC-CUST-031 — Phone sorts nothing, Total Revenue is not sortable, there is no Status column
+### TC-CUST-031 — Phone sorts nothing, there is no Status column
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Admin logged in; several customers with different phone numbers.
 - **Steps:**
   1. `/customers` and read the column headers.
   2. Click the "Phone" column header; note the request and the row order.
-  3. Try to click the "Total Revenue" header.
-- **Expected:** The headers are Company, Primary Contact, Email, Phone, Total Revenue and Customer
-  Since; there is no Status column (removed in #118). Step 2 sends `sort_by=phone`, which is not in
-  the handler's `customerSortColumns` (`created_at, updated_at, first_name, last_name, email,
-  company`), so the handler blanks `sort_by` and returns the unsorted list with 200: the row order
-  does not change while the `TableSortLabel` arrow flips as if it had. Step 3: Total Revenue is
-  plain text with no sort control (`sortable: false` in `CustomerList.tsx`), so no request is sent.
+- **Expected:** The headers are Company, Primary Contact, Email, Phone and Customer Since; there
+  is no Status column (removed in #118) and no Total Revenue column (removed in #186). Step 2
+  sends `sort_by=phone`, which is not in the handler's `customerSortColumns` (`created_at,
+  updated_at, first_name, last_name, email, company`), so the handler blanks `sort_by` and returns
+  the unsorted list with 200: the row order does not change while the `TableSortLabel` arrow flips
+  as if it had.
 - **Known issue:** The Phone header looks sortable but is inert. Dropping the unknown column is
   the deliberate SQL-injection guard, so the fix is either `sortable: false` on Phone or `phone`
   in the handler allowlist (`utils.AllowedSortColumns` already lists it for customers). Recorded

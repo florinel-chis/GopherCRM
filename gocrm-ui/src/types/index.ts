@@ -41,7 +41,6 @@ export interface Customer {
   country?: string;
   postal_code?: string;
   website?: string;
-  total_revenue: number;
   notes?: string;
   owner_id?: number;
   owner?: User;
