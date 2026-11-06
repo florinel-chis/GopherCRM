@@ -98,8 +98,10 @@ func cancelLeadAutomation(tx *gorm.DB, leadID uint) error {
 // exist only to prove control of an address the erasure just destroyed.
 //
 // Submissions with no lead_id (spam, never-confirmed opt-ins, forms configured
-// not to create leads) are outside any lead's erasure and are deliberately not
-// touched here; their clean-up is a retention concern, not an Article 17 one.
+// not to create leads) are not touched here. Those whose email is the erased
+// row's original address are scrubbed by scrubUnlinkedSubmissions (erasure.go,
+// #214), which eraseRecord runs for every plan with an email column; the rest
+// are a retention concern.
 func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 	var lead models.Lead
 	if err := tx.Unscoped().Select("email").First(&lead, leadID).Error; err != nil {

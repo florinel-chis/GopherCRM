@@ -210,7 +210,7 @@ Decide first whether the new table stores personal data or only refers to people
   For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
   (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
-  `TestThePersonalDataSweepCoversQuoteTables` (line 269) that writes the person into the table and
+  `TestThePersonalDataSweepCoversQuoteTables` (line 313) that writes the person into the table and
   asserts the sweep sees it. A sweep that cannot see a table proves nothing; the quote canary
   proves the sweep can see quote rows, not that erasure clears them.
 - **Personal fields** (names, email, phone, address, free text typed by or about a person): the
@@ -223,9 +223,10 @@ Decide first whether the new table stores personal data or only refers to people
 - Extend `TestIdentityErasure{SQLite,MySQL}` (`internal/repository/identity_erasure_test.go`) and
   the sweep tests so the person is seeded into the new table before the erasure.
 - Update the matrix in [DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data). Known gaps you
-  inherit: unlinked form submissions and ticket free text (#214), quote free text
-  (#245), and the missing lock protocol between erasure and conversion or
-  authentication (#183).
+  inherit: ticket free text, which the erasure keeps and an operator redacts first through the
+  documented procedure (#214), quote free text (#245), and the missing lock protocol between
+  erasure and conversion or authentication (#183). A new table that copies a person's email
+  without a link to the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
 
 ### 3.11 Tests at every layer
 
@@ -307,7 +308,7 @@ origins (lines 49-55) and six step types (lines 58-65).
    run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`,
    called from `executeStep` at line 903); copy that path for any external side effect.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
-   (`internal/repository/erasure.go:350`) must reach it.
+   (`internal/repository/erasure.go:471`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,
    `automationFormat.ts`, and the types in `gocrm-ui/src/types/automation.ts`.
 7. Tests: execution and dry run (`automation_step_execution_test.go`,
@@ -472,9 +473,9 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:302-349`). Erasure skips the automation tables if they are absent (`erasure.go:329-365`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:302-349`). Erasure skips the automation tables if they are absent (`erasure.go:450-494`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
 | Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,486-487`; AutoMigrate `database.go:120-123`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`) and `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,103`) |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:251`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.

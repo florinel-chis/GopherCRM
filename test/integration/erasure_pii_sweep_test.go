@@ -532,6 +532,77 @@ func TestLeadErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	assert.Len(t, events, 2)
 }
 
+// --- Unlinked form submissions (#214) ----------------------------------------
+
+// A form with create_lead off links its submissions to no lead, so the lead
+// cascade never reached them: the person's address, name and phone sat in
+// form_submissions after the customer and its login were erased. The erasure
+// now scrubs every unlinked submission whose email is the erased row's
+// address, and hard-deletes its confirmation token and mail delivery rows.
+func TestUnlinkedSubmissionErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
+	db := setupFullSchemaDB(t)
+	subject := newErasureSubject("unlinked-sweep")
+
+	customer := subject.asCustomer(t, db)
+	login := subject.asUser(t, db)
+	require.NoError(t, db.Model(login).Update("role", models.RoleCustomer).Error)
+	require.NoError(t, db.Model(customer).Update("user_id", login.ID).Error)
+
+	form := &models.Form{Name: "Newsletter", PublicID: "unlinked-sweep", Status: models.FormStatusPublished,
+		Fields: []models.FormFieldDef{{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true}}, CreateLead: false}
+	require.NoError(t, db.Create(form).Error)
+	// The submission as form intake stores it for a form that creates no lead:
+	// lower-cased address, the values, the visitor's metadata, no lead.
+	submission := &models.FormSubmission{}
+	submission.FormID = form.ID
+	submission.Email = strings.ToLower(subject.Email)
+	submission.Status = models.FormSubmissionReceived
+	submission.Data = map[string]string{
+		"email": strings.ToLower(subject.Email), "name": subject.FirstName + " " + subject.LastName, "phone": subject.Phone,
+	}
+	submission.IPAddress = "203.0.113.77"
+	submission.UserAgent = "Mozilla/5.0"
+	submission.Referrer = "https://example.com/newsletter"
+	submission.UTMSource = "newsletter"
+	submission.UTMCampaign = strings.ToLower(subject.LastName)
+	submission.ReferrerHost = "example.com"
+	require.NoError(t, db.Create(submission).Error)
+	require.Nil(t, submission.LeadID, "a create_lead=false submission is linked to no lead")
+	token := &models.FormConfirmationToken{SubmissionID: submission.ID, TokenHash: strings.Repeat("ab", 32)}
+	token.ExpiresAt = time.Now().Add(time.Hour)
+	require.NoError(t, db.Create(token).Error)
+	delivery := &models.FormMailDelivery{SubmissionID: submission.ID, FormID: form.ID, Kind: models.FormMailKindNotification}
+	delivery.Status = models.FormMailStatusFailed
+	delivery.ErrorCode = models.FormMailErrorMailFailed
+	delivery.Attempts = 1
+	require.NoError(t, db.Create(delivery).Error)
+
+	countBySubmission := func(model interface{}) int64 {
+		var n int64
+		require.NoError(t, db.Unscoped().Model(model).Where("submission_id = ?", submission.ID).Count(&n).Error)
+		return n
+	}
+
+	require.Equal(t, []string{"customers", "form_submissions", "users"}, tablesHolding(t, db, subject.identifiers()),
+		"the sweep must see the unlinked submission before the erasure")
+	require.EqualValues(t, 1, countBySubmission(&models.FormConfirmationToken{}))
+	require.EqualValues(t, 1, countBySubmission(&models.FormMailDelivery{}))
+
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+
+	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+	assert.Zero(t, countBySubmission(&models.FormConfirmationToken{}), "the token is hard-deleted")
+	assert.Zero(t, countBySubmission(&models.FormMailDelivery{}), "the delivery row is hard-deleted")
+
+	var scrubbed models.FormSubmission
+	require.NoError(t, db.Unscoped().First(&scrubbed, submission.ID).Error)
+	assert.Nil(t, scrubbed.LeadID, "the row stays unlinked")
+	assert.Equal(t, models.FormSubmissionReceived, scrubbed.Status)
+	assert.Equal(t, form.ID, scrubbed.FormID)
+	assert.True(t, strings.HasSuffix(scrubbed.Email, "@anonymized.invalid"), "the row carries a placeholder")
+	assert.Empty(t, scrubbed.IPAddress)
+}
+
 // --- The conversion link -----------------------------------------------------
 
 // THE test for the leak. A conversion leaves the same person described twice, in

@@ -50,6 +50,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Erasure reaches unlinked form submissions of the erased address (#214).** Erasing a lead, a
+  customer, a staff user or a customer-role user now also scrubs, in the same erasure unit, every
+  `form_submissions` row with no `lead_id` (spam, never-confirmed opt-ins, `create_lead=false`
+  forms) whose `email` is the erased row's original address or its lower-cased form, live and
+  soft-deleted, on live and deleted forms, in every status: the email becomes the erased row's
+  placeholder, `data` becomes `{}`, and the IP, user agent, referrer and six attribution columns
+  are emptied; `form_id`, `status`, the null `lead_id` and the deletion state stay. Their
+  confirmation tokens and mail delivery rows are hard-deleted, so the old link no longer confirms
+  and no retry mails the address. Only the email column is matched (exact or lower-cased on
+  SQLite, the `utf8mb4_unicode_ci` collation on MySQL/MariaDB), so every submission from that
+  address is affected, a shared inbox's included; a blank or placeholder address matches nothing.
+  A schema without `form_submissions` skips the step. Ticket title, description and resolution
+  stay as business records: DEVELOPMENT.md documents an operator procedure that redacts them
+  through `PUT /tickets/{id}` before `DELETE /customers/{id}`.
 - **`PUT /customers/{id}` can clear the optional text fields (#270).** `phone`, `company`,
   `position`, `address`, `city`, `state`, `country`, `postal_code` and `notes` used to apply only
   when non-empty, so the customer form's cleared fields answered 200 and came back on reload. A
