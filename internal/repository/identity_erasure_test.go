@@ -183,8 +183,14 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 	ip := "198.51.100." + tag[len(tag)-2:]
 	userAgent := "OttilieBrowser/" + tag
 	referrer := "https://landing.example/" + tag
+	// The attribution of the submission (#220), one distinct copy of the
+	// person per column so the sweep can be held to each of them.
+	attribution := identityAttribution(tag)
 	g.needles = []string{first, last, phone, company, address, notes, loginEmail, liveEmail, goneEmail,
 		leadEmail, leadGoneEmail, leadBEmail, externalID, website, userAgent, referrer}
+	for _, column := range identityAttributionColumns {
+		g.needles = append(g.needles, attribution[column])
+	}
 
 	now := time.Now()
 	g.login = &models.User{Email: loginEmail, Password: "$2a$10$personhash" + tag, FirstName: first, LastName: last,
@@ -226,7 +232,9 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 		CreateLead: true, DefaultOwnerID: g.sales.ID, CreatedByID: g.admin.ID}
 	require.NoError(t, db.Create(form).Error)
 	g.submission = &models.FormSubmission{FormID: form.ID, Data: map[string]string{"email": leadEmail, "name": first + " " + last},
-		Email: leadEmail, Status: models.FormSubmissionConfirmed, LeadID: &g.leadLive.ID, IPAddress: ip, UserAgent: userAgent, Referrer: referrer}
+		Email: leadEmail, Status: models.FormSubmissionConfirmed, LeadID: &g.leadLive.ID, IPAddress: ip, UserAgent: userAgent, Referrer: referrer,
+		UTMSource: attribution["utm_source"], UTMMedium: attribution["utm_medium"], UTMCampaign: attribution["utm_campaign"],
+		UTMTerm: attribution["utm_term"], UTMContent: attribution["utm_content"], ReferrerHost: attribution["referrer_host"]}
 	require.NoError(t, db.Create(g.submission).Error)
 	require.NoError(t, db.Create(&models.FormConfirmationToken{SubmissionID: g.submission.ID, TokenHash: "ct" + strings.Repeat(tag, 4), ExpiresAt: now.Add(time.Hour)}).Error)
 
@@ -263,7 +271,29 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 	for _, table := range []string{"users", "customers", "leads", "ticket_comments", "form_submissions", "notifications"} {
 		require.Contains(t, holding, table, "the seeded person must be visible in %s before the erasure", table)
 	}
+	hits := identitySweep(t, db, g.needles)
+	for _, column := range identityAttributionColumns {
+		require.Contains(t, hits, fmt.Sprintf("form_submissions.%s contains %q", column, attribution[column]),
+			"the sweep must see the attribution copy in form_submissions.%s before the erasure", column)
+	}
 	return g
+}
+
+// identityAttributionColumns are the six attribution columns of a submission
+// (#220).
+var identityAttributionColumns = []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "referrer_host"}
+
+// identityAttribution is a distinct, lower-cased copy of the person per
+// attribution column, as the parser would store it.
+func identityAttribution(tag string) map[string]string {
+	return map[string]string{
+		"utm_source":    "ottilie-source-" + tag,
+		"utm_medium":    "ottilie-medium-" + tag,
+		"utm_campaign":  "ottilie-campaign-" + tag,
+		"utm_term":      "ottilie-term-" + tag,
+		"utm_content":   "ottilie-content-" + tag,
+		"referrer_host": "brennagh-" + tag + ".landing.example",
+	}
 }
 
 // identitySweep reads every row of every table, soft-deleted rows included,
@@ -408,6 +438,12 @@ func assertGraphErased(t *testing.T, db *gorm.DB, g *identityGraph) {
 	assert.Empty(t, submission.IPAddress)
 	assert.Empty(t, submission.UserAgent)
 	assert.Empty(t, submission.Referrer)
+	assert.Empty(t, submission.UTMSource)
+	assert.Empty(t, submission.UTMMedium)
+	assert.Empty(t, submission.UTMCampaign)
+	assert.Empty(t, submission.UTMTerm)
+	assert.Empty(t, submission.UTMContent)
+	assert.Empty(t, submission.ReferrerHost)
 
 	var run models.AutomationRun
 	require.NoError(t, db.First(&run, g.run.ID).Error)

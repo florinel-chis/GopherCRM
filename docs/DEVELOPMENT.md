@@ -974,14 +974,14 @@ What the erasure touches, and what it keeps on purpose:
 | `users` (erased account) | `email` → placeholder; `password` → unusable marker; `first_name`, `last_name`; `is_active` false; `last_login_at`, `failed_login_attempts`, `locked_until` | `id`, `role` (not personal; recognises an erased customer login), timestamps |
 | `customers` | `email` → placeholder; names, `phone`, `company`, `website`, `position`, `address`, `city`, `state`, `country`, `postal_code`, `notes` | `user_id`, `assigned_to_id`, `company_id` (ids, business links) |
 | `leads` | `email` → placeholder; names, `phone`, `company`, `position`, `notes`, `external_id` | `source`, `status`, `classification`, `owner_id`, `customer_id`, `company_id` |
-| `form_submissions` linked by `lead_id` | `data` → `{}`; `email` → the lead's placeholder; `ip_address`, `user_agent`, `referrer` | form, status, `lead_id` |
+| `form_submissions` linked by `lead_id` (live and soft-deleted) | `data` → `{}`; `email` → the lead's placeholder; `ip_address`, `user_agent`, `referrer`; the six attribution columns `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `referrer_host` (#220) | form, status, `lead_id` |
 | `form_confirmation_tokens` and `form_mail_deliveries` of those submissions | hard-deleted | — |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
 | `notifications` addressed to an erased user, or whose entity is an erased lead | hard-deleted | notifications about deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
 | `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only) |
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content) |
-| `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes |
+| `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) | not touched by erasure | Not linked to any person the CRM can erase. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | Logs, already-issued JWTs | out of reach | See below |
@@ -1187,7 +1187,8 @@ The pieces, and why each is shaped the way it is:
   `*_status_changed` / `*_stage_changed` with `from_value` and `to_value` when the value differs;
   a lead assign `lead_updated` alone; the stage endpoint `deal_stage_changed` alone; the same stage again nothing. Events carry ids,
   types, statuses and the origin (`user`, `form`, `bulk`, `conversion`, `automation`), never a
-  name or an address.
+  name or an address. A form submission linked to a lead adds `lead_form_submitted` with its
+  `form_id` and `submission_id` (see *Form attribution and the form-submitted event*).
 - **Three conditional claims.** The dispatcher claims an event with `UPDATE … SET processed_at
   WHERE id = ? AND processed_at IS NULL` (exactly one row) and, in the same transaction, inserts
   one run per enabled matching rule with `clause.OnConflict{DoNothing: true}` on the unique
@@ -1474,6 +1475,66 @@ Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless n
 and `TestFormMailDeliveriesMigrationFiles` (`cmd/migrate`, migration
 `20261106120000_add_form_mail_deliveries`). CI limit: as for the purge, the MySQL roots skip in
 `make verify-backend`, which has no DSN.
+
+### Form attribution and the form-submitted event
+
+Each finalised enquiry (#220) keeps its own attribution on its `form_submissions` row, apart from
+the lead's `source`, and a `lead_form_submitted` automation event lets rules route each enquiry.
+The parsing lives in `internal/service/form_attribution.go`.
+
+- **Six columns.** `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`
+  (`varchar(100)`) and `referrer_host` (`varchar(255)`), all `NOT NULL DEFAULT ''`, serialised as
+  strings, empty when absent. No index, no backfill: rows stored before this change read empty.
+- **Parsing is deterministic and minimal.** For each `utm_*` key a non-blank submitted field of that
+  name (a hidden input the form declares) wins; otherwise the first value of that query parameter of
+  an absolute `http`/`https` `page_url` is used. Values lose invalid UTF-8 and control characters,
+  are trimmed, lower-cased and cut to 100 runes. `referrer_host` is the lower-cased host of such a
+  URL without port, credentials, path or query, cut to 255 characters. Anything else (another
+  scheme, a relative or unparsable URL) gives empty strings. The page URL used is the stored
+  `referrer` (cut to 512 characters), so a confirmation parses exactly what arrived.
+- **Where it applies.** `storeReceivedSubmission` sets the columns before the insert, and
+  `confirmInTransaction` sets them when the confirmation finalises the row; a pending row stays
+  empty until then. `newSubmission` does not, because `recordSpam` shares it: a spam row stores
+  empty attribution whatever its fields and `page_url` carried. `leads.source` keeps the form name
+  the lead was created with, and the `utm_*` lines still go into the lead's notes.
+- **The event.** When a finalised submission of a `create_lead` form is linked to a lead,
+  `applySubmissionLead` records `lead_form_submitted` (entity `lead`, origin `form`, nullable
+  `automation_events.form_id` and `submission_id` set) right after the `lead_created` (new lead)
+  or `lead_updated` (repeat enquiry) event, in the same transaction as the link, so a rollback
+  records neither. Spam, pending and `create_lead`-off submissions record none. The event carries
+  ids only.
+- **Dispatch and validation.** `lead_form_submitted` is a lead trigger only; a deal rule on it is
+  `trigger_type` `invalid_value`. `trigger.form_id` (0 or omitted: every form) narrows the rule to
+  one form in `triggerMatches` and is `not_applicable` on any other trigger. The six attribution
+  names are string condition fields of a lead rule on `lead_form_submitted` and `not_applicable`
+  everywhere else; the draft dry run runs the same `validateRule`.
+- **Evaluation.** A condition on an attribution field reads the submission named by the run's
+  triggering event (`AutomationRepository.GetEventFormSubmission`), inside the step transaction
+  after the lead's locking read, and uses it only when its `lead_id` is the run's lead; otherwise,
+  and in every dry run, the fields read empty. Two enquiries to the same lead therefore branch on
+  their own values.
+- **Erasure and logs.** The lead erasure empties the six columns on every linked row, live and
+  soft-deleted (`scrubLeadFormSubmissions`); the event rows keep their ids. No log line of the
+  submission, confirmation, dispatch or step paths carries an attribution value, the host or the
+  page URL.
+- **Schema.** `MigrateDatabase` adds the eight columns on SQLite; MySQL and MariaDB get them from
+  `20261107120000_add_form_attribution`, which adds each one only when missing.
+- **Not done.** No first- or last-touch attribution on the lead, and the embed script does not fill
+  hidden `utm_*` inputs from the host page's URL.
+
+Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestFormAttributionParse`, `TestFormSubmissionAttribution{SQLite,MySQL}`,
+`TestFormSubmittedEvent{SQLite,MySQL}`, `TestAutomationFormSubmittedDispatch{SQLite,MySQL}`,
+`TestAutomationFormTriggerValidation`, `TestAutomationAttributionConditions{SQLite,MySQL}`,
+`TestAutomationDryRunAttributionEmpty` (SQLite) and `TestFormAttributionLogsOmitValues`
+(`internal/service`); `TestFormAttributionErasedWithLead{SQLite,MySQL}` and the identity sweep
+`TestIdentityErasure{SQLite,MySQL}` (`internal/repository`);
+`TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` and
+`TestLeadErasureLeavesNoPersonalDataInAnyTable` (`test/integration`); `TestFormAttributionAPISQLite`
+(`tests`); `TestFormSubmissionAttributionJSON` and `TestFormAttributionSQLiteUpgrade`
+(`internal/models`); `TestFormAttributionMigration` and `TestFormAttributionMigrationFiles`
+(`cmd/migrate`). CI limit: as for the purge, the MySQL roots skip in `make verify-backend`, which
+has no DSN.
 
 ### AEO runtime validation and candidate inspection
 

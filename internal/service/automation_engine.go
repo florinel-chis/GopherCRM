@@ -321,7 +321,8 @@ func (e *AutomationEngine) DispatchEvent(event models.AutomationEvent) (int, err
 }
 
 // triggerMatches applies the from/to filter of a status or stage change
-// trigger; the other event triggers match every event of their type.
+// trigger and the form_id filter of lead_form_submitted (0 means every form);
+// the other event triggers match every event of their type.
 func triggerMatches(trigger models.AutomationTrigger, event models.AutomationEvent) bool {
 	switch event.EventType {
 	case models.AutomationEventLeadStatusChanged, models.AutomationEventDealStageChanged:
@@ -329,6 +330,10 @@ func triggerMatches(trigger models.AutomationTrigger, event models.AutomationEve
 			return false
 		}
 		if trigger.To != "" && trigger.To != event.ToValue {
+			return false
+		}
+	case models.AutomationEventLeadFormSubmitted:
+		if trigger.FormID != 0 && (event.FormID == nil || *event.FormID != trigger.FormID) {
 			return false
 		}
 	}
@@ -701,6 +706,15 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 		plan.outcome = models.AutomationOutcomeWaiting
 		plan.details["resume_at"] = resumeAt.Format(time.RFC3339)
 	case models.AutomationStepCondition:
+		if rec.entityType == models.AutomationEntityLead && isAttributionField(cfg.Field) {
+			// Read here, inside the step transaction and after the lead's
+			// locking read, so the condition sees the submission as it is now.
+			attribution, err := e.triggeringAttribution(r, run)
+			if err != nil {
+				return nil, err
+			}
+			rec.attribution = attribution
+		}
 		ok, err := evaluateCondition(cfg, rec)
 		if err != nil {
 			return nil, err
@@ -809,6 +823,27 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 		return nil, fmt.Errorf("unknown automation step type %q: %w", step.StepType, apperrors.ErrValidation)
 	}
 	return plan, nil
+}
+
+// triggeringAttribution returns the attribution of the form submission named
+// by the run's triggering event (#220). It is nil — every attribution field
+// reads empty — for a schedule run, an event without a submission, a
+// submission that is gone, or one whose lead_id is not the run's lead.
+func (e *AutomationEngine) triggeringAttribution(r repository.AutomationRepository, run *models.AutomationRun) (*formAttribution, error) {
+	if run.EventID == nil || run.EntityType != models.AutomationEntityLead {
+		return nil, nil
+	}
+	submission, err := r.GetEventFormSubmission(*run.EventID)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if submission == nil || submission.LeadID == nil || *submission.LeadID != run.EntityID {
+		return nil, nil
+	}
+	return attributionFromSubmission(submission), nil
 }
 
 // buildAutomationTask renders the task of a create_task step: assigned to

@@ -293,19 +293,19 @@ schema). A root that skipped proves nothing.
 ## 6. Add an automation event or step
 
 Read [Automation runtime](DEVELOPMENT.md#automation-runtime) first. The vocabulary lives in
-`internal/models/automation.go`: six event types plus the `schedule` trigger (lines 30-38), five
-origins (lines 44-50) and six step types (lines 53-60).
+`internal/models/automation.go`: seven event types plus the `schedule` trigger (lines 30-43), five
+origins (lines 49-55) and six step types (lines 58-65).
 
 **A new step type:**
 
-1. Constant in `internal/models/automation.go`. `step_type` is `varchar(20)` (line 226), so keep the
+1. Constant in `internal/models/automation.go`. `step_type` is `varchar(20)` (line 274), so keep the
    name short.
-2. Validation in `validateStep` (`internal/service/automation_validation.go:277`).
+2. Validation in `validateStep` (`internal/service/automation_validation.go:287`).
 3. Dry run in `AutomationEngine.DryRun` (`internal/service/automation_dry_run.go:17`).
-4. Execution in `planStep` (`internal/service/automation_engine.go:690`): build a `stepPlan` whose
+4. Execution in `planStep` (`internal/service/automation_engine.go:695`): build a `stepPlan` whose
    `effect` writes through the transaction-bound repositories, so it commits or rolls back with the
    run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`,
-   called from `executeStep` at line 867); copy that path for any external side effect.
+   called from `executeStep` at line 903); copy that path for any external side effect.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
    (`internal/repository/erasure.go:350`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,
@@ -317,7 +317,7 @@ origins (lines 44-50) and six step types (lines 53-60).
 **A new event or trigger:**
 
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
-   and `origin` are `varchar(20)` (lines 181-182, 258-263).
+   and `origin` are `varchar(20)` (lines 214-216, 310-315).
 2. Record the event **inside the write transaction** of the business change, through the
    functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:51`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
@@ -325,12 +325,12 @@ origins (lines 44-50) and six step types (lines 53-60).
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
    never turns into a run. That is the loop guard; keep it.
 4. Allow the trigger for its entity in `automationTriggerTypes`
-   (`internal/service/automation_validation.go:102`). `validateRule` refuses any trigger missing
-   from that map before `validateTrigger` runs (`automation_validation.go:141-145`), so without
+   (`internal/service/automation_validation.go:108`). `validateRule` refuses any trigger missing
+   from that map before `validateTrigger` runs (`automation_validation.go:143-152`), so without
    this step a rule on the new event cannot be saved.
 5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
-   (`automation_engine.go:598,623`), the erasure cancel for that entity, and validation of values in
-   `validateTrigger`/`validAutomationValue` (`automation_validation.go:219,267`).
+   (`automation_engine.go:628,603`), the erasure cancel for that entity, and validation of values in
+   `validateTrigger`/`validAutomationValue` (`automation_validation.go:226,277`).
 6. Frontend: the trigger unions and `AUTOMATION_TRIGGERS` in `gocrm-ui/src/types/automation.ts:8-26`,
    `TRIGGER_TYPES` in `gocrm-ui/src/pages/automation/ruleFormSchema.ts:84`, and the label in
    `TRIGGER_LABELS` (`automationFormat.ts:28`).
@@ -339,8 +339,7 @@ origins (lines 44-50) and six step types (lines 53-60).
    rule-acceptance case to `automation_validation_test.go` (a rule on the new trigger saves, one on
    the wrong entity is refused) and to `ruleFormSchema.test.ts`.
 
-Wanted but missing: ticket events (#242), and a form-finalised event with
-attribution fields (#220).
+Wanted but missing: ticket events (#242).
 
 ## 7. Add a form field type
 

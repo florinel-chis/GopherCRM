@@ -124,14 +124,19 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 		lead, err := env.leads.GetLatestByEmail("ada@example.com")
 		require.NoError(t, err)
 		events := env.eventsOf(models.AutomationEntityLead, lead.ID)
-		require.Equal(t, []string{models.AutomationEventLeadCreated}, eventTypes(events))
+		// Each linked submission is followed by lead_form_submitted (#220).
+		require.Equal(t, []string{models.AutomationEventLeadCreated, models.AutomationEventLeadFormSubmitted}, eventTypes(events))
 		assert.Equal(t, models.AutomationOriginForm, events[0].Origin)
+		assert.Equal(t, models.AutomationOriginForm, events[1].Origin)
 
 		_, err = f.service.SubmitPublic(context.Background(), form.PublicID, validSubmission(), submissionMeta())
 		require.NoError(t, err)
 		events = env.eventsOf(models.AutomationEntityLead, lead.ID)
-		require.Equal(t, []string{models.AutomationEventLeadCreated, models.AutomationEventLeadUpdated}, eventTypes(events))
-		assert.Equal(t, models.AutomationOriginForm, events[1].Origin)
+		require.Equal(t, []string{
+			models.AutomationEventLeadCreated, models.AutomationEventLeadFormSubmitted,
+			models.AutomationEventLeadUpdated, models.AutomationEventLeadFormSubmitted,
+		}, eventTypes(events))
+		assert.Equal(t, models.AutomationOriginForm, events[2].Origin)
 		assertEventsHoldNoPersonalData(t, db, "ada@example.com", "Lovelace", "Please call me back")
 	})
 

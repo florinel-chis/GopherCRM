@@ -86,8 +86,8 @@ func cancelLeadAutomation(tx *gorm.DB, leadID uint) error {
 
 // scrubLeadFormSubmissions extends a lead's erasure to the form submissions
 // that produced or fed it. A submission duplicates the person's data — the
-// submitted values verbatim, the email address, the visitor's IP, user agent
-// and the page they submitted from — so leaving it behind would undo the
+// submitted values verbatim, the email address, the visitor's IP, user agent,
+// the page they submitted from and its attribution — so leaving it behind would undo the
 // erasure the same way a surviving conversion twin would.
 //
 // It runs as the lead plan's AfterScrub: same transaction, after the lead's
@@ -115,14 +115,23 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 		return nil
 	}
 
+	// The attribution of each enquiry (#220) is client-supplied text (utm_*
+	// values and the page's host) that can carry the person, so it goes with
+	// the rest of the submission, live and soft-deleted rows alike.
 	err := tx.Unscoped().Model(&models.FormSubmission{}).
 		Where("id IN ?", submissionIDs).
 		Updates(map[string]interface{}{
-			"data":       "{}",
-			"email":      lead.Email,
-			"ip_address": "",
-			"user_agent": "",
-			"referrer":   "",
+			"data":          "{}",
+			"email":         lead.Email,
+			"ip_address":    "",
+			"user_agent":    "",
+			"referrer":      "",
+			"utm_source":    "",
+			"utm_medium":    "",
+			"utm_campaign":  "",
+			"utm_term":      "",
+			"utm_content":   "",
+			"referrer_host": "",
 		}).Error
 	if err != nil {
 		return fmt.Errorf("scrubbing form submissions of lead %d: %w", leadID, err)

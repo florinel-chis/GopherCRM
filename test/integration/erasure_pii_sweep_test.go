@@ -256,10 +256,54 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		"bulk_operations", "bulk_operation_items",
 		"products", "quotes", "quote_lines", "quote_status_changes",
 		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
+		"forms", "form_submissions", "form_confirmation_tokens", "form_mail_deliveries",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)
 	}
+
+	// The attribution columns of a submission (#220) and the ids of the
+	// form-submitted event exist, so the lead sweep below reads them.
+	for _, column := range formAttributionColumns {
+		assert.True(t, db.Migrator().HasColumn("form_submissions", column), "form_submissions.%s", column)
+	}
+	for _, column := range []string{"form_id", "submission_id"} {
+		assert.True(t, db.Migrator().HasColumn("automation_events", column), "automation_events.%s", column)
+	}
+}
+
+// formAttributionColumns are the six attribution columns of a submission.
+var formAttributionColumns = []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "referrer_host"}
+
+// seedAttributedSubmission writes a submission linked to the lead whose six
+// attribution columns each carry one of the person's identifiers, as a form
+// enquiry whose utm_* values or page host named the person would (#220).
+func seedAttributedSubmission(t *testing.T, db *gorm.DB, subject erasureSubject, leadID uint, deleted bool) *models.FormSubmission {
+	t.Helper()
+	form := &models.Form{Name: "Sweep form", PublicID: fmt.Sprintf("sweep-%d-%t", leadID, deleted), Status: models.FormStatusPublished,
+		Fields: []models.FormFieldDef{{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true}}, CreateLead: true}
+	require.NoError(t, db.Create(form).Error)
+	lower := func(value string) string { return strings.ToLower(value) }
+	submission := &models.FormSubmission{
+		FormID: form.ID, Data: map[string]string{"email": lower(subject.Email)}, Email: lower(subject.Email),
+		Status: models.FormSubmissionReceived, LeadID: &leadID,
+		UTMSource:    lower(subject.FirstName),
+		UTMMedium:    lower(subject.LastName),
+		UTMCampaign:  lower(subject.Email),
+		UTMTerm:      lower(subject.Phone),
+		UTMContent:   lower(subject.FirstName) + "-" + lower(subject.LastName),
+		ReferrerHost: lower(subject.LastName) + ".example",
+	}
+	require.NoError(t, db.Create(submission).Error)
+	if deleted {
+		require.NoError(t, db.Delete(&models.FormSubmission{}, submission.ID).Error)
+	}
+	formID, submissionID := form.ID, submission.ID
+	require.NoError(t, repository.NewAutomationRepository(db).RecordEvent(&models.AutomationEvent{
+		EntityType: models.AutomationEntityLead, EntityID: leadID, EventType: models.AutomationEventLeadFormSubmitted,
+		Origin: models.AutomationOriginForm, FormID: &formID, SubmissionID: &submissionID, CreatedAt: time.Now().UTC(),
+	}))
+	return submission
 }
 
 // The quotes release added four tables. A quote copies no personal data by
@@ -451,12 +495,41 @@ func TestLeadErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		Title: "Call back about the quote", Status: models.TaskStatusPending,
 		Priority: models.TaskPriorityMedium, AssignedToID: owner.ID, LeadID: &lead.ID,
 	}).Error)
+	// Two enquiries of the lead, one soft-deleted, each with the person in all
+	// six attribution columns (#220).
+	submissions := []*models.FormSubmission{
+		seedAttributedSubmission(t, db, subject, lead.ID, false),
+		seedAttributedSubmission(t, db, subject, lead.ID, true),
+	}
 
-	require.Equal(t, []string{"leads"}, tablesHolding(t, db, subject.identifiers()))
+	require.Equal(t, []string{"form_submissions", "leads"}, tablesHolding(t, db, subject.identifiers()))
+	seen := map[string]bool{}
+	for _, hit := range sweepDatabaseFor(t, db, subject.identifiers()) {
+		if hit.Table == "form_submissions" {
+			seen[hit.Column] = true
+		}
+	}
+	for _, column := range formAttributionColumns {
+		require.True(t, seen[column], "the sweep must see the person in form_submissions.%s before the erasure", column)
+	}
 
 	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
+	for _, submission := range submissions {
+		var scrubbed models.FormSubmission
+		require.NoError(t, db.Unscoped().First(&scrubbed, submission.ID).Error)
+		for column, value := range map[string]string{
+			"utm_source": scrubbed.UTMSource, "utm_medium": scrubbed.UTMMedium, "utm_campaign": scrubbed.UTMCampaign,
+			"utm_term": scrubbed.UTMTerm, "utm_content": scrubbed.UTMContent, "referrer_host": scrubbed.ReferrerHost,
+		} {
+			assert.Empty(t, value, "submission %d %s", submission.ID, column)
+		}
+	}
+	// The form-submitted events stay, ids and types only.
+	var events []models.AutomationEvent
+	require.NoError(t, db.Where("event_type = ? AND entity_id = ?", models.AutomationEventLeadFormSubmitted, lead.ID).Find(&events).Error)
+	assert.Len(t, events, 2)
 }
 
 // --- The conversion link -----------------------------------------------------

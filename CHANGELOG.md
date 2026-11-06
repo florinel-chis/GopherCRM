@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-enquiry form attribution and the `lead_form_submitted` event (#220).** Each finalised
+  submission (received, or confirmed through double opt-in) stores its own `utm_source`,
+  `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host` on its
+  `form_submissions` row, taken from a submitted field of that name or else from the `page_url`
+  query, normalised and clipped; `referrer_host` keeps the page's host only. Spam and pending rows
+  stay empty, and `leads.source` keeps the form that created the lead. When such a submission of a
+  `create_lead` form is linked to a lead, a `lead_form_submitted` event with `form_id` and
+  `submission_id` follows the `lead_created` or `lead_updated` in the same transaction. Lead rules
+  can trigger on it, narrow it to one form with `trigger.form_id`, and branch on the six
+  attribution fields of the triggering submission (empty in a dry run); anywhere else those fields
+  and `form_id` are refused with `not_applicable`. Lead erasure empties the attribution of every
+  linked submission. `GET /forms/submissions/{id}` and `GET /forms/{id}/submissions` return the six
+  fields. MySQL installs run `20261107120000_add_form_attribution`; SQLite gets the columns through
+  AutoMigrate. Existing submissions and events are not backfilled, and the embed script does not
+  fill hidden `utm_*` fields.
 - **Form mail delivery records and manual retry (#216).** Every form mail (double-opt-in
   confirmation, follow-up, one notification per `notify_emails` address) gets a
   `form_mail_deliveries` row in the submission or confirmation transaction, stamped `sent`,
