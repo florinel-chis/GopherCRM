@@ -345,8 +345,8 @@ attribution fields (#220).
 ## 7. Add a form field type
 
 Constant and `validateFieldType` in `internal/models/form.go:54-62,365`; submitted-value validation
-in `validateValues` (`internal/service/form_service.go:762`, called from `SubmitPublic` at line
-708); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
+in `validateValues` (`internal/service/form_service.go:767`, called from `SubmitPublic` at line
+713); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`

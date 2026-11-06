@@ -69,6 +69,14 @@ func (s *formPublicServiceStub) GetSubmission(uint) (*models.FormSubmission, err
 	panic("not a public route")
 }
 
+func (s *formPublicServiceStub) ListDeliveries(service.FormMailDeliveryFilter, int, int) ([]models.FormMailDelivery, int64, error) {
+	panic("not a public route")
+}
+
+func (s *formPublicServiceStub) RetryDelivery(context.Context, uint) (*models.FormMailDelivery, error) {
+	panic("not a public route")
+}
+
 func (s *formPublicServiceStub) PublicDefinition(publicID, origin string) (*service.PublicFormDefinition, error) {
 	s.definitionCalls++
 	s.lastPublicID = publicID

@@ -454,8 +454,8 @@ tell apart, matches no row, and the call answers 409 `ErrQuoteChangedDuringSend`
 window in which a stale rendering is recorded as the last email. A `Mailer` failure is 502
 `MAIL_DELIVERY_FAILED` and stamps nothing. The development `LogMailer` (no `SMTP_HOST`) is not a
 failure: its `Send` logs and returns nil, so the quote is stamped although nothing was delivered —
-the same fallback the password reset and the forms mail already share, documented in the README's
-known limitations. The subject is fixed (`Quote Q-000042 from GopherCRM`),
+the same fallback the password reset shares (form mail records it `log_only`, see the README's
+known limitations). The subject is fixed (`Quote Q-000042 from GopherCRM`),
 the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
 `customer_id` only — a transport error that quotes the address is returned, not logged. Roots:
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
@@ -975,7 +975,7 @@ What the erasure touches, and what it keeps on purpose:
 | `customers` | `email` → placeholder; names, `phone`, `company`, `website`, `position`, `address`, `city`, `state`, `country`, `postal_code`, `notes` | `user_id`, `assigned_to_id`, `company_id` (ids, business links) |
 | `leads` | `email` → placeholder; names, `phone`, `company`, `position`, `notes`, `external_id` | `source`, `status`, `classification`, `owner_id`, `customer_id`, `company_id` |
 | `form_submissions` linked by `lead_id` | `data` → `{}`; `email` → the lead's placeholder; `ip_address`, `user_agent`, `referrer` | form, status, `lead_id` |
-| `form_confirmation_tokens` of those submissions | hard-deleted | — |
+| `form_confirmation_tokens` and `form_mail_deliveries` of those submissions | hard-deleted | — |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
 | `notifications` addressed to an erased user, or whose entity is an erased lead | hard-deleted | notifications about deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
@@ -1329,10 +1329,13 @@ confirmation tokens once they pass that age. `cmd/form_retention_runtime.go` bui
 the setting is off, so no goroutine runs and no row is read.
 
 - **What goes.** A `spam` or `pending` row with a null `lead_id` and `created_at` before the cutoff,
-  with all its tokens, soft-deleted rows and rows of soft-deleted forms included. A pending row that
-  still holds a spendable token stays until the token is spent or expires; a spam row cannot be
-  confirmed, so a token does not protect it. `received` and `confirmed` rows and lead-linked rows are
-  never touched: lead erasure owns the latter.
+  with all its tokens and its `form_mail_deliveries` rows (#216), soft-deleted rows and rows of
+  soft-deleted forms included. A pending row that still holds a spendable token stays until the
+  token is spent or expires; a spam row cannot be confirmed, so a token does not protect it. Each
+  confirmation retry (see *Form mail delivery*) re-arms a 48 h token, which keeps that pending
+  submission out of the `FORM_RETENTION_DAYS` purge until the token is spent or expires.
+  `received` and `confirmed` rows and lead-linked rows are never touched: lead erasure owns the
+  latter.
 - **The floor.** Config raises 1 and 2 days to 3. `Sweep` also returns `ErrFormRetentionTooShort`
   before reading or writing anything for a retention below 72 hours, the 48-hour link lifetime plus
   a margin, so a wiring mistake cannot delete.
@@ -1346,13 +1349,15 @@ the setting is off, so no goroutine runs and no row is read.
 - **Chunks.** `Sweep` walks spam and then pending by ascending id, at most 500 rows per
   `WithTransactionAndRetry` transaction. A chunk (`FormRepository.PurgeSubmissionChunk`) reads its
   candidates and token ids with plain reads, locks the tokens by primary key, locks the submissions
-  by primary key, re-checks the rule on what those locking reads return, and only then deletes tokens
-  and submissions. Locking by primary key keeps the locking reads off the secondary indexes, whose
+  by primary key, re-checks the rule on what those locking reads return, and only then deletes
+  tokens, the purged submissions' delivery rows (read with a plain read, deleted by primary key and
+  counted in `FormSubmissionPurgeChunk.Deliveries`) and submissions. Locking by primary key keeps the locking reads off the secondary indexes, whose
   next-key locks would block a new submission's insert; the deletes still reach those indexes (see
   *Re-submissions*). A failure rolls back that chunk only, and
   the next sweep picks up what is left. The walk never selects a row twice, so a row that survives
   the re-check cannot keep a sweep busy.
-- **Lock order.** Token first, submission second, the order a confirmation uses. A confirmation that
+- **Lock order.** Token first, submission second, the order a confirmation and a confirmation
+  retry use; delivery rows are deleted only after both locks. A confirmation that
   claimed its token makes the chunk wait; the chunk then sees the row confirmed and leaves it. A
   confirmation that read its token before a purge finds nothing to claim and gets
   `ErrInvalidConfirmationToken`, so it can never reach `UpdateSubmission`'s `Save` and restore the
@@ -1396,6 +1401,79 @@ overlap two transactions, so its roots prove the same outcomes in sequence. CI l
 are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`, which CI runs only on
 the transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
 `make verify-backend` has no DSN and skips them, so a `contextual` PR's CI does not execute them.
+
+### Form mail delivery (#216)
+
+Every form mail is recorded: the double-opt-in confirmation, the follow-up and one notification per
+`NotifyEmails` address each get a `form_mail_deliveries` row (`models.FormMailDelivery`). The code
+lives in `internal/service/form_mail_delivery.go` and `internal/repository/form_mail_delivery_repository.go`.
+
+- **Written with the submission.** The rows are inserted `pending` in the transaction that stores a
+  received or pending submission, or that confirms one, so spam and a rolled-back transaction leave
+  no row. A notification row is written for every non-blank address. Submissions stored before this
+  change have no rows (no backfill).
+- **Claimed, sent, stamped.** After the commit each row is claimed with a conditional update
+  (`ClaimPendingDelivery`: `pending` → `sending`, `attempts + 1`, `last_attempt_at`), `Mailer.Send` is
+  called once, and the outcome is stamped by `FinishDelivery`, which matches only a `sending` row:
+  `sent` (accepted by the relay, `sent_at` set), `failed` with `error_code` `mail_failed`, `timeout`
+  (`os.ErrDeadlineExceeded`) or `invalid_recipient` (`mailer.ErrInvalidAddress`,
+  `mailer.ErrInvalidHeader`), `log_only` when the mailer implements `mailer.LogOnlyReporter` and
+  reports `LogsOnly()` (the `LogMailer`, no `SMTP_HOST`; `sent_at` stays null), or `skipped` with
+  `no_mailer` or `no_recipient`. The claim and the stamp each run on their own
+  `context.WithoutCancel(ctx)` with a fresh timeout created at that statement (5 s,
+  `WithFormMailStampTimeout` per service instance), so a cancelled request or a slow relay cannot
+  leave a row `sending`; `Send` itself is bounded only by the mailer. The public submit and confirm
+  answers never change: a delivery failure is recorded, not returned. A claim that fails leaves the
+  row `pending` and nothing is sent.
+- **Stuck rows.** A `pending` or `sending` row whose `updated_at` is more than
+  `service.FormMailStuckAfter` (15 minutes) before the service clock is reported `stuck` and becomes
+  retryable. `retryable` in the JSON means status-eligible only (`failed`, `log_only` or stuck); a
+  retry may still answer 409 or 404 for reasons that depend on the submission, the form or
+  `notify_emails`.
+- **Reads.** `GET /forms/submissions/{id}` and `GET /forms/{id}/submissions` carry `deliveries` per
+  submission (`[]` when there are none). `GET /forms/deliveries` (admin, sales, support) is the
+  attention list across forms: `failed`, `log_only` and stuck rows by default, or exactly the stored
+  `status` given, filtered by `form_id` and `kind`, id descending, paginated.
+- **Retry.** `POST /forms/deliveries/{id}/retry` (admin and sales) calls `FormService.RetryDelivery`,
+  a transaction root: one `WithTransactionAndRetry` transaction reads the delivery, locks the
+  submission by primary key, reads the form (a soft-deleted form refuses) and ends with
+  `ClaimDeliveryForRetry`, a conditional update that only a `failed`, `log_only` or stuck row
+  passes. After the commit the message is re-rendered from the current form and sent once to the
+  submitter or to the `NotifyEmails` address whose HMAC (`recipient_hash`, never serialised) the
+  row stores; an address no longer listed refuses, there is no recipient override. Two concurrent
+  retries send once: the loser's claim matches nothing. Answers: 200 with the updated row, 409
+  `FORM_DELIVERY_NOT_RETRYABLE` (`apperrors.ErrFormDeliveryNotRetryable`), 404 for an unknown row
+  or a vanished submission, 502 `MAIL_DELIVERY_FAILED` when the send fails (the row is stamped
+  `failed`). A stamp that finds no row because the delivery was purged or erased meanwhile logs a
+  Warn line with ids and returns the send's outcome.
+- **Confirmation retry.** Inside the same kind of transaction, after plain reads of the delivery and
+  the submission: `InvalidatePendingTokens` for the form and address (token rows first, the
+  confirmation's lock order), the submission locked by primary key and re-checked (pending, no
+  lead), a refusal when the form has a newer non-spam submission of the same email (a locking read
+  on MySQL, plain on SQLite), then the submission's single existing token row is re-armed in place
+  by primary key (`ReArmConfirmationToken`: new `token_hash`, `expires_at` = now + 48 h, `used_at`
+  NULL), and the delivery is claimed. No token row is ever inserted; zero or two token rows refuse.
+  The old link stops working, the mailed one confirms.
+- **Purge and erasure.** `PurgeSubmissionChunk` deletes the rows of the submissions it purges (see
+  *Form retention purge*), and a lead erasure hard-deletes the rows of the lead's submissions right
+  after their confirmation tokens (`scrubLeadFormSubmissions`), so a retry of such an id is 404.
+- **Privacy.** A row holds ids, the kind, the status, an error code, counts and timestamps; no
+  address, subject or body. Delivery log lines carry `form_id`, `submission_id`, `delivery_id`, the
+  `mail` kind, `status` and `error_code`, plus the error through `utils.LogError`.
+- **Not done.** No automatic or background retry, no backoff, no bounce or provider confirmation.
+
+Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestFormMailDeliveryRecorded{SQLite,MySQL}`, `TestFormMailDeliveryRetry{SQLite,MySQL}`,
+`TestFormMailDeliveryConfirmationRetry{SQLite,MySQL}`, `TestFormMailDeliveryErasedWithLead{SQLite,MySQL}`,
+`TestFormMailDeliveryLogOnlyRecorded`, `TestFormMailDeliveryStuckRows` and
+`TestFormMailDeliveryLogsOmitPersonalData` (`internal/service`);
+`TestFormMailDeliveryRepository{SQLite,MySQL}` and `TestFormMailDeliveryPurgedWithSubmission{SQLite,MySQL}`
+(`internal/repository`); `TestFormDeliveryHandlerErrorMapping` and `TestFormDeliveryRoutesRoles`
+(`internal/handler`); `TestFormMailDeliveryAPISQLite` (`tests`); `TestFormMailDeliveryJSON`
+(`internal/models`); `TestLogMailerReportsLogOnly` (`internal/mailer`); `TestFormMailDeliveriesMigration`
+and `TestFormMailDeliveriesMigrationFiles` (`cmd/migrate`, migration
+`20261106120000_add_form_mail_deliveries`). CI limit: as for the purge, the MySQL roots skip in
+`make verify-backend`, which has no DSN.
 
 ### AEO runtime validation and candidate inspection
 

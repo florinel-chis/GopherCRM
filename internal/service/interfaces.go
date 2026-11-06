@@ -546,8 +546,25 @@ type FormService interface {
 	// row.
 	Update(id uint, form *models.Form) error
 	Delete(id uint) error
+	// ListSubmissions and GetSubmission attach each submission's mail
+	// delivery rows (#216), [] when there are none.
 	ListSubmissions(formID uint, offset, limit int, status string) ([]models.FormSubmission, int64, error)
 	GetSubmission(id uint) (*models.FormSubmission, error)
+
+	// ListDeliveries returns one page of form mail deliveries, id descending:
+	// failed, log_only and stuck rows by default, or exactly the stored status
+	// the filter names. An unknown status or kind is FieldErrors.
+	ListDeliveries(filter FormMailDeliveryFilter, offset, limit int) ([]models.FormMailDelivery, int64, error)
+	// RetryDelivery re-sends one failed, log_only or stuck delivery: one
+	// WithTransactionAndRetry transaction that ends in a conditional claim,
+	// then one send after the commit, stamped on a fresh bounded context. A
+	// confirmation retry re-arms the submission's single token in place.
+	// Refusals are ErrFormDeliveryNotRetryable (nothing written), an unknown
+	// delivery or a vanished submission apperrors.ErrNotFound, a send failure
+	// an error matching apperrors.ErrMailDelivery (the row is stamped failed
+	// and returned with it). A ctx that already carries a transaction gets
+	// utils.ErrTransactionRootRequired before any read.
+	RetryDelivery(ctx context.Context, id uint) (*models.FormMailDelivery, error)
 
 	// PublicDefinition returns what a visitor's browser needs to render a
 	// published form, including a freshly minted time-trap challenge.

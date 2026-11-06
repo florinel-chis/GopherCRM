@@ -16,7 +16,8 @@ import (
 // The submission-detail route is registered before the form-detail route
 // because both live one segment below /forms: gin resolves the static
 // "submissions" segment ahead of the ":id" wildcard only when they are declared
-// in this order.
+// in this order. The mail delivery routes (#216) sit before it for the same
+// reason; support may read the attention list, retrying is admin and sales.
 func SetupFormRoutes(router *gin.RouterGroup, h *FormHandler) {
 	group := router.Group("/forms")
 	group.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport))
@@ -24,6 +25,8 @@ func SetupFormRoutes(router *gin.RouterGroup, h *FormHandler) {
 	{
 		group.GET("", h.List)
 		group.POST("", write, h.Create)
+		group.GET("/deliveries", h.ListDeliveries)
+		group.POST("/deliveries/:id/retry", write, h.RetryDelivery)
 		group.GET("/submissions/:id", h.GetSubmission)
 		group.GET("/:id", h.Get)
 		group.PUT("/:id", write, h.Update)

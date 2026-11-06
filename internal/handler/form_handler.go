@@ -441,6 +441,14 @@ func (h *FormHandler) respondError(c *gin.Context, logger *logrus.Entry, err err
 	case errors.Is(err, apperrors.ErrValidation):
 		logger.WithError(utils.LogError(err)).Warn("Form request failed validation")
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, err.Error(), nil)
+	case errors.Is(err, apperrors.ErrFormDeliveryNotRetryable):
+		logger.WithError(utils.LogError(err)).Warn("Form mail delivery is not retryable")
+		utils.RespondError(c, http.StatusConflict, formDeliveryNotRetryableCode,
+			"This delivery cannot be retried", nil)
+	case errors.Is(err, apperrors.ErrMailDelivery):
+		logger.WithError(utils.LogError(err)).Warn("Form mail retry failed to deliver")
+		utils.RespondError(c, http.StatusBadGateway, utils.ErrCodeMailDeliveryFailed,
+			"The form mail could not be delivered", nil)
 	case apperrors.IsNotFound(err):
 		logger.WithError(utils.LogError(err)).Warn("Form resource not found")
 		utils.RespondNotFound(c, notFoundMessage)

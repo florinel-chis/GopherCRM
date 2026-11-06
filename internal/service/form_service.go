@@ -274,6 +274,11 @@ type formService struct {
 	// or updates (issue #164), in the submission's own transaction. Nil means
 	// no automation.
 	automation repository.AutomationRepository
+
+	// Mail delivery records (#216, form_mail_delivery.go); zero values select
+	// time.Now and the 5-second bound of each post-commit claim and stamp.
+	mailClock        func() time.Time
+	mailStampTimeout time.Duration
 }
 
 // FormServiceOption configures NewFormService beyond its required
@@ -468,7 +473,7 @@ func (s *formService) ListSubmissions(formID uint, offset, limit int, status str
 	if _, err := s.GetByID(formID); err != nil {
 		return nil, 0, err
 	}
-	return s.repo.ListSubmissions(formID, offset, limit, status)
+	return s.withDeliveries(s.repo.ListSubmissions(formID, offset, limit, status))
 }
 
 func (s *formService) GetSubmission(id uint) (*models.FormSubmission, error) {
@@ -479,7 +484,7 @@ func (s *formService) GetSubmission(id uint) (*models.FormSubmission, error) {
 		}
 		return nil, err
 	}
-	return submission, nil
+	return s.withSubmissionDeliveries(submission)
 }
 
 // prepare normalises and validates a form for storage: it fills in the
@@ -903,8 +908,10 @@ func (s *formService) newSubmission(form *models.Form, values map[string]string,
 // storeReceivedSubmission persists a final submission together with the lead it
 // feeds, then sends whatever mail the form configures. The lead and the
 // submission's link to it are written in one transaction so a submission can
-// never point at a lead that was rolled back.
+// never point at a lead that was rolled back; so are the pending rows of its
+// mail (#216), which are claimed, sent and stamped after the commit.
 func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.Form, submission *models.FormSubmission) error {
+	var jobs []formMailJob
 	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
@@ -915,20 +922,23 @@ func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.
 		if err := txFormRepo.CreateSubmission(submission); err != nil {
 			return err
 		}
-		if !form.CreateLead {
-			return nil
+		if form.CreateLead {
+			if err := s.applySubmissionLead(s.leadRepo.WithTx(tx), automationTx(s.automation, tx), form, submission); err != nil {
+				return err
+			}
+			if err := txFormRepo.UpdateSubmission(submission); err != nil {
+				return err
+			}
 		}
-		if err := s.applySubmissionLead(s.leadRepo.WithTx(tx), automationTx(s.automation, tx), form, submission); err != nil {
-			return err
-		}
-		return txFormRepo.UpdateSubmission(submission)
+		var err error
+		jobs, err = s.recordAcceptedMail(txFormRepo, form, submission)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 
-	s.notify(form, submission)
-	s.sendFollowUpMail(form, submission)
+	s.deliverMail(ctx, jobs)
 	return nil
 }
 
@@ -944,7 +954,7 @@ func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.
 // discarded the id GORM copied onto the struct, and mail goes out once, after
 // the attempt that committed.
 func (s *formService) storePendingSubmission(ctx context.Context, form *models.Form, submission *models.FormSubmission) error {
-	var rawToken string
+	var jobs []formMailJob
 
 	err := s.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -976,14 +986,14 @@ func (s *formService) storePendingSubmission(ctx context.Context, form *models.F
 			return err
 		}
 
-		rawToken = raw
-		return nil
+		jobs, err = s.recordConfirmationMail(txFormRepo, form, submission, raw)
+		return err
 	}, formPendingSubmissionRetries)
 	if err != nil {
 		return err
 	}
 
-	s.sendConfirmationMail(form, submission, rawToken)
+	s.deliverMail(ctx, jobs)
 	return nil
 }
 
@@ -1022,6 +1032,7 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 	var (
 		form       *models.Form
 		submission *models.FormSubmission
+		jobs       []formMailJob
 	)
 	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -1030,6 +1041,10 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 		}
 		var err error
 		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), hash)
+		if err != nil {
+			return err
+		}
+		jobs, err = s.recordAcceptedMail(s.repo.WithTx(tx), form, submission)
 		return err
 	})
 	if err != nil {
@@ -1043,8 +1058,7 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 
 	// Only committed state is announced: the team is told about a lead that
 	// exists and the visitor gets the content for a confirmation that stuck.
-	s.notify(form, submission)
-	s.sendFollowUpMail(form, submission)
+	s.deliverMail(ctx, jobs)
 
 	logger.WithField("submission_id", submission.ID).Info("Form submission confirmed")
 	return nil
@@ -1269,90 +1283,7 @@ func submitOutcome(form *models.Form) *SubmitOutcome {
 	return outcome
 }
 
-// ---------------------------------------------------------------------------
-// Mail
-// ---------------------------------------------------------------------------
-
-// sendConfirmationMail delivers the double-opt-in link. Delivery failures are
-// logged and never returned: the submission is stored and the visitor can ask
-// for a new link by submitting again.
-func (s *formService) sendConfirmationMail(form *models.Form, submission *models.FormSubmission, rawToken string) {
-	link := s.confirmURL + "?token=" + url.QueryEscape(rawToken)
-
-	subject := form.ConfirmationSubject
-	if strings.TrimSpace(subject) == "" {
-		subject = formDefaultConfirmationSubject
-	}
-	body := form.ConfirmationBody
-	if strings.TrimSpace(body) == "" {
-		body = formDefaultConfirmationBody
-	}
-	// A body an admin wrote without the placeholder would be a dead end, so the
-	// link is appended rather than dropped.
-	if !strings.Contains(body, formConfirmationLinkPlaceholder) {
-		body = strings.TrimRight(body, "\n") + "\n\n" + formConfirmationLinkPlaceholder + "\n"
-	}
-	body = strings.ReplaceAll(body, formConfirmationLinkPlaceholder, link)
-
-	s.send(form, submission.Email, subject, body, "confirmation")
-}
-
-// sendFollowUpMail delivers the post-submission mail, which is what carries a
-// gated-content link. It is sent only when the form defines a subject: an empty
-// subject is how a form says it has no follow-up.
-func (s *formService) sendFollowUpMail(form *models.Form, submission *models.FormSubmission) {
-	if strings.TrimSpace(form.FollowUpSubject) == "" {
-		return
-	}
-
-	body := form.FollowUpBody
-	if strings.TrimSpace(body) == "" {
-		body = formDefaultFollowUpBody
-	}
-	body = strings.ReplaceAll(body, formContentLinkPlaceholder, form.ContentURL)
-
-	s.send(form, submission.Email, form.FollowUpSubject, body, "follow-up")
-}
-
-// notify tells the team about a submission, one message per configured
-// recipient.
-func (s *formService) notify(form *models.Form, submission *models.FormSubmission) {
-	if len(form.NotifyEmails) == 0 {
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString("A new submission arrived through the form \"")
-	b.WriteString(form.Name)
-	b.WriteString("\".\n\n")
-	for _, line := range submissionLines(form, submission, false) {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	b.WriteString("\nSubmission ID: ")
-	fmt.Fprintf(&b, "%d\n", submission.ID)
-
-	subject := "New submission: " + form.Name
-	body := b.String()
-	for _, recipient := range form.NotifyEmails {
-		s.send(form, recipient, subject, body, "notification")
-	}
-}
-
-// send delivers one message. Mail is a side effect of a submission that has
-// already been stored, so a delivery failure is logged and swallowed — the same
-// posture the password reset flow takes.
-func (s *formService) send(form *models.Form, to, subject, body, kind string) {
-	if s.mailer == nil || strings.TrimSpace(to) == "" {
-		return
-	}
-	if err := s.mailer.Send(to, subject, body); err != nil {
-		utils.Logger.WithError(utils.LogError(err)).
-			WithField("form_id", form.ID).
-			WithField("mail", kind).
-			Warn("Form mail delivery failed")
-	}
-}
+// Mail is rendered, recorded and delivered in form_mail_delivery.go (#216).
 
 // ---------------------------------------------------------------------------
 // Small helpers

@@ -11,6 +11,10 @@ func NewLogMailer() *LogMailer {
 	return &LogMailer{}
 }
 
+// LogsOnly reports that this mailer never delivers anything: a nil error from
+// Send means the message was logged (see LogOnlyReporter).
+func (m *LogMailer) LogsOnly() bool { return true }
+
 func (m *LogMailer) SendPasswordReset(to, resetURL string) error {
 	log().
 		WithField("to", to).

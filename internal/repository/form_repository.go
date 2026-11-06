@@ -320,8 +320,9 @@ var errFormPurgeOutsideTransaction = errors.New("form submission purge must run 
 //     what those locking reads return. On MySQL they are current reads, so a
 //     row a confirmation just confirmed or a competing sweep just removed is
 //     seen as it now is, whatever the transaction's snapshot says.
-//  4. Tokens are deleted before their submissions, by primary key. Everything
-//     is Unscoped, so soft-deleted rows go too and the removal is permanent.
+//  4. Tokens, then the submissions' mail delivery rows (#216), are deleted
+//     before their submissions, by primary key. Everything is Unscoped, so
+//     soft-deleted rows go too and the removal is permanent.
 //
 // Locking by primary key alone is deliberate: a predicate on status or
 // created_at could lead InnoDB through a secondary index, whose next-key locks
@@ -393,6 +394,23 @@ func (r *formRepository) PurgeSubmissionChunk(q FormSubmissionPurgeQuery) (FormS
 			return chunk, result.Error
 		}
 		chunk.Tokens = result.RowsAffected
+	}
+
+	// The delivery rows (#216) hold ids and statuses only, but they belong to
+	// the submission and go with it, by primary key like the tokens.
+	var deliveryIDs []uint
+	if err := r.db.Unscoped().Model(&models.FormMailDelivery{}).
+		Where("submission_id IN ?", submissionIDs).
+		Order("id").
+		Pluck("id", &deliveryIDs).Error; err != nil {
+		return chunk, err
+	}
+	if len(deliveryIDs) > 0 {
+		result := r.db.Unscoped().Where("id IN ?", deliveryIDs).Delete(&models.FormMailDelivery{})
+		if result.Error != nil {
+			return chunk, result.Error
+		}
+		chunk.Deliveries = result.RowsAffected
 	}
 
 	result := r.db.Unscoped().Where("id IN ?", submissionIDs).Delete(&models.FormSubmission{})

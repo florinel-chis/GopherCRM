@@ -34,6 +34,10 @@ type fakeFormService struct {
 	deleteFn              func(id uint) error
 	listSubmissionsFn     func(formID uint, offset, limit int, status string) ([]models.FormSubmission, int64, error)
 	getSubmissionFn       func(id uint) (*models.FormSubmission, error)
+	listDeliveriesFn      func(filter service.FormMailDeliveryFilter, offset, limit int) ([]models.FormMailDelivery, int64, error)
+	retryDeliveryFn       func(id uint) (*models.FormMailDelivery, error)
+	listedDeliveryFilter  service.FormMailDeliveryFilter
+	retriedDeliveryID     uint
 	createdActorID        uint
 	createdForm           *models.Form
 	updatedForm           *models.Form
@@ -106,6 +110,22 @@ func (f *fakeFormService) GetSubmission(id uint) (*models.FormSubmission, error)
 		return f.getSubmissionFn(id)
 	}
 	return &models.FormSubmission{BaseModel: models.BaseModel{ID: id}, FormID: 3}, nil
+}
+
+func (f *fakeFormService) ListDeliveries(filter service.FormMailDeliveryFilter, offset, limit int) ([]models.FormMailDelivery, int64, error) {
+	f.listedDeliveryFilter = filter
+	if f.listDeliveriesFn != nil {
+		return f.listDeliveriesFn(filter, offset, limit)
+	}
+	return []models.FormMailDelivery{}, 0, nil
+}
+
+func (f *fakeFormService) RetryDelivery(_ context.Context, id uint) (*models.FormMailDelivery, error) {
+	f.retriedDeliveryID = id
+	if f.retryDeliveryFn != nil {
+		return f.retryDeliveryFn(id)
+	}
+	return &models.FormMailDelivery{ID: id, Status: models.FormMailStatusSent}, nil
 }
 
 func (f *fakeFormService) PublicDefinition(publicID, origin string) (*service.PublicFormDefinition, error) {

@@ -117,7 +117,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"configurations", "refresh_tokens", "companies", "deals", "deal_stage_changes",
 		"labels", "task_labels", "password_reset_tokens", "bulk_operations",
 		"bulk_operation_items", "aeo_profiles", "aeo_prompts", "aeo_runs",
-		"aeo_answers", "aeo_citations", "forms", "form_submissions", "form_confirmation_tokens",
+		"aeo_answers", "aeo_citations", "forms", "form_submissions", "form_confirmation_tokens", "form_mail_deliveries",
 		"products", "quotes", "quote_lines", "quote_status_changes",
 		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
 	}

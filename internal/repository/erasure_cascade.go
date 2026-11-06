@@ -132,6 +132,17 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 		Delete(&models.FormConfirmationToken{}).Error; err != nil {
 		return fmt.Errorf("purging confirmation tokens of lead %d: %w", leadID, err)
 	}
+
+	// The mail delivery rows (#216) of those submissions go right after their
+	// tokens, so no retry can mail the erased address again. A fixture that
+	// migrates a subset without the table skips this through the same
+	// migrator probe the notification purge uses.
+	if tx.Migrator().HasTable(&models.FormMailDelivery{}) {
+		if err := tx.Unscoped().Where("submission_id IN ?", submissionIDs).
+			Delete(&models.FormMailDelivery{}).Error; err != nil {
+			return fmt.Errorf("purging form mail deliveries of lead %d: %w", leadID, err)
+		}
+	}
 	return nil
 }
 
