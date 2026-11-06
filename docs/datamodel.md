@@ -350,8 +350,8 @@ erDiagram
 | name | string | Yes | - | max 200, trimmed | Display name |
 | description | text | No | - | max 65535 bytes | Free text |
 | entity_type | string | Yes | - | `lead` or `deal`, max 20 | What the rule runs on |
-| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`, max 40 | When a run starts |
-| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status or stage change (empty = any); `hour_utc` 0–23, `filters {status|stage}` and `stale_days` for a schedule |
+| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `lead_form_submitted` (lead rules only), `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`, max 40 | When a run starts |
+| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status or stage change (empty = any); `form_id` for `lead_form_submitted` (0 or absent = every form); `hour_utc` 0–23, `filters {status|stage}` and `stale_days` for a schedule |
 | enabled | boolean | Yes | false | - | Disabled rules start no run |
 | version | int | Yes | 1 | incremented by every update | Every run records the version it started from |
 | schedule_pass_on | string | No | - | `YYYY-MM-DD` | UTC day of the schedule pass in progress |
@@ -378,7 +378,10 @@ rule update (hard-deleted, no `deleted_at`).
 Limits checked when a rule is saved: at most 20 steps, at most 90 days of waits in total, a
 forward `else_position` within the rule, allowlisted condition fields and operators with a value
 of the matching JSON type, known `{{placeholders}}` only, and every named user a live, active
-staff account.
+staff account. A lead rule on `lead_form_submitted` may also compare the string fields
+`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host`, read
+from the submission the triggering event names (empty when it names none, belongs to another lead,
+or in a dry run); on any other rule they are refused (`not_applicable`).
 
 The placeholders an email subject or body and a notification title or body may use are scoped
 to the rule's entity type. A lead rule knows `lead.id`, `lead.first_name`, `lead.last_name`,
@@ -411,6 +414,8 @@ row outlives nothing and refers to the record by type and id.
 | to_value | string | No | max 50 | New status or stage (`deal_created` carries the stage) |
 | origin | string | Yes | `user`, `form`, `bulk`, `conversion` or `automation`, max 20 | `automation` events are claimed and start no run (loop guard) |
 | actor_id | uint | No | - | The acting user, when known |
+| form_id | uint | No | no index, no FK | `lead_form_submitted` only (#220): the form of the finalised submission; null on every other event |
+| submission_id | uint | No | no index, no FK | `lead_form_submitted` only: the submission, whose attribution a condition reads; null otherwise |
 | created_at | datetime | Yes | UTC | |
 | processed_at | datetime | No | indexed | Set by the dispatcher's conditional claim (`WHERE processed_at IS NULL`) |
 
@@ -484,6 +489,28 @@ address and no message content. `stuck` and `retryable` are computed on read, no
 | attempts | int | Yes | default 0 | Claims: the first send and every retry |
 | last_attempt_at | datetime | No | UTC | |
 | sent_at | datetime | No | UTC; set for `sent` only | |
+
+## Form Submission Attribution
+
+`form_submissions` carries the attribution of each finalised enquiry (#220), kept apart from
+`leads.source`, which keeps the form name the lead was created with. The six columns are set when
+a received submission is stored or a double opt-in submission is confirmed; spam and pending rows,
+and rows stored before this change, hold empty strings. They are serialised on every submission
+read as strings, `""` when absent. Lead erasure empties them on every linked row, live and
+soft-deleted.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| utm_source | string | Yes | `''` | max 100 runes, lower-cased, no control characters | A non-blank submitted `utm_source` field, else the first `utm_source` query value of an absolute http(s) `page_url` |
+| utm_medium | string | Yes | `''` | as utm_source | Same rule for `utm_medium` |
+| utm_campaign | string | Yes | `''` | as utm_source | Same rule for `utm_campaign` |
+| utm_term | string | Yes | `''` | as utm_source | Same rule for `utm_term` |
+| utm_content | string | Yes | `''` | as utm_source | Same rule for `utm_content` |
+| referrer_host | string | Yes | `''` | max 255, lower-cased | Host of an absolute http(s) `page_url`, without port, credentials, path or query |
+
+No index: rules read the attribution of one submission by primary key. Migration
+`20261107120000_add_form_attribution` adds the columns on MySQL/MariaDB (with the two
+`automation_events` ids); `MigrateDatabase` adds them on SQLite.
 
 ## Customer Model
 

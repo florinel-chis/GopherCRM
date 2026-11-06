@@ -67,13 +67,16 @@ func TestMigrationAutomationTablesListed(t *testing.T) {
 }
 
 // snapshotAutomationTables reads the six tables out of INFORMATION_SCHEMA,
-// as snapshotQuoteTables does for the quote tables.
+// as snapshotQuoteTables does for the quote tables. automation_events.form_id
+// and submission_id belong to 20261107120000_add_form_attribution (#220) and
+// are compared there.
 func snapshotAutomationTables(t *testing.T, tdb *migrationTestDB) map[string]tableSchema {
 	t.Helper()
 	out := map[string]tableSchema{}
 	for _, table := range automationMigrationTables {
 		out[table] = snapshotTable(t, tdb, table)
 	}
+	out["automation_events"] = withoutColumns(out["automation_events"], formAttributionEventColumns)
 	return out
 }
 

@@ -35,6 +35,11 @@ const (
 	AutomationEventDealUpdated       = "deal_updated"
 	AutomationEventDealStageChanged  = "deal_stage_changed"
 	AutomationTriggerSchedule        = "schedule"
+	// AutomationEventLeadFormSubmitted (#220) is recorded when a finalised
+	// submission of a create_lead form is linked to a lead, after that lead's
+	// lead_created or lead_updated event; it carries form_id and
+	// submission_id.
+	AutomationEventLeadFormSubmitted = "lead_form_submitted"
 )
 
 // Event origins. Automation-originated writes (an assign_owner step) record
@@ -146,6 +151,8 @@ type AutomationTrigger struct {
 	Filters *AutomationScheduleFilter `json:"filters,omitempty"`
 	// Schedule trigger only: visit only records whose updated_at is more than this many days old; 0 or omitted means any age. Must not be negative; refused (not_applicable) on an event trigger.
 	StaleDays int `json:"stale_days,omitempty" minimum:"0" example:"14"`
+	// lead_form_submitted only: start only for submissions of this form. 0 or omitted means every form; a non-zero value on any other trigger type is refused (not_applicable).
+	FormID uint `json:"form_id,omitempty" example:"4"`
 }
 
 // AutomationStepConfig is the decoded configuration of one step. Which
@@ -156,8 +163,8 @@ type AutomationStepConfig struct {
 	// wait: how long the run pauses, in minutes, 1 to 129600 (90 days). The waits of one rule may add up to at most 90 days.
 	DurationMinutes int64 `json:"duration_minutes,omitempty" minimum:"1" maximum:"129600" example:"1440"`
 
-	// condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.
-	Field string `json:"field,omitempty" enums:"status,source,classification,company,owner_id,stage,currency,amount_cents,probability" example:"status"`
+	// condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.
+	Field string `json:"field,omitempty" enums:"status,source,classification,company,owner_id,stage,currency,amount_cents,probability,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer_host" example:"status"`
 	// condition: the comparison. String fields take eq, neq, in, not_in, contains (case-insensitive substring), is_empty and is_not_empty; number and money fields take eq, neq, gt, gte, lt and lte.
 	Operator string `json:"operator,omitempty" enums:"eq,neq,in,not_in,contains,is_empty,is_not_empty,gt,gte,lt,lte" example:"eq"`
 	// condition: the value compared against, as raw JSON whose type depends on the operator: a string for eq/neq/contains on a string field, a non-empty array of strings for in/not_in, a number for every operator on a number or money field (amount_cents in minor units), and no value (omitted or null) for is_empty/is_not_empty. The schema therefore names no type; an object is always refused.
@@ -205,8 +212,8 @@ type AutomationRule struct {
 	Description string `gorm:"type:text" json:"description" example:"Creates a call-back task for every lead from the website."`
 	// Kind of record the rule runs on.
 	EntityType string `gorm:"not null;type:varchar(20)" json:"entity_type" enums:"lead,deal" example:"lead"`
-	// What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.
-	TriggerType   string `gorm:"not null;type:varchar(40)" json:"trigger_type" enums:"lead_created,lead_updated,lead_status_changed,deal_created,deal_updated,deal_stage_changed,schedule" example:"lead_created"`
+	// What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.
+	TriggerType   string `gorm:"not null;type:varchar(40)" json:"trigger_type" enums:"lead_created,lead_updated,lead_status_changed,lead_form_submitted,deal_created,deal_updated,deal_stage_changed,schedule" example:"lead_created"`
 	TriggerConfig string `gorm:"column:trigger_config;type:text" json:"-"`
 	// Whether the rule starts new runs. A new rule is disabled unless the create body sends true; a PUT without enabled keeps the stored value.
 	Enabled bool `gorm:"not null;default:false" json:"enabled" example:"true"`
@@ -295,18 +302,22 @@ func (s *AutomationStep) AfterFind(tx *gorm.DB) error {
 // AutomationEvent is the outbox row a lead or deal write records in its own
 // transaction. It carries ids, the event type, the previous and new value of
 // a changed status or stage, and the origin: never a name, an address or a
-// note. processed_at is set by the dispatcher's conditional claim.
+// note. processed_at is set by the dispatcher's conditional claim. form_id
+// and submission_id are set on lead_form_submitted only (#220) and are null
+// on every other event; they are ids, so erasure leaves them in place.
 type AutomationEvent struct {
-	ID          uint       `gorm:"primarykey" json:"id"`
-	EntityType  string     `gorm:"not null;type:varchar(20);index:idx_automation_events_entity" json:"entity_type"`
-	EntityID    uint       `gorm:"not null;index:idx_automation_events_entity" json:"entity_id"`
-	EventType   string     `gorm:"not null;type:varchar(40)" json:"event_type"`
-	FromValue   string     `gorm:"type:varchar(50)" json:"from_value"`
-	ToValue     string     `gorm:"type:varchar(50)" json:"to_value"`
-	Origin      string     `gorm:"not null;type:varchar(20)" json:"origin"`
-	ActorID     *uint      `json:"actor_id,omitempty"`
-	CreatedAt   time.Time  `gorm:"not null" json:"created_at"`
-	ProcessedAt *time.Time `gorm:"index" json:"processed_at,omitempty"`
+	ID           uint       `gorm:"primarykey" json:"id"`
+	EntityType   string     `gorm:"not null;type:varchar(20);index:idx_automation_events_entity" json:"entity_type"`
+	EntityID     uint       `gorm:"not null;index:idx_automation_events_entity" json:"entity_id"`
+	EventType    string     `gorm:"not null;type:varchar(40)" json:"event_type"`
+	FromValue    string     `gorm:"type:varchar(50)" json:"from_value"`
+	ToValue      string     `gorm:"type:varchar(50)" json:"to_value"`
+	Origin       string     `gorm:"not null;type:varchar(20)" json:"origin"`
+	ActorID      *uint      `json:"actor_id,omitempty"`
+	FormID       *uint      `json:"form_id,omitempty"`
+	SubmissionID *uint      `json:"submission_id,omitempty"`
+	CreatedAt    time.Time  `gorm:"not null" json:"created_at"`
+	ProcessedAt  *time.Time `gorm:"index" json:"processed_at,omitempty"`
 }
 
 func (AutomationEvent) TableName() string { return "automation_events" }

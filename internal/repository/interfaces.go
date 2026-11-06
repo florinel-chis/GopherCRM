@@ -704,6 +704,12 @@ type AutomationRepository interface {
 	SetLeadOwner(id uint, ownerID uint, now time.Time) error
 	SetDealOwner(id uint, ownerID uint, now time.Time) error
 	ListScheduleCandidateIDs(query AutomationScheduleQuery) ([]uint, error)
+	// GetEventFormSubmission returns the live form submission named by the
+	// event's submission_id (#220), or (nil, nil) when the event names none.
+	// An unknown event or a submission that is gone is gorm.ErrRecordNotFound.
+	// It is a plain read; the step transaction calls it after the lead's
+	// locking read.
+	GetEventFormSubmission(eventID uint) (*models.FormSubmission, error)
 
 	WithTx(tx *gorm.DB) AutomationRepository
 }

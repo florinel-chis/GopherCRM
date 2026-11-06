@@ -38,11 +38,13 @@ These caveats apply to every recipe that takes in leads through forms.
 
 - **Repeat enquiries do not create a new lead.** The newest live lead with the same email gets a
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
-  were (`applySubmissionLead`, `internal/service/form_service.go:1148-1210`). Matching is
+  were (`applySubmissionLead`, `internal/service/form_service.go:1156-1224`). Matching is
   installation-wide, not per form (`GetLatestByEmail`,
-  `internal/repository/lead_repository.go:300`). Automation rules that should act on every enquiry
-  must listen to `lead_updated` as well as `lead_created`, or they miss the repeats. A rule that
-  routes on `source` sees the form that created the lead, not the form just submitted.
+  `internal/repository/lead_repository.go:300`). A rule that routes on `source` sees the form that
+  created the lead, not the form just submitted. To act on every enquiry, trigger on
+  `lead_form_submitted`: it follows the `lead_created` or `lead_updated` of each finalised
+  submission, carries the form and submission ids, can be narrowed with `trigger.form_id`, and lets
+  conditions branch on that submission's own `utm_*` and `referrer_host` (#220).
 - **Form mail failures are recorded, not hidden.** Confirmation, follow-up and each team notification
   get their own delivery row, sent after the submission is stored and stamped `sent`, `failed`,
   `log_only` (no `SMTP_HOST`) or `skipped` (`sendAndStamp`, `internal/service/form_mail_delivery.go:237-289`).
@@ -68,7 +70,7 @@ These caveats apply to every recipe that takes in leads through forms.
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
   before the response is written (`storeReceivedSubmission` and `ConfirmSubmission`,
-  `internal/service/form_service.go:913-943,1021-1065`), so a disconnect after the commit leaves the
+  `internal/service/form_service.go:913-946,1024-1068`), so a disconnect after the commit leaves the
   submission stored and the token spent. A client that sees no response cannot conclude that
   nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
@@ -108,7 +110,7 @@ and turns some into deals and quotes.
    response as a genuine submission and is stored with `status=spam`.
 4. With double opt-in, `GET /forms/public/confirm` renders a button and only the POST spends the
    token. The token claim, the lead write and the submission update are one transaction, and mail
-   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1021`;
+   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1024`;
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
@@ -116,11 +118,13 @@ and turns some into deals and quotes.
    leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
    (`internal/models/form.go:356-358`, called from `internal/service/form_service.go:511`). A form
    with lead creation turned off may have no owner; its submissions are stored and no lead is
-   written (`internal/service/form_service.go:925-932`).
-6. Automation reacts to `lead_created` (and `lead_updated` for repeats). Typical steps: a condition
-   on `source`, `create_task`, `notify`, `wait`, a condition `status == new`, and a staff
-   `send_email` (event and step names in `internal/models/automation.go:31-59`; condition fields in
-   `internal/service/automation_condition.go:43-50`). Dry-run a rule before enabling it
+   written (`internal/service/form_service.go:928-935`).
+6. Automation reacts to `lead_created` (and `lead_updated` for repeats), or to `lead_form_submitted`
+   for every finalised enquiry, optionally narrowed to one form with `trigger.form_id`. Typical
+   steps: a condition on `source` or on the enquiry's `utm_campaign`, `create_task`, `notify`,
+   `wait`, a condition `status == new`, and a staff `send_email` (event and step names in
+   `internal/models/automation.go:31-64`; condition fields in
+   `internal/service/automation_condition.go:47-74`). Dry-run a rule before enabling it
    (`internal/service/automation_dry_run.go`).
 7. Conversion to a customer, then a deal and a quote (`internal/service/lead_service.go`,
    `internal/service/deal_service.go`, `internal/service/quote_service.go`).
@@ -165,8 +169,12 @@ values. One shared installation does not work for several clients, for two reaso
   sales user on its own, #185) and `leadsApi.assignLead` calls it
   (`gocrm-ui/src/api/endpoints/leads.ts:137`), but no screen offers it yet. The API, `owner_id` on a
   lead update (admin only) and the automation `assign_owner` step are the working paths today.
-- Attribution: UTM parameters land in lead notes. Do not map them into `source`, which automation
-  routes on. Separate attribution fields are #220.
+- Attribution: each finalised enquiry stores its own `utm_source`, `utm_medium`, `utm_campaign`,
+  `utm_term`, `utm_content` and `referrer_host` on its `form_submissions` row, apart from the lead's
+  `source` (`FormSubmission`, `internal/models/form.go:503-524`). A `lead_form_submitted` rule,
+  narrowed to one form with `trigger.form_id`, can branch on them. The values come from hidden
+  `utm_*` fields or the `page_url` query; the embed script does not fill the hidden fields from the
+  host page. The `utm_*` lines also still land in the lead's notes. Do not map them into `source`.
 - No nurture email to leads: `send_email` reaches staff users only (`docs/ROADMAP.md`, "Email to
   leads and customers"). Tracked in #238.
 - Form mail: `GET /forms/deliveries` lists failed, log-only and stuck mails; admin and sales retry
@@ -256,7 +264,10 @@ engines describe its product against competitors.
   `renderFormFollowUp`, `internal/service/form_mail_delivery.go:124-148,350-356`). With double
   opt-in, the follow-up goes out after confirmation, so the link reaches only a confirmed address.
 - **Routing.** Automation conditions can test a lead's `source`, `classification`, `company`,
-  `status` and `owner_id` (`internal/service/automation_condition.go:43-50`).
+  `status` and `owner_id` (`internal/service/automation_condition.go:47-57`). A
+  `lead_form_submitted` rule can also test the triggering submission's `utm_source`,
+  `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host`
+  (`internal/service/automation_condition.go:68-74`).
 - **AEO.** One brand profile with aliases, owned domains and competitors
   (`internal/models/aeo.go:28-31`). Prompts can be generated by the engine set in
   `integration.aeo.generation_engine` (`internal/models/configuration.go:407`). Runs go to
@@ -382,9 +393,10 @@ A provider that runs courses for individuals and corporate groups.
 - **Flow:** one form per course; the syllabus link goes out in the follow-up mail; an automation
   rule creates a callback task; a corporate group becomes a company, a deal and a per-seat quote.
 - **Gaps:**
-  - A repeat enquiry keeps the lead's original `source` (shared caveats), so routing by course
-    breaks for anyone who enquires about a second course. A form-finalised event that carries the
-    form and submission ids is the first change needed: #220.
+  - A repeat enquiry keeps the lead's original `source` (shared caveats), so do not route by course
+    on `source`. Trigger on `lead_form_submitted` with `trigger.form_id` set to the course's form
+    instead: it starts for every finalised enquiry, a repeat included, and the run can branch on
+    that enquiry's own `utm_*` values (#220).
 - **Limit:** automation schedules run daily in UTC (`internal/models/automation.go:12`).
 - **Do not promise:** sessions, capacity, booking or attendance tracking.
 
@@ -409,7 +421,7 @@ planning around an issue number.
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
-| Lead attribution fields, and an event per finalised form submission | 1, 3, 6 | `internal/service/form_service.go:1148-1210` | #220 |
+| Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
 | Erasure of unlinked submissions and ticket free text | 1, 4 | `docs/DEVELOPMENT.md:983,986` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |

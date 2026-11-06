@@ -499,6 +499,30 @@ type FormSubmission struct {
 	// (page_url; client-supplied, not verified), cut to 512 characters.
 	// Emptied when the linked lead is erased.
 	Referrer string `gorm:"type:varchar(512)" json:"referrer" example:"https://www.example.com/pricing" readonly:"true"`
+
+	// Attribution of this enquiry (#220), kept apart from the lead's source.
+	// Set when a received submission is stored or a double opt-in submission is
+	// confirmed; empty for spam, for pending submissions and for submissions
+	// stored before attribution existed. Each utm_* value comes from a
+	// non-blank submitted field of that name, else from the first query
+	// parameter of that name of an absolute http(s) page_url; it is trimmed,
+	// lower-cased, stripped of control characters and cut to 100 characters.
+	// Emptied when the linked lead is erased.
+
+	// utm_source of the enquiry; empty when absent.
+	UTMSource string `gorm:"column:utm_source;type:varchar(100);not null;default:''" json:"utm_source" example:"newsletter" readonly:"true"`
+	// utm_medium of the enquiry; empty when absent.
+	UTMMedium string `gorm:"column:utm_medium;type:varchar(100);not null;default:''" json:"utm_medium" example:"email" readonly:"true"`
+	// utm_campaign of the enquiry; empty when absent.
+	UTMCampaign string `gorm:"column:utm_campaign;type:varchar(100);not null;default:''" json:"utm_campaign" example:"spring-launch" readonly:"true"`
+	// utm_term of the enquiry; empty when absent.
+	UTMTerm string `gorm:"column:utm_term;type:varchar(100);not null;default:''" json:"utm_term" example:"crm software" readonly:"true"`
+	// utm_content of the enquiry; empty when absent.
+	UTMContent string `gorm:"column:utm_content;type:varchar(100);not null;default:''" json:"utm_content" example:"header-cta" readonly:"true"`
+	// Lower-cased host of an absolute http(s) page_url, without port,
+	// credentials, path or query, cut to 255 characters; empty when absent.
+	ReferrerHost string `gorm:"column:referrer_host;type:varchar(255);not null;default:''" json:"referrer_host" example:"www.example.com" readonly:"true"`
+
 	// When the double opt-in link was confirmed (RFC 3339); null otherwise.
 	ConfirmedAt *time.Time `json:"confirmed_at" example:"2026-10-30T09:15:00Z" extensions:"x-nullable" readonly:"true"`
 	// Outcome of every mail of this submission (confirmation, follow-up and

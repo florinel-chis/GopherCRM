@@ -25,14 +25,15 @@ const (
 
 // RuleFieldError is one refused field of an automation rule body. Field is a
 // path into the request body: name, description, entity_type, trigger_type,
-// trigger.from, trigger.to, trigger.hour_utc, trigger.stale_days,
-// trigger.filters, trigger.filters.status, trigger.filters.stage, steps,
+// trigger.from, trigger.to, trigger.form_id, trigger.hour_utc,
+// trigger.stale_days, trigger.filters, trigger.filters.status,
+// trigger.filters.stage, steps,
 // steps[i].step_type or steps[i].config.<name>, where i is the zero-based
 // index of the step in the request's steps array.
 //
 // @Description One refused field of an automation rule body.
 type RuleFieldError struct {
-	// Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based index in the steps array.
+	// Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based index in the steps array.
 	Field string `json:"field" example:"steps[0].config.title"`
 	// Why it was refused: required (missing or blank), too_long, line_break (a title or subject with a line break), invalid_value (not an allowed value), out_of_range (a number outside its bounds, or waits adding up to more than 90 days), not_applicable (set where it does not apply), unknown_placeholder, too_many (more than 20 steps) or unknown_reference (an unknown, deactivated or customer user).
 	Code string `json:"code" enums:"required,too_long,line_break,invalid_value,out_of_range,not_applicable,unknown_placeholder,too_many,unknown_reference" example:"required"`
@@ -107,7 +108,8 @@ func (c *ruleChecker) result() error {
 var automationTriggerTypes = map[string]map[string]bool{
 	models.AutomationEntityLead: {
 		models.AutomationEventLeadCreated: true, models.AutomationEventLeadUpdated: true,
-		models.AutomationEventLeadStatusChanged: true, models.AutomationTriggerSchedule: true,
+		models.AutomationEventLeadStatusChanged: true, models.AutomationEventLeadFormSubmitted: true,
+		models.AutomationTriggerSchedule: true,
 	},
 	models.AutomationEntityDeal: {
 		models.AutomationEventDealCreated: true, models.AutomationEventDealUpdated: true,
@@ -161,7 +163,7 @@ func (s *automationService) validateRule(rule *models.AutomationRule) error {
 	for i := range rule.Steps {
 		step := &rule.Steps[i]
 		step.Position = i + 1
-		validateStep(c, rule.EntityType, step, i, len(rule.Steps))
+		validateStep(c, rule.EntityType, rule.TriggerType, step, i, len(rule.Steps))
 		if step.StepType == models.AutomationStepWait && step.Config.DurationMinutes > 0 {
 			totalWait += step.Config.DurationMinutes
 		}
@@ -234,6 +236,9 @@ func validateTrigger(c *ruleChecker, entityType, triggerType string, trigger *mo
 			c.invalid("trigger."+v.name, RuleErrorInvalidValue, 0, "trigger %s %q is not a valid %s value", v.name, v.value, entityType)
 		}
 	}
+	if trigger.FormID != 0 && triggerType != models.AutomationEventLeadFormSubmitted {
+		c.invalid("trigger.form_id", RuleErrorNotApplicable, 0, "form_id only applies to a lead_form_submitted trigger")
+	}
 	if triggerType != models.AutomationTriggerSchedule {
 		const notSchedule = "hour_utc, filters and stale_days only apply to a schedule trigger"
 		if trigger.HourUTC != 0 {
@@ -279,7 +284,7 @@ func validAutomationValue(entityType, value string) bool {
 // validateStep checks one step, index being its zero-based place in the
 // request. Defaults are filled in place: an empty recipient is "owner", an
 // empty else is "stop", and assign_owner always names its user.
-func validateStep(c *ruleChecker, entityType string, step *models.AutomationStep, index, stepCount int) {
+func validateStep(c *ruleChecker, entityType, triggerType string, step *models.AutomationStep, index, stepCount int) {
 	cfg := &step.Config
 	pos := index + 1
 	path := func(name string) string { return fmt.Sprintf("steps[%d].config.%s", index, name) }
@@ -341,7 +346,7 @@ func validateStep(c *ruleChecker, entityType string, step *models.AutomationStep
 			invalid("duration_minutes", RuleErrorOutOfRange, "a wait is at most 90 days")
 		}
 	case models.AutomationStepCondition:
-		for _, problem := range validateCondition(entityType, *cfg) {
+		for _, problem := range validateCondition(entityType, triggerType, *cfg) {
 			invalid(problem.field, problem.code, "%s", problem.message)
 		}
 		switch cfg.Else {

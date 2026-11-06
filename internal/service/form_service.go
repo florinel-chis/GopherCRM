@@ -285,8 +285,8 @@ type formService struct {
 // dependencies.
 type FormServiceOption func(*formService)
 
-// WithFormAutomationEvents makes the submission paths record lead_created
-// (origin form) for a new lead and lead_updated for an existing one.
+// WithFormAutomationEvents makes the submission paths record lead_created or
+// lead_updated (origin form), then lead_form_submitted (#220).
 func WithFormAutomationEvents(repo repository.AutomationRepository) FormServiceOption {
 	return func(s *formService) { s.automation = repo }
 }
@@ -919,6 +919,9 @@ func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.
 		}
 		txFormRepo := s.repo.WithTx(tx)
 
+		// A received submission is final on arrival: its attribution is
+		// committed with the row (#220).
+		applyFormAttribution(submission)
 		if err := txFormRepo.CreateSubmission(submission); err != nil {
 			return err
 		}
@@ -1128,6 +1131,10 @@ func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo reposi
 	confirmedAt := time.Now()
 	submission.Status = models.FormSubmissionConfirmed
 	submission.ConfirmedAt = &confirmedAt
+	// The confirmation finalises the submission, so this is where its
+	// attribution is derived and committed (#220), from the values and the
+	// page URL stored when it arrived.
+	applyFormAttribution(submission)
 
 	if form.CreateLead {
 		if err := s.applySubmissionLead(leadRepo, events, form, submission); err != nil {
@@ -1144,7 +1151,8 @@ func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo reposi
 // the same address gains a note recording this submission, and when there is
 // none a lead is created from the mapped fields. Both repositories are
 // transaction-scoped by the caller; events (nil without automation) records
-// the lead's outbox event in the same transaction, origin form.
+// the lead's outbox event in the same transaction, origin form, followed by
+// one lead_form_submitted event carrying the form and submission ids (#220).
 func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, events repository.AutomationRepository, form *models.Form, submission *models.FormSubmission) error {
 	notes := submissionNotes(form, submission)
 
@@ -1159,6 +1167,9 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, ev
 			return err
 		}
 		if err := automationLeadUpdated(events, existing.ID, existing.Status, existing.Status, models.AutomationOriginForm, nil); err != nil {
+			return err
+		}
+		if err := automationLeadFormSubmitted(events, existing.ID, form.ID, submission.ID); err != nil {
 			return err
 		}
 		submission.LeadID = &existing.ID
@@ -1202,6 +1213,9 @@ func (s *formService) applySubmissionLead(leadRepo repository.LeadRepository, ev
 		return err
 	}
 	if err := automationLeadCreated(events, lead.ID, models.AutomationOriginForm, nil); err != nil {
+		return err
+	}
+	if err := automationLeadFormSubmitted(events, lead.ID, form.ID, submission.ID); err != nil {
 		return err
 	}
 

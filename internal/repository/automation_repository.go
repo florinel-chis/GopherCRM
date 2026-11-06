@@ -645,3 +645,21 @@ func (r *automationRepository) ListScheduleCandidateIDs(query AutomationSchedule
 	err := db.Where("id > ?", query.AfterID).Order("id ASC").Limit(query.Limit).Pluck("id", &ids).Error
 	return ids, err
 }
+
+// GetEventFormSubmission reads the submission a lead_form_submitted event
+// names (#220): the event row by primary key, then the live submission by
+// primary key. An event without a submission id is (nil, nil).
+func (r *automationRepository) GetEventFormSubmission(eventID uint) (*models.FormSubmission, error) {
+	var event models.AutomationEvent
+	if err := r.db.Select("id", "submission_id").First(&event, eventID).Error; err != nil {
+		return nil, err
+	}
+	if event.SubmissionID == nil {
+		return nil, nil
+	}
+	var submission models.FormSubmission
+	if err := r.db.First(&submission, *event.SubmissionID).Error; err != nil {
+		return nil, err
+	}
+	return &submission, nil
+}

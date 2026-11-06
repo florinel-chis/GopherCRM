@@ -785,10 +785,16 @@ expired, or if its owner has been deactivated or erased.
 - `POST /api/v1/automation/rules` - Create a rule
   `{name, description?, entity_type, trigger_type, trigger, enabled?, steps[]}` *(returns 201 with the
   steps numbered 1..n; `trigger_type` is `lead_created`, `lead_updated`, `lead_status_changed`,
-  `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`; `trigger` carries `from`/`to`
-  for a status or stage change and `hour_utc`, `filters {status|stage}` and `stale_days` for a
-  schedule; a step is `{step_type, config}` with `wait` (`duration_minutes`), `condition` (`field`,
-  `operator`, `value`, `currency` for `amount_cents`, `else` stop|jump, `else_position`),
+  `lead_form_submitted` (lead rules only: a finalised submission of a `create_lead` form linked to
+  the lead, new or repeat), `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`;
+  `trigger` carries `from`/`to` for a status or stage change, `form_id` (optional,
+  `lead_form_submitted` only; 0 or omitted means every form, `not_applicable` on any other trigger)
+  and `hour_utc`, `filters {status|stage}` and `stale_days` for a schedule; a step is
+  `{step_type, config}` with `wait` (`duration_minutes`), `condition` (`field`, `operator`, `value`,
+  `currency` for `amount_cents`, `else` stop|jump, `else_position`; a `lead_form_submitted` rule
+  may also test the string fields `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`,
+  `utm_content` and `referrer_host` of the submission that started the run — empty in a dry run,
+  `not_applicable` on any other rule),
   `create_task` (`title`, `description?`, `priority?`, `due_in_days`, `recipient` owner|user,
   `user_id`), `assign_owner` (`user_id`), `send_email` (`subject`, `body`, recipient) and `notify`
   (`title`, `body?`, recipient); an invalid trigger or step, more than 20 steps, more than 90 days

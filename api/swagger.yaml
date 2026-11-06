@@ -1008,13 +1008,15 @@ definitions:
         description: The trigger configuration; which fields apply depends on trigger_type.
       trigger_type:
         description: What starts a run. Lead rules take lead_created, lead_updated,
-          lead_status_changed or schedule; deal rules take deal_created, deal_updated,
+          lead_status_changed, lead_form_submitted (a finalised submission of a create_lead
+          form linked to the lead) or schedule; deal rules take deal_created, deal_updated,
           deal_stage_changed or schedule. Writes made by an automation step never
           start a run.
         enum:
         - lead_created
         - lead_updated
         - lead_status_changed
+        - lead_form_submitted
         - deal_created
         - deal_updated
         - deal_stage_changed
@@ -1379,10 +1381,12 @@ definitions:
         type: integer
       field:
         description: 'condition: the record field compared. Lead rules: status, source,
-          classification, company (compared as strings) and owner_id (a number). Deal
-          rules: stage, source, currency (strings), amount_cents (money, needs currency)
-          and probability, owner_id (numbers). Names, addresses and notes are never
-          comparable.'
+          classification, company (compared as strings) and owner_id (a number); lead
+          rules triggered by lead_form_submitted also take utm_source, utm_medium,
+          utm_campaign, utm_term, utm_content and referrer_host (strings, read from
+          the submission that started the run; empty in a dry run). Deal rules: stage,
+          source, currency (strings), amount_cents (money, needs currency) and probability,
+          owner_id (numbers). Names, addresses and notes are never comparable.'
         enum:
         - status
         - source
@@ -1393,6 +1397,12 @@ definitions:
         - currency
         - amount_cents
         - probability
+        - utm_source
+        - utm_medium
+        - utm_campaign
+        - utm_term
+        - utm_content
+        - referrer_host
         example: status
         type: string
       operator:
@@ -1474,6 +1484,12 @@ definitions:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationScheduleFilter'
         description: 'Schedule trigger only: narrows the records each pass visits.
           Refused (not_applicable) on an event trigger.'
+      form_id:
+        description: 'lead_form_submitted only: start only for submissions of this
+          form. 0 or omitted means every form; a non-zero value on any other trigger
+          type is refused (not_applicable).'
+        example: 4
+        type: integer
       from:
         description: 'Only for lead_status_changed and deal_stage_changed: start only
           when the previous value was this lead status (lead rules) or deal stage
@@ -2577,6 +2593,13 @@ definitions:
         example: https://www.example.com/pricing
         readOnly: true
         type: string
+      referrer_host:
+        description: |-
+          Lower-cased host of an absolute http(s) page_url, without port,
+          credentials, path or query, cut to 255 characters; empty when absent.
+        example: www.example.com
+        readOnly: true
+        type: string
       spam_reason:
         description: |-
           Protection layer that caught a spam submission: time_trap (submitted
@@ -2612,6 +2635,31 @@ definitions:
           Browser User-Agent header, cut to 255 characters. Emptied when the
           linked lead is erased.
         example: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)
+        readOnly: true
+        type: string
+      utm_campaign:
+        description: utm_campaign of the enquiry; empty when absent.
+        example: spring-launch
+        readOnly: true
+        type: string
+      utm_content:
+        description: utm_content of the enquiry; empty when absent.
+        example: header-cta
+        readOnly: true
+        type: string
+      utm_medium:
+        description: utm_medium of the enquiry; empty when absent.
+        example: email
+        readOnly: true
+        type: string
+      utm_source:
+        description: utm_source of the enquiry; empty when absent.
+        example: newsletter
+        readOnly: true
+        type: string
+      utm_term:
+        description: utm_term of the enquiry; empty when absent.
+        example: crm software
         readOnly: true
         type: string
     type: object
@@ -3825,9 +3873,10 @@ definitions:
         type: string
       field:
         description: 'Path of the refused field in the request body: name, description,
-          entity_type, trigger_type, trigger.from, trigger.to, trigger.hour_utc, trigger.stale_days,
-          trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type
-          or steps[i].config.<name>, with i the zero-based index in the steps array.'
+          entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc,
+          trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage,
+          steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based
+          index in the steps array.'
         example: steps[0].config.title
         type: string
       message:
@@ -4193,16 +4242,18 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger'
         description: 'Trigger configuration: from and to for a status or stage change,
-          hour_utc, filters and stale_days for a schedule.'
+          form_id for lead_form_submitted, hour_utc, filters and stale_days for a
+          schedule.'
       trigger_type:
         description: What starts a run. Required. Lead rules take lead_created, lead_updated,
-          lead_status_changed or schedule; deal rules deal_created, deal_updated,
-          deal_stage_changed or schedule (anything else is invalid_value and skips
-          the trigger checks).
+          lead_status_changed, lead_form_submitted or schedule; deal rules deal_created,
+          deal_updated, deal_stage_changed or schedule (anything else is invalid_value
+          and skips the trigger checks).
         enum:
         - lead_created
         - lead_updated
         - lead_status_changed
+        - lead_form_submitted
         - deal_created
         - deal_updated
         - deal_stage_changed
@@ -9155,18 +9206,19 @@ paths:
       - application/json
       description: 'Create a follow-up automation rule with its ordered steps. Roles:
         admin only. entity_type is lead or deal; trigger_type is lead_created, lead_updated,
-        lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule;
-        trigger carries from/to for a status or stage change and hour_utc, filters
-        and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner,
-        send_email and notify, numbered 1..n in the given order. Validation (nothing
-        is written when it fails): name required, at most 200 characters; description
-        at most 65535 bytes; an invalid trigger or step config, more than 20 steps,
-        more than 90 days of waits, a backward or out-of-range else_position or an
-        unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer
-        user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused
-        field is listed in error.details.fields as {field, code, message}: field is
-        a path into the body (name, trigger.hour_utc, steps[i].config.title with i
-        counted from zero), code one of required, too_long, line_break, invalid_value,
+        lead_status_changed, lead_form_submitted (lead rules only), deal_created,
+        deal_updated, deal_stage_changed or schedule; trigger carries from/to for
+        a status or stage change, an optional form_id for lead_form_submitted and
+        hour_utc, filters and stale_days for a schedule. Steps are wait, condition,
+        create_task, assign_owner, send_email and notify, numbered 1..n in the given
+        order. Validation (nothing is written when it fails): name required, at most
+        200 characters; description at most 65535 bytes; an invalid trigger or step
+        config, more than 20 steps, more than 90 days of waits, a backward or out-of-range
+        else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown,
+        inactive or customer user id is 400 INVALID_REFERENCE when it is the first
+        refusal. Every refused field is listed in error.details.fields as {field,
+        code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title
+        with i counted from zero), code one of required, too_long, line_break, invalid_value,
         out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference;
         error.message and error.code are those of the first refused field. An unknown
         entity_type stops the checks, an unknown trigger_type skips the trigger checks,

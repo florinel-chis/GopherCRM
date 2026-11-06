@@ -21,6 +21,10 @@ type automationRecord struct {
 	ownerID    uint
 	lead       *models.Lead
 	deal       *models.Deal
+	// attribution is the triggering submission's attribution (#220), set by
+	// the step before an attribution condition; nil reads every field empty,
+	// which is what a dry run sees.
+	attribution *formAttribution
 }
 
 func recordFromLead(lead *models.Lead) *automationRecord {
@@ -61,6 +65,34 @@ var automationConditionFields = map[string]map[string]automationFieldKind{
 	},
 }
 
+// automationAttributionFields are the string condition fields read from the
+// form submission that started the run (#220). They exist only on lead rules
+// triggered by lead_form_submitted.
+var automationAttributionFields = map[string]bool{
+	"utm_source": true, "utm_medium": true, "utm_campaign": true,
+	"utm_term": true, "utm_content": true, "referrer_host": true,
+}
+
+// isAttributionField reports whether a condition field is read from the
+// triggering submission's attribution.
+func isAttributionField(field string) bool {
+	return automationAttributionFields[field]
+}
+
+// evaluatedFieldKind resolves a condition field at evaluation time. The
+// attribution fields resolve for every lead record: a stored rule was
+// validated when it was saved, and a record without a triggering submission
+// reads them empty.
+func evaluatedFieldKind(entityType, field string) (automationFieldKind, bool) {
+	if kind, ok := automationConditionFields[entityType][field]; ok {
+		return kind, true
+	}
+	if entityType == models.AutomationEntityLead && isAttributionField(field) {
+		return automationFieldString, true
+	}
+	return 0, false
+}
+
 // Condition operators per field kind.
 var (
 	automationStringOperators = map[string]bool{
@@ -75,6 +107,9 @@ var (
 func (r *automationRecord) stringValue(field string) string {
 	switch r.entityType {
 	case models.AutomationEntityLead:
+		if isAttributionField(field) {
+			return r.attribution.value(field)
+		}
 		if r.lead == nil {
 			return ""
 		}
@@ -136,9 +171,17 @@ type conditionProblem struct {
 // independent problem is reported, in the order the checks run: an unknown
 // field stops there (the operator and the value mean nothing without it), an
 // operator the field does not support skips the value check, and the value
-// and currency checks are independent of each other.
-func validateCondition(entityType string, cfg models.AutomationStepConfig) []conditionProblem {
+// and currency checks are independent of each other. An attribution field
+// (#220) is a string field of a lead rule triggered by lead_form_submitted
+// and not_applicable on every other rule, which also stops there.
+func validateCondition(entityType, triggerType string, cfg models.AutomationStepConfig) []conditionProblem {
 	kind, ok := automationConditionFields[entityType][cfg.Field]
+	if !ok && isAttributionField(cfg.Field) {
+		if entityType != models.AutomationEntityLead || triggerType != models.AutomationEventLeadFormSubmitted {
+			return []conditionProblem{{"field", RuleErrorNotApplicable, fmt.Sprintf("condition field %q only applies to a lead rule triggered by %s", cfg.Field, models.AutomationEventLeadFormSubmitted)}}
+		}
+		kind, ok = automationFieldString, true
+	}
 	if !ok {
 		return []conditionProblem{{"field", RuleErrorInvalidValue, fmt.Sprintf("unknown condition field %q for %s rules", cfg.Field, entityType)}}
 	}
@@ -193,7 +236,7 @@ func validateCondition(entityType string, cfg models.AutomationStepConfig) []con
 // condition on amount_cents is true only when the deal's currency equals the
 // condition's currency: amounts in different currencies are never compared.
 func evaluateCondition(cfg models.AutomationStepConfig, rec *automationRecord) (bool, error) {
-	kind, ok := automationConditionFields[rec.entityType][cfg.Field]
+	kind, ok := evaluatedFieldKind(rec.entityType, cfg.Field)
 	if !ok {
 		return false, fmt.Errorf("unknown condition field %q: %w", cfg.Field, apperrors.ErrValidation)
 	}

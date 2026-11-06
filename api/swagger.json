@@ -4140,7 +4140,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.",
+                "description": "Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.",
                 "consumes": [
                     "application/json"
                 ],
@@ -24871,12 +24871,13 @@
                     ]
                 },
                 "trigger_type": {
-                    "description": "What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.",
+                    "description": "What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.",
                     "type": "string",
                     "enum": [
                         "lead_created",
                         "lead_updated",
                         "lead_status_changed",
+                        "lead_form_submitted",
                         "deal_created",
                         "deal_updated",
                         "deal_stage_changed",
@@ -25254,7 +25255,7 @@
                     "example": 4
                 },
                 "field": {
-                    "description": "condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.",
+                    "description": "condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.",
                     "type": "string",
                     "enum": [
                         "status",
@@ -25265,7 +25266,13 @@
                         "stage",
                         "currency",
                         "amount_cents",
-                        "probability"
+                        "probability",
+                        "utm_source",
+                        "utm_medium",
+                        "utm_campaign",
+                        "utm_term",
+                        "utm_content",
+                        "referrer_host"
                     ],
                     "example": "status"
                 },
@@ -25339,6 +25346,11 @@
                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationScheduleFilter"
                         }
                     ]
+                },
+                "form_id": {
+                    "description": "lead_form_submitted only: start only for submissions of this form. 0 or omitted means every form; a non-zero value on any other trigger type is refused (not_applicable).",
+                    "type": "integer",
+                    "example": 4
                 },
                 "from": {
                     "description": "Only for lead_status_changed and deal_stage_changed: start only when the previous value was this lead status (lead rules) or deal stage (deal rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).",
@@ -26465,6 +26477,12 @@
                     "readOnly": true,
                     "example": "https://www.example.com/pricing"
                 },
+                "referrer_host": {
+                    "description": "Lower-cased host of an absolute http(s) page_url, without port,\ncredentials, path or query, cut to 255 characters; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "www.example.com"
+                },
                 "spam_reason": {
                     "description": "Protection layer that caught a spam submission: time_trap (submitted\nunder 3 seconds or over 24 hours after the definition was served),\ndomain (origin not in allowed_domains), honeypot (decoy input filled) or\ncaptcha (token missing, rejected or unverifiable). Empty string for every\nother status.",
                     "type": "string",
@@ -26498,6 +26516,36 @@
                     "type": "string",
                     "readOnly": true,
                     "example": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)"
+                },
+                "utm_campaign": {
+                    "description": "utm_campaign of the enquiry; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "spring-launch"
+                },
+                "utm_content": {
+                    "description": "utm_content of the enquiry; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "header-cta"
+                },
+                "utm_medium": {
+                    "description": "utm_medium of the enquiry; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "email"
+                },
+                "utm_source": {
+                    "description": "utm_source of the enquiry; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "newsletter"
+                },
+                "utm_term": {
+                    "description": "utm_term of the enquiry; empty when absent.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "crm software"
                 }
             }
         },
@@ -27772,7 +27820,7 @@
                     "example": "required"
                 },
                 "field": {
-                    "description": "Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.\u003cname\u003e, with i the zero-based index in the steps array.",
+                    "description": "Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.\u003cname\u003e, with i the zero-based index in the steps array.",
                     "type": "string",
                     "example": "steps[0].config.title"
                 },
@@ -28165,7 +28213,7 @@
                     }
                 },
                 "trigger": {
-                    "description": "Trigger configuration: from and to for a status or stage change, hour_utc, filters and stale_days for a schedule.",
+                    "description": "Trigger configuration: from and to for a status or stage change, form_id for lead_form_submitted, hour_utc, filters and stale_days for a schedule.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger"
@@ -28173,12 +28221,13 @@
                     ]
                 },
                 "trigger_type": {
-                    "description": "What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule (anything else is invalid_value and skips the trigger checks).",
+                    "description": "What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule (anything else is invalid_value and skips the trigger checks).",
                     "type": "string",
                     "enum": [
                         "lead_created",
                         "lead_updated",
                         "lead_status_changed",
+                        "lead_form_submitted",
                         "deal_created",
                         "deal_updated",
                         "deal_stage_changed",

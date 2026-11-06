@@ -47,6 +47,25 @@ func automationLeadUpdated(r repository.AutomationRepository, leadID uint, from,
 	return recordAutomationEvent(r, models.AutomationEntityLead, leadID, models.AutomationEventLeadStatusChanged, string(from), string(to), origin, actorID)
 }
 
+// automationLeadFormSubmitted records lead_form_submitted (#220), origin
+// form, with the ids of the form and of the finalised submission linked to
+// the lead. It carries ids only: the attribution stays on the submission row,
+// where the step transaction reads it.
+func automationLeadFormSubmitted(r repository.AutomationRepository, leadID, formID, submissionID uint) error {
+	if r == nil {
+		return nil
+	}
+	return r.RecordEvent(&models.AutomationEvent{
+		EntityType:   models.AutomationEntityLead,
+		EntityID:     leadID,
+		EventType:    models.AutomationEventLeadFormSubmitted,
+		Origin:       models.AutomationOriginForm,
+		FormID:       &formID,
+		SubmissionID: &submissionID,
+		CreatedAt:    time.Now().UTC(),
+	})
+}
+
 // automationDealCreated records deal_created with to_value set to the stage.
 func automationDealCreated(r repository.AutomationRepository, dealID uint, stage models.DealStage, origin string, actorID *uint) error {
 	return recordAutomationEvent(r, models.AutomationEntityDeal, dealID, models.AutomationEventDealCreated, "", string(stage), origin, actorID)
