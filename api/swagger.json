@@ -21263,7 +21263,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a support ticket. Roles: support and admin (sales and customers get 403 before the body is read). The ticket always starts in status open, whatever the body says, and priority defaults to medium. When assigned_to_id is omitted the ticket is assigned to the caller; a given assignee must exist and hold the support or admin role. The customer must exist. No notification or email is sent.",
+                "description": "Create a support ticket. Roles: support and admin (sales and customers get 403 before the body is read). The ticket always starts in status open, whatever the body says, and priority defaults to medium. When assigned_to_id is omitted the ticket is assigned to the caller; a given assignee must exist and hold the support or admin role. The customer must exist. due_at is optional (an RFC 3339 timestamp, stored in UTC with millisecond precision); first_responded_at and overdue in the body are ignored, and a new ticket always has first_responded_at null. No notification or email is sent.",
                 "consumes": [
                     "application/json"
                 ],
@@ -21305,7 +21305,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; BAD_REQUEST when the assignee does not exist or is not a support or admin user",
+                        "description": "VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_DUE_AT (error.details.field is due_at) when due_at is neither null nor an RFC 3339 timestamp, nothing is created; BAD_REQUEST when the assignee does not exist or is not a support or admin user",
                         "schema": {
                             "allOf": [
                                 {
@@ -21873,7 +21873,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partially update a ticket: absent or empty fields are left unchanged, and nothing can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. The response carries the customer, assignee and comments (including internal notes).",
+                "description": "Partially update a ticket: absent or empty fields are left unchanged, and nothing but due_at can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. due_at follows its own rule: absent leaves it unchanged, null clears it, an RFC 3339 timestamp sets it (stored in UTC with millisecond precision). first_responded_at and overdue in the body are ignored; first_responded_at is never changed by this route. The response carries the customer, assignee and comments (including internal notes).",
                 "consumes": [
                     "application/json"
                 ],
@@ -21922,7 +21922,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), a closed ticket would change status, or the new assignee does not exist or is not a support or admin user; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type",
+                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), a closed ticket would change status, or the new assignee does not exist or is not a support or admin user; INVALID_DUE_AT (error.details.field is due_at) when due_at is neither null nor an RFC 3339 timestamp, and then no field of the body is written; VALIDATION_ERROR when a binding rule fails (error.details maps each failing field, by its Go struct field name such as Title or LabelIDs[0], to a message); BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type",
                         "schema": {
                             "allOf": [
                                 {
@@ -22340,7 +22340,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. No notification or email is sent.",
+                "description": "Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. No notification or email is sent.",
                 "consumes": [
                     "application/json"
                 ],
@@ -27465,11 +27465,32 @@
                     "type": "string",
                     "example": "Since this morning the office printer no longer appears on the network."
                 },
+                "due_at": {
+                    "description": "When the ticket is due (RFC 3339 in UTC with millisecond precision), or null when it has no due date. Always present in the JSON. Admin and support callers set it on POST /tickets and PUT /tickets/{id}; on PUT an absent due_at leaves it unchanged and null clears it.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true,
+                    "example": "2026-11-20T17:00:00.000Z"
+                },
+                "first_responded_at": {
+                    "description": "When staff first answered the ticket (RFC 3339 in UTC with millisecond precision): the created_at of the first comment that an admin or support user wrote and that is not an internal note. Null until then. Always present in the JSON. Set by the server once and never changed; request bodies cannot set it.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-18T09:12:45.120Z"
+                },
                 "id": {
                     "description": "Unique identifier, assigned by the server on creation. Read-only.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 42
+                },
+                "overdue": {
+                    "description": "True when due_at is set and before the time of the response (compared in UTC) and the status is open or in_progress; false otherwise. Computed on every read and never stored.",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "example": false
                 },
                 "priority": {
                     "description": "Priority; medium when not given on create.",
@@ -29225,6 +29246,13 @@
                     "type": "string",
                     "example": "Since this morning the office printer no longer appears on the network."
                 },
+                "due_at": {
+                    "description": "Due date and time as an RFC 3339 timestamp with any offset; stored in UTC, truncated to milliseconds. Omitted or null means no due date. Any other value (a date without a time, a number, a boolean, an object, an impossible date) is 400 INVALID_DUE_AT and nothing is written.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true,
+                    "example": "2026-11-20T17:00:00Z"
+                },
                 "priority": {
                     "description": "Priority; medium when omitted or empty.",
                     "enum": [
@@ -30705,7 +30733,7 @@
             }
         },
         "internal_handler.UpdateTicketRequest": {
-            "description": "Body of PUT /tickets/{id}. Every field is optional; absent or empty fields are left unchanged.",
+            "description": "Body of PUT /tickets/{id}. Every field is optional; absent or empty fields are left unchanged, and a null due_at clears the due date.",
             "type": "object",
             "properties": {
                 "assigned_to_id": {
@@ -30717,6 +30745,13 @@
                     "description": "New description; absent or empty leaves it unchanged.",
                     "type": "string",
                     "example": "The printer is visible again but prints blank pages."
+                },
+                "due_at": {
+                    "description": "New due date as an RFC 3339 timestamp with any offset; stored in UTC, truncated to milliseconds. Absent leaves it unchanged and null clears it. Any other value is 400 INVALID_DUE_AT and nothing is written, including the other fields of the body.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true,
+                    "example": "2026-11-20T17:00:00Z"
                 },
                 "priority": {
                     "description": "New priority; absent or empty leaves it unchanged.",

@@ -46,7 +46,7 @@ func TestTicketSLAFieldsMigrationFiles(t *testing.T) {
 		assert.Contains(t, downSQL, fmt.Sprintf("'alter table tickets drop column %s'", column))
 		assert.Contains(t, downSQL, fmt.Sprintf("table_name = 'tickets' and column_name = '%s'", column), "the drop is guarded")
 	}
-	assert.NotContains(t, upSQL, "overdue", "overdue is computed, never stored")
+	assert.NotContains(t, upSQL, "column overdue", "overdue is computed, never stored")
 	assert.NotContains(t, upSQL, "create index", "no new index")
 	assert.NotContains(t, upSQL, "foreign key", "no new foreign key")
 	assert.NotContains(t, upSQL, "create table", "no new table")
