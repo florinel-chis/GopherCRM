@@ -389,7 +389,16 @@ func (s *ticketService) CreateComment(comment *models.TicketComment) error {
 	}
 	comment.Author = author
 
-	if err := s.ticketRepo.CreateComment(comment); err != nil {
+	// The first comment a staff user writes that is not an internal note is
+	// the ticket's first response (#278): it is inserted together with the
+	// first_responded_at stamp. Internal notes and other authors' comments are
+	// plain inserts.
+	if !comment.IsInternal && (author.Role == models.RoleAdmin || author.Role == models.RoleSupport) {
+		err = s.ticketRepo.CreateCommentWithFirstResponse(comment)
+	} else {
+		err = s.ticketRepo.CreateComment(comment)
+	}
+	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create ticket comment")
 		return err
 	}

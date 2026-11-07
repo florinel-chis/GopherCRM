@@ -139,6 +139,10 @@ type TicketRepository interface {
 	ListRecent(assignedToID *uint, limit int) ([]models.Ticket, error)
 	ListRecentlyResolved(assignedToID *uint, limit int) ([]models.Ticket, error)
 	CreateComment(comment *models.TicketComment) error
+	// CreateCommentWithFirstResponse inserts the comment and stamps the
+	// ticket's first_responded_at with its created_at when still NULL, in one
+	// transaction (#278).
+	CreateCommentWithFirstResponse(comment *models.TicketComment) error
 	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 	WithTx(tx *gorm.DB) TicketRepository
 }

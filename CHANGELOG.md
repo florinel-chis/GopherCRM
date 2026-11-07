@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ticket SLA fields (#278).** Tickets carry a nullable `due_at`, which admin and support callers
+  set on `POST /tickets` and `PUT /tickets/{id}` as an RFC 3339 timestamp (stored in UTC with
+  millisecond precision; on update an absent key keeps it and `null` clears it; any other value is
+  400 `INVALID_DUE_AT` and nothing is written), and a nullable `first_responded_at`, which the server
+  sets once to the `created_at` of the first non-internal comment by an admin or support user, in
+  the same transaction as the comment. Internal notes, status changes, reassignments, bulk status
+  updates and request bodies never set it. A read-only `overdue` flag (a past `due_at` on an open or
+  in-progress ticket, compared in UTC) is computed on every read. All three appear wherever a ticket
+  is returned, under the existing visibility rules. MySQL installs run
+  `20261108120000_add_ticket_sla_fields`; SQLite gets the columns through AutoMigrate. Existing
+  tickets are not backfilled. No UI yet; attachments remain #243.
 - **Per-enquiry form attribution and the `lead_form_submitted` event (#220).** Each finalised
   submission (received, or confirmed through double opt-in) stores its own `utm_source`,
   `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host` on its

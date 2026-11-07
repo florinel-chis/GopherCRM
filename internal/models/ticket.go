@@ -1,6 +1,11 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"encoding/json"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // TicketStatus is the workflow status of a ticket. A new ticket always starts
 // as open; a closed ticket cannot be moved to any other status.
@@ -48,6 +53,55 @@ type Ticket struct {
 	Resolution string `gorm:"type:text" json:"resolution" example:"Rolled the printer back to the previous firmware."`
 	// The ticket's comments, oldest first, each with its author. Only loaded by GET /tickets/{id} and PUT /tickets/{id}; omitted elsewhere. Customer callers never receive internal notes here.
 	Comments []TicketComment `gorm:"foreignKey:TicketID" json:"comments,omitempty"`
+	// When the ticket is due (RFC 3339 in UTC with millisecond precision), or null when it has no due date. Always present in the JSON. Admin and support callers set it on POST /tickets and PUT /tickets/{id}; on PUT an absent due_at leaves it unchanged and null clears it.
+	DueAt *time.Time `json:"due_at" swaggertype:"string" format:"date-time" example:"2026-11-20T17:00:00.000Z" extensions:"x-nullable"`
+	// When staff first answered the ticket (RFC 3339 in UTC with millisecond precision): the created_at of the first comment that an admin or support user wrote and that is not an internal note. Null until then. Always present in the JSON. Set by the server once and never changed; request bodies cannot set it.
+	FirstRespondedAt *time.Time `json:"first_responded_at" swaggertype:"string" format:"date-time" example:"2026-11-18T09:12:45.120Z" extensions:"x-nullable" readonly:"true"`
+	// True when due_at is set and before the time of the response (compared in UTC) and the status is open or in_progress; false otherwise. Computed on every read and never stored.
+	Overdue bool `gorm:"-" json:"overdue" example:"false" readonly:"true"`
+}
+
+// ticketTimeLayout is how the SLA timestamps of a ticket are serialised: RFC
+// 3339 in UTC with exactly three fractional digits.
+const ticketTimeLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// IsOverdue reports whether the ticket is past its due date at now: due_at is
+// set, strictly before now (both compared in UTC), and the ticket is still
+// open or in progress. A resolved or closed ticket is never overdue.
+func (t Ticket) IsOverdue(now time.Time) bool {
+	if t.DueAt == nil {
+		return false
+	}
+	if t.Status != TicketStatusOpen && t.Status != TicketStatusInProgress {
+		return false
+	}
+	return t.DueAt.UTC().Before(now.UTC())
+}
+
+func formatTicketTime(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(ticketTimeLayout)
+	return &formatted
+}
+
+// MarshalJSON emits due_at and first_responded_at in UTC with millisecond
+// precision (null when unset, never omitted) and computes overdue from the
+// wall clock. Every other key is the struct's own encoding.
+func (t Ticket) MarshalJSON() ([]byte, error) {
+	type plain Ticket
+	return json.Marshal(struct {
+		plain
+		DueAt            *string `json:"due_at"`
+		FirstRespondedAt *string `json:"first_responded_at"`
+		Overdue          bool    `json:"overdue"`
+	}{
+		plain:            plain(t),
+		DueAt:            formatTicketTime(t.DueAt),
+		FirstRespondedAt: formatTicketTime(t.FirstRespondedAt),
+		Overdue:          t.IsOverdue(time.Now()),
+	})
 }
 
 // @Description A comment on a ticket, or an internal note visible to staff only.

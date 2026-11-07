@@ -554,6 +554,12 @@ Represents customer support tickets.
 | customer_id | uint | Yes | - | FK to customers | Customer who created ticket |
 | assigned_to_id | uint | No | - | FK to users | Assigned support user |
 | resolution | text | No | - | - | Resolution notes |
+| due_at | datetime | No | NULL | `datetime(3)` on MySQL | When the ticket is due (UTC, millisecond precision); set by admin and support callers on create and update, cleared with `null` (#278) |
+| first_responded_at | datetime | No | NULL | `datetime(3)` on MySQL | `created_at` of the first non-internal comment by an admin or support user; written once by the server, never through a request body (#278) |
+
+`overdue` is not a column: every ticket answer computes it as `due_at` set, strictly before the
+time of the response in UTC, on an `open` or `in_progress` ticket. Neither new column is indexed,
+and tickets created before migration `20261108120000_add_ticket_sla_fields` read NULL for both.
 
 ### Ticket Status Values
 - `open` - New/unassigned ticket
