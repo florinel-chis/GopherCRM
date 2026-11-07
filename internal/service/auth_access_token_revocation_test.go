@@ -905,12 +905,12 @@ func runLogoutLockOrderScenarios(t *testing.T, f *atvFixture, contended bool) {
 	t.Run("the users row is locked before any refresh_tokens row", func(t *testing.T) {
 		s := f.seed(t)
 		f.hooks.reset()
-		require.NoError(t, f.svc.Logout(s.owner.ID, ""))
-		assert.Equal(t, []string{"users:lock", "refresh_tokens:revoke_all", "users:update"}, f.hooks.recorded())
-
-		f.hooks.reset()
 		require.NoError(t, f.svc.Logout(s.owner.ID, atvSibling))
 		assert.Equal(t, []string{"users:lock", "refresh_tokens:read", "refresh_tokens:revoke", "users:update"}, f.hooks.recorded())
+
+		f.hooks.reset()
+		require.NoError(t, f.svc.Logout(s.owner.ID, ""))
+		assert.Equal(t, []string{"users:lock", "refresh_tokens:revoke_all", "users:update"}, f.hooks.recorded())
 		assert.Equal(t, uint(2), f.version(t, s.owner.ID))
 	})
 

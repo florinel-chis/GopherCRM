@@ -4158,9 +4158,10 @@ definitions:
         type: string
       token:
         description: |-
-          Access token: an HS256-signed JWT (claims user_id, email, role, exp) valid
-          for JWT_EXPIRY_HOURS (24 hours by default). Send it as
-          `Authorization: Bearer <token>`. It cannot be revoked before it expires.
+          Access token: an HS256-signed JWT (claims user_id, email, role,
+          token_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or
+          until a logout, a password change or a password reset of its account ends
+          it earlier. Send it as `Authorization: Bearer <token>`.
         example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0Mn0.c2lnbmF0dXJl
         type: string
       user:
