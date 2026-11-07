@@ -28103,7 +28103,7 @@
                     "example": "Jx3k9QeV0m2b5sT8wY1zA4cD7fG0hJ3kL6nP9qR2tU5"
                 },
                 "token": {
-                    "description": "Access token: an HS256-signed JWT (claims user_id, email, role,\ntoken_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or\nuntil a logout, a password change or a password reset of its account ends\nit earlier. Send it as `Authorization: Bearer\u003ctoken\u003e`.",
+                    "description": "Access token: an HS256-signed JWT (claims user_id, email, role,\ntoken_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or\nuntil a logout, a password change or a password reset of its account ends\nit earlier. Send it as `Authorization: Bearer \u003ctoken\u003e`.",
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0Mn0.c2lnbmF0dXJl"
                 },
