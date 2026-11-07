@@ -313,7 +313,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // Logout godoc
 // @Summary Log out (revoke refresh tokens)
 // @Description Revokes refresh tokens of the caller (any authenticated role, bearer or API-key). With no body, an empty body or no refresh_token, every refresh token of the caller is revoked; with a refresh_token only that token is revoked, and only when it belongs to the caller. Idempotent: an unknown, already revoked or foreign token still answers 200 and discloses nothing.
-// @Description Logout does not invalidate access tokens: an issued JWT stays valid until it expires (there is no blocklist), so the client must discard it. API keys are not affected.
+// @Description Logout also ends every access token issued to the caller before it, with or without a refresh_token and for bearer and API-key callers alike: the account token_version is incremented in the same transaction as the revocation, and an older JWT is then refused with 401 Invalid credentials. A failure of either rolls both back and is a 500, as is a server whose session store is not wired. API keys are not affected.
 // @Description Rate limit: the authenticated tier, 120 requests per minute with a burst of 30 per client IP, shared by every authenticated route and checked after authentication.
 // @Tags auth
 // @Accept json
@@ -360,7 +360,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Summary Change the caller's password
 // @Description Any authenticated role. Re-authenticates with current_password, then replaces it with new_password (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The password write, the revocation of the caller's refresh tokens and the renewal of the current session are one transaction: a failure before the commit leaves the password and every session unchanged. A COMMIT whose acknowledgement fails is ambiguous (the change may have been applied) and is reported as a 500 without credentials. The login lockout counter is not touched.
 // @Description With a bearer token and the client's current refresh_token in the body, that session is renewed: the token is spent, every other refresh token of the caller is revoked, and the response carries a replacement token, refresh_token and user. A refresh_token that is not a live session of the caller (unknown, revoked, expired, foreign) is 409 SESSION_STALE and nothing changes. Without a refresh_token, or for an API-key request (whose refresh_token is ignored and which never receives session credentials), every refresh token is revoked and only the message is returned.
-// @Description Revocation ends renewal, not access: access tokens already issued stay valid until they expire (there is no blocklist). A wrong current password is a 400, not a 401, because the request itself is authenticated. Rate limit: the authenticated tier (120 per minute, burst 30, per client IP).
+// @Description The change also ends every access token issued before it, including the one that authenticated this request: the account token_version is incremented in the password write, and an older JWT is then refused with 401 Invalid credentials. The renewed token in the response carries the new value and keeps working. A wrong current password is a 400, not a 401, because the request itself is authenticated. Rate limit: the authenticated tier (120 per minute, burst 30, per client IP).
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -464,7 +464,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 // ConfirmPasswordReset godoc
 // @Summary Complete a password reset
 // @Description Public. Spends the token from the emailed link and sets new_password, which must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The policy is checked before the token is touched, so a weak password leaves the link usable. Tokens are single use and expire after one hour; an unknown, expired or used token, or one whose account is deactivated or erased, is the same generic 400.
-// @Description In one transaction the token is claimed, the password written, the login lockout cleared and every refresh token of the account revoked. A failure before the commit rolls all of it back and the link stays usable; when the COMMIT itself fails the outcome is ambiguous (the password may have changed and the link been spent), so a retry may be refused as an invalid or expired link. Issued access tokens stay valid until they expire. Rate limit: the strict /auth tier (10 per minute, burst 5, per client IP).
+// @Description In one transaction the token is claimed, the password written, the login lockout cleared and every refresh token of the account revoked. A failure before the commit rolls all of it back and the link stays usable; when the COMMIT itself fails the outcome is ambiguous (the password may have changed and the link been spent), so a retry may be refused as an invalid or expired link. The password write also increments the account token_version, so every access token issued before the reset is refused with 401 from then on. Rate limit: the strict /auth tier (10 per minute, burst 5, per client IP).
 // @Tags auth
 // @Accept json
 // @Produce json

@@ -10,8 +10,8 @@ file, not by trusting the coverage matrix.
 
 - `docs/FEATURES.md` section 1 (rows 1.1–1.11), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
-- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route, no
-  access-token blocklist, concurrent-refresh stampede)
+- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route,
+  access-token revocation beyond the session-ending events, concurrent-refresh stampede)
 - `gocrm-ui/src/pages/auth/Login.tsx`, `gocrm-ui/src/pages/auth/Register.tsx`
 - `gocrm-ui/src/contexts/AuthContext.tsx`, `gocrm-ui/src/api/client.ts`,
   `gocrm-ui/src/api/endpoints/auth.ts`
@@ -449,9 +449,11 @@ file, not by trusting the coverage matrix.
   3. From an `APIRequestContext`, `POST /api/v1/auth/refresh` with `{refresh_token: <captured>}`.
 - **Expected:** The refresh call returns **401** with `Invalid or expired refresh token`. A logout
   with no body revokes every refresh token of the user (`AuthHandler.Logout`).
-- **Known issue:** The access token issued before logout keeps working until it expires — there is no
-  JWT blocklist (`docs/ROADMAP.md`, "Access-token blocklist"). A case asserting that the old JWT is
-  rejected immediately would be wrong.
+- **Known issue:** None for the access token since #236: the logout also increments
+  `users.token_version`, so the JWT captured before it answers **401** `Invalid credentials` at
+  once, exactly like an expired token, while an API key of the account keeps working
+  (`tests/auth_access_token_revocation_test.go` `TestAccessTokenRevocationAPISQLite`). A case may
+  assert that rejection.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new)
 
 ---
@@ -532,10 +534,12 @@ file, not by trusting the coverage matrix.
   one token commit exactly one successor: the winner receives a working access token and the
   only live successor, every loser gets the generic 401 and no credentials, and a later replay
   neither adds a row nor invalidates the winner. Logout stays idempotent around a rotation: logging
-  out with the spent token, an unknown token or someone else's token is a no-op success, logging
-  out with the successor revokes exactly that session and a second logout still succeeds.
-- **Known issue:** a JWT issued before a rotation or logout stays valid until it expires. Two tabs
-  sharing a remembered session still refresh independently (#184).
+  out with the spent token, an unknown token or someone else's token revokes no refresh token and
+  succeeds, logging out with the successor revokes exactly that session and a second logout still
+  succeeds (every logout also ends the caller's earlier access tokens, #236).
+- **Known issue:** a JWT issued before a rotation stays valid until it expires (a logout, a password
+  change or a reset ends it, #236). Two tabs sharing a remembered session still refresh
+  independently (#184).
 - **Automation:** `internal/service/auth_refresh_rotation_regression_test.go` runs every scenario
   on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
   created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
@@ -636,9 +640,10 @@ file, not by trusting the coverage matrix.
 - **Steps:** Request a reset, read the token out of the delivered mail, open the reset link, set a new
   policy-compliant password, then log in with it.
 - **Expected:** The token is single-use with a 1 h expiry; confirming returns **200**, clears any
-  lockout and revokes every refresh token of the account in the same transaction that writes the
-  password; the old password no longer authenticates and a replay of the link returns the generic
-  **400**.
+  lockout, increments `users.token_version` (every access token issued before the reset answers
+  **401**, #236) and revokes every refresh token of the account in the same transaction that writes
+  the password; the old password no longer authenticates and a replay of the link returns the
+  generic **400**.
 - **Automation:** blocked — needs mail capture (with `SMTP_HOST` unset the mailer only writes a
   redacted log line) *and* the missing `/reset-password` SPA route. The API round trip is
   covered in Go by `tests/auth_session_integration_test.go` `TestPasswordResetRoundTrip`.
@@ -650,7 +655,8 @@ file, not by trusting the coverage matrix.
   new password before anything is written, so a weak password, or one bcrypt refuses (over 72
   bytes), leaves the link usable. The token claim — a conditional update that stamps `used_at`
   only while the row is unused and strictly unexpired and must affect exactly one row — the owner
-  re-check, the password and lockout update and the revocation of every refresh token of the
+  re-check, the password, lockout and `token_version` update (one write; the increment ends every
+  earlier access token, #236) and the revocation of every refresh token of the
   account then run in one transaction (`internal/service/auth_service.go`
   `ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `MarkUsed`).
   The owner re-check is a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL,
@@ -713,8 +719,10 @@ file, not by trusting the coverage matrix.
   `user`; the page stores the pair in the storage the session already used ("Remember me" →
   `localStorage`) and says "You stay signed in here. Your other sessions can no longer renew
   themselves; access they already hold ends when it expires." The pre-change refresh token and
-  every other session's refresh token answer **401** at `/auth/refresh`; access tokens already
-  issued keep working until they expire. A wrong current password returns **400** with "The
+  every other session's refresh token answer **401** at `/auth/refresh`, and since #236 every
+  access token issued before the change, including the one that made the request, answers **401**
+  at once (the Profile copy quoted above predates this; the frontend text is a separate ticket),
+  while the renewed `token` works. A wrong current password returns **400** with "The
   current password is incorrect" (not 401 — the session presenting it is still authenticated).
 - **Automation:** automated — `gocrm-ui/e2e/tests/settings.spec.ts` "changes the password and the
   new one works on the next login", "rejects a wrong current password with the server message"
@@ -724,8 +732,10 @@ file, not by trusting the coverage matrix.
 - **Type:** regression
 - **Expected:** One transaction: locking owner read, the hash the current password was verified
   against re-checked (a concurrent change makes the second one a 400), the presented refresh token
-  claimed, the new hash written, every other refresh token revoked, the successor inserted and its
-  access token signed. A failure at any step before the commit leaves the old password and every session as they
+  claimed, the new hash written together with the incremented `users.token_version` (one write,
+  which ends every access token issued before the change, #236), every other refresh token revoked,
+  the successor inserted and its access token signed with the new version. A failure at any step
+  before the commit leaves the old password, the version and every session as they
   were, and the same request then succeeds. A presented token that is unknown, revoked, expired or
   another user's is **409** `SESSION_STALE` with nothing changed; the UI tells the user to sign in
   again (it is never retried: following a rotation made by another tab needs cross-tab
@@ -741,7 +751,12 @@ file, not by trusting the coverage matrix.
   concurrency root runs on a schema built by the real migrations and forces both lock orderings);
   `tests/auth_session_integration_test.go` `TestChangePasswordRenewsCurrentSession`,
   `TestChangePasswordWithAPIKeyNeverIssuesSession`; Vitest `client.refresh.test.ts`
-  (`ApiClient.changePassword`) and `Profile.test.tsx`.
+  (`ApiClient.changePassword`) and `Profile.test.tsx`. The access-token side (#236):
+  `internal/service/auth_access_token_revocation_test.go`
+  (`TestAccessTokenVersionClaim`, `TestAccessTokenRevokedBy{Logout,PasswordChange,PasswordReset}{SQLite,MySQL}`,
+  `TestAccessTokenSurvivesRefreshRotation{SQLite,MySQL}`, `TestLogoutLocksOwnerBeforeRefreshTokens{SQLite,MySQL}`,
+  `TestLogoutRequiresSessionStore`, `TestAccessTokenRevocationLogsOmitPersonalData`) and, over HTTP,
+  `tests/auth_access_token_revocation_test.go` `TestAccessTokenRevocationAPISQLite`.
 
 ---
 

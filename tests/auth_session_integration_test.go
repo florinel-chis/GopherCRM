@@ -298,8 +298,9 @@ func (suite *AuthSessionIntegrationTestSuite) loginPair(email, password string) 
 
 // TestChangePasswordRenewsCurrentSession: the session that changes the
 // password presents its refresh token and receives a replacement pair; every
-// other session (and the presented token itself) loses renewal, while access
-// tokens already issued keep authorising until they expire.
+// other session (and the presented token itself) loses renewal, and every
+// access token issued before the change is rejected at once (#236) while the
+// renewed one keeps authorising.
 func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordRenewsCurrentSession() {
 	user := &models.User{Email: "renewer@example.com", FirstName: "Renew", LastName: "Session", Role: models.RoleSales}
 	suite.Require().NoError(suite.userService.Register(user, "Password123!"))
@@ -327,8 +328,11 @@ func (suite *AuthSessionIntegrationTestSuite) TestChangePasswordRenewsCurrentSes
 		suite.Equal(http.StatusUnauthorized, w.Code)
 	}
 
-	// Revocation ends renewal, not access: issued JWTs still authorise.
-	suite.Equal(http.StatusOK, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+otherAccess).Code)
+	// The change ends access as well as renewal: the access tokens issued
+	// before it, the caller's own included, are rejected; the renewed one is
+	// signed with the new token_version and authorises.
+	suite.Equal(http.StatusUnauthorized, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+otherAccess).Code)
+	suite.Equal(http.StatusUnauthorized, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+currentAccess).Code)
 	suite.Equal(http.StatusOK, suite.getWithAuth("/api/v1/test/whoami", "Bearer "+renewedAccess).Code)
 
 	// Presenting a spent token is a 409 and changes nothing.

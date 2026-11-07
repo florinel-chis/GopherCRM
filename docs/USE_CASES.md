@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1005`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1013`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1046`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1054`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -358,7 +358,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1010`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1051`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
@@ -414,7 +414,7 @@ Each of these would need a different core model, not a recipe.
 | Recruiting | No attachments for CVs, and the pipeline links one deal to one customer, where recruiting needs many candidates per opening |
 | Nonprofit donor CRM | No recurring gifts, campaigns or nurture email to contacts |
 | Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`internal/models/aeo.go:28-31`) |
-| Regulated health records | No field-level encryption, no read audit, and an issued access token cannot be revoked before it expires (`docs/ROADMAP.md`, "Access-token blocklist") |
+| Regulated health records | No field-level encryption, no read audit, and a single access token cannot be revoked on its own: only logout, a password change or a reset ends access tokens early, all of an account's at once (#236; `docs/ROADMAP.md`, "Access-token revocation beyond the session-ending events") |
 | An e-commerce order system inside the CRM | Products and quotes are sales tools; the shop platform stays the system of record for orders, stock and payment |
 
 ## 8. Cross-cutting gaps
@@ -427,7 +427,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1005,1010,1013` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1046,1051,1054` | #214 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |

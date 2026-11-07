@@ -578,7 +578,10 @@ All of the above sit behind the strict rate-limit tier (10/min). Two more auth e
 authentication and live on the moderate tier:
 
 - `POST /api/v1/auth/logout` - Revoke the caller's refresh tokens (all of them, or just the one in
-  the optional `{refresh_token}` body). The JWT itself stays valid until expiry.
+  the optional `{refresh_token}` body) and end every access token issued to the caller before the
+  logout, in one transaction: `users.token_version` is incremented, and an older JWT then answers
+  `401 Invalid credentials` like an expired one. This holds for Bearer and API-key callers, with or
+  without a body; API keys themselves keep working.
 - `POST /api/v1/auth/change-password` - Verify the current password and set a new one (same
   complexity policy) in one transaction with the revocation of the user's refresh tokens; a
   failure before the commit leaves the password and every session unchanged (a failed COMMIT is
@@ -587,7 +590,9 @@ authentication and live on the moderate tier:
   `refresh_token` and `user`, and every other session loses renewal. A `refresh_token` that is not
   a live session of the caller is `409 SESSION_STALE` with nothing changed. Without one, and
   always for API-key requests, every refresh token is revoked and no credentials are returned.
-  Access tokens already issued elsewhere stay valid until they expire.
+  The change also ends every access token issued before it, the caller's own included; the
+  renewed `token` is signed after the change and keeps working. A confirmed password reset
+  (`POST /auth/password-reset/confirm`) ends earlier access tokens the same way.
 
 ### Users
 - `GET /api/v1/users` - List all users *(admin)*
@@ -938,9 +943,11 @@ gophercrm/
 
 ## Known Limitations
 
-- **Access tokens cannot be revoked before expiry.** Logout, password change and the
-  refresh-token rotation revoke the *refresh* tokens, but an already-issued JWT stays valid until
-  `JWT_EXPIRY_HOURS` elapses — there is no token blocklist (deactivation and erasure do reject it).
+- **Access tokens end early only on logout, password change and password reset.** These three
+  increment the account's `users.token_version`, which every JWT carries, so every access token
+  issued before them is refused at once (deactivation and erasure reject it too). Refresh rotation
+  does not: the access token it replaces stays valid until `JWT_EXPIRY_HOURS` elapses, and so does
+  every token of an account whose role changes. There is no per-token denylist.
 - **Session handling has two known gaps.** Browser tabs sharing a remembered session
   (`localStorage`) do not coordinate their refreshes, so two tabs refreshing at the same moment can
   sign each other out (#184). A login that verified the old password a moment before a password

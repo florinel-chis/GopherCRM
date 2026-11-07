@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Early revocation of access tokens (#236).** Every access JWT carries the account's
+  `users.token_version` as the integer claim `token_version`, and a Bearer request whose claim is
+  not the stored value is refused with the usual 401 `Invalid credentials` (a token without the
+  claim reads as 0; a malformed claim is refused). `POST /auth/logout` (Bearer or API key, with or
+  without a body), `POST /auth/change-password` and `POST /auth/password-reset/confirm` increment
+  the counter by one in the transaction that revokes the refresh tokens, so every access token
+  issued before them stops working at once; the token renewed by a password change is signed with
+  the new value. Refresh rotation and login leave the counter alone, so the access token a rotation
+  replaces still expires on its own. Logout is now one transaction that locks the users row before
+  any refresh-token row, and refuses with a 500 when the session store is not wired. MySQL installs
+  run `20261109120000_add_user_token_version`; SQLite gets the column through AutoMigrate, and
+  existing accounts read 0, so no session ends on upgrade. API keys are not affected.
 - **Ticket SLA fields (#278).** Tickets carry a nullable `due_at`, which admin and support callers
   set on `POST /tickets` and `PUT /tickets/{id}` as an RFC 3339 timestamp (stored in UTC with
   millisecond precision; on update an absent key keeps it and `null` clears it; any other value is

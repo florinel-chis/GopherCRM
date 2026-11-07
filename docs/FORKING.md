@@ -63,8 +63,9 @@ Checked by searching the tracked tree on `4dfe404`:
   `docs/ROADMAP.md` as "Data export"; #234).
 - The CSRF middleware is not installed (`internal/middleware/csrf.go`; README "Known Limitations";
   #235).
-- An issued JWT cannot be revoked before it expires (README "Known Limitations";
-  `docs/ROADMAP.md` "Access-token blocklist"; #236).
+- An issued JWT ends early only through logout, a password change or a password reset, which
+  increment `users.token_version` (#236). A role change does not end it, and the token a refresh
+  rotation replaces stays valid until it expires (README "Known Limitations").
 - The automation worker and the AEO module both assume a single API process (README "Known
   Limitations"; section 5.4; #237, #229).
 
@@ -327,11 +328,14 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `internal/service/auth_service.go:391-396`) and the UI silently trades them for new access
+>   `internal/service/auth_service.go:408-413`) and the UI silently trades them for new access
 >   tokens signed with the new secret (`gocrm-ui/src/api/client.ts:232-256`). To end every session,
->   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout and a password
->   change revoke that user's refresh tokens, and a deactivated user's refresh is refused.
->   Restoring a database backup needs the secrets it was written with.
+>   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
+>   change and a password reset revoke that user's refresh tokens and end the access tokens issued
+>   before them (they increment `users.token_version`, #236), and a deactivated user's refresh is
+>   refused. Restoring a database backup needs the secrets it was written with; a backup also brings
+>   back older `token_version` values, so access tokens ended after it was taken pass again until
+>   they expire.
 > - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. The application issues no auth
 >   cookies (`utils.SetAuthCookies` in `internal/utils/cookie.go:21` has no caller outside tests),
 >   so the cookie settings it also affects have no effect today.
@@ -357,7 +361,7 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:107-110`).
 - `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:302`, used at
-  `internal/service/auth_service.go:344`) and the refresh-token lifetime from
+  `internal/service/auth_service.go:358`) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:307`). `JWT_ACCESS_TOKEN_MINUTES` is read
   (`config.go:303`) but only feeds the unused cookie helper.
 

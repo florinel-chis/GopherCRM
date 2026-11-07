@@ -13,8 +13,8 @@ coverage matrix.
 
 - `docs/FEATURES.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
   6.5, 7.5, 7.8 for the shared list conventions; Gap Summary G22, G34
-- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (no access-token blocklist,
-  concurrent-refresh stampede)
+- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
+  session-ending events, concurrent-refresh stampede)
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`, `gocrm-ui/src/components/Breadcrumbs.tsx`,
   `gocrm-ui/src/components/DataTable.tsx`, `gocrm-ui/src/components/ErrorBoundary.tsx`,
@@ -370,8 +370,10 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Expected:** `POST /api/v1/auth/logout` returns **200**, `AuthContext.logout` clears
   `gophercrm_token` and `gophercrm_refresh_token` from `localStorage` *and* `sessionStorage`, and the
   app navigates to `/login`. The replayed refresh returns **401**.
-- **Known issue:** The access token itself stays valid until it expires — there is no blocklist
-  (`docs/ROADMAP.md`, "Access-token blocklist"). A token captured before logout still authenticates.
+- **Known issue:** None for the access token since #236: the logout increments
+  `users.token_version`, so a token captured before it answers **401** `Invalid credentials` at once
+  (`tests/auth_access_token_revocation_test.go` `TestAccessTokenRevocationAPISQLite`). An access
+  token replaced by a refresh rotation, with no logout after it, still works until it expires.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (extended) — closes G11.
 
 ---

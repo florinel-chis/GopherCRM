@@ -28,6 +28,7 @@ Represents system users with different roles and permissions.
 | role | enum | Yes | 'customer' | max 20 | User role (see below) |
 | is_active | boolean | Yes | true | - | Account active status |
 | last_login_at | timestamp | No | - | - | Last login timestamp |
+| token_version | bigint unsigned | Yes | 0 | not null | Session generation (#236), hidden in API responses. Every access JWT carries it as the `token_version` claim and is refused once it differs; logout, a password change and a password reset increment it. MySQL gets it from `20261109120000_add_user_token_version`, SQLite from `MigrateDatabase`; existing accounts read 0 |
 
 ### User Roles
 - `admin` - Full system access
