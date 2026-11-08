@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -212,7 +213,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List tickets
-// @Description One page of tickets with their customer and assignee. Roles: admin and sales see every ticket; support sees only tickets assigned to them (unassigned tickets and other people's are never listed), a scope applied in the query before offset and limit so the tickets, total and meta all reflect it and no parameter can widen it; customers get 403. Precedence: for support, the assignee scope with optional search and sort; otherwise search (with optional sort), then sort_by, then the plain list. search is a substring match (SQL LIKE) on title, description and resolution. An unknown sort_by is ignored (ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100. Soft-deleted tickets are never listed; comments are not included.
+// @Description One page of tickets with their customer and assignee. Roles: admin and sales see every ticket; support sees only tickets assigned to them (unassigned tickets and other people's are never listed), a scope applied in the query before offset and limit so the tickets, total and meta all reflect it and no parameter can widen it; customers get 403, whatever the filters. Filters: status and priority each take exactly one value, matched case-sensitively; they combine with each other, with search and with sort_by/sort_order, are applied in the query before offset and limit (so tickets, total and meta reflect them), and for support only narrow the assigned tickets. An empty status or priority is ignored, a repeated parameter uses its first value, and an unknown or differently cased value is 400 VALIDATION_ERROR before anything is read. Precedence without a status or priority filter: for support, the assignee scope with optional search and sort; otherwise search (with optional sort), then sort_by, then the plain list. search is a substring match (SQL LIKE) on title, description and resolution. An unknown sort_by is ignored (ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100. Soft-deleted tickets are never listed; comments are not included.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
@@ -223,7 +224,10 @@ func (h *TicketHandler) Create(c *gin.Context) {
 // @Param sort_by query string false "Sort column; unknown values are ignored" Enums(created_at, updated_at, title, status, priority)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
 // @Param search query string false "Substring matched against title, description and resolution; for support it only narrows the assigned tickets"
+// @Param status query string false "Only tickets in this status (exact, case-sensitive match); empty is ignored, an unknown value is 400" Enums(open, in_progress, resolved, closed)
+// @Param priority query string false "Only tickets with this priority (exact, case-sensitive match); empty is ignored, an unknown value is 400" Enums(low, medium, high, urgent)
 // @Success 200 {object} utils.APIResponse{data=TicketListData,meta=utils.APIMeta} "One page of tickets; meta carries page, per_page, total and total_pages"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - status or priority is not one of the listed values (error.details is keyed by the offending parameter name; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - customers cannot list tickets"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
@@ -237,6 +241,25 @@ func (h *TicketHandler) List(c *gin.Context) {
 	// Customer users cannot list all tickets
 	if currentUserRole == string(models.RoleCustomer) {
 		utils.RespondForbidden(c, "Customers cannot list all tickets")
+		return
+	}
+
+	// Optional status and priority filters (#218). c.Query takes the first
+	// value of a repeated parameter, and an empty value counts as absent. The
+	// match is exact and case-sensitive, and it is checked here, before the
+	// query, because MySQL's default collation would compare case-insensitively.
+	status := c.Query("status")
+	priority := c.Query("priority")
+	invalid := gin.H{}
+	if status != "" && !models.TicketStatus(status).IsValid() {
+		invalid["status"] = "must be one of open, in_progress, resolved, closed"
+	}
+	if priority != "" && !models.TicketPriority(priority).IsValid() {
+		invalid["priority"] = "must be one of low, medium, high, urgent"
+	}
+	if len(invalid) > 0 {
+		logger.WithField("invalid_parameters", len(invalid)).Warn("Invalid ticket list filter")
+		utils.RespondValidationError(c, invalid)
 		return
 	}
 
@@ -277,7 +300,17 @@ func (h *TicketHandler) List(c *gin.Context) {
 	// Support users only ever see tickets assigned to them, as on the detail
 	// route. The scope is part of the query, so the rows and the total both
 	// reflect it before pagination, and no query parameter can widen it.
-	if currentUserRole == string(models.RoleSupport) {
+	// A status or priority filter goes through ListFiltered, with the same
+	// assignee scope forced for support; without one the existing branches run
+	// unchanged.
+	if status != "" || priority != "" {
+		filter := repository.TicketListFilter{Search: search, Status: status, Priority: priority}
+		if currentUserRole == string(models.RoleSupport) {
+			assigneeID := c.GetUint("user_id")
+			filter.AssigneeID = &assigneeID
+		}
+		tickets, total, err = h.ticketService.ListFiltered(filter, offset, limit, sortBy, sortOrder)
+	} else if currentUserRole == string(models.RoleSupport) {
 		tickets, total, err = h.ticketService.ListAssigned(c.GetUint("user_id"), search, offset, limit, sortBy, sortOrder)
 	} else if search != "" {
 		tickets, total, err = h.ticketService.Search(search, offset, limit, sortBy, sortOrder)

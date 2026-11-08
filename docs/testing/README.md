@@ -25,7 +25,7 @@ blocked.
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, conversion, bulk status, owner validation and assignment | 68 | 16 | 37 | 15 | 33 | 27 | 8 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer | 46 | 17 | 16 | 13 | 19 | 18 | 9 |
-| [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets, SLA fields | 58 | 25 | 23 | 10 | 15 | 40 | 3 |
+| [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets, SLA fields, server-side status/priority filters | 64 | 29 | 25 | 10 | 21 | 40 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 11 | 28 | 10 |
 | [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 40 | 15 | 18 | 7 | 15 | 25 | 0 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings | 34 | 9 | 16 | 9 | 3 | 14 | 17 |
@@ -36,7 +36,7 @@ blocked.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **653** | **219** | **285** | **149** | **256** | **314** | **83** |
+| **Total** | | **659** | **223** | **287** | **149** | **262** | **314** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -164,12 +164,14 @@ fail in ways that look like application bugs.
    uses a separate tagged test binary and explicit E2E switch to isolate all live tiers. Ordinary
    binaries ignore that E2E switch; rate-limit scenarios must use an ordinary build or leave the
    E2E switch unset. Dedicated Go tests cover enforcement in both build modes.
-7. **Filters are client-side — except the task label filter.** Lead status, ticket status/priority,
-   task status/priority and the user role filter narrow only the currently loaded page. A case
-   asserting server-side filtered result sets asserts behaviour that does not exist. The one
-   exception since 2026-08-08 is `GET /tasks?label_id=`, which filters server-side (and wins over
-   `search` — the UI disables the search box while a label filter is active for exactly that
-   reason).
+7. **Filters are client-side — except the task label filter and the ticket status/priority
+   filters.** Lead status, task status/priority and the user role filter narrow only the currently
+   loaded page. A case asserting server-side filtered result sets for them asserts behaviour that
+   does not exist. The exceptions are `GET /tasks?label_id=` (since 2026-08-08), which filters
+   server-side (and wins over `search` — the UI disables the search box while a label filter is
+   active for exactly that reason), and `GET /tickets?status=&priority=` (#218), which filters
+   server-side before pagination, combines with `search` and the sort, and answers an unknown value
+   with 400 `VALIDATION_ERROR` (see [05-tickets.md](05-tickets.md) section 5.5).
 8. **Elevated roles come from outside the app.** Public registration always creates a `customer`.
    The admin comes from the `create-admin` CLI; sales and support accounts require an
    admin-authenticated `POST /users`, and no e2e helper does that yet — building that role-login

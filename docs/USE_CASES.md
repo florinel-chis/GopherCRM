@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1121`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1132`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1143`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1154`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -350,15 +350,16 @@ history. This is a staff-maintained register, not a shared helpdesk.
 ### Gaps before a shared desk
 
 - Support users see only tickets assigned to them, in the list and the detail
-  (`internal/handler/ticket_handler.go:195`). There is no unassigned queue: #218.
-- Status and priority filters run client-side over the current page (`docs/FEATURES.md`, 5.5):
-  #218.
+  (`internal/handler/ticket_handler.go:195`). There is no unassigned or shared queue: #259.
+- Ticket status and priority filters run server-side (#218, delivered): `GET /tickets` applies
+  them before pagination, so totals are correct, and for support they only narrow the assigned
+  tickets (`docs/FEATURES.md`, 5.5).
 - No inbound mail, and no reply email to the customer: #219.
 - No intake path from a form or an external system that is safe to retry: a ticket has no
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1129`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1151`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
@@ -433,7 +434,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1121,1129,1132` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1143,1151,1154` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
@@ -441,7 +442,7 @@ planning around an issue number.
 | External identity mapping for customers, as a `(source, scope, external_id)` table rather than columns, because customer email is globally unique | 3, 4 | `internal/models/customer.go:9` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:218` | #215 |
-| Shared support queue and server-side ticket filters | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #218 |
+| Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #259 |
 | Customer-visible ticket replies by email | 4 | no ticket path sends mail | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |

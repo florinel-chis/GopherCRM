@@ -21098,7 +21098,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of tickets with their customer and assignee. Roles: admin and sales see every ticket; support sees only tickets assigned to them (unassigned tickets and other people's are never listed), a scope applied in the query before offset and limit so the tickets, total and meta all reflect it and no parameter can widen it; customers get 403. Precedence: for support, the assignee scope with optional search and sort; otherwise search (with optional sort), then sort_by, then the plain list. search is a substring match (SQL LIKE) on title, description and resolution. An unknown sort_by is ignored (ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100. Soft-deleted tickets are never listed; comments are not included.",
+                "description": "One page of tickets with their customer and assignee. Roles: admin and sales see every ticket; support sees only tickets assigned to them (unassigned tickets and other people's are never listed), a scope applied in the query before offset and limit so the tickets, total and meta all reflect it and no parameter can widen it; customers get 403, whatever the filters. Filters: status and priority each take exactly one value, matched case-sensitively; they combine with each other, with search and with sort_by/sort_order, are applied in the query before offset and limit (so tickets, total and meta reflect them), and for support only narrow the assigned tickets. An empty status or priority is ignored, a repeated parameter uses its first value, and an unknown or differently cased value is 400 VALIDATION_ERROR before anything is read. Precedence without a status or priority filter: for support, the assignee scope with optional search and sort; otherwise search (with optional sort), then sort_by, then the plain list. search is a substring match (SQL LIKE) on title, description and resolution. An unknown sort_by is ignored (ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100. Soft-deleted tickets are never listed; comments are not included.",
                 "produces": [
                     "application/json"
                 ],
@@ -21156,6 +21156,30 @@
                         "description": "Substring matched against title, description and resolution; for support it only narrows the assigned tickets",
                         "name": "search",
                         "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "open",
+                            "in_progress",
+                            "resolved",
+                            "closed"
+                        ],
+                        "type": "string",
+                        "description": "Only tickets in this status (exact, case-sensitive match); empty is ignored, an unknown value is 400",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "low",
+                            "medium",
+                            "high",
+                            "urgent"
+                        ],
+                        "type": "string",
+                        "description": "Only tickets with this priority (exact, case-sensitive match); empty is ignored, an unknown value is 400",
+                        "name": "priority",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -21174,6 +21198,24 @@
                                         },
                                         "meta": {
                                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - status or priority is not one of the listed values (error.details is keyed by the offending parameter name; the value is not echoed)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
                                         }
                                     }
                                 }

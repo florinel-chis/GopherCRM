@@ -114,6 +114,20 @@ type TicketAssigneeScope struct {
 	Search       string
 }
 
+// TicketListFilter narrows GET /tickets (#218). Every field is optional and
+// they combine with AND: a nil AssigneeID is no assignee filter, while a
+// non-nil one restricts to that assignee (a value of zero matches no ticket,
+// as in TicketAssigneeScope); an empty Status, Priority or Search is no
+// filter. Status and Priority are matched exactly; callers validate them
+// first. The predicate is part of the query, so it applies before offset and
+// limit, and the count uses the same predicate.
+type TicketListFilter struct {
+	AssigneeID *uint
+	Search     string
+	Status     string
+	Priority   string
+}
+
 type TicketRepository interface {
 	Create(ticket *models.Ticket) error
 	GetByID(id uint) (*models.Ticket, error)
@@ -133,6 +147,10 @@ type TicketRepository interface {
 	// column, or by id when none is given, with id as the tie-break.
 	ListByAssigneeScope(scope TicketAssigneeScope, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error)
 	CountByAssigneeScope(scope TicketAssigneeScope) (int64, error)
+	// Filtered collections of GET /tickets (#218). Both share one predicate;
+	// rows are ordered like ListByAssigneeScope.
+	ListByFilter(filter TicketListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error)
+	CountByFilter(filter TicketListFilter) (int64, error)
 	// Dashboard analytics. A nil assignedToID means every ticket; a non-nil one
 	// narrows the query to that assignee before the limit is applied.
 	CountByPriority() (map[string]int64, error)

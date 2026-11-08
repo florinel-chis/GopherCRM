@@ -133,6 +133,11 @@ type TicketService interface {
 	// empty search lists every assigned ticket.
 	ListAssigned(assigneeID uint, search string, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	GetByCustomerAndAssignee(customerID, assigneeID uint, offset, limit int) ([]models.Ticket, int64, error)
+	// ListFiltered lists the tickets matching filter for GET /tickets with a
+	// status or priority filter (#218): rows and total share one predicate,
+	// applied before offset and limit. The handler sets filter.AssigneeID for
+	// support callers.
+	ListFiltered(filter repository.TicketListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error)
 	GetOpenCount() (int64, error)
 	// Dashboard analytics. The ByAssignee variants narrow the query to one
 	// assignee before the limit, which is how support callers are scoped.

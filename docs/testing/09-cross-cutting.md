@@ -612,15 +612,17 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   sort by Created column descending" and "should toggle sort order on double click" cover leads
   only; G21 asks for the other columns.
 
-### TC-XCUT-038 — Status, priority and role dropdowns do not filter anything
+### TC-XCUT-038 — Lead, task and user status, priority and role dropdowns do not filter anything
 - **Priority:** P1
 - **Type:** negative
-- **Preconditions:** Logged in as the seeded admin; leads in more than one status, tickets in more
+- **Preconditions:** Logged in as the seeded admin; leads in more than one status, tasks in more
   than one status and priority, users in more than one role.
 - **Steps:**
   1. On `/leads`, note the visible rows, then select **Status → New** and re-read the table.
-  2. Repeat on `/tickets` with **Status** and **Priority**, on `/tasks` with both, and on `/users`
-     with **Role**.
+  2. Repeat on `/tasks` with **Status** and **Priority**, and on `/users` with **Role**.
+     `/tickets` is the exception: since #218 the backend filters ticket status and priority
+     server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and TC-TICK-059 to 064
+     in [05-tickets.md](05-tickets.md), not by this case.
 - **Expected:** In every case the request is re-issued with the extra query parameter
   (`?status=new`, `?role=sales`, …), the backend **ignores** it, and the rendered rows and the total
   in the pagination footer are **unchanged**. Verified live: `GET /leads?limit=5&status=new` returns
@@ -629,13 +631,16 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   lead **Classification** filter, which `lead_handler.go:178` reads — and only when `search` is empty
   and the caller is an admin, because the search branch is evaluated first and sales users are routed
   to `GetByOwner` before either is considered.
-- **Known issue:** FEATURES 3.8, 5.5, 6.5 and 7.8 and gap G34 describe these as *client-side filters
+- **Known issue:** FEATURES 3.8, 6.5 and 7.8 and gap G34 describe these as *client-side filters
   over the current page*. That is too generous: no list page filters the fetched rows at all — the
   only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
   E2E tests used to pass because they asserted `expect(count).toBeGreaterThanOrEqual(0)`, which
   cannot fail (`admin-leads.spec.ts` "admin can filter leads by status", `admin-tasks.spec.ts` "admin
-  can filter tasks by status" / "by priority", `admin-tickets.spec.ts` "admin can filter tickets by
-  status" / "by priority"). Since 2026-09-23 they are `test.fixme` until the filters work.
+  can filter tasks by status" / "by priority"). Since 2026-09-23 they are `test.fixme` until the
+  filters work. This no longer covers tickets: `GET /tickets` filters `status` and `priority`
+  server-side since #218 (FEATURES 5.5), and the `admin-tickets.spec.ts` "admin can filter tickets
+  by status" / "by priority" tests stay `test.fixme` only until a frontend test ticket rewrites
+  them with real assertions.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
 
