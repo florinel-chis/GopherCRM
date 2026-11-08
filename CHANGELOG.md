@@ -306,8 +306,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quote email takes the same logging fallback as the password reset: it is logged, not delivered,
   and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
   recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
-  the code of a relay reply without the text, which can echo the recipient. Quotes copy no personal
-  data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:
+  the code of a relay reply without the text, which can echo the recipient. Customer erasure keeps
+  the quotes, and since #245 redacts their title, notes and line descriptions; the PII sweep
+  covers the four new tables. Schema:
   AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
   frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
   (#158)
@@ -450,8 +451,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shipped as `EUR`, admin-editable, and exposed on `GET /configurations/ui`).
     `expected_close_date` is a plain `YYYY-MM-DD` date on the wire.
   - Companies report `deal_count`, and deleting a company also clears `company_id` on its deals.
-  - Deals hold no personal data: erasing a linked customer, lead or user leaves them and their
-    history intact.
+  - Erasing a linked customer, lead or user keeps the deals and their history; since #245 erasing
+    the customer or lead (or a customer-role login reaching them) redacts their title, notes and
+    lost reason. Erasing a staff owner does not.
   - Migration `20260930120000_add_deals` for MySQL and MariaDB (two new tables, nothing altered);
     auto-migration covers SQLite, populated files included.
 - **Companies.** A curated organisation record next to the free-text company field of leads and
