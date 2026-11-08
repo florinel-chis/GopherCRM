@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -126,17 +127,25 @@ func isValidTaskStatus(status models.TaskStatus) bool {
 // ctx is the caller's request. The history row and the transaction are bound
 // to it, so a request cancelled before the history row is written leaves no
 // trace, and one cancelled while the batch waits for a connection or a row
-// lock rolls the batch back. The outcome is then recorded against the history
-// row on a context that keeps the request's values but not its cancellation,
-// bounded by bulkOutcomeTimeout, because that row already exists and should
-// not stay pending. An outcome write that cannot finish within the bound (the
-// connection or the row is still held elsewhere) is logged and the row stays
-// pending.
+// lock rolls the batch back.
 //
-// A batch is a transaction root: its history row and outcome are committed on
-// their own, which an enclosing transaction could not roll back, so a ctx that
-// already carries a transaction is refused with utils.ErrTransactionRootRequired
-// before anything is written.
+// completed is the last write of the batch transaction (#196):
+// BulkOperationRepository.WithTx(tx).CompletePending, a conditional update by
+// primary key from pending. It commits with the records or not at all, so a
+// row that is still pending belongs to a batch that did not commit. When it
+// finds no pending row — the stale-pending sweep already failed it — it
+// returns apperrors.ErrBulkOperationNotPending and the whole batch rolls back.
+//
+// After a batch that rolled back, failed is recorded against the history row
+// on a context that keeps the request's values but not its cancellation,
+// bounded by bulkOutcomeTimeout. An outcome write that cannot finish within the
+// bound (the connection or the row is still held elsewhere) is logged and the
+// row stays pending until the sweep (BulkOperationRecoveryRuntime) fails it.
+//
+// A batch is a transaction root: its history row and its failed outcome are
+// committed on their own, which an enclosing transaction could not roll back,
+// so a ctx that already carries a transaction is refused with
+// utils.ErrTransactionRootRequired before anything is written.
 func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uint, resourceType string, ids []uint, apply func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error) (*models.BulkStatusUpdateResult, error) {
 	if utils.InTransaction(ctx) {
 		return nil, utils.ErrTransactionRootRequired
@@ -151,32 +160,40 @@ func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uin
 		if !ok || tx == nil {
 			return fmt.Errorf("transaction not found in context")
 		}
-		return apply(s.statusRepo.WithTx(tx), automationTx(s.automation, tx))
+		if err := apply(s.statusRepo.WithTx(tx), automationTx(s.automation, tx)); err != nil {
+			return err
+		}
+		return s.bulkOperationRepo.WithTx(tx).CompletePending(ctx, operation.ID)
 	})
 
 	if err != nil {
-		s.recordBulkStatusOutcome(ctx, operation.ID, models.StatusFailed)
+		s.recordBulkStatusOutcome(ctx, operation.ID)
 		return nil, err
 	}
 
-	s.recordBulkStatusOutcome(ctx, operation.ID, models.StatusCompleted)
 	return &models.BulkStatusUpdateResult{Updated: len(ids)}, nil
 }
 
-// bulkOutcomeTimeout bounds the write that records a batch's outcome once the
-// batch itself has finished or been abandoned.
+// bulkOutcomeTimeout bounds the write that records a failed batch's outcome
+// once the batch itself has rolled back or been abandoned.
 var bulkOutcomeTimeout = 5 * time.Second
 
-// recordBulkStatusOutcome updates the audit record. A failure to write it must
-// not change what the caller is told about the records themselves, which are
-// already committed (or already rolled back), so it is logged and swallowed.
-func (s *bulkStatusService) recordBulkStatusOutcome(ctx context.Context, operationID uint, status models.BulkOperationStatus) {
+// recordBulkStatusOutcome sets the history row of a batch that did not commit
+// to failed. A failure to write it must not change what the caller is told
+// about the records themselves, which are already rolled back, so it is logged
+// (operation_id and the error only) and swallowed; the row then stays pending
+// until the stale-pending sweep fails it. A row that is no longer pending (the
+// sweep got there first) is already terminal: that is not a failure and is not
+// logged.
+func (s *bulkStatusService) recordBulkStatusOutcome(ctx context.Context, operationID uint) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkOutcomeTimeout)
 	defer cancel()
-	if err := s.updateBulkOperationStatus(ctx, operationID, status); err != nil {
-		s.logger.WithError(utils.LogError(err)).WithField("operation_id", operationID).
-			Warn("Failed to record bulk status operation outcome")
+	err := s.updateBulkOperationStatus(ctx, operationID, models.StatusFailed)
+	if err == nil || errors.Is(err, apperrors.ErrBulkOperationNotPending) {
+		return
 	}
+	s.logger.WithError(utils.LogError(err)).WithField("operation_id", operationID).
+		Warn("Failed to record bulk status operation outcome")
 }
 
 // BulkSetLeadStatus sets one status on every listed lead.

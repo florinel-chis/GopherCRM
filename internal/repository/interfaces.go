@@ -461,11 +461,29 @@ type PasswordResetTokenRepository interface {
 }
 
 // BulkOperationRepository records the history row of each bulk status update:
-// one bulk_operations row created before the batch runs, its status set to the
-// outcome afterwards.
+// one bulk_operations row created pending before the batch runs, completed
+// inside the batch transaction, or failed after a batch that rolled back. A
+// row left pending (its batch never committed) is failed by the stale-pending
+// sweep (#196).
 type BulkOperationRepository interface {
 	Create(ctx context.Context, operation *models.BulkOperation) error
+	// CompletePending sets a pending row completed with one conditional
+	// UPDATE by primary key (WHERE id = ? AND status = 'pending'). Called on
+	// the transaction-bound repository, it commits or rolls back with the
+	// batch. No live pending row returns apperrors.ErrBulkOperationNotPending.
+	CompletePending(ctx context.Context, id uint) error
+	// UpdateStatus sets the status of a row that is still pending, by primary
+	// key; a completed or failed row is never overwritten. No live pending
+	// row returns apperrors.ErrBulkOperationNotPending and changes nothing.
 	UpdateStatus(ctx context.Context, id uint, status models.BulkOperationStatus) error
+	// MarkStalePendingFailed fails the live pending rows created strictly
+	// before cutoff and returns how many it changed. It reads candidate ids
+	// with a plain non-locking SELECT in chunks of at most 500 and updates
+	// each chunk by primary key, so it takes no lock through
+	// idx_bulk_operations_status.
+	MarkStalePendingFailed(ctx context.Context, cutoff time.Time) (int64, error)
+
+	WithTx(tx *gorm.DB) BulkOperationRepository
 }
 
 // BulkStatusRepository holds the read and write halves of a bulk status change.

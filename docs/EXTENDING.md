@@ -128,7 +128,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (`productSearchClause`).
 - A delete that matched no row returns `gorm.ErrRecordNotFound` (`productRepository.Delete`).
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
-  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 903).
+  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 956).
 - Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
   rejection of an unknown sort column and soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
@@ -464,7 +464,7 @@ it is the cleanest removal.
 | Layer | Remove or change |
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
-| Wiring | `cmd/main.go` (import line 12; construction lines 321-346; handler line 384; reconcile and scheduler lines 418-438; route line 495); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)` (line 510) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker and the form retention purge |
+| Wiring | `cmd/main.go` (import line 12; construction lines 321-346; handler line 384; reconcile and scheduler lines 418-438; route line 495); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)` (line 516) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker, the form retention purge and the stale bulk operation sweep |
 | Configuration | `AEOConfig` and its block (`internal/config/config.go:145,330`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:134-138`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |

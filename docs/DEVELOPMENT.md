@@ -176,11 +176,11 @@ that is cancelled or times out therefore stops waiting for a pooled connection o
 rolls back and writes nothing: a confirmation token stays unspent, and a captcha check abandoned
 by the request returns the context's error instead of a spam verdict. A bulk batch cancelled after
 its history row exists records `failed` through `UpdateStatus` on `context.WithoutCancel(ctx)`
-bounded by 5 s; if the connection or the row is still held elsewhere when that bound expires,
-the write is abandoned, a warning is logged and the history row stays `pending`. Mail and
-notifications still go out only after the commit and are not tied to the request. The
-cancellation surfaces as the generic failure answer (500, or the invalid-link page for a
-confirmation) to a client that is already gone, and is logged like any other failure of the route.
+bounded by 5 s; if the connection or the row is still held elsewhere when that bound expires, the
+write is abandoned, a warning is logged and the row stays `pending` until the sweep fails it (see
+*Bulk endpoints*, #196). Mail and notifications still go out only after the commit and are not
+tied to the request. The cancellation surfaces as the generic failure answer (500, or the
+invalid-link page for a confirmation) to a client already gone, and is logged like any failure.
 
 These entry points (`LeadService.ConvertToCustomer`, `FormService.SubmitPublic` and
 `ConfirmSubmission`, `BulkStatusService.BulkSet*Status`) are transaction roots. Called with a
@@ -198,9 +198,9 @@ method not named above (`LeadService.Create` and `Update` among them), which sti
 `context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
 take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
 (one-connection pool; cancelled while the first read, the transaction or the spam write waits,
-cancelled before the call, and the bulk outcome recorded `failed` or left `pending` when its own
-bounded write cannot get the connection), `TestRequestCancellationMySQLLockWait` (queued behind
-another transaction's row lock, observed as the same statement still executing in
+cancelled before the call, and the bulk outcome recorded `failed`, or left `pending` until a sweep
+fails it, when its bounded write cannot get the connection), `TestRequestCancellationMySQLLockWait`
+(queued behind another transaction's row lock, observed as the same statement still executing in
 `information_schema.PROCESSLIST` on two consecutive polls, which works on MySQL 8 and MariaDB
 10.11), `TestRequestCancellationCaptchaVerifier` (a stalled verification server),
 `TestRequestRootRequired{SQLite,MySQL}`, `TestTransactionManagerDB{SQLite,MySQL}` and, in the
@@ -727,13 +727,66 @@ Each one normalises the ids (1–100, duplicates count once), checks the role, w
 `bulk_operations` history row, then inside ONE transaction reads every listed record through
 `BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
 or in a forbidden transition (the offending ids go into `error.details`), and only then writes
-the status — plus, for leads, the automation events on the same transaction. The history row is
-set to `completed` or `failed` afterwards; a failure to do so is logged and never changes the
-response. There is no generic bulk create/update/delete/action machinery any more (#112); a new
+the status — plus, for leads, the automation events on the same transaction — and, as the last
+write of that transaction, sets the history row `completed` (see below). There is no generic bulk
+create/update/delete/action machinery any more (#112); a new
 bulk operation gets its own narrow service method and repository halves the same way, and a bulk
 erasure would need per-item isolation designed afresh (each erasure is one savepoint-bracketed
 unit, `runErasureUnit`, but a batch would also have to report per-item failures and authorize
 every item's whole graph).
+
+**Every bulk history row reaches a terminal status (#196).** `completed` is written inside the
+batch transaction by `BulkOperationRepository.WithTx(tx).CompletePending(ctx, id)`, a conditional
+`UPDATE … WHERE id = ? AND status = 'pending'` by primary key. It commits with the records or not
+at all, so a row that is still `pending` belongs to a batch that did not commit. When it matches
+no row it returns `apperrors.ErrBulkOperationNotPending` and the whole batch rolls back. That
+sentinel is a plain `errors.New` that wraps none of `ErrNotFound`, `ErrForbidden` or
+`gorm.ErrRecordNotFound` and is not an `AppError`, so `respondBulkStatusError` answers 500 with no
+handler change: a batch whose own row was swept before it committed answers 500 and changes
+nothing. After a batch that rolled back, `recordBulkStatusOutcome` writes only `failed`, through
+`UpdateStatus` on `context.WithoutCancel(ctx)` bounded by 5 s. `UpdateStatus` is conditional on
+`status = 'pending'` too, so a late write never overwrites a `completed` or `failed` row; its
+`ErrBulkOperationNotPending` is ignored without a warning, and any other failure is only logged
+(`operation_id` and the error through `utils.LogError`) and never changes the answer.
+
+A row whose `failed` write timed out stays `pending` until `service.BulkOperationRecoveryRuntime`
+(`internal/service/bulk_operation_recovery_runtime.go`, wired by `cmd/bulk_recovery_runtime.go`)
+sweeps it. The sweep runs at boot and every `BulkOperationSweepInterval` (15 minutes) on every
+replica, with the cutoff `now - BulkOperationStaleAfter` (1 hour); the horizon, the interval and
+the chunk size (`repository.BulkOperationSweepChunk`, 500) are package constants, not settings.
+`MarkStalePendingFailed(ctx, cutoff)` works in two steps: a plain, non-locking `SELECT id … WHERE
+status = 'pending' AND created_at < cutoff AND deleted_at IS NULL ORDER BY id`, read in chunks of
+at most 500 by keyset, then per chunk one `UPDATE` by primary key (`id IN (…)` plus the same
+predicate) that sets `failed` and `updated_at`. It returns the summed count; extra sweeps on other
+replicas only compete for the same rows, each changing once. The sweep must never take a lock
+through `idx_bulk_operations_status` (no locking read, no `UPDATE` whose predicate is the status
+index): an index-driven `UPDATE` locks the secondary index before the primary key, the reverse of
+`CompletePending`'s order, and deadlocks (MySQL/MariaDB error 1213) against live batches. The
+index (non-unique, `bulk_operations(status)`) comes from `models.MigrateDatabase` on SQLite and
+from `migrations/20261110120000_add_bulk_operation_status_index` on MySQL/MariaDB. `failed`
+therefore means none of the batch's records changed, with one exception: rows already `pending`
+when this was deployed recorded `completed` after their commit under the old code, so their batch
+may have committed; they are swept to `failed` all the same (outcome unknown, documented, not
+stored). Sweep log lines carry only the `failed` count and, on failure, the error through
+`utils.LogError`. `Stop` cancels the sweep and joins its goroutine under main's shared deadline.
+
+Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestBulkOutcomeRecovery{SQLite,MySQL}` (a failed completion rolls the batch back; a rolled-back
+batch whose `failed` write times out is `pending`, then `failed` after one sweep past the horizon;
+a row swept before its batch completed; late writes), `TestBulkOperationRecoveryRuntimeLifecycle`,
+`TestBulkOperationRecoveryLogsOmitPersonalData` and the updated
+`TestRequestCancellation{SQLite,MySQL}` and `TestBulkStatusService{SQLite,MySQL}`
+(`internal/service`); `TestBulkOperationRepositoryOutcome{SQLite,MySQL}` (1,201 stale rows in three
+chunks, captured statements, an `EXPLAIN` on MySQL) and `TestBulkOperationSweepConcurrent{SQLite,MySQL}`
+(sequential on SQLite; on MySQL concurrent sweeps, a sweep racing a batch, and live batches against
+looping sweeps with no error 1213) (`internal/repository`); `TestBulkOperationStatusIndexSQLite`
+(`internal/models`); `TestBulkOperationRecoveryProductionWiring` (`cmd`, the real wiring over a
+SQLite file); `TestBulkOperationStatusIndexMigrationFiles` and `TestBulkOperationStatusIndexMigration`
+(`cmd/migrate`). CI limit: the MySQL roots in `internal/service` and `internal/repository`
+`bulk*_test.go` are discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the
+transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
+`make verify-backend` has no DSN and skips them. Registering the migration roots in the Database
+migrations workflow is an operator follow-up.
 
 **Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
 
@@ -1322,9 +1375,10 @@ while the count is non-zero. Tests substitute `aeoSchedulerClock` to deliver a d
 Follow-up automation (#164) is the second owner of background work. `internal/service/
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
-(`combineStops`) that `main` runs — automation first, then the form retention purge, then AEO —
-before `models.CloseDatabase`. That order describes the code and is not a contract: no handle
-depends on another, all three share one deadline, and no test asserts the order.
+(`combineStops`) that `main` runs — automation first, then the form retention purge, then the
+stale bulk operation sweep (#196), then AEO — before `models.CloseDatabase`. That order describes
+the code and is not a contract: no handle depends on another, all four share one deadline, and no
+test asserts the order.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
@@ -1407,8 +1461,8 @@ The pieces, and why each is shaped the way it is:
   run), closes admission, cancels the owned context and waits for every admitted step to release —
   a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
   afterwards — then joins the goroutine, all under the one deadline main passes to the combined
-  handle (`aeoDrainTimeout`, 15 s, shared with the form retention and AEO drains that run after
-  it). A drained
+  handle (`aeoDrainTimeout`, 15 s, shared with the form retention, bulk operation sweep and AEO
+  drains that run after it). A drained
   runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
   even on a context that has already ended: the join and the admission drain check their
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
@@ -1529,8 +1583,8 @@ the setting is off, so no goroutine runs and no row is read.
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
-  drains after the automation worker and before AEO:
-  `combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)`.
+  drains after the automation worker and before the stale bulk operation sweep and AEO:
+  `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)`.
 - **Replicas.** The purge is safe on every replica, unlike the automation worker: extra sweeps only
   compete for the same rows.
 - **Logs.** A sweep logs `spam_removed`, `pending_removed`, `tokens_removed` and `chunks`, and a

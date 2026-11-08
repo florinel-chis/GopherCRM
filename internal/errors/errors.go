@@ -133,6 +133,14 @@ var (
 	// ErrNotificationNotFound is a notification that does not exist or that
 	// belongs to another user: both are 404.
 	ErrNotificationNotFound = errors.New("notification not found")
+
+	// ErrBulkOperationNotPending is a conditional write to a bulk_operations
+	// row (completed inside the batch transaction, failed afterwards) that
+	// found no live pending row with that id: the row was already completed
+	// or failed, for example by the stale-pending sweep (#196). It is a plain
+	// sentinel that wraps no not-found or forbidden error and is not an
+	// AppError, so the bulk status handler answers it with the generic 500.
+	ErrBulkOperationNotPending = errors.New("bulk operation is no longer pending")
 )
 
 // Error codes

@@ -30,8 +30,7 @@ const (
 var userTokenVersionColumns = []string{"token_version"}
 
 // TestUserTokenVersionMigrationFiles needs no database: the pair exists, adds
-// and drops exactly the guarded column, adds no index, key or backfill, and is
-// the newest migration of the directory.
+// and drops exactly the guarded column, and adds no index, key or backfill.
 func TestUserTokenVersionMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, userTokenVersionName+".up.sql"))
@@ -49,17 +48,8 @@ func TestUserTokenVersionMigrationFiles(t *testing.T) {
 	assert.NotContains(t, upSQL, "create table", "no new table")
 	assert.NotContains(t, upSQL, "\nupdate ", "existing rows are not backfilled")
 	assert.NotContains(t, downSQL, "drop table", "rollback keeps the rows")
-
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, userTokenVersionName+".up.sql", newest, "the newest migration")
-	assert.Equal(t, userTokenVersionVersion, latestMigrationVersion)
+	// The newest-migration assertion moved to TestBulkOperationStatusIndexMigrationFiles
+	// when 20261110120000_add_bulk_operation_status_index (#196) followed this pair.
 }
 
 func snapshotUserTokenVersionColumns(t *testing.T, tdb *migrationTestDB) []string {

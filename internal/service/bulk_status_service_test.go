@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -269,9 +270,19 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 
 		rows := operations(t, db)
 		require.Len(t, rows, 2)
-		for _, row := range rows {
-			assert.Equal(t, models.StatusPending, row.Status, "the outcome write failed, so the row stays pending")
-		}
+		// #196: completed is written inside the batch transaction, so the
+		// committed batch's row is completed whatever the later write does.
+		assert.Equal(t, models.StatusCompleted, rows[0].Status, "completed commits with the batch")
+		assert.Equal(t, models.StatusPending, rows[1].Status, "right after the call the failed write's fault leaves the row pending")
+
+		// A sweep with the clock past the horizon fails the pending row.
+		swept, err := SweepStaleBulkOperations(context.Background(), repository.NewBulkOperationRepository(db),
+			time.Now().Add(BulkOperationStaleAfter+time.Minute))
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, swept)
+		rows = operations(t, db)
+		assert.Equal(t, models.StatusCompleted, rows[0].Status, "a completed row is never swept")
+		assert.Equal(t, models.StatusFailed, rows[1].Status, "the sweep moves the pending row to failed")
 	})
 
 	t.Run("a failed history create refuses the batch before any write", func(t *testing.T) {
