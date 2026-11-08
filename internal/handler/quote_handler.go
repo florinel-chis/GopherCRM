@@ -432,7 +432,7 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a quote
-// @Description Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. Quotes hold no personal data, so this is not an erasure.
+// @Description Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth

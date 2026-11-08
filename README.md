@@ -460,6 +460,14 @@ before this rule existed are not repaired automatically: `docs/DEVELOPMENT.md` l
 that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
 are all soft-deleted have no supported path yet.
 
+Deals and quotes of the erased customers and leads are kept with their links, stages, amounts,
+statuses, totals and history, but the text staff typed into them can name the client, so the same
+transaction overwrites it: deal titles become `[redacted]` and their notes and lost reasons are
+emptied, quote titles become `[redacted]` and their notes are emptied whatever the quote status,
+quote line descriptions are reset to the product names, and notifications about those deals are
+deleted (#245). Ticket and task text is kept; see `docs/DEVELOPMENT.md` for the ticket redaction
+procedure.
+
 Two consequences:
 
 - **Erasure cannot be undone.** The only way to get the data back is to restore a database backup.

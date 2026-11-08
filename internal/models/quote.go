@@ -69,9 +69,13 @@ func (s QuoteStatus) CanTransitionTo(to QuoteStatus) bool {
 // everything, lines included, is editable only while the status is draft.
 //
 // Money is integer minor units next to one ISO 4217 code shared by every
-// line. A quote copies no personal data: the recipient is read from the
-// linked customer at send time, so erasing the customer leaves the quote and
-// its history untouched (the links are business links, like a deal's).
+// line. A quote copies no contact data: the recipient is read from the linked
+// customer at send time. The links are business links, like a deal's, so
+// erasing the customer keeps the quote, its status, totals and history. The
+// title, notes and line descriptions are staff-typed free text that may name
+// the client, so erasing the quote's customer, or the customer or lead of its
+// deal, overwrites them in the same unit, whatever the status: title
+// "[redacted]", notes empty, each line's description its product's name (#245).
 type Quote struct {
 	BaseModel
 	// Quote title, trimmed, 1 to 200 characters. Required.

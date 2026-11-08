@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-submission can deadlock with the retention purge, so `storePendingSubmission` now runs under
   `WithTransactionAndRetry`, with a fresh submission id on each attempt and one confirmation mail
   after the commit.
+- **Erasure redacts the deal and quote text that can name the person (#245).** Erasing a customer
+  or lead (directly, through a converted lead or through a customer-role login) now also, in the
+  same transaction, sets the title of every linked deal to `[redacted]` and empties its notes and
+  lost reason; sets the title of every quote addressed to an erased customer or grown from such a
+  deal to `[redacted]` and empties its notes, whatever its status; resets each line description of
+  those quotes to its product's name; and hard-deletes the notifications about those deals. Live
+  and soft-deleted rows are reached alike. The rows, their links, stages, amounts, statuses, totals
+  and history stay, `deals.source` is kept, and deals and quotes reached only through `owner_id`
+  are untouched. A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps
+  its text, and graphs erased before this release are not repaired. No schema change and no API
+  response change.
 
 ### Fixed
 

@@ -987,7 +987,8 @@ What happens on `DELETE`:
   support account past the admin-only `DELETE /users/{id}` and its self-delete guard. So a customer
   or lead erasure leaves a staff user there alone, and erasing a staff user directly erases that
   user only. `assigned_to_id`, `owner_id`, ticket/task assignees, `company_id` and deal, quote and
-  ticket links are business links: never followed, never cleared. `customers.user_id` itself is
+  ticket links are business links: never followed to another person, never cleared (the deal and
+  quote links are read to find the business text to scrub, see below). `customers.user_id` itself is
   kept (an id, not personal data). Note the naming trap: the body of `POST /customers/{id}/assign`
   calls its field `user_id`, but it writes `assigned_to_id`.
 - **Who may erase what.** `DELETE /users/{id}` and `DELETE /customers/{id}` are admin-only routes.
@@ -1007,6 +1008,25 @@ What happens on `DELETE`:
 - Only then is each row soft-deleted. The rows are deliberately **kept** so that foreign keys from
   tickets, tasks, deals, quotes and leads still resolve — business records survive, the person
   does not.
+- **Deal and quote text (#245).** Once the traversal has reached every row of the person, the
+  same unit scrubs the staff-typed text of the deals and quotes linked to the erased customers and
+  leads (`internal/repository/business_text_erasure.go`, run by `eraseGraph` after the cascade):
+  every deal whose `customer_id` is an erased customer or whose `lead_id` is an erased lead gets
+  `title` `[redacted]`, `notes` `''` and `lost_reason` `''`; every quote whose `customer_id` is an
+  erased customer, or whose `deal_id` is one of those deals (even when its `customer_id` names
+  another customer), gets `title` `[redacted]` and `notes` `''`, whatever its status (an accepted
+  quote included), and each of its lines gets the name of its product as `description` (soft-deleted
+  products included); and every notification with `entity_type = 'deal'` about one of those deals
+  is hard-deleted (`Unscoped`), whatever its recipient, because an automation step renders
+  `deal.title` into it. Live and soft-deleted rows are reached alike and keep their own deletion
+  state. Stage, probability, amount, currency, `source`, the links, the owner, status, totals,
+  dates, line quantities, prices, discounts and positions, `deal_stage_changes` and
+  `quote_status_changes` are unchanged. `owner_id` is never followed, so a staff user's erasure
+  leaves the deals and quotes they own alone. Each table is probed with `tx.Migrator().HasTable`
+  and skipped when absent (fixtures that migrate a subset); when it exists every failure rolls the
+  unit back, and the errors name tables and ids only. The fields are overwritten wholesale; there
+  is no attempt to detect a name inside them. A locked (sent, accepted …) quote is rewritten all
+  the same: the erasure is the only writer that may.
 - **One unit, exactly once.** The whole graph is one transaction; a repository obtained through
   `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction (released on success,
   rolled back on an error or a panic, sent past GORM's prepared-statement wrapper), so a caller
@@ -1045,19 +1065,38 @@ What the erasure touches, and what it keeps on purpose:
 | `form_confirmation_tokens` and `form_mail_deliveries` of those submissions | hard-deleted | — |
 | `form_submissions` with no `lead_id` whose `email` matches the erased lead, customer or user (#214; live and soft-deleted, rows of soft-deleted forms, every status) | `email` → the erased row's placeholder; `data` → `{}`; `ip_address`, `user_agent`, `referrer` and the six attribution columns → `''`; their `form_confirmation_tokens` and `form_mail_deliveries` hard-deleted. Matched on the `email` column only, `email IN (original, lower(original))`: exact or lower-cased on SQLite; on MySQL/MariaDB the `utf8mb4_unicode_ci` collation decides (case- and accent-insensitive, trailing spaces ignored), the rule form intake's lead linking uses. The `data` JSON is not searched. Every submission from that address is affected, a shared inbox's included; a blank or placeholder original matches nothing | `form_id`, `status`, `lead_id` (NULL), the row's own deletion state |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
-| `notifications` addressed to an erased user, or whose entity is an erased lead | hard-deleted | notifications about deals and other leads |
+| `notifications` addressed to an erased user, whose entity is an erased lead, or whose entity is a deal reached below (#245) | hard-deleted | notifications about unreached deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
-| `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only) |
-| `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `deals` (`title`, `notes`, `lost_reason`, `source`), `quotes` (`title`, `notes`), `quote_lines` (`description`), `companies` (`notes`), staff-written ticket comments | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*) |
-| `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed |
+| `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only); runs of a reached deal keep running and render the redacted title |
+| `deals` whose `customer_id` is an erased customer or whose `lead_id` is an erased lead (live and soft-deleted; #245) | `title` → `[redacted]`; `notes`, `lost_reason` → `''` | stage, probability, amount, currency, `source`, every link, `owner_id`, dates, deletion state |
+| `quotes` whose `customer_id` is an erased customer or whose `deal_id` is a deal above (every status, live and soft-deleted; #245) | `title` → `[redacted]`; `notes` → `''` | status, currency, totals, `valid_until`, `sent_at`, `closed_at`, `last_emailed_at`, every link, `owner_id`, deletion state |
+| `quote_lines` of those quotes | `description` → the name of the line's product (soft-deleted products included) | product, quantity, prices, discount, total, position |
+| `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `companies` (`notes`), staff-written ticket comments, deals and quotes reached only through `owner_id` | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*). A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text |
+| `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
+`test/integration/business_text_erasure_sweep_test.go`,
 `internal/repository/identity_erasure_test.go`) seed the person into every scrubbed target above
 first and assert the sweep can see each copy before the erasure; an empty table would prove
 nothing.
+
+Regression roots for the deal and quote text (#245), on SQLite and on a disposable
+`TEST_MYSQL_DSN` schema (skipped without it) unless noted, in
+`internal/repository/business_text_erasure_test.go`:
+`TestCustomerErasureScrubsDealText{SQLite,MySQL}`, `TestCustomerErasureScrubsQuoteText{SQLite,MySQL}`,
+`TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL}` (admin and non-admin lead erasure, converted
+lead, customer-role login, refused erasure), `TestBusinessTextErasureLeavesUnrelatedRecords{SQLite,MySQL}`,
+`TestBusinessTextErasureAtomic{SQLite,MySQL}` (a failure injected into the `quote_lines` scrub, and
+a `WithTx` caller that rolls back), `TestBusinessTextErasurePurgesDealNotifications{SQLite,MySQL}`
+and `TestBusinessTextErasureWithoutDealTables` (SQLite, two schema subsets); the identity sweep
+`TestIdentityErasure{SQLite,MySQL}`; `TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData`,
+`TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData` and
+`TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory` (`test/integration`); and, over
+HTTP, `TestBusinessTextErasureAPISQLite` (`tests`). CI limit: the MySQL roots skip in
+`make verify-backend`, which has no DSN; registering them in a checker is an operator follow-up.
 
 **Unlinked submissions (#214).** `eraseRecord` reads the row's original address before it writes
 the placeholder (the plan's `AfterScrub` sees only the placeholder) and, after `AfterScrub` and
@@ -1147,9 +1186,12 @@ Known limits of the erasure, in one place:
   #183.
 - **History.** Deploying a new erasure rule does not repair graphs erased under an older one (see
   above); fully soft-deleted graphs have no supported path yet.
-- **Retained content.** Business free text (tickets, tasks, deals, quotes, quote lines, company
-  notes, staff-written comments) and legacy `bulk_operation_items` payloads are kept by design
-  (see the matrix); ticket text can be redacted first (see *Operator procedure for ticket text*).
+- **Retained content.** Business free text (tickets, tasks, company notes, staff-written comments,
+  `deals.source`, deals and quotes reached only through their owner) and legacy
+  `bulk_operation_items` payloads are kept by design (see the matrix); ticket text can be redacted
+  first (see *Operator procedure for ticket text*). Deal and quote text of the erased person is
+  scrubbed (#245), but a task rendered from `{{deal.title}}` before the erasure keeps its copy, and
+  deals and quotes of graphs erased before #245 are not repaired.
   Unlinked form submissions are erased only when their `email` matches the erased row; others
   stay until the retention purge removes them. Logs and issued JWTs are out of reach.
 - **Form-delete dialogs.** Both form-delete dialogs still say "Collected submissions are retained"
@@ -1370,7 +1412,9 @@ The pieces, and why each is shaped the way it is:
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
   the deadline passes: the process exits without closing the database and the next boot reconciles.
 - **Erasure hooks.** See *Deleting personal data* above: lead erasure cancels the lead's runs and
-  purges its notifications before the scrub; user erasure purges the user's notifications.
+  purges its notifications before the scrub; user erasure purges the user's notifications; the
+  erasure of a deal's customer or lead purges the notifications about that deal (#245) and leaves
+  its runs running, so later steps render the redacted title.
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
   simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
   conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,

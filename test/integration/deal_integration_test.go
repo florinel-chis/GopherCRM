@@ -503,10 +503,11 @@ func TestDealIntegrationTestSuite(t *testing.T) {
 
 // --- Erasure keeps deals and their history ------------------------------------
 
-// A deal holds no personal data and its links are business links, so erasing
-// the customer, the lead or the owning user behind it scrubs the person, leaves
-// the deal and its history exactly where they are, and the whole-database
-// sweep finds nothing of the person in either deals table.
+// A deal's links are business links, so erasing the customer, the lead or the
+// owning user behind it scrubs the person and keeps the deal, its stage, links,
+// owner and history. Its staff-typed text is not kept (#245): the title becomes
+// "[redacted]" and the notes and lost_reason are emptied, so the
+// whole-database sweep finds nothing of the person in either deals table.
 func TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory(t *testing.T) {
 	db := setupFullSchemaDB(t)
 	subject := newErasureSubject("deal-link")
@@ -522,9 +523,20 @@ func TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory(t *testing.T
 		repository.NewLeadRepository(db), repository.NewUserRepository(db), nil, utils.NewTransactionManager(db))
 	_, err := svc.ChangeStage(deal.ID, models.DealStageWon, nil, nil, actor.ID)
 	require.NoError(t, err)
+	// The service keeps lost_reason only on a lost deal, so the text is written
+	// after the transition, the way staff-typed text naming the client ends up
+	// on the row.
+	require.NoError(t, db.Model(&models.Deal{}).Where("id = ?", deal.ID).Updates(map[string]interface{}{
+		"notes":       "Signed by " + subject.FirstName + " after a call to " + subject.Phone,
+		"lost_reason": "Almost lost: " + subject.LastName + " asked for a discount",
+	}).Error)
+	var seeded models.Deal
+	require.NoError(t, db.First(&seeded, deal.ID).Error)
+	require.NotEmpty(t, seeded.Notes, "the deal carries notes before the erasure")
+	require.NotEmpty(t, seeded.LostReason, "the deal carries a lost_reason before the erasure")
 
-	require.Equal(t, []string{"customers", "leads", "users"}, tablesHolding(t, db, subject.identifiers()),
-		"the sweep must see the person where they are, and nowhere in the deals tables, before the erasure")
+	require.Equal(t, []string{"customers", "deals", "leads", "users"}, tablesHolding(t, db, subject.identifiers()),
+		"the sweep must see the person where they are, the deal's text included, before the erasure")
 
 	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
 	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
@@ -534,8 +546,11 @@ func TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory(t *testing.T
 
 	var survivor models.Deal
 	require.NoError(t, db.First(&survivor, deal.ID).Error, "the deal is still live")
-	assert.Equal(t, "Enterprise licence", survivor.Title)
+	assert.Equal(t, "[redacted]", survivor.Title)
+	assert.Empty(t, survivor.Notes)
+	assert.Empty(t, survivor.LostReason)
 	assert.Equal(t, models.DealStageWon, survivor.Stage)
+	assert.Equal(t, int64(500000), survivor.AmountCents)
 	require.NotNil(t, survivor.CustomerID)
 	assert.Equal(t, customer.ID, *survivor.CustomerID, "the business link survives the erasure")
 	require.NotNil(t, survivor.LeadID)

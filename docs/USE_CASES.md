@@ -385,6 +385,12 @@ A supplier that answers requests for quotation from business customers.
     with the other quote limits from recipe 2.
   - Product SKUs are indexed but not unique (`internal/models/product.go:19`), so they are not safe
     as a key into an ERP: #239.
+- **Erasure:** erasing a customer or lead keeps its deals and quotes, links, totals and history,
+  and overwrites their staff-typed text in the same transaction, whatever the quote status: deal
+  title `[redacted]` with empty notes and lost reason, quote title `[redacted]` with empty notes,
+  and each line's description reset to its product's name (#245; `docs/DEVELOPMENT.md`, *Deleting
+  personal data*). Keep anything an Article 17(3) exemption requires outside those fields, for
+  example in the accounting system.
 - **Do not promise:** an order, a delivery date, an inventory commitment, or a stock, order or ERP
   handoff.
 
@@ -428,6 +434,7 @@ planning around an issue number.
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
 | Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1046,1051,1054` | #214 |
+| Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |

@@ -36,8 +36,11 @@ the frontend gating.
 - Test data must come from `generateLeadData()` in `gocrm-ui/e2e/fixtures/admin-user.ts`; never
   hardcode an email address.
 - **Deleting a lead is irreversible erasure** (`internal/repository/erasure_cascade.go`), and it
-  cascades to the customer the lead was converted into. Only ever delete records the test itself
-  created.
+  cascades to the customer the lead was converted into. It also redacts the staff-typed text of
+  the deals linked to the lead or that customer and of their quotes (deal title `[redacted]`, notes
+  and lost reason empty; quote title `[redacted]`, notes empty, line descriptions reset to the
+  product names) and deletes the notifications about those deals (#245); a refused sales erasure of
+  a converted lead changes none of them. Only ever delete records the test itself created.
 - Non-admin roles need accounts the suite cannot self-serve: `POST /auth/register` always creates a
   `customer` (`auth_handler.go`), so sales and support accounts must come from an admin
   `POST /users` call. There is no non-admin login helper — `gocrm-ui/e2e/helpers/admin-auth.ts` is

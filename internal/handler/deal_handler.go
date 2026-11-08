@@ -543,7 +543,7 @@ func (h *DealHandler) History(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a deal
-// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). Deals hold no personal data, so this is not an erasure. No automation event is recorded.
+// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). This is not an erasure: the deal's title, notes and lost_reason stay on the deleted row. They are overwritten (title [redacted], notes and lost_reason empty) only when the linked customer or lead is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted deals too. No automation event is recorded.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth

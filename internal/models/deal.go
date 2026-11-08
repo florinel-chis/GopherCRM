@@ -74,11 +74,13 @@ const DealDefaultCurrency = "EUR"
 // exact on MySQL, MariaDB and SQLite alike, with no decimal dependency. Sums
 // are only ever meaningful per currency.
 //
-// A deal holds no personal data by design: the title and notes are free text
-// and may be typed to contain a name, the same accepted limitation as a
-// ticket subject. The links (company_id, customer_id, lead_id, owner_id) are
-// business links like assigned_to_id, so erasing the person behind any of them
-// leaves the deal and its history untouched.
+// The links (company_id, customer_id, lead_id, owner_id) are business links
+// like assigned_to_id, so erasing the person behind any of them keeps the deal,
+// its stage, amount and history. The title, notes and lost_reason are
+// staff-typed free text that may name the client, so erasing the customer or
+// lead the deal links to overwrites them (title "[redacted]", the other two
+// empty) in the same unit (#245; repository/business_text_erasure.go). Erasing
+// the owner does not: owner_id is never followed.
 type Deal struct {
 	BaseModel
 	// Deal title, trimmed, 1 to 200 characters. Required.

@@ -169,7 +169,11 @@ AutoMigrate, holding the database write lock while it does.
 ## Deal Model
 
 A sales opportunity, optionally linked to a company, a customer and the lead it grew from, always
-owned by a user. Holds no personal data; deleting one is a soft delete that keeps the history.
+owned by a user. Deleting one is a soft delete that keeps the history. The title, notes and
+lost reason are staff-typed and may name the client: erasing the linked customer or lead keeps the
+row, its stage, amount, links, owner and history, and sets `title` to `[redacted]` and `notes` and
+`lost_reason` to `''` in the same transaction, live and soft-deleted deals alike (#245; see
+[DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data)). Erasing the owner does not.
 Money is an integer amount in minor units next to an ISO 4217 code — sums are only meaningful per
 currency.
 
@@ -177,7 +181,7 @@ currency.
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| title | string | Yes | - | max 200 | Deal title (trimmed) |
+| title | string | Yes | - | max 200 | Deal title (trimmed); `[redacted]` after an erasure of the linked customer or lead |
 | stage | string | Yes | `qualification` | one of the stage values below | Pipeline stage |
 | amount_cents | int64 | Yes | 0 | ≥ 0 | Amount in minor units |
 | currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$` | ISO 4217 code |
@@ -238,15 +242,18 @@ reuse of a code or, scoped by `deleted_at`, stops meaning anything (see the gotc
 
 A priced offer to a customer, optionally grown from a deal, always owned by a user. A quote
 carries its lines and server-computed totals; everything, lines included, is editable only while
-the status is `draft`. Quotes copy no personal data: the recipient of the email is read from the
-linked customer at send time, so erasing the customer leaves the quote, its lines and its history
-untouched, with `customer_id` in place as a business link (as deals keep theirs).
+the status is `draft`. Quotes copy no contact data: the recipient of the email is read from the
+linked customer at send time, so erasing the customer keeps the quote, its status, totals, lines
+and history, with `customer_id` in place as a business link (as deals keep theirs). The staff-typed
+text is not kept: erasing the quote's customer, or the customer or lead of its deal, sets `title`
+to `[redacted]` and `notes` to `''` and resets each line's `description` to the name of its product,
+in the same transaction and whatever the status (#245).
 
 ### Fields
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| title | string | Yes | - | max 200, trimmed | Free text (the same accepted limitation as deal titles) |
+| title | string | Yes | - | max 200, trimmed | Free text; `[redacted]` after an erasure that reaches the quote |
 | status | enum | Yes | `draft` | one of the status values below, max 20 | Lifecycle status |
 | currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`; immutable once the quote has lines | Currency of every line and total |
 | subtotal_cents | int64 | Yes | 0 | Σ quantity × unit_price_cents over the lines; never taken from a request | |
@@ -292,7 +299,7 @@ overridden in the request and edited while the quote is a draft. Lines are hard-
 | quote_id | uint | Yes | FK to quotes, indexed | The quote |
 | product_id | uint | Yes | FK to products, indexed; a soft-deleted product still resolves | The product it was priced from |
 | position | int64 | Yes | 1-based, assigned max+1 on insert | Display order |
-| description | string | Yes | max 255 | Copied from `products.name` unless overridden |
+| description | string | Yes | max 255 | Copied from `products.name` unless overridden; reset to `products.name` by an erasure that reaches the quote |
 | quantity | int64 | Yes | 1 to 1,000,000 | |
 | unit_price_cents | int64 | Yes | 0 to 10^12, and quantity × unit_price_cents at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
 | discount_bp | int64 | Yes | 0 to 10000 | Per-line percentage in basis points (12.5 % = 1250) |

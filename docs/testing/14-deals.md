@@ -41,10 +41,13 @@ names the Go test that already pins its API behaviour.
   hidden lead is the same **400** `INVALID_REFERENCE` as a missing one. Every deal returned is
   redacted per caller: `lead_id` and `lead` are omitted when the caller may not see the lead, which
   is decided on each read (admin-made links, lead owner changes).
-- **Deals hold no personal data and are not erased.** `DELETE /deals/{id}` is a soft delete; the
-  `deal_stage_changes` rows stay. Erasing a linked customer, lead or user leaves `customer_id`,
-  `lead_id`, `owner_id` and `changed_by_id` in place as business links. A case may only delete
-  deals it created.
+- **Deals are kept by an erasure; their text is not (#245).** `DELETE /deals/{id}` is a soft
+  delete; the `deal_stage_changes` rows stay. Erasing a linked customer, lead or user leaves
+  `customer_id`, `lead_id`, `owner_id` and `changed_by_id` in place as business links. Erasing the
+  linked customer or lead (directly, through a converted lead or through a customer-role login)
+  also sets the deal's `title` to `[redacted]`, empties `notes` and `lost_reason` and deletes the
+  notifications about the deal; stage, amount and history stay. Erasing the owner changes nothing
+  on the deal. A case may only delete deals it created.
 - **Stage rules live in one place** (`applyDealTransition`) and apply to create, `PUT` and the
   stage endpoint alike: probability defaults to 10/40/70 for the open stages unless sent; `won` is
   always 100 and `lost` always 0 whatever is sent; `closed_at` is set on entering `won` or `lost`
@@ -477,13 +480,21 @@ names the Go test that already pins its API behaviour.
   2. Delete (erase) the customer; open its deal and history.
 - **Expected:** Step 1: the deal is intact with no company (`company_id` NULL, cleared in the same
   transaction as the company's soft delete). Step 2: the customer's personal fields are
-  overwritten as before; the deal keeps `customer_id`, its stage and its history rows; nothing of
-  the person appears in `deals` or `deal_stage_changes`.
+  overwritten as before; the deal keeps `customer_id`, its stage, amount and history rows, its
+  title reads `[redacted]` and its notes and lost reason are empty (#245); nothing of the person
+  appears in `deals` or `deal_stage_changes`.
 - **Automation:** planned — `admin-deals.spec.ts` (new); `admin-companies.spec.ts` for the company
   half. Go: `deal_service_test.go` `TestCompanyServiceDelete_UnlinksDealsToo`;
   `deal_integration_test.go` `TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory`,
   `TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory`; `erasure_pii_sweep_test.go`
-  `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` now lists both tables.
+  `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` now lists both tables. The
+  text redaction (#245) is pinned in Go: `internal/repository/business_text_erasure_test.go`
+  `TestCustomerErasureScrubsDealText{SQLite,MySQL}`, `TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL}`
+  (lead, converted lead, customer-role login, a refused sales erasure that changes nothing),
+  `TestBusinessTextErasureLeavesUnrelatedRecords{SQLite,MySQL}` (another customer's deal and a deal
+  owned by an erased staff user stay byte for byte), `TestBusinessTextErasurePurgesDealNotifications{SQLite,MySQL}`
+  (notifications about the deal are deleted); over HTTP, `tests/business_text_erasure_test.go`
+  `TestBusinessTextErasureAPISQLite`.
 
 ## 14.7 Pipeline board (2026-09-30)
 

@@ -125,7 +125,14 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
   customer/login linking, login, refresh rotation, password reset or API-key creation: a
   conversion or credential committed while an erasure is in flight can be missed, and opposite
-  entry points can deadlock (an error, never a partial commit).
+  entry points can deadlock (an error, never a partial commit). The same holds for a deal or quote
+  write racing the business-text scrub (#245): a deal linked, or a quote edited, while the erasure
+  is in flight can keep its text.
+- **Deal and quote text left by the erasure (#245 follow-ups).** The erasure redacts the deal and
+  quote text of the erased customers and leads, but a task a `create_task` step rendered from
+  `{{deal.title}}` before the erasure keeps that text (`deal.title` stays allowed in task
+  templates), deals and quotes of graphs erased before #245 are not repaired, and the web client
+  has no indication that a title was redacted by an erasure (a later frontend ticket).
 - **Production SMTP** — password-reset delivery falls back to a redacted log line unless
   `SMTP_*` is configured; the forms mail and the quote email take the same fallback, and the quote
   email then reports success and stamps `last_emailed_at` with nothing delivered. A deployment

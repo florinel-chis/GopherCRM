@@ -208,9 +208,17 @@ func newErasureCascade(allowCustomers bool) *erasureCascade {
 // eraseGraph is the one entry point: it runs root against a fresh cascade
 // inside one erasure unit. Nothing else creates a cascade, so no step of an
 // erasure can start a second traversal with its own visited set.
+//
+// Once the traversal has reached every row of the person, the staff-typed text
+// of the deals and quotes linked to the erased customers and leads is scrubbed
+// in the same unit (business_text_erasure.go, #245).
 func eraseGraph(db *gorm.DB, allowCustomers bool, root func(c *erasureCascade, tx *gorm.DB) error) error {
 	return runErasureUnit(db, func(tx *gorm.DB) error {
-		return root(newErasureCascade(allowCustomers), tx)
+		cascade := newErasureCascade(allowCustomers)
+		if err := root(cascade, tx); err != nil {
+			return err
+		}
+		return cascade.scrubBusinessText(tx)
 	})
 }
 
