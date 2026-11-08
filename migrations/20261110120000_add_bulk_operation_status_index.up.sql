@@ -1,6 +1,6 @@
 -- Migration: Bulk operation status index
 -- Date: 2026-11-10
--- Description: The non-unique index idx_bulk_operations_status on
+-- Description: The index idx_bulk_operations_status (not unique) on
 -- bulk_operations(status) (#196). The stale-pending sweep, which every replica
 -- runs at boot and every 15 minutes, finds the pending rows older than an hour
 -- through it with a plain non-locking SELECT and then updates them by primary

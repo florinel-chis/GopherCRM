@@ -335,7 +335,10 @@ func runBulkOperationRepositoryOutcome(t *testing.T, db *gorm.DB) {
 		for _, query := range queries {
 			assert.Regexp(t, "(?i)^SELECT .*id.* FROM .*bulk_operations", query)
 			assert.Contains(t, query, "ORDER BY")
-			assert.Contains(t, query, "LIMIT 500")
+			assert.Regexp(t, `LIMIT (500|\?)$`, query, "chunks of BulkOperationSweepChunk; MySQL binds the limit")
+			if db.Dialector.Name() != "mysql" {
+				assert.Contains(t, query, "LIMIT 500", "SQLite writes the chunk size as a literal")
+			}
 			assert.Contains(t, query, "deleted_at` IS NULL")
 		}
 		for _, update := range updates {
