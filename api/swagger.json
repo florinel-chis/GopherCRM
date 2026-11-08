@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED \"Invalid credentials\", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
+        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED \"Invalid credentials\", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
         "title": "GopherCRM API",
         "contact": {},
         "version": "1.2.0"
@@ -15761,6 +15761,156 @@
                     },
                     "500": {
                         "description": "INTERNAL_ERROR - unexpected failure; details are logged, never returned",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/leads/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Roles: admin and sales (the /leads group guard, repeated in the handler and the service); support and customer get 403. The rows are exactly the leads the caller may list on GET /leads. An admin gets every live lead under the list's precedence, the first parameter present wins: search (substring match on first_name, last_name, email, company, phone and notes, honouring the sort), then classification (exact match, ascending id order, the sort ignored), then sort_by, else ascending id order. A sales user always gets only the leads it owns, in ascending id order; search, classification, sort_by and sort_order are ignored for that role. external_id, page, offset and limit are not read: the export is never paginated.\nThe success body is NOT the JSON envelope: it is the raw CSV, Content-Type text/csv; charset=utf-8 and Content-Disposition attachment; filename=leads-export.csv. Errors raised before the file starts (401, 403, 429, 500) use the JSON envelope. Every row is read by one ordered statement before the first byte is written, so a database failure is a JSON 500, never a truncated file. With a sort column the rows are ordered by that column and then by id in the same direction, so descending is the exact reverse of ascending.\nColumns, in this order: id, first_name, last_name, email, phone, company, position, source, status, classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at. created_at and updated_at are RFC 3339 in UTC (for example 2026-03-14T09:26:53Z). customer_id is empty for an unconverted lead and company_id for a lead without a company link. A text cell starting with =, @, a tab or a carriage return, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula (the customer export's rule). Erased (soft-deleted) leads never appear; converted leads do.",
+                "produces": [
+                    "text/csv",
+                    "application/json"
+                ],
+                "tags": [
+                    "leads"
+                ],
+                "summary": "Export leads as CSV",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Admin only: substring searched in first_name, last_name, email, company, phone and notes",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "unclassified",
+                            "test",
+                            "spam",
+                            "lead",
+                            "hot_lead"
+                        ],
+                        "type": "string",
+                        "description": "Admin only, ignored when search is present: exact classification to match",
+                        "name": "classification",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "created_at",
+                            "updated_at",
+                            "first_name",
+                            "last_name",
+                            "email",
+                            "company",
+                            "status",
+                            "classification",
+                            "source"
+                        ],
+                        "type": "string",
+                        "description": "Admin only, ignored when classification wins: sort column; any other value is ignored (no error)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "default": "asc",
+                        "description": "Sort direction for sort_by; any other value becomes asc",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The CSV file (raw body, not the JSON envelope)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'",
                         "schema": {
                             "allOf": [
                                 {

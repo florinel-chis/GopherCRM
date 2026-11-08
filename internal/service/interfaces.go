@@ -98,6 +98,12 @@ type LeadService interface {
 	// converted at or after `since`. Callers bucket them in Go: no date function
 	// is spelled the same on MySQL 8 and SQLite.
 	GetConversionTimestamps(since time.Time) ([]time.Time, error)
+	// ExportForActor returns every lead the actor may list, unpaginated, for
+	// GET /leads/export: an admin under the list's parameter precedence, a
+	// sales user only its own leads in id order with every parameter ignored,
+	// and an error matching apperrors.ErrForbidden for any other role, without
+	// a read.
+	ExportForActor(actor LeadViewer, params LeadExportParams) ([]models.Lead, error)
 }
 
 type CustomerService interface {

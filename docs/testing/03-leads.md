@@ -2,7 +2,7 @@
 
 Playwright E2E test-case catalog for the Leads area: the list page, create/edit forms, the detail
 page, deletion (which is GDPR erasure), search, sorting, the status and classification filters,
-lead-to-customer conversion, pagination, and the bulk status endpoint. Every **Expected** below
+lead-to-customer conversion, pagination, the CSV export, and the bulk status endpoint. Every **Expected** below
 states what the application does *today*; where that behaviour is defective or surprising a
 **Known issue** line says so and points at the source. The whole `/leads` API group is gated to
 admin + sales, so several cases exist purely to pin the difference between the backend guard and
@@ -10,7 +10,7 @@ the frontend gating.
 
 **Sources**
 
-- `docs/FEATURES.md` section 3 (rows 3.1–3.12) and section 10 (bulk status intro), Gap Summary
+- `docs/FEATURES.md` section 3 (rows 3.1–3.14) and section 10 (bulk status intro), Gap Summary
   G16, G17, G21, G34.
 - Frontend: `gocrm-ui/src/pages/leads/LeadList.tsx`, `LeadForm.tsx`, `LeadDetail.tsx`;
   `gocrm-ui/src/components/DataTable.tsx`, `ConvertLeadDialog.tsx`, `ConfirmDialog.tsx`,
@@ -904,11 +904,105 @@ the frontend gating.
   `TestListLeads_ByExternalID`, `TestListLeads_ByExternalIDSharedByTwoOwners`,
   `TestListLeads_ByExternalIDTooLong`.
 
+## 3.13 Export leads as CSV (API only)
+
+`GET /leads/export` (#234) has no UI control yet; an export button is a later frontend ticket. The
+cases below are API-level, driven through Playwright's `request` fixture or Go. Like the customer
+export, the success body is the raw CSV, not the JSON envelope; every refusal or failure before
+the file starts is the JSON envelope.
+
+### TC-LEAD-069 — Admin downloads every live lead as CSV
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin JWT; more than 1,000 leads of several owners, some converted, some
+  erased through `DELETE /leads/{id}`.
+- **Steps:**
+  1. `GET /api/v1/leads/export`.
+  2. Parse the body with a CSV parser.
+- **Expected:** 200, `Content-Type: text/csv; charset=utf-8`,
+  `Content-Disposition: attachment; filename=leads-export.csv`. The header row is `id, first_name,
+  last_name, email, phone, company, position, source, status, classification, external_id, notes,
+  owner_id, customer_id, company_id, created_at, updated_at`. Every live lead appears exactly once,
+  in ascending id order; erased leads are absent, converted leads present with their `customer_id`.
+  `customer_id` and `company_id` are empty when unset; timestamps are RFC 3339 in UTC
+  (`…Z`). `external_id`, `page`, `offset` and `limit` are ignored.
+- **Automation:** automated (backend) — `tests/lead_export_csv_test.go`
+  `TestLeadExportCSV{SQLite,MySQL}`; `internal/handler/lead_export_test.go` `TestLeadExportRecord`
+
+### TC-LEAD-070 — A sales user exports only its own leads, whatever it sends
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Sales JWT; leads owned by that user, by the admin and by a second sales user;
+  one of the sales user's leads erased, one converted.
+- **Steps:**
+  1. `GET /api/v1/leads/export`.
+  2. Repeat with `?search=…&classification=spam&sort_by=email&sort_order=desc`.
+- **Expected:** Both answers hold exactly the sales user's own live leads (the converted one
+  included, the erased one absent) in ascending id order; every `owner_id` cell is the caller's
+  id. Search, classification and sort are ignored for this role, as on `GET /leads` (TC-LEAD-003).
+- **Automation:** automated (backend) — `tests/lead_export_csv_test.go`
+  `TestLeadExportRoles{SQLite,MySQL}`; `internal/service/lead_export_test.go`
+  `TestLeadServiceExportScope`
+
+### TC-LEAD-071 — Support, customer and anonymous callers cannot export leads
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Support and customer JWTs.
+- **Steps:**
+  1. `GET /api/v1/leads/export` as support, then as customer.
+  2. The same request without credentials, and with a malformed token.
+  3. As admin, `GET /api/v1/leads/{id}` for an existing lead.
+- **Expected:** Step 1: **403** JSON envelope `FORBIDDEN` "Insufficient permissions", no
+  `Content-Disposition`. Step 2: **401** JSON envelope `UNAUTHORIZED`. Step 3: 200 with the lead:
+  the static `/leads/export` route does not shadow `/leads/{id}`. The handler and the service
+  refuse any role other than admin and sales on their own as well, without reading a lead.
+- **Automation:** automated (backend) — `tests/lead_export_csv_test.go`
+  `TestLeadExportRoles{SQLite,MySQL}`; `internal/handler/lead_export_test.go`
+  `TestLeadExportHandler`; `internal/service/lead_export_test.go`
+  `TestLeadServiceExportRefusesOtherRoles`
+
+### TC-LEAD-072 — Export cells are quoted and formula-like text is neutralised
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; leads whose names, company, position, notes contain commas,
+  double quotes and newlines, and leads whose cells start with `=`, `@`, a tab, `+sum(` or
+  `-not a number`, next to a phone `+1 (555) 010-0100` and notes `-12.5`.
+- **Steps:**
+  1. `GET /api/v1/leads/export` and parse the body with a CSV parser.
+- **Expected:** Commas, quotes and newlines round-trip exactly. A text cell starting with `=`,
+  `@`, a tab or a carriage return, or with `+`/`-` followed by anything other than a plain number,
+  is prefixed with an apostrophe (the customer export's `csvSafeField`); the phone number and the
+  negative figure are left alone.
+- **Automation:** automated (backend) — `tests/lead_export_csv_test.go`
+  `TestLeadExportCSV{SQLite,MySQL}`; `internal/handler/lead_export_test.go`
+  `TestLeadExportRecord`
+
+### TC-LEAD-073 — The admin export order follows the list's precedence and is total
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Admin JWT; more than 1,000 leads whose sort values run against id order,
+  with duplicate runs and empty company values.
+- **Steps:**
+  1. Export with `sort_by` `classification`, `company`, `email` and `created_at`, each `asc` and
+     `desc`.
+  2. Export with `search=…&classification=spam&sort_by=email&sort_order=desc`, then with
+     `classification=spam&sort_by=email`.
+  3. Export with an unknown `sort_by` and with `sort_order=sideways`.
+- **Expected:** Step 1: the rows are ordered by the column and then by id in the same direction,
+  so `desc` is the exact reverse of `asc`, and no lead is missing or repeated. Step 2: the search
+  wins and keeps the sort; then the classification wins and the rows come in ascending id order.
+  Step 3: the unknown column is dropped (ascending id order) and the bad direction becomes `asc`;
+  neither is a 400. The rows are read by one statement before the first byte is written, so a
+  database failure is a JSON 500, never a truncated file.
+- **Automation:** automated (backend) — `internal/repository/lead_export_traversal_test.go`
+  `TestLeadExportTraversal{SQLite,MySQL}`; `tests/lead_export_csv_test.go`
+  `TestLeadExportCSV{SQLite,MySQL}`
+
 ---
 
 ## Section 10 — Bulk lead status endpoint
 
-`POST /leads/bulk/status` is routed by `SetupBulkStatusRoutes` (`routes.go:125`) with its own
+`POST /leads/bulk/status` is routed by `SetupBulkStatusRoutes` (`routes.go:279`) with its own
 `RequireRole(admin, sales)` guard. **The UI exposes no bulk selection for leads**: `LeadList.tsx`
 does not pass `selectable` to `DataTable`, so no checkboxes render, and `DataTable`'s bulk-delete
 handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in

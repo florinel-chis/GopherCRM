@@ -6794,7 +6794,7 @@ info:
 
     ## Response envelope
     Every JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.
-    Exceptions that are not enveloped: GET /customers/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
+    Exceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
 
     ## Errors
     error.code is the stable value to branch on; error.message is for people and may change. Shared codes:
@@ -16913,6 +16913,110 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: Update the status of several leads at once
+      tags:
+      - leads
+  /leads/export:
+    get:
+      description: |-
+        Roles: admin and sales (the /leads group guard, repeated in the handler and the service); support and customer get 403. The rows are exactly the leads the caller may list on GET /leads. An admin gets every live lead under the list's precedence, the first parameter present wins: search (substring match on first_name, last_name, email, company, phone and notes, honouring the sort), then classification (exact match, ascending id order, the sort ignored), then sort_by, else ascending id order. A sales user always gets only the leads it owns, in ascending id order; search, classification, sort_by and sort_order are ignored for that role. external_id, page, offset and limit are not read: the export is never paginated.
+        The success body is NOT the JSON envelope: it is the raw CSV, Content-Type text/csv; charset=utf-8 and Content-Disposition attachment; filename=leads-export.csv. Errors raised before the file starts (401, 403, 429, 500) use the JSON envelope. Every row is read by one ordered statement before the first byte is written, so a database failure is a JSON 500, never a truncated file. With a sort column the rows are ordered by that column and then by id in the same direction, so descending is the exact reverse of ascending.
+        Columns, in this order: id, first_name, last_name, email, phone, company, position, source, status, classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at. created_at and updated_at are RFC 3339 in UTC (for example 2026-03-14T09:26:53Z). customer_id is empty for an unconverted lead and company_id for a lead without a company link. A text cell starting with =, @, a tab or a carriage return, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula (the customer export's rule). Erased (soft-deleted) leads never appear; converted leads do.
+      parameters:
+      - description: 'Admin only: substring searched in first_name, last_name, email,
+          company, phone and notes'
+        in: query
+        name: search
+        type: string
+      - description: 'Admin only, ignored when search is present: exact classification
+          to match'
+        enum:
+        - unclassified
+        - test
+        - spam
+        - lead
+        - hot_lead
+        in: query
+        name: classification
+        type: string
+      - description: 'Admin only, ignored when classification wins: sort column; any
+          other value is ignored (no error)'
+        enum:
+        - created_at
+        - updated_at
+        - first_name
+        - last_name
+        - email
+        - company
+        - status
+        - classification
+        - source
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction for sort_by; any other value becomes asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - text/csv
+      - application/json
+      responses:
+        "200":
+          description: The CSV file (raw body, not the JSON envelope)
+          schema:
+            type: string
+        "401":
+          description: 'UNAUTHORIZED: the Authorization header is missing or is neither
+            Bearer <jwt> nor ApiKey <key> (''Missing or invalid authorization header''),
+            or the credential is invalid, expired or belongs to a deactivated account
+            (''Invalid credentials'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN ''Insufficient permissions'': the caller is not
+            admin or sales'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: more than 120 requests per minute (burst
+            30) from this client IP, one bucket shared by every authenticated endpoint;
+            error.details.retry_after is ''60s'' and no Retry-After or X-RateLimit
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: unexpected failure; the message is always
+            ''An unexpected error occurred'''
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Export leads as CSV
       tags:
       - leads
   /notifications:

@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1143`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1154`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1153`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1164`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -228,7 +228,7 @@ lost deal.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
   `gocrm-ui/src/routes/index.tsx:53,161`), both admin and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
-  (`internal/handler/routes.go:224`).
+  (`internal/handler/routes.go:225`).
 - The quote email subject reads "Quote Q-… from GopherCRM" (`internal/service/quote_email.go:12-15`).
   Changing it is a code edit until #221 lands.
 
@@ -322,7 +322,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:127-135`). `GET /tickets` and `GET /tickets/my`
   refuse customers (`ticket_handler.go:153,316`), but `GET /customers/:id/tickets` lists the
   tickets of the customer record linked to the caller's account and refuses any other id
-  (`internal/handler/routes.go:149`, `ticket_handler.go:250-260`; tested in
+  (`internal/handler/routes.go:150`, `ticket_handler.go:250-260`; tested in
   `internal/integration/ticket_visibility_integration_test.go:560`). The UI has no customer
   ticket navigation, create form or comment form.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
@@ -339,7 +339,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   in #224.
 - Train staff on the difference between internal notes and public comments.
 - An integration that creates both customers and tickets **with one identity** must use an admin
-  API key: customer create is admin and sales (`internal/handler/routes.go:41`), ticket create is
+  API key: customer create is admin and sales (`internal/handler/routes.go:42`), ticket create is
   support and admin (`internal/handler/ticket_handler.go:87`), and API keys carry their owner's
   full role with no scopes (`APIKey`, `internal/models/apikey.go:5`). Two identities also work: a
   sales key creates the customer and a support key creates the ticket. The support key can then
@@ -359,7 +359,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1151`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1161`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
@@ -434,7 +434,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1143,1151,1154` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1153,1161,1164` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |

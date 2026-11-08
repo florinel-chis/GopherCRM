@@ -179,6 +179,21 @@ func (_m *LeadService) GetByClassification(classification models.LeadClassificat
 }
 
 // ListByExternalID provides a mock function with given fields: externalID
+// ExportForActor provides a mock function with given fields: actor, params
+func (_m *LeadService) ExportForActor(actor service.LeadViewer, params service.LeadExportParams) ([]models.Lead, error) {
+	ret := _m.Called(actor, params)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExportForActor")
+	}
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
 func (_m *LeadService) ListByExternalID(externalID string) ([]models.Lead, error) {
 	ret := _m.Called(externalID)
 

@@ -1,13 +1,13 @@
 package handler
 
 import (
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -425,7 +425,7 @@ func (h *LeadHandler) List(c *gin.Context) {
 func (h *LeadHandler) listByExternalID(c *gin.Context, externalID string, limit int) {
 	logger := utils.LogHandlerStart(c, "LeadHandler.listByExternalID")
 
-	if utf8.RuneCountInString(externalID) > service.LeadExternalIDMaxLength {
+	if len([]rune(externalID)) > service.LeadExternalIDMaxLength {
 		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation,
 			fmt.Sprintf("external_id is too long (at most %d characters)", service.LeadExternalIDMaxLength),
 			gin.H{"field": "external_id"})
@@ -864,4 +864,160 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, customer)
 	utils.RespondSuccess(c, http.StatusOK, customer)
+}
+
+// leadExportColumns is the CSV header of GET /leads/export and the order every
+// data row is written in: the fields the lead list returns, without the
+// preloaded owner, customer and company objects. It is the file's contract with
+// whatever consumes the download, so columns are appended, never reordered or
+// renamed in place.
+var leadExportColumns = []string{
+	"id", "first_name", "last_name", "email", "phone", "company", "position",
+	"source", "status", "classification", "external_id", "notes", "owner_id",
+	"customer_id", "company_id", "created_at", "updated_at",
+}
+
+// leadExportSortColumns is the sort_by allowlist of the export, the same set
+// GET /leads accepts. Any other value is dropped (id ascending), as the list
+// does.
+var leadExportSortColumns = map[string]bool{
+	"created_at":     true,
+	"updated_at":     true,
+	"first_name":     true,
+	"last_name":      true,
+	"email":          true,
+	"company":        true,
+	"status":         true,
+	"classification": true,
+	"source":         true,
+}
+
+// Export godoc
+// @Summary Export leads as CSV
+// @Description Roles: admin and sales (the /leads group guard, repeated in the handler and the service); support and customer get 403. The rows are exactly the leads the caller may list on GET /leads. An admin gets every live lead under the list's precedence, the first parameter present wins: search (substring match on first_name, last_name, email, company, phone and notes, honouring the sort), then classification (exact match, ascending id order, the sort ignored), then sort_by, else ascending id order. A sales user always gets only the leads it owns, in ascending id order; search, classification, sort_by and sort_order are ignored for that role. external_id, page, offset and limit are not read: the export is never paginated.
+// @Description The success body is NOT the JSON envelope: it is the raw CSV, Content-Type text/csv; charset=utf-8 and Content-Disposition attachment; filename=leads-export.csv. Errors raised before the file starts (401, 403, 429, 500) use the JSON envelope. Every row is read by one ordered statement before the first byte is written, so a database failure is a JSON 500, never a truncated file. With a sort column the rows are ordered by that column and then by id in the same direction, so descending is the exact reverse of ascending.
+// @Description Columns, in this order: id, first_name, last_name, email, phone, company, position, source, status, classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at. created_at and updated_at are RFC 3339 in UTC (for example 2026-03-14T09:26:53Z). customer_id is empty for an unconverted lead and company_id for a lead without a company link. A text cell starting with =, @, a tab or a carriage return, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula (the customer export's rule). Erased (soft-deleted) leads never appear; converted leads do.
+// @Tags leads
+// @Produce text/csv
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param search query string false "Admin only: substring searched in first_name, last_name, email, company, phone and notes"
+// @Param classification query string false "Admin only, ignored when search is present: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
+// @Param sort_by query string false "Admin only, ignored when classification wins: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
+// @Param sort_order query string false "Sort direction for sort_by; any other value becomes asc" Enums(asc, desc) default(asc)
+// @Success 200 {string} string "The CSV file (raw body, not the JSON envelope)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
+// @Router /leads/export [get]
+func (h *LeadHandler) Export(c *gin.Context) {
+	role := c.GetString("user_role")
+	// The log lines carry the operation, the role, the user id, presence flags
+	// and the count only: never the search term, the raw sort or a lead's data.
+	logger := utils.Logger.WithFields(map[string]interface{}{
+		"operation": "LeadHandler.Export",
+		"role":      role,
+		"user_id":   c.GetUint("user_id"),
+	})
+
+	// Belt and braces with the group's RequireRole(admin, sales) guard; the
+	// service refuses any other role as well.
+	if role != string(models.RoleAdmin) && role != string(models.RoleSales) {
+		logger.Warn("Lead export refused for this role")
+		utils.RespondForbidden(c, "Insufficient permissions")
+		return
+	}
+
+	search := c.Query("search")
+	classification := c.Query("classification")
+	sortBy := c.Query("sort_by")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+	if !leadExportSortColumns[sortBy] {
+		sortBy = ""
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+	logger = logger.WithFields(map[string]interface{}{
+		"has_search":         search != "",
+		"has_classification": classification != "",
+		"has_sort":           sortBy != "",
+	})
+
+	// Every row is read before a byte is written: a failure halfway through a
+	// stream would reach the client after a 200 as a file that looks complete.
+	leads, err := h.leadService.ExportForActor(leadViewer(c), service.LeadExportParams{
+		Search:         search,
+		Classification: classification,
+		SortBy:         sortBy,
+		SortOrder:      sortOrder,
+	})
+	if err != nil {
+		if errors.Is(err, apperrors.ErrForbidden) {
+			logger.Warn("Lead export refused by the service")
+			utils.RespondForbidden(c, "Insufficient permissions")
+			return
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to export leads")
+		utils.RespondInternalError(c)
+		return
+	}
+
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=leads-export.csv")
+	c.Status(http.StatusOK)
+
+	writer := csv.NewWriter(c.Writer)
+	if err := writer.Write(leadExportColumns); err != nil {
+		// The status line is already out; all that is left is to record it.
+		logger.WithError(utils.LogError(err)).Error("Failed to write the lead CSV header")
+		return
+	}
+	for i := range leads {
+		if err := writer.Write(leadExportRecord(&leads[i])); err != nil {
+			logger.WithError(utils.LogError(err)).Error("Failed to write a lead CSV row")
+			return
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to flush the lead CSV export")
+		return
+	}
+
+	logger.WithField("count", len(leads)).Info("Lead export written")
+}
+
+// leadExportRecord renders one lead as a CSV row in the order pinned by
+// leadExportColumns. Every text cell goes through csvSafeField, the customer
+// export's formula guard; timestamps are RFC 3339 in UTC; a nil customer_id or
+// company_id is an empty cell.
+func leadExportRecord(lead *models.Lead) []string {
+	optionalID := func(id *uint) string {
+		if id == nil {
+			return ""
+		}
+		return strconv.FormatUint(uint64(*id), 10)
+	}
+	return []string{
+		strconv.FormatUint(uint64(lead.ID), 10),
+		csvSafeField(lead.FirstName),
+		csvSafeField(lead.LastName),
+		csvSafeField(lead.Email),
+		csvSafeField(lead.Phone),
+		csvSafeField(lead.Company),
+		csvSafeField(lead.Position),
+		csvSafeField(lead.Source),
+		csvSafeField(string(lead.Status)),
+		csvSafeField(string(lead.Classification)),
+		csvSafeField(lead.ExternalID),
+		csvSafeField(lead.Notes),
+		strconv.FormatUint(uint64(lead.OwnerID), 10),
+		optionalID(lead.CustomerID),
+		optionalID(lead.CompanyID),
+		lead.CreatedAt.UTC().Format(time.RFC3339),
+		lead.UpdatedAt.UTC().Format(time.RFC3339),
+	}
 }
