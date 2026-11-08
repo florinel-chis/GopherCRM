@@ -18,7 +18,7 @@ const (
 
 // CustomerExternalID maps an integrator's own identity of a customer to the
 // GopherCRM customer (#212): the system that issued it (source), an optional
-// namespace inside that system such as a storefront site (scope, ” when the
+// namespace inside that system such as a storefront site (scope, "" when the
 // source has one namespace) and the identifier itself (external_id). The triple
 // is unique; the comparison is exact and case-sensitive on every engine (SQLite
 // compares with BINARY, MySQL/MariaDB with utf8mb4_bin on the three columns).
@@ -61,7 +61,7 @@ const customerExternalIDCollation = "utf8mb4_bin"
 // ensureCustomerExternalIDCollation gives source, scope and external_id the
 // binary collation on MySQL/MariaDB. AutoMigrate creates the table with the
 // database's default collation (case- and accent-insensitive), under which the
-// unique index would refuse ('Shop-A', ”, 'X1') beside ('shop-a', ”, 'x1')
+// unique index would refuse ('Shop-A', "", 'X1') beside ('shop-a', "", 'x1')
 // and a lookup would match either. The SQL migration creates the columns with
 // utf8mb4_bin already; this guard covers a schema that only AutoMigrate
 // created. It reads information_schema first and issues the ALTER only when a

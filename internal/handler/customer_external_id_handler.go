@@ -54,7 +54,7 @@ func externalIDWriterRole(c *gin.Context) bool {
 
 // CreateExternalID godoc
 // @Summary Map an external identity to a customer
-// @Description Admin and sales (route guard, repeated in the handler); support and customer get 403. Maps the (source, scope, external_id) triple to the live customer in one transaction that locks the customer row and inserts the mapping (#212). The triple is unique across all customers and compared exactly (case-sensitive): a triple already mapped, to this customer or another one, is 409. source is 1-64, scope 0-128 (absent means ”) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or erased customer is 404 and nothing is written. Erasing the customer later deletes its mappings, after which the triple can be mapped again. There is no update: delete and re-create instead.
+// @Description Admin and sales (route guard, repeated in the handler); support and customer get 403. Maps the (source, scope, external_id) triple to the live customer in one transaction that locks the customer row and inserts the mapping (#212). The triple is unique across all customers and compared exactly (case-sensitive): a triple already mapped, to this customer or another one, is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or erased customer is 404 and nothing is written. Erasing the customer later deletes its mappings, after which the triple can be mapped again. There is no update: delete and re-create instead.
 // @Tags customers
 // @Accept json
 // @Produce json

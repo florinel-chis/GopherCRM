@@ -1853,6 +1853,57 @@ definitions:
         maxLength: 255
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.CustomerExternalID:
+    description: A mapping of an external (source, scope, external_id) identity to
+      a customer. The triple is unique and compared exactly (case-sensitive).
+    properties:
+      created_at:
+        description: When the mapping was created (RFC 3339 date-time). Read-only.
+        example: "2026-11-11T09:30:00Z"
+        readOnly: true
+        type: string
+      customer_id:
+        description: Customer the identity maps to. Read-only.
+        example: 42
+        readOnly: true
+        type: integer
+      external_id:
+        description: |-
+          The identifier in that source and scope: 1-255 characters, same
+          character rules as source. Compared exactly (case-sensitive).
+        example: gid-1001
+        maxLength: 255
+        minLength: 1
+        type: string
+      id:
+        description: Unique identifier of the mapping, assigned by the server. Read-only.
+        example: 9
+        readOnly: true
+        type: integer
+      scope:
+        description: |-
+          Namespace inside the source, for example a storefront site: 0-128
+          characters, '' when the source has a single namespace. Same character
+          rules as source. Compared exactly.
+        example: store-eu
+        maxLength: 128
+        type: string
+      source:
+        description: |-
+          System that issued the identifier: 1-64 characters, no control
+          characters, no leading or trailing whitespace. Compared exactly.
+        example: shopify
+        maxLength: 64
+        minLength: 1
+        type: string
+      updated_at:
+        description: |-
+          When the mapping was last written (RFC 3339 date-time). Mappings are
+          never updated in place, so it equals created_at. Read-only.
+        example: "2026-11-11T09:30:00Z"
+        readOnly: true
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.Deal:
     properties:
       amount_cents:
@@ -4772,6 +4823,35 @@ definitions:
           only here; store it now, it cannot be retrieved later.
         example: gcrm_3f9a1c2b7d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8
         type: string
+    type: object
+  internal_handler.CreateCustomerExternalIDRequest:
+    description: Body of POST /customers/{id}/external-ids. Each value must be valid
+      UTF-8 without control characters and without leading or trailing whitespace;
+      it is stored and compared exactly (case-sensitive). The service, not the binder,
+      enforces the required fields.
+    properties:
+      external_id:
+        description: The identifier in that source and scope; required, 1-255 characters.
+        example: gid-1001
+        maxLength: 255
+        minLength: 1
+        type: string
+      scope:
+        description: |-
+          Namespace inside the source, for example a storefront site; optional,
+          0-128 characters, absent or empty means ''.
+        example: store-eu
+        maxLength: 128
+        type: string
+      source:
+        description: System that issued the identifier; required, 1-64 characters.
+        example: shopify
+        maxLength: 64
+        minLength: 1
+        type: string
+    required:
+    - external_id
+    - source
     type: object
   internal_handler.CreateCustomerRequest:
     description: Body of POST /customers. Text fields other than the names and email
@@ -11696,6 +11776,7 @@ paths:
       description: |-
         Admin, sales and support (checked in the handler; customer gets 403). All three roles see the same unfiltered set of live customers; there is no ownership narrowing. data holds customers and total; meta repeats the pagination (page, per_page, total, total_pages, each omitted when 0). Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then id, in the requested direction. search matches a substring (SQL LIKE) of first_name, last_name, email, company, phone or notes and combines with the sort. The embedded user (the customer's login) is loaded only for the default listing without search and sort_by.
         Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0; page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
+        External-id lookup: when the query contains source, scope or external_id (even empty), the request is an exact lookup of one mapped identity instead of a listing (#212). The role check still runs first. source and external_id are required, scope is optional and absent means the empty string; each must be valid UTF-8 without control characters or leading or trailing whitespace, source at most 64, scope at most 128 and external_id at most 255 characters. The comparison is exact and case-sensitive. The answer has the list shape with at most one live customer (total 0 or 1, meta page 1); search, sort_by, page and offset are ignored. An erased customer is never returned.
       parameters:
       - description: 1-based page number; a positive value overrides offset
         in: query
@@ -11736,11 +11817,29 @@ paths:
         in: query
         name: search
         type: string
+      - description: 'External-id lookup: the system that issued the identifier (1-64
+          characters, exact). Its presence selects lookup mode, where it is required'
+        in: query
+        maxLength: 64
+        name: source
+        type: string
+      - description: 'External-id lookup: the namespace inside the source (0-128 characters,
+          exact); absent means the empty string. Its presence selects lookup mode'
+        in: query
+        maxLength: 128
+        name: scope
+        type: string
+      - description: 'External-id lookup: the identifier (1-255 characters, exact,
+          case-sensitive). Its presence selects lookup mode, where it is required'
+        in: query
+        maxLength: 255
+        name: external_id
+        type: string
       produces:
       - application/json
       responses:
         "200":
-          description: A page of customers
+          description: A page of customers, or the lookup result (total 0 or 1)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -11749,6 +11848,17 @@ paths:
                   $ref: '#/definitions/internal_handler.CustomerListResponse'
                 meta:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: lookup mode with source or external_id missing
+            or invalid, or scope invalid; details.field names the parameter and details.reason
+            the rule, never the value'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "401":
           description: 'UNAUTHORIZED: missing or malformed Authorization header, or
@@ -12394,6 +12504,208 @@ paths:
       summary: List a customer's deals
       tags:
       - deals
+  /customers/{id}/external-ids:
+    post:
+      consumes:
+      - application/json
+      description: 'Admin and sales (route guard, repeated in the handler); support
+        and customer get 403. Maps the (source, scope, external_id) triple to the
+        live customer in one transaction that locks the customer row and inserts the
+        mapping (#212). The triple is unique across all customers and compared exactly
+        (case-sensitive): a triple already mapped, to this customer or another one,
+        is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id
+        1-255 characters; each must be valid UTF-8 without control characters or leading
+        or trailing whitespace. A missing or erased customer is 404 and nothing is
+        written. Erasing the customer later deletes its mappings, after which the
+        triple can be mapped again. There is no update: delete and re-create instead.'
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The external identity
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateCustomerExternalIDRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Mapping created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.CustomerExternalID'
+              type: object
+        "400":
+          description: 'BAD_REQUEST: Invalid customer ID, or a body that does not
+            bind (Invalid request format). VALIDATION_ERROR: a refused field; details.field
+            names it (source, scope or external_id) and details.reason the rule, never
+            the value'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller is neither admin nor sales (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: no live customer with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'CONFLICT: the triple is already mapped to a customer'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the mapping could not be stored'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Map an external identity to a customer
+      tags:
+      - customers
+  /customers/{id}/external-ids/{mappingId}:
+    delete:
+      description: Admin and sales (route guard, repeated in the handler); support
+        and customer get 403. Hard-deletes the mapping when it belongs to the customer
+        at the path (#212); the triple can then be mapped again. A mapping id that
+        does not exist or belongs to another customer is 404 and nothing is deleted.
+      parameters:
+      - description: Customer ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Mapping ID
+        in: path
+        name: mappingId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted; no body
+        "400":
+          description: 'BAD_REQUEST: Invalid customer ID or Invalid mapping ID'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller is neither admin nor sales (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: the customer has no mapping with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the mapping could not be deleted'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete an external identity mapping of a customer
+      tags:
+      - customers
   /customers/{id}/quotes:
     get:
       description: |-
