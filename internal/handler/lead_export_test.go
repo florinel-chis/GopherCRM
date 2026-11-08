@@ -63,6 +63,11 @@ func leadExportAssertEnvelope(t *testing.T, rec *httptest.ResponseRecorder, stat
 }
 
 func TestLeadExportHandler(t *testing.T) {
+	previous := utils.Logger
+	t.Cleanup(func() { utils.Logger = previous })
+	utils.Logger = logrus.New()
+	utils.Logger.SetLevel(logrus.PanicLevel)
+
 	admin := service.LeadViewer{UserID: 1, Role: models.RoleAdmin}
 
 	t.Run("service_failure_is_the_json_500_envelope", func(t *testing.T) {
