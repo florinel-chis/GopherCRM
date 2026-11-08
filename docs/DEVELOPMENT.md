@@ -287,8 +287,9 @@ in which case the retry answers 401 and the session ends.
 
 **Lock order for session writes** — every transaction that writes both an account and its refresh
 tokens locks the `users` row first and the `refresh_tokens` rows second: the reset (reset token,
-owner, refresh tokens), the rotation (owner, then the claim) and the password change (owner, then
-the claim, the revocation and the successor). `refresh_tokens.user_id` references `users` with a
+owner, refresh tokens), the rotation (owner, then the claim), the password change (owner, then
+the claim, the revocation and the successor) and the logout (owner, then the revocation, then the
+`token_version` increment, #236). `refresh_tokens.user_id` references `users` with a
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
 (error 1213). New session flows must follow the same order.
@@ -304,8 +305,10 @@ inserted and its access token signed. Any failure before the commit rolls back e
 COMMIT (`utils.ErrCommitFailed`) is ambiguous — the server may have applied the change — and is
 answered 500 without credentials, so the client cannot assume either outcome. Without a refresh token —
 and always for API-key requests, which the auth middleware records under
-`service.AuthMethodContextKey` — every token is revoked and nothing is issued. Access JWTs already
-issued elsewhere stay valid until they expire. Roots:
+`service.AuthMethodContextKey` — every token is revoked and nothing is issued. The password write
+also increments `users.token_version`, so every access JWT issued before the change, the caller's
+own included, is refused once it commits; the renewed access token is signed with the new value
+(see *Access-token revocation* below). Roots:
 `TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}` and
 `TestRefreshRotationLocksOwnerBeforeClaimSQLite` in
 `internal/service/auth_change_password_regression_test.go`; the MySQL concurrency root migrates a
@@ -317,6 +320,44 @@ about to run its locking owner read, and releases the first only once
 `information_schema.PROCESSLIST` (MySQL and MariaDB alike) shows that `FOR UPDATE` still executing
 on two consecutive polls — i.e. blocked on the row lock. On SQLite the single pooled connection
 serialises the two requests instead, so there is no lock wait to observe.
+
+**Access-token revocation** (#236) — every access JWT carries the owner's `users.token_version`
+(`bigint unsigned NOT NULL DEFAULT 0`, `json:"-"`) as the integer claim `token_version`, signed by
+`GenerateJWT`. `ValidateToken`, which already reads the user row on every Bearer request, checks the
+claim's shape before that read (absent reads 0; a value that is not a JSON number, not integral,
+negative or above 2^53-1 is refused before any conversion to `uint`) and, after the unchanged
+signature, expiry, missing-user and `is_active` checks, refuses a claim that differs from the stored
+value with `service.ErrAccessTokenRevoked`; `middleware.Auth` answers it with the same 401 `Invalid
+credentials` an expired token gets. The sentinel and the claim helpers live in
+`internal/service/access_token_version.go`. Three operations increment the counter by exactly one
+through `UpdateFields` under the users-row lock, inside the transaction they already run: the
+password change and the reset confirmation in the same write as the password, and `Logout`, which is
+now one transaction of its own (locking owner read, then the refresh-token revocation — every token
+without a body, otherwise only the caller's own presented token — then the increment; a failure of
+either rolls both back). The increment happens for Bearer and API-key callers alike, with or without
+a body. **`Logout` refuses with an error, answered 500 by the handler, and writes nothing when the
+transaction manager or the refresh-token repository is not wired** (a service built with
+`NewAuthService` included); a caller the scoped locking read no longer finds (erased) gets nil and
+nothing is written. Refresh rotation and login never change the counter: the rotation signs the
+value its locking read returned, and the access token it replaces stays valid until it expires. A
+role change does not increment it, API keys are not affected, and there is no per-token denylist.
+The log lines of the rejection and of the three increments carry `user_id` and `operation` only.
+MySQL and MariaDB get the column from `20261109120000_add_user_token_version` (added only when
+missing), SQLite from `MigrateDatabase`; existing rows read 0, which is also what a token signed
+before the claim existed reads, so an upgrade ends no session. Roots, in
+`internal/service/auth_access_token_revocation_test.go` unless noted (the MySQL roots use a
+disposable `TEST_MYSQL_DSN` schema and skip without it): `TestAccessTokenVersionClaim`,
+`TestAccessTokenRevokedBy{Logout,PasswordChange,PasswordReset}{SQLite,MySQL}`,
+`TestLogoutRequiresSessionStore`, `TestAccessTokenSurvivesRefreshRotation{SQLite,MySQL}`,
+`TestLogoutLocksOwnerBeforeRefreshTokens{SQLite,MySQL}` (the MySQL root runs on the real migrations
+and forces a logout against a rotation of the same user in both orderings, each wait seen in
+`information_schema.PROCESSLIST` on two consecutive polls, with no error 1213),
+`TestAccessTokenRevocationLogsOmitPersonalData`; `TestUserRepositoryTokenVersion{SQLite,MySQL}`
+(`internal/repository`); `TestUserTokenVersionJSONHidden`, `TestUserTokenVersionSQLiteUpgrade`
+(`internal/models`); `TestUserTokenVersionMigrationFiles`, `TestUserTokenVersionMigration`
+(`cmd/migrate`); and, over HTTP, `TestAccessTokenRevocationAPISQLite`
+(`tests/auth_access_token_revocation_test.go`). Registering the migration roots in the Database
+migrations workflow is an operator follow-up.
 
 **`PUT /users/me` refuses password fields** (#254) — `POST /auth/change-password` is the only
 authenticated way to change a password. `UpdateMeRequest` declares `password`, `current_password`
@@ -1148,7 +1189,8 @@ The annotations document what the code does, including its warts. A defect found
 documenting goes to [ROADMAP.md](ROADMAP.md), never into the spec as intended behaviour.
 
 - **General block** (`cmd/main.go`): authentication (`Authorization: Bearer <jwt>` and
-  `Authorization: ApiKey <key>`, refresh rotation, access tokens valid until expiry), the response
+  `Authorization: ApiKey <key>`, refresh rotation, access tokens ended by logout or a password
+  change or reset, otherwise valid until expiry), the response
   envelope, the shared error codes, pagination, rate limits, CORS and `X-Request-ID`, the two
   security schemes (both the `Authorization` header) and one `@tag.name`/`@tag.description` pair
   per tag. A new tag needs a declaration there.

@@ -4158,9 +4158,10 @@ definitions:
         type: string
       token:
         description: |-
-          Access token: an HS256-signed JWT (claims user_id, email, role, exp) valid
-          for JWT_EXPIRY_HOURS (24 hours by default). Send it as
-          `Authorization: Bearer <token>`. It cannot be revoked before it expires.
+          Access token: an HS256-signed JWT (claims user_id, email, role,
+          token_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or
+          until a logout, a password change or a password reset of its account ends
+          it earlier. Send it as `Authorization: Bearer <token>`.
         example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0Mn0.c2lnbmF0dXJl
         type: string
       user:
@@ -6788,7 +6789,7 @@ info:
 
     ## Authentication
     Protected operations accept one credential in the Authorization header, either `Authorization: Bearer <jwt>` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey <key>` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED "Missing or invalid authorization header"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED "Invalid credentials".
-    Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens, but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
+    Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED "Invalid credentials", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
     Roles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN "Insufficient permissions". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.
 
     ## Response envelope
@@ -8602,7 +8603,7 @@ paths:
       description: |-
         Any authenticated role. Re-authenticates with current_password, then replaces it with new_password (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The password write, the revocation of the caller's refresh tokens and the renewal of the current session are one transaction: a failure before the commit leaves the password and every session unchanged. A COMMIT whose acknowledgement fails is ambiguous (the change may have been applied) and is reported as a 500 without credentials. The login lockout counter is not touched.
         With a bearer token and the client's current refresh_token in the body, that session is renewed: the token is spent, every other refresh token of the caller is revoked, and the response carries a replacement token, refresh_token and user. A refresh_token that is not a live session of the caller (unknown, revoked, expired, foreign) is 409 SESSION_STALE and nothing changes. Without a refresh_token, or for an API-key request (whose refresh_token is ignored and which never receives session credentials), every refresh token is revoked and only the message is returned.
-        Revocation ends renewal, not access: access tokens already issued stay valid until they expire (there is no blocklist). A wrong current password is a 400, not a 401, because the request itself is authenticated. Rate limit: the authenticated tier (120 per minute, burst 30, per client IP).
+        The change also ends every access token issued before it, including the one that authenticated this request: the account token_version is incremented in the password write, and an older JWT is then refused with 401 Invalid credentials. The renewed token in the response carries the new value and keeps working. A wrong current password is a 400, not a 401, because the request itself is authenticated. Rate limit: the authenticated tier (120 per minute, burst 30, per client IP).
       parameters:
       - description: Current and new password, optionally the current refresh token
         in: body
@@ -8750,7 +8751,7 @@ paths:
       - application/json
       description: |-
         Revokes refresh tokens of the caller (any authenticated role, bearer or API-key). With no body, an empty body or no refresh_token, every refresh token of the caller is revoked; with a refresh_token only that token is revoked, and only when it belongs to the caller. Idempotent: an unknown, already revoked or foreign token still answers 200 and discloses nothing.
-        Logout does not invalidate access tokens: an issued JWT stays valid until it expires (there is no blocklist), so the client must discard it. API keys are not affected.
+        Logout also ends every access token issued to the caller before it, with or without a refresh_token and for bearer and API-key callers alike: the account token_version is incremented in the same transaction as the revocation, and an older JWT is then refused with 401 Invalid credentials. A failure of either rolls both back and is a 500, as is a server whose session store is not wired. API keys are not affected.
         Rate limit: the authenticated tier, 120 requests per minute with a burst of 30 per client IP, shared by every authenticated route and checked after authentication.
       parameters:
       - description: 'Optional: the one refresh token to revoke'
@@ -8873,7 +8874,7 @@ paths:
       - application/json
       description: |-
         Public. Spends the token from the emailed link and sets new_password, which must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The policy is checked before the token is touched, so a weak password leaves the link usable. Tokens are single use and expire after one hour; an unknown, expired or used token, or one whose account is deactivated or erased, is the same generic 400.
-        In one transaction the token is claimed, the password written, the login lockout cleared and every refresh token of the account revoked. A failure before the commit rolls all of it back and the link stays usable; when the COMMIT itself fails the outcome is ambiguous (the password may have changed and the link been spent), so a retry may be refused as an invalid or expired link. Issued access tokens stay valid until they expire. Rate limit: the strict /auth tier (10 per minute, burst 5, per client IP).
+        In one transaction the token is claimed, the password written, the login lockout cleared and every refresh token of the account revoked. A failure before the commit rolls all of it back and the link stays usable; when the COMMIT itself fails the outcome is ambiguous (the password may have changed and the link been spent), so a retry may be refused as an invalid or expired link. The password write also increments the account token_version, so every access token issued before the reset is refused with 401 from then on. Rate limit: the strict /auth tier (10 per minute, burst 5, per client IP).
       parameters:
       - description: Reset token and new password
         in: body
@@ -21444,8 +21445,8 @@ securityDefinitions:
     type: apiKey
   BearerAuth:
     description: 'JWT access token from POST /auth/login or POST /auth/refresh, sent
-      as "Authorization: Bearer <jwt>". Valid until it expires; logout does not revoke
-      it.'
+      as "Authorization: Bearer <jwt>". Valid until it expires, or until a logout,
+      a password change or a password reset of its account ends it earlier.'
     in: header
     name: Authorization
     type: apiKey

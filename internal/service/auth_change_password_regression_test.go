@@ -494,24 +494,32 @@ func runChangePasswordRenewalScenarios(t *testing.T, f *cpFixture) {
 		assert.NotEmpty(t, login.AccessToken)
 	})
 
-	t.Run("an access token issued before the change keeps authorising until it expires", func(t *testing.T) {
-		// Documented boundary: revocation ends renewal, not access. There is
-		// no blocklist; only owner state (deactivation, erasure) rejects an
-		// unexpired JWT early.
+	t.Run("an access token issued before the change is rejected at once", func(t *testing.T) {
+		// #236: the change increments users.token_version in the password
+		// write, so every access JWT issued before it is refused immediately;
+		// the renewed access token carries the new value and keeps working.
 		s := f.seed(t)
-		_, err := f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
+		user, err := f.svc.ValidateToken(s.oldJWT)
+		require.NoError(t, err, "the old access token authorises before the change")
+		assert.Equal(t, s.owner.ID, user.ID)
+
+		tokens, err := f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, cpPresented)
 		require.NoError(t, err)
 
-		user, err := f.svc.ValidateToken(s.oldJWT)
-		require.NoError(t, err, "the old access token still authorises")
-		assert.Equal(t, s.owner.ID, user.ID)
+		user, err = f.svc.ValidateToken(s.oldJWT)
+		assert.Nil(t, user)
+		assert.ErrorIs(t, err, ErrAccessTokenRevoked, "the old access token is rejected before it expires")
 		_, err = f.svc.RefreshAccessToken(cpSibling)
-		assert.ErrorIs(t, err, ErrInvalidRefreshToken, "but its session can no longer renew")
+		assert.ErrorIs(t, err, ErrInvalidRefreshToken, "and its session can no longer renew")
+
+		renewed, err := f.svc.ValidateToken(tokens.AccessToken)
+		require.NoError(t, err, "the renewed access token authorises")
+		assert.Equal(t, s.owner.ID, renewed.ID)
 
 		require.NoError(t, f.db.WithContext(resetContext(t)).Model(&models.User{}).
 			Where("id = ?", s.owner.ID).Update("is_active", false).Error)
-		_, err = f.svc.ValidateToken(s.oldJWT)
-		assert.Error(t, err, "deactivation still rejects the old access token before it expires")
+		_, err = f.svc.ValidateToken(tokens.AccessToken)
+		assert.Error(t, err, "deactivation still rejects an access token before it expires")
 	})
 }
 

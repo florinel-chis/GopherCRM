@@ -27,7 +27,7 @@ import (
 // @description
 // @description ## Authentication
 // @description Protected operations accept one credential in the Authorization header, either `Authorization: Bearer <jwt>` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey <key>` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED "Missing or invalid authorization header"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED "Invalid credentials".
-// @description Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens, but an issued access token cannot be revoked early: it stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
+// @description Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED "Invalid credentials", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
 // @description Roles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN "Insufficient permissions". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.
 // @description
 // @description ## Response envelope
@@ -63,7 +63,7 @@ import (
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
-// @description JWT access token from POST /auth/login or POST /auth/refresh, sent as "Authorization: Bearer <jwt>". Valid until it expires; logout does not revoke it.
+// @description JWT access token from POST /auth/login or POST /auth/refresh, sent as "Authorization: Bearer <jwt>". Valid until it expires, or until a logout, a password change or a password reset of its account ends it earlier.
 
 // @securityDefinitions.apikey ApiKeyAuth
 // @in header

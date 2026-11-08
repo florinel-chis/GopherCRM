@@ -106,8 +106,12 @@ pagination, strict configuration typing, and — instead of deleting the fronten
 called missing routes — the routes now exist (auth session lifecycle, dashboard analytics, bulk
 status updates, API-key management, customer export/assign, upcoming tasks). Still open:
 
-- **Access-token blocklist** — logout, rotation and password change revoke refresh tokens only;
-  an issued JWT stays valid until expiry.
+- **Access-token revocation beyond the session-ending events** — logout, a password change and a
+  password reset now end every earlier access token through `users.token_version` (#236). A
+  refresh rotation still leaves the access token it replaces valid until expiry, and a role change
+  ends nothing; revoking a single access token would need a `jti` denylist, which is not planned.
+  The web client's Profile copy still says access held elsewhere "ends when it expires"; that
+  frontend text is a separate ticket.
 - **Cross-tab refresh coordination** — within one tab the refresh is shared and every request
   settles (#115). Tabs that share a remembered session (`localStorage`) still refresh
   independently: two tabs presenting the same token at once commit one rotation, and the loser's

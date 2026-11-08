@@ -326,19 +326,43 @@ func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {
 	assert.Equal(t, hashOpaqueToken(tokens.RefreshToken, sessionTestSecret), stored.TokenHash)
 }
 
+// Logout is one transaction (#236): the owner is read with the locking read,
+// the refresh tokens are revoked and users.token_version is incremented, all
+// through the transaction-bound repositories. The real-database roots are in
+// auth_access_token_revocation_test.go.
 func TestAuthService_Logout(t *testing.T) {
+	// expectOwner wires the transaction-bound views, the locking owner read and
+	// the increment of token_version from 0 to exactly 1.
+	expectOwner := func(d *sessionTestDeps) {
+		d.expectTransactionBoundRepos()
+		d.userRepo.On("GetByID", uint(42)).Return(sessionActiveUser(42, "OldPass123!"), nil)
+		d.userRepo.On("UpdateFields", uint(42), mock.MatchedBy(func(f map[string]interface{}) bool {
+			return len(f) == 1 && f["token_version"] == uint(1)
+		})).Return(nil)
+	}
+	assertIncremented := func(t *testing.T, d *sessionTestDeps) {
+		t.Helper()
+		d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.refreshRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.userRepo.AssertCalled(t, "GetByID", uint(42))
+		d.userRepo.AssertNumberOfCalls(t, "UpdateFields", 1)
+	}
+
 	t.Run("no token revokes all sessions of the user", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		expectOwner(d)
 		d.refreshRepo.On("RevokeAllForUser", uint(42)).Return(nil)
 
 		err := d.svc.Logout(42, "")
 
 		assert.NoError(t, err)
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(42))
+		assertIncremented(t, d)
 	})
 
 	t.Run("specific token owned by the user is revoked", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		expectOwner(d)
 		raw := "owned-token"
 		hash := hashOpaqueToken(raw, sessionTestSecret)
 		stored := &models.RefreshToken{UserID: 42, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}
@@ -349,10 +373,12 @@ func TestAuthService_Logout(t *testing.T) {
 
 		assert.NoError(t, err)
 		d.refreshRepo.AssertCalled(t, "RevokeByTokenHash", hash)
+		assertIncremented(t, d)
 	})
 
 	t.Run("token of another user is not revoked but logout still succeeds", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		expectOwner(d)
 		raw := "someone-elses-token"
 		hash := hashOpaqueToken(raw, sessionTestSecret)
 		stored := &models.RefreshToken{UserID: 7, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}
@@ -362,16 +388,44 @@ func TestAuthService_Logout(t *testing.T) {
 
 		assert.NoError(t, err)
 		d.refreshRepo.AssertNotCalled(t, "RevokeByTokenHash", mock.Anything)
+		assertIncremented(t, d)
 	})
 
 	t.Run("unknown token is idempotent success", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		expectOwner(d)
 		hash := hashOpaqueToken("gone", sessionTestSecret)
 		d.refreshRepo.On("GetByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
 
 		err := d.svc.Logout(42, "gone")
 
 		assert.NoError(t, err)
+		assertIncremented(t, d)
+	})
+
+	t.Run("an erased caller writes nothing", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		d.userRepo.On("GetByID", uint(42)).Return(nil, gorm.ErrRecordNotFound)
+
+		err := d.svc.Logout(42, "")
+
+		assert.NoError(t, err)
+		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
+	})
+
+	t.Run("without a transaction manager logout is refused", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.svc = NewAuthServiceWithSessions(
+			d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, nil, d.mailer,
+			sessionTestJWTConfig, "http://localhost:5173", "")
+
+		err := d.svc.Logout(42, "")
+
+		assert.Error(t, err)
+		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
 	})
 }
 
@@ -410,7 +464,8 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		var written string
 		d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
 			written, _ = f["password"].(string)
-			return len(f) == 1
+			// The same write increments token_version (#236).
+			return len(f) == 2 && f["token_version"] == uint(1)
 		})).Return(nil)
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
 
@@ -593,10 +648,11 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 		assert.NoError(t, err)
 		d.resetRepo.AssertCalled(t, "MarkUsed", uint(9))
 		require.NotNil(t, updated)
-		require.Len(t, updated, 3, "only the password and the lockout columns are written")
+		require.Len(t, updated, 4, "only the password, the lockout columns and token_version are written")
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated["password"].(string)), []byte("BrandNewPass1!")))
 		assert.Equal(t, 0, updated["failed_login_attempts"])
 		assert.Nil(t, updated["locked_until"])
+		assert.Equal(t, uint(1), updated["token_version"], "the reset increments token_version (#236)")
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
 		// Every write went through the transaction-bound repositories.
 		d.resetRepo.AssertCalled(t, "WithTx", mock.Anything)

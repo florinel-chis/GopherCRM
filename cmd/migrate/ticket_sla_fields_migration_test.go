@@ -30,8 +30,7 @@ const (
 var ticketSLAFieldsColumns = []string{"due_at", "first_responded_at"}
 
 // TestTicketSLAFieldsMigrationFiles needs no database: the pair exists, names
-// both columns in both directions, adds no index, key or backfill, and is the
-// newest migration of the directory.
+// both columns in both directions and adds no index, key or backfill.
 func TestTicketSLAFieldsMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, ticketSLAFieldsName+".up.sql"))
@@ -52,17 +51,8 @@ func TestTicketSLAFieldsMigrationFiles(t *testing.T) {
 	assert.NotContains(t, upSQL, "create table", "no new table")
 	assert.NotContains(t, upSQL, "\nupdate ", "existing rows are not backfilled")
 	assert.NotContains(t, downSQL, "drop table", "rollback keeps the rows")
-
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, ticketSLAFieldsName+".up.sql", newest, "the newest migration")
-	assert.Equal(t, ticketSLAFieldsVersion, latestMigrationVersion)
+	// The newest-migration assertion moved to TestUserTokenVersionMigrationFiles
+	// when 20261109120000_add_user_token_version (#236) followed this pair.
 }
 
 func snapshotTicketSLAColumns(t *testing.T, tdb *migrationTestDB) []string {
