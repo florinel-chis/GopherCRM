@@ -1040,12 +1040,14 @@ What happens on `DELETE`:
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification
   whose entity is the lead is hard-deleted, because a rendered title or body may name the person.
   Run logs hold ids only and stay. The tasks a `create_task` step created stay too, as every task
-  does (a business record whose `lead_id` still resolves), and that is safe because their text
-  cannot name the person: a task's title and description accept only the non-personal
-  placeholders (`lead.id`, `lead.status`, `lead.source` and the `deal.*` fields), a personal one
-  (`lead.first_name`, `lead.email`, `lead.phone`, `lead.company`, `owner.*`) is refused when the
-  rule is validated, and the task renderer blanks it even in a rule stored before the allowlist
-  was narrowed. A user erasure hard-deletes the notifications addressed to the user alongside the
+  does (a business record whose `lead_id` still resolves). A task's title and description accept
+  only the placeholders `lead.id`, `lead.status`, `lead.source` and the `deal.*` fields; a
+  person's field (`lead.first_name`, `lead.email`, `lead.phone`, `lead.company`, `owner.*`) is
+  refused when the rule is validated, and the task renderer blanks it even in a rule stored before
+  the allowlist was narrowed. The `deal.*` fields are not free of personal data, though:
+  `deal.title` is staff-typed and may name the client. The erasure redacts the deal's title
+  (#245), but a task rendered from `{{deal.title}}` before the erasure keeps that text — an
+  accepted, documented limitation (see the matrix below). A user erasure hard-deletes the notifications addressed to the user alongside the
   credential purge. A failure in either step rolls the whole erasure back; a
   table absent from the schema (a fixture that migrates a subset) is skipped by a migrator probe,
   never by swallowing an error. The order matters on MySQL: an automation step holds the lead row

@@ -210,7 +210,7 @@ Decide first whether the new table stores personal data or only refers to people
   For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
   (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
-  `TestThePersonalDataSweepCoversQuoteTables` (line 313) that writes the person into the table and
+  `TestThePersonalDataSweepCoversQuoteTables` (line 314) that writes the person into the table and
   asserts the sweep sees it. A sweep that cannot see a table proves nothing; the quote canary
   proves the sweep can see quote rows, and `business_text_erasure_sweep_test.go` proves the
   erasure clears them.

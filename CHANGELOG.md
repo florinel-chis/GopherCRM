@@ -273,8 +273,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
   neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
   step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
-  only the non-personal placeholders (`lead.id`, `lead.status`, `lead.source`, the `deal.*`
-  fields) because a task survives the erasure of its lead; the name, email, phone, company and
+  only the placeholders `lead.id`, `lead.status`, `lead.source` and the `deal.*` fields because
+  a task survives the erasure of its lead (`deal.title` is staff-typed and may name the client; a
+  task rendered from it before an erasure keeps that text, see #245); the name, email, phone, company and
   owner placeholders stay available to the email and notification text, which does not outlive
   the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
   `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
