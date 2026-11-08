@@ -301,6 +301,39 @@ func (s *ticketService) ListAssigned(assigneeID uint, search string, offset, lim
 	return tickets, total, nil
 }
 
+// ListFiltered lists one page of the tickets matching filter, with their
+// customer and assignee, and the number of tickets the same filter matches
+// before pagination. The log lines carry ids, offsets and counts only: never
+// the search term, and the status and priority only as presence flags.
+func (s *ticketService) ListFiltered(filter repository.TicketListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Ticket, int64, error) {
+	fields := map[string]interface{}{
+		"offset":          offset,
+		"limit":           limit,
+		"status_filter":   filter.Status != "",
+		"priority_filter": filter.Priority != "",
+		"search_filter":   filter.Search != "",
+	}
+	if filter.AssigneeID != nil {
+		fields["assignee_id"] = *filter.AssigneeID
+	}
+	logger := utils.LogServiceCall(utils.Logger.WithFields(fields), "TicketService", "ListFiltered")
+
+	tickets, err := s.ticketRepo.ListByFilter(filter, offset, limit, sortBy, sortOrder, "Customer", "AssignedTo")
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list filtered tickets")
+		return nil, 0, err
+	}
+
+	total, err := s.ticketRepo.CountByFilter(filter)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to count filtered tickets")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Filtered tickets listed successfully")
+	return tickets, total, nil
+}
+
 // GetByCustomerAndAssignee lists one customer's tickets that are assigned to
 // one user, for GET /customers/:id/tickets as a support caller.
 func (s *ticketService) GetByCustomerAndAssignee(customerID, assigneeID uint, offset, limit int) ([]models.Ticket, int64, error) {

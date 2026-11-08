@@ -191,6 +191,57 @@ func (r *ticketRepository) CountByAssigneeScope(scope TicketAssigneeScope) (int6
 	return count, err
 }
 
+// whereTicketListFilter is the one predicate of ListByFilter and CountByFilter.
+// It ANDs the optional assignee, status and priority with the parenthesised
+// search alternatives, so the search OR can never let a row with another
+// assignee, status or priority through. Columns are qualified with the table
+// name and every value is bound.
+func whereTicketListFilter(db *gorm.DB, filter TicketListFilter) *gorm.DB {
+	if filter.AssigneeID != nil {
+		db = db.Where("tickets.assigned_to_id = ?", *filter.AssigneeID)
+	}
+	if filter.Status != "" {
+		db = db.Where("tickets.status = ?", filter.Status)
+	}
+	if filter.Priority != "" {
+		db = db.Where("tickets.priority = ?", filter.Priority)
+	}
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		db = db.Where(
+			"(tickets.title LIKE ? OR tickets.description LIKE ? OR tickets.resolution LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
+		)
+	}
+	return db
+}
+
+// ListByFilter returns one page of the tickets matching filter. The filter is
+// applied before offset and limit, and the rows walk orderPage's total order:
+// the validated sort column, then id in the same direction, or id ascending.
+func (r *ticketRepository) ListByFilter(filter TicketListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Ticket, error) {
+	tickets := []models.Ticket{}
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	query = whereTicketListFilter(query, filter)
+	query, err := orderPage(query, "tickets", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = query.Offset(offset).Limit(limit).Find(&tickets).Error
+	return tickets, err
+}
+
+// CountByFilter counts every live ticket matching filter, with the predicate
+// of ListByFilter and before any pagination.
+func (r *ticketRepository) CountByFilter(filter TicketListFilter) (int64, error) {
+	var count int64
+	err := whereTicketListFilter(r.db.Model(&models.Ticket{}), filter).Count(&count).Error
+	return count, err
+}
+
 // CountByPriority returns the number of live tickets per priority. Priorities
 // with no rows are absent from the map; the caller supplies the full label set.
 func (r *ticketRepository) CountByPriority() (map[string]int64, error) {

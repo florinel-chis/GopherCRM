@@ -657,6 +657,28 @@ SQLite from `MigrateDatabase`. Regression roots: `TestTicketOverdue`, `TestTicke
 (`cmd/migrate`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in
 the Database migrations workflow is an operator follow-up.
 
+**Ticket list filters (#218).** `GET /tickets` takes optional `status` and `priority` query
+parameters, each one exact, case-sensitive value of `models.TicketStatus` or
+`models.TicketPriority`. The handler validates them with `IsValid` before any query, after the
+customer 403: MySQL's default collation is case-insensitive and would match `Open` to `open`. An
+unknown value is 400 `VALIDATION_ERROR` (`utils.RespondValidationError`, `error.details` keyed by
+the parameter name, the value not echoed) and no service is called. `c.Query` takes the first
+value of a repeated parameter, and an empty value counts as absent. Only when a filter is present
+does the handler call `TicketService.ListFiltered(filter, offset, limit, sortBy, sortOrder)` with
+a `repository.TicketListFilter{AssigneeID, Search, Status, Priority}`, forcing `AssigneeID` to the
+caller's own `user_id` for support; without one the existing `List`, `ListSorted`, `Search` and
+`ListAssigned` branches run with unchanged arguments. `TicketRepository.ListByFilter` (preloads,
+`orderPage`, OFFSET/LIMIT) and `CountByFilter` share one predicate builder,
+`whereTicketListFilter`, which ANDs the optional assignee (a non-nil 0 matches no ticket, as in
+`TicketAssigneeScope`), status and priority with the parenthesised search OR, so the rows and the
+total come from the same filter before offset and limit. The service logs ids, offsets, counts
+and presence flags only, never the search term or the raw sort. No schema change or index.
+Regression roots: `TestTicketEnumIsValid` (`internal/models`); `TestTicketListFilterHandler`
+(`internal/handler`); `TestTicketServiceListFiltered` (`internal/service`);
+`TestTicketListFilterRepository{SQLite,MySQL}` (`internal/repository`);
+`TestTicketListFilters{SQLite,MySQL}` (`internal/integration`). The MySQL roots use a disposable
+`TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable.
+
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
 in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in

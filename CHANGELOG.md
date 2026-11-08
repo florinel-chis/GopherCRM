@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Server-side ticket filters (#218).** `GET /tickets` accepts optional `status`
+  (`open`, `in_progress`, `resolved`, `closed`) and `priority` (`low`, `medium`, `high`, `urgent`)
+  query parameters, matched exactly and case-sensitively. They combine with each other, with
+  `search` and with `sort_by`/`sort_order`, and apply in the query before offset and limit, so
+  `total` and the pagination metadata count the filtered set; for support they only narrow the
+  tickets assigned to the caller, and customers still get 403. An empty value is ignored, a
+  repeated parameter uses its first value, and an unknown or differently cased value is answered
+  400 `VALIDATION_ERROR` with `error.details` keyed by the parameter name. The ticket screen
+  already sends these parameters, so its status and priority selects now filter on the server with
+  correct totals. No schema change.
 - **Early revocation of access tokens (#236).** Every access JWT carries the account's
   `users.token_version` as the integer claim `token_version`, and a Bearer request whose claim is
   not the stored value is refused with the usual 401 `Invalid credentials` (a token without the

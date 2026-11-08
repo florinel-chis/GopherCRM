@@ -345,6 +345,23 @@ func (_m *TicketRepository) CountByAssigneeScope(scope repository.TicketAssignee
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+// ListByFilter provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder, preloads
+func (_m *TicketRepository) ListByFilter(filter repository.TicketListFilter, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Ticket, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder, preloads)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Error(1)
+}
+
+// CountByFilter provides a mock function with given fields: filter
+func (_m *TicketRepository) CountByFilter(filter repository.TicketListFilter) (int64, error) {
+	ret := _m.Called(filter)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 // CountByPriority provides a mock function with no fields
 func (_m *TicketRepository) CountByPriority() (map[string]int64, error) {
 	ret := _m.Called()

@@ -4,6 +4,7 @@ package mocks
 
 import (
 	models "github.com/florinel-chis/gophercrm/internal/models"
+	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -367,6 +368,17 @@ func (_m *TicketService) Search(query string, offset int, limit int, sortBy stri
 // ListAssigned provides a mock function with given fields: assigneeID, search, offset, limit, sortBy, sortOrder
 func (_m *TicketService) ListAssigned(assigneeID uint, search string, offset int, limit int, sortBy string, sortOrder string) ([]models.Ticket, int64, error) {
 	ret := _m.Called(assigneeID, search, offset, limit, sortBy, sortOrder)
+
+	var r0 []models.Ticket
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Ticket)
+	}
+	return r0, ret.Get(1).(int64), ret.Error(2)
+}
+
+// ListFiltered provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder
+func (_m *TicketService) ListFiltered(filter repository.TicketListFilter, offset int, limit int, sortBy string, sortOrder string) ([]models.Ticket, int64, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder)
 
 	var r0 []models.Ticket
 	if ret.Get(0) != nil {

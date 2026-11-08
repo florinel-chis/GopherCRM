@@ -614,45 +614,141 @@ gating); where the two disagree, that disagreement gets its own case.
 
 ---
 
-## 5.5 Filter by Status / Priority (page-local controls)
+## 5.5 Filter by Status / Priority (server-side filters)
 
-### TC-TICK-033 — The Status filter does not change the visible rows
+Since #218 `GET /tickets` filters on `status` and `priority` in the query. Each takes one value of
+`models.TicketStatus` (`open`, `in_progress`, `resolved`, `closed`) or `models.TicketPriority`
+(`low`, `medium`, `high`, `urgent`), matched exactly and case-sensitively. The filters combine with
+each other, with `search` and with `sort_by`/`sort_order`, and apply before offset and limit, so
+`data.total`, `meta.total` and `meta.total_pages` count the filtered set. For support they only
+narrow the tickets assigned to the caller. An empty value is ignored, a repeated parameter uses its
+first value, and an unknown or differently cased value is 400 `VALIDATION_ERROR` (`error.details`
+keyed by the parameter name, the value not echoed) before any query runs; customers still get 403
+first. The ticket screen already sends these parameters (`TicketList.tsx` keeps lower-case option
+values, `''` for "All", resets `page` to 1 and renders `data.total`), so its selects now filter on
+the server. Sources: `internal/handler/ticket_handler.go` (`List`),
+`internal/service/ticket_service.go` (`ListFiltered`), `internal/repository/ticket_repository.go`
+(`whereTicketListFilter`, `ListByFilter`, `CountByFilter`) and `internal/models/ticket.go`
+(`IsValid`).
+
+### TC-TICK-033 — The Status filter returns only matching tickets with the filtered total
 - **Priority:** P0
-- **Type:** regression
+- **Type:** functional
 - **Preconditions:** Admin logged in; at least one ticket in status `open` and one in `resolved`,
-  both created by the test and both on the first page (set `limit` high enough, or search first).
+  both created by the test.
 - **Steps:**
   1. Navigate to `/tickets`.
   2. Open the "Status" select and choose "Resolved".
-  3. Capture the outgoing request and compare the row set before and after.
-- **Expected:** A new request goes out as `GET /tickets?page=1&limit=10&status=resolved&priority=&search=`
-  and the row set is **identical** — the open ticket is still listed. `TicketHandler.List` reads only
-  `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search`; `status` is silently discarded,
-  and `TicketList.tsx` renders `data?.data` with no local `.filter()`, so nothing is filtered
-  client-side either. Verified live against `localhost:8090`: `GET /tickets?limit=100&status=closed`
-  returns all 24 rows with `total: 24`.
-- **Known issue:** FEATURES.md row 5.5 and gap **G34** describe this as "client-side over the current
-  page". That is inaccurate for tickets — there is no client-side filtering at all; the control is
-  inert. The row and the gap entry both need correcting.
+  3. Capture the outgoing request and compare the row set and the pagination footer before and
+     after.
+- **Expected:** The request goes out as `GET /tickets?page=1&limit=10&status=resolved&priority=&search=`
+  and returns only `resolved` tickets; the open ticket is no longer listed. `data.total` and
+  `meta.total` count the resolved tickets only, and the footer shows that count. The empty
+  `priority=` and `search=` are ignored. Choosing "All Statuses" again sends `status=` and restores
+  the unfiltered list and total.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
-  status" is `test.fixme` (2026-09-23; it asserted `count >= 0`). A real assertion fails until the
-  filter works (TC-XCUT-038).
+  status" is `test.fixme` (2026-09-23; it asserted `count >= 0`) until a frontend test ticket
+  rewrites it. The API behaviour is pinned by TC-TICK-059 and TC-TICK-063.
 
-### TC-TICK-034 — The Priority filter does not change the visible rows
+### TC-TICK-034 — The Priority filter returns only matching tickets with the filtered total
 - **Priority:** P1
-- **Type:** regression
+- **Type:** functional
 - **Preconditions:** Admin logged in; tickets of at least two different priorities created by the
   test.
 - **Steps:**
   1. Navigate to `/tickets`; choose "Urgent" in the "Priority" select.
-  2. Compare the row set before and after; then choose "All Priorities".
-- **Expected:** `priority=urgent` is sent and ignored; the rows are unchanged, and non-urgent
-  tickets remain visible. Resetting to "All Priorities" sends `priority=` and again changes nothing.
-  Both selects do reset `page` to 1, which is observable in the request.
-- **Known issue:** Same root cause as TC-TICK-033 (FEATURES.md row 5.5, gap G34).
+  2. Compare the row set and the footer before and after; then choose "All Priorities".
+- **Expected:** `priority=urgent` is sent and only urgent tickets are listed, with `data.total` and
+  the footer counting them; combined with a status choice both filters apply. Resetting to "All
+  Priorities" sends `priority=`, which is ignored, and the unfiltered list and total return. Both
+  selects reset `page` to 1, which is observable in the request.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
-  priority" is `test.fixme` (2026-09-23; it asserted `count >= 0`). A real assertion fails until the
-  filter works (TC-XCUT-038).
+  priority" is `test.fixme` (2026-09-23; it asserted `count >= 0`) until a frontend test ticket
+  rewrites it. The API behaviour is pinned by TC-TICK-059 and TC-TICK-063.
+
+### TC-TICK-059 — Each filter alone and both together, per role, with filtered totals
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** An admin, a sales user and two support users; tickets in every status and
+  priority, assigned to either agent, to the admin or to nobody, plus a soft-deleted ticket that
+  matches the filters.
+- **Steps:**
+  1. As admin and as sales, call `GET /tickets?status=<s>`, `?priority=<p>` and
+     `?status=<s>&priority=<p>` for several values.
+  2. Repeat as each support user.
+- **Expected:** Each answer is 200 with exactly the live tickets matching every given filter, in
+  ascending id order; admin and sales see every assignee, support only its own assignments.
+  `data.total` and `meta.total` equal the number of matching tickets, `meta.total_pages` is
+  `ceil(total/limit)`, and `meta.page`/`meta.per_page` follow the request. The soft-deleted ticket
+  is never listed or counted.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}`
+  (`internal/integration/ticket_list_filter_integration_test.go`),
+  `TestTicketListFilterRepository{SQLite,MySQL}` (`internal/repository`)
+
+### TC-TICK-060 — Support filters only narrow the assigned tickets
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** A support user with assigned tickets; tickets of another agent, unassigned and
+  admin-held tickets with the same status, priority and search terms.
+- **Steps:**
+  1. As the support user, call `GET /tickets` with each filter, adding `assigned_to_id`,
+     `assignee_id`, `user_id` or `customer_id` naming other rows, or `search=%`.
+- **Expected:** Only the caller's own matching tickets come back, with the scoped total; the extra
+  parameters are ignored and no other agent's, unassigned or admin-held ticket appears. The handler
+  sets the assignee to the caller's own user id before calling `TicketService.ListFiltered`.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}` and
+  `TestTicketListFilterHandler` (`internal/handler`)
+
+### TC-TICK-061 — Filtered pages walk the set once and combine with search and sort
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** As TC-TICK-059, with ties on priority, title and `created_at`.
+- **Steps:**
+  1. Page through each filter with `limit` 1, 2 and 3 and with `offset`.
+  2. Combine the filters with `search` and with `sort_by`/`sort_order` (`priority`, `title`,
+     `status`, `created_at`, both directions), and page through a sorted filter.
+- **Expected:** Concatenated pages reproduce the filtered set exactly once, every page carrying the
+  same total; a page past the end is empty with that total. Search narrows within the filters (the
+  search OR never lets another status, priority or assignee through), and the sort orders by the
+  column and then by id in the same direction.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}` and
+  `TestTicketListFilterRepository{SQLite,MySQL}`
+
+### TC-TICK-062 — An unknown or differently cased value is 400 VALIDATION_ERROR
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** An admin, a sales user and a support user.
+- **Steps:**
+  1. As each, call `GET /tickets?status=bogus`, `?priority=URGENT`, `?status=Open` and both invalid
+     together.
+- **Expected:** 400 with `error.code` `VALIDATION_ERROR` and `error.details` keyed by the offending
+  parameter name or names; the value is not echoed and the body carries no tickets. No service
+  method is called, so no query runs.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}`, `TestTicketListFilterHandler`
+  and `TestTicketEnumIsValid` (`internal/models`)
+
+### TC-TICK-063 — An empty value is ignored; a repeated parameter uses its first value
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** As TC-TICK-059.
+- **Steps:**
+  1. Compare `GET /tickets?status=&priority=` (what the UI sends for "All"), `?status=` and
+     `?priority=` with `GET /tickets`, also with paging, search and sort.
+  2. Call `GET /tickets?status=resolved&status=open&priority=high&priority=low`.
+- **Expected:** Empty values return the same page, total and metadata as no parameter; the
+  handler runs the unfiltered list, search, sort or support branch with unchanged arguments.
+  The repeated parameters filter on `resolved` and `high`.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}` and `TestTicketListFilterHandler`
+
+### TC-TICK-064 — Customers still get 403 with filters present
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Customer-role users, linked to a customer record and unlinked.
+- **Steps:**
+  1. Call `GET /tickets` with valid, invalid and empty `status`/`priority` values.
+- **Expected:** 403 `FORBIDDEN` every time, before the filters are validated, with no ticket in the
+  body and no service call.
+- **Automation:** automated — `TestTicketListFilters{SQLite,MySQL}` and `TestTicketListFilterHandler`
 
 ---
 
@@ -813,8 +909,10 @@ gating); where the two disagree, that disagreement gets its own case.
   `GET /tickets?customer_id=<id>` — and `customer_id` is not among the query parameters
   `TicketHandler.List` reads, so it is ignored and every ticket comes back. The purpose-built
   `GET /customers/:id/tickets` route is never called by the frontend.
-- **Known issue:** Same class of defect as the inert status/priority filters (TC-TICK-033). Not
-  recorded against row 5.9, which describes the endpoint rather than its (absent) consumer.
+- **Known issue:** The UI sends a query parameter `GET /tickets` does not read; the status and
+  priority parameters, the other ones the ticket screen sends, are filtered server-side since #218
+  (TC-TICK-033), but `customer_id` is still ignored. Not recorded against row 5.9, which describes
+  the endpoint rather than its (absent) consumer.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended)
 
 ---

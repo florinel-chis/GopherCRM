@@ -30,6 +30,26 @@ const (
 	TicketPriorityUrgent TicketPriority = "urgent"
 )
 
+// IsValid reports whether s is exactly one of the four declared statuses. The
+// match is case-sensitive: "Open" and "" are not valid.
+func (s TicketStatus) IsValid() bool {
+	switch s {
+	case TicketStatusOpen, TicketStatusInProgress, TicketStatusResolved, TicketStatusClosed:
+		return true
+	}
+	return false
+}
+
+// IsValid reports whether p is exactly one of the four declared priorities.
+// The match is case-sensitive: "URGENT" and "" are not valid.
+func (p TicketPriority) IsValid() bool {
+	switch p {
+	case TicketPriorityLow, TicketPriorityMedium, TicketPriorityHigh, TicketPriorityUrgent:
+		return true
+	}
+	return false
+}
+
 // @Description A support request raised for a customer and handled by a support or admin user.
 type Ticket struct {
 	BaseModel
