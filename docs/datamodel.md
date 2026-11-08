@@ -398,15 +398,18 @@ to the rule's entity type. A lead rule knows `lead.id`, `lead.first_name`, `lead
 `deal.currency` and `deal.source`; both know `owner.first_name`, `owner.last_name` and
 `owner.email` of the record's owner at execution time. Anything else, including a `lead.*`
 placeholder in a deal rule, is an unknown placeholder and the rule is refused. A mail is not
-stored, and a notification is hard-deleted with the lead it refers to and with its recipient, so
-neither rendering outlives the person.
+stored, and a notification is hard-deleted with the lead it refers to, with its recipient, and,
+for a deal rule, when the deal's customer or lead is erased (#245), so neither rendering outlives
+the person.
 
 A task title or description is narrower: `lead.id`, `lead.status` and `lead.source` for a lead
 rule, the six `deal.*` placeholders for a deal rule, and nothing of the owner. A task is a
 business record that is kept when its lead is erased (the link resolves, the person does not), so
 the name, email, phone and company placeholders are refused in it when the rule is validated, and
-the task renderer blanks them even in a rule stored before the allowlist was narrowed. The
-rendered text goes into the task, the mail or the notification, never into a log line.
+the task renderer blanks them even in a rule stored before the allowlist was narrowed.
+`deal.title` stays allowed in a task although it is staff-typed and may name the client: the
+erasure redacts the deal's own title (#245), but a task rendered from it before the erasure keeps
+that copy, an accepted and documented limitation. The rendered text goes into the task, the mail or the notification, never into a log line.
 
 ### Automation Event
 

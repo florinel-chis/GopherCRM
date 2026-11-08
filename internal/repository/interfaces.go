@@ -342,8 +342,10 @@ type QuoteStatusStamps struct {
 	ClosedAt *time.Time
 }
 
-// QuoteRepository backs the quotes module. Quotes copy no personal data, so
-// nothing here takes part in the erasure; the status history is append-only.
+// QuoteRepository backs the quotes module. Nothing here takes part in the
+// erasure: the erasure of a quote's customer, or of the customer or lead of
+// its deal, redacts the quote's text itself, inside its own unit
+// (business_text_erasure.go, #245). The status history is append-only.
 //
 // The conditional updates (UpdateDraft, UpdateTotals, ClaimStatus,
 // StampEmailed) report how many rows matched their WHERE clause. On MySQL the
