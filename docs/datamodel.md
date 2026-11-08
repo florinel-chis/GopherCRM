@@ -681,6 +681,31 @@ Represents system configuration settings that control application behavior.
 
 `security.session_timeout_hours` and `tickets.auto_assign_support` were seeded by earlier releases and never read. They are retired (#224): startup deletes them on every driver (`models.RetiredConfigurationKeys`), and `migrations/20261031120000_retire_inert_configurations` does the same on MySQL and MariaDB. Session length comes from `JWT_EXPIRY_HOURS` (access token) and `REFRESH_TOKEN_EXPIRY_DAYS`. A ticket created without `assigned_to_id` is assigned to the user who created it (`internal/handler/ticket_handler.go:107-110`); nothing distributes tickets among support users.
 
+## Bulk Operation Model
+
+`bulk_operations` — the history row of one bulk status update (`POST /leads|tickets|tasks/bulk/status`).
+It holds ids, counts and statuses only, no record content, and is not touched by erasure.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| user_id | uint | Yes | - | FK to users | The caller |
+| resource_type | string | Yes | - | `leads`, `tickets` or `tasks`, max 50 | What the batch changed |
+| type | string | Yes | - | `action`, max 20 | Only `action` is written; legacy rows may hold `create`, `update` or `delete` |
+| status | string | Yes | `pending` | max 20, non-unique index `idx_bulk_operations_status` | `pending`, `completed` or `failed`; legacy rows may hold `processing` or `partial`, which nothing rewrites |
+| total_items | int | Yes | - | 1–100 | Distinct ids in the request |
+| success_count, failure_count | int | No | 0 | - | Not written by the status endpoints |
+
+The row is created `pending` before the batch runs. `completed` is written inside the batch
+transaction by a conditional update from `pending`, so it commits with the records or not at all;
+`failed` is written after a batch that rolled back, again only from `pending` (#196). A row still
+`pending` an hour after `created_at` belongs to a batch that never committed and is set to `failed`
+by the sweep every replica runs at boot and every 15 minutes, which reads its candidates through
+the status index without locking and updates them by primary key. Rows that were already `pending`
+before that change may belong to a batch that committed; the sweep fails them too, and the outcome
+is not recorded anywhere. Migration `20261110120000_add_bulk_operation_status_index` creates the
+index on MySQL/MariaDB; `MigrateDatabase` creates it on SQLite. `bulk_operation_items` holds legacy
+rows only; nothing writes it.
+
 ## API Request/Response Format
 
 ### Frontend to Backend Field Mapping

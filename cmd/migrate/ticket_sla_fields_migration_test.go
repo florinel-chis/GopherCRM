@@ -51,8 +51,8 @@ func TestTicketSLAFieldsMigrationFiles(t *testing.T) {
 	assert.NotContains(t, upSQL, "create table", "no new table")
 	assert.NotContains(t, upSQL, "\nupdate ", "existing rows are not backfilled")
 	assert.NotContains(t, downSQL, "drop table", "rollback keeps the rows")
-	// The newest-migration assertion moved to TestUserTokenVersionMigrationFiles
-	// when 20261109120000_add_user_token_version (#236) followed this pair.
+	// The newest-migration assertion lives in TestBulkOperationStatusIndexMigrationFiles
+	// since 20261110120000_add_bulk_operation_status_index (#196) became the newest pair.
 }
 
 func snapshotTicketSLAColumns(t *testing.T, tdb *migrationTestDB) []string {

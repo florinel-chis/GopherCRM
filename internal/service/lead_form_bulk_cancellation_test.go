@@ -420,7 +420,7 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 		assert.Equal(t, models.StatusFailed, operations[0].Status)
 	})
 
-	t.Run("an outcome write that cannot get a connection gives up and leaves the row pending", func(t *testing.T) {
+	t.Run("an outcome write that cannot get a connection gives up, and the sweep fails the row later", func(t *testing.T) {
 		env := newCancellationEnv(t, open(t))
 		lead := env.leads.bind(t).newLead(models.LeadStatusNew, nil)
 		previous := bulkOutcomeTimeout
@@ -443,7 +443,19 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 		require.NoError(t, env.db.Find(&operations).Error)
 		require.Len(t, operations, 1)
 		assert.Equal(t, models.StatusPending, operations[0].Status,
-			"a timed-out outcome write leaves the documented pending row")
+			"right after the call a timed-out outcome write leaves the row pending")
+
+		// #196: the row does not stay pending for good. A sweep with the clock
+		// past the horizon fails it without anyone stepping in.
+		swept, err := SweepStaleBulkOperations(context.Background(), repository.NewBulkOperationRepository(env.db),
+			time.Now().Add(BulkOperationStaleAfter+time.Minute))
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, swept)
+		var after models.BulkOperation
+		require.NoError(t, env.db.First(&after, operations[0].ID).Error)
+		assert.Equal(t, models.StatusFailed, after.Status, "the sweep moves the row to failed")
+		require.NoError(t, env.db.First(&stored, lead.ID).Error)
+		assert.Equal(t, models.LeadStatusNew, stored.Status, "the records stay unchanged")
 	})
 }
 

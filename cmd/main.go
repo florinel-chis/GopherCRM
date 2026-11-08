@@ -252,8 +252,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 
 // setupDependencies wires every repository, service and handler onto the API
 // group and returns the function that drains the automation worker, the form
-// retention purge and the AEO runtime at shutdown, in that order, before main
-// closes the database.
+// retention purge, the bulk operation sweep and the AEO runtime at shutdown,
+// in that order, before main closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
@@ -504,8 +504,14 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		}
 	}
 
+	// The stale bulk operation sweep (#196) runs on every replica: at boot and
+	// every 15 minutes it fails pending bulk_operations rows older than an hour,
+	// whose batch never committed.
+	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo)
+	bulkRecovery.start(backgroundCtx)
+
 	// One drain handle for every runtime: the automation worker first (its step
 	// transactions are short), then the form retention purge (a chunk in flight
-	// rolls back), then the AEO runs.
-	return combineStops(automation.Stop, formRetention.Stop, aeoRuntime.Stop)
+	// rolls back), then the bulk operation sweep, then the AEO runs.
+	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)
 }

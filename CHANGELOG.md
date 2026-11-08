@@ -84,6 +84,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bulk status history rows no longer stay `pending` for good (#196).** A bulk status batch
+  (`POST /leads|tickets|tasks/bulk/status`) now writes its `bulk_operations` row `completed` as the
+  last write of its own transaction, with a conditional update from `pending`, so the row commits
+  with the records or not at all. After a batch that rolled back, `failed` is written by a
+  conditional update that never overwrites a terminal row. A row whose `failed` write timed out
+  (lock contention, a held pool) is failed by a sweep that every replica runs at boot and every 15
+  minutes, once the row is an hour old; it reads its candidates without locking and updates them by
+  primary key in chunks of 500. `failed` therefore means none of the batch's records changed, except
+  for rows already `pending` before this upgrade, which are swept to `failed` although their batch
+  may have committed. The one answer that changes: a batch whose own row was swept before it
+  committed answers 500 and changes nothing. MySQL installs run
+  `20261110120000_add_bulk_operation_status_index` (a non-unique index on `bulk_operations(status)`);
+  SQLite gets it through AutoMigrate. No setting is added.
 - **Customers no longer show a fabricated Total Revenue (#186).** The API has never returned a
   revenue value; the web client's adapter defaulted `total_revenue` to 0, so the customer list and
   detail pages showed `$0` for every customer. The "Total Revenue" column is gone from the

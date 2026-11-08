@@ -50,16 +50,20 @@ const MaxBulkStatusItems = 100
 // BulkOperation represents a bulk operation record
 type BulkOperation struct {
 	BaseModel
-	UserID        uint                `gorm:"not null" json:"user_id"`
-	User          User                `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	ResourceType  string              `gorm:"not null;type:varchar(50)" json:"resource_type"`
-	Type          BulkOperationType   `gorm:"column:type;not null;type:varchar(20)" json:"type"`
-	OperationType BulkOperationType   `gorm:"-" json:"operation_type,omitempty"` // Alias for Type (not persisted)
-	Status        BulkOperationStatus `gorm:"not null;default:'pending';type:varchar(20)" json:"status"`
-	TotalItems    int                 `gorm:"not null" json:"total_items"`
-	SuccessCount  int                 `gorm:"default:0" json:"success_count"`
-	FailureCount  int                 `gorm:"default:0" json:"failure_count"`
-	Items         []BulkOperationItem `gorm:"foreignKey:OperationID" json:"items,omitempty"`
+	UserID        uint              `gorm:"not null" json:"user_id"`
+	User          User              `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	ResourceType  string            `gorm:"not null;type:varchar(50)" json:"resource_type"`
+	Type          BulkOperationType `gorm:"column:type;not null;type:varchar(20)" json:"type"`
+	OperationType BulkOperationType `gorm:"-" json:"operation_type,omitempty"` // Alias for Type (not persisted)
+	// Status is indexed (idx_bulk_operations_status, non-unique) so the
+	// stale-pending sweep finds its candidates without scanning the table
+	// (#196). The sweep only reads through the index with a plain SELECT and
+	// updates by primary key, so it never locks through it.
+	Status       BulkOperationStatus `gorm:"not null;default:'pending';type:varchar(20);index:idx_bulk_operations_status" json:"status"`
+	TotalItems   int                 `gorm:"not null" json:"total_items"`
+	SuccessCount int                 `gorm:"default:0" json:"success_count"`
+	FailureCount int                 `gorm:"default:0" json:"failure_count"`
+	Items        []BulkOperationItem `gorm:"foreignKey:OperationID" json:"items,omitempty"`
 }
 
 // BulkOperationItem represents an individual item within a bulk operation
