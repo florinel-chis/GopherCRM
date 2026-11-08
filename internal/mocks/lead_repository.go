@@ -495,6 +495,17 @@ func (_m *LeadRepository) WithTx(tx *gorm.DB) repository.LeadRepository {
 	return _m
 }
 
+// ListAllForExport provides a mock function with given fields: filter
+func (_m *LeadRepository) ListAllForExport(filter repository.LeadExportFilter) ([]models.Lead, error) {
+	ret := _m.Called(filter)
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
 func NewLeadRepository(t interface {
 	mock.TestingT
 	Cleanup(func())

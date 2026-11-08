@@ -79,6 +79,10 @@ type LeadRepository interface {
 	// must append to the lead that already exists instead of forking a new one.
 	GetLatestByEmail(email string) (*models.Lead, error)
 	WithTx(tx *gorm.DB) LeadRepository
+	// ListAllForExport returns every live lead matching the filter, unpaginated,
+	// in one ordered statement whose order is total (sort column then id in the
+	// same direction, or id ascending). Backs GET /leads/export.
+	ListAllForExport(filter LeadExportFilter) ([]models.Lead, error)
 }
 
 type CustomerRepository interface {

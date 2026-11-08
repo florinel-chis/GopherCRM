@@ -27,6 +27,7 @@ func SetupLeadRoutes(router *gin.RouterGroup, handler *LeadHandler) {
 	{
 		leads.POST("", handler.Create)
 		leads.GET("", handler.List)
+		leads.GET("/export", handler.Export)
 		leads.GET("/:id", handler.Get)
 		leads.PUT("/:id", handler.Update)
 		leads.DELETE("/:id", handler.Delete)

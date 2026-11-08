@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CSV export of leads (#234).** `GET /leads/export` downloads `leads-export.csv`
+  (`text/csv; charset=utf-8`) holding exactly the leads the caller may list: an admin gets every
+  live lead under the list's precedence (a non-empty `search` with the sort, else an exact
+  `classification` in ascending id order, else `sort_by`/`sort_order`, else ascending id order), a
+  sales user only its own leads in ascending id order whatever it sends, and support and customer
+  callers 403. `external_id`, `page`, `offset` and `limit` are not read. The columns are id,
+  first_name, last_name, email, phone, company, position, source, status, classification,
+  external_id, notes, owner_id, customer_id, company_id, created_at and updated_at; timestamps are
+  RFC 3339 in UTC and every text cell gets the customer export's formula guard. The rows come from
+  one ordered statement whose order ends in the lead id (#105) and are read in full before the
+  first byte, so a database failure is a JSON 500, never a truncated file. Erased leads are
+  absent, converted leads present. No UI button yet, and no schema change.
 - **Server-side ticket filters (#218).** `GET /tickets` accepts optional `status`
   (`open`, `in_progress`, `resolved`, `closed`) and `priority` (`low`, `medium`, `high`, `urgent`)
   query parameters, matched exactly and case-sensitively. They combine with each other, with

@@ -322,3 +322,65 @@ func (r *leadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
 	return &leadRepository{db: tx}
 }
+
+// LeadExportFilter narrows the leads ListAllForExport reads. Every field is
+// optional and applied only when given: a nil OwnerID is every owner, an empty
+// Search or Classification is no filter, and an empty SortBy is id ascending.
+// The service decides which fields a caller may set (LeadService.ExportForActor);
+// the repository applies whatever it receives.
+type LeadExportFilter struct {
+	// OwnerID restricts the rows to one owner (a sales caller's own leads).
+	OwnerID *uint
+	// Search is a substring matched against first_name, last_name, email,
+	// company, phone and notes, as the lead list search does.
+	Search string
+	// Classification is an exact classification match.
+	Classification models.LeadClassification
+	// SortBy is a column of the leads sort allowlist (utils.ValidateSort); an
+	// unknown column is an error, never interpolated.
+	SortBy string
+	// SortOrder is asc or desc, used only with SortBy.
+	SortOrder string
+}
+
+// ListAllForExport returns every live lead matching filter, unpaginated, for
+// the CSV export (GET /leads/export, #234).
+//
+// The rows are read by ONE ordered statement whose order is total (#105): the
+// validated sort column and then leads.id in the same direction, or leads.id
+// ascending without a sort column. No batching: GORM's FindInBatches continues
+// on `id > last id`, which skips and repeats rows under any other ordering. One
+// statement is also one consistent read on SQLite and MySQL, and makes
+// duplicate values, NULLs and collation ties deterministic, so a descending
+// export is the exact reverse of the ascending one.
+//
+// Soft-deleted (erased) leads are excluded by GORM's default scope; converted
+// leads are live rows and are included, as in the lead list. An unknown sort
+// column is returned as an error before any statement runs.
+func (r *leadRepository) ListAllForExport(filter LeadExportFilter) ([]models.Lead, error) {
+	query := r.db.Model(&models.Lead{})
+	if filter.OwnerID != nil {
+		query = query.Where("owner_id = ?", *filter.OwnerID)
+	}
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		query = query.Where(
+			"(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?)",
+			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
+		)
+	}
+	if filter.Classification != "" {
+		query = query.Where("classification = ?", filter.Classification)
+	}
+
+	query, err := orderPage(query, "leads", filter.SortBy, filter.SortOrder)
+	if err != nil {
+		return nil, err
+	}
+
+	leads := make([]models.Lead, 0)
+	if err := query.Find(&leads).Error; err != nil {
+		return nil, err
+	}
+	return leads, nil
+}

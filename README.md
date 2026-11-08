@@ -616,6 +616,8 @@ authentication and live on the moderate tier:
   `external_id` returns the leads with that exact external id the caller may see, overriding the
   others; hidden leads are left out rather than refused)
 - `POST /api/v1/leads` - Create new lead (the owner must be an active admin or sales user)
+- `GET /api/v1/leads/export` - Download the leads the caller may list as CSV *(admin: every lead, with
+  the list's search, classification and sort; sales: only its own leads, in id order)*
 - `GET /api/v1/leads/:id` - Get specific lead
 - `PUT /api/v1/leads/:id` - Update lead (a changed owner must be an active admin or sales user; admin only)
 - `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into and its login; converted leads admin-only)

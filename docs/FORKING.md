@@ -28,7 +28,7 @@ wiring is in `setupDependencies` (`cmd/main.go:257`).
 | Auth, sessions, API keys | public `/auth`; own keys for any authenticated user | rotating refresh tokens, single-use reset tokens claimed inside one transaction, lockout after 5 failures, one generic 401 when login or `POST /auth/refresh` rejects the credential (an operational refresh failure is a retryable 503 `SESSION_REFRESH_UNAVAILABLE` and a malformed body a 400, `internal/handler/auth_handler.go:211-238`; change-password answers 400 for a wrong current password and 409 `SESSION_STALE` for a stale session, `:340-346`) | `internal/service/auth_password_reset_regression_test.go`, `auth_refresh_rotation_regression_test.go`, `internal/handler/apikey_handler_test.go` |
 | Registration | public, ships **off** | always creates a `customer`; fails closed on a settings read error | `internal/handler/auth_registration_test.go`, `internal/middleware/registration_test.go` |
 | Users | admin; self for get/update | deactivated users' bearer tokens are rejected; delete is erasure | `internal/handler/user_handler_test.go`, `internal/service/user_service_test.go` |
-| Leads | admin, sales (own leads only) | email or phone required; conversion rules from settings; one visibility policy | `internal/service/lead_conversion_rules_test.go`, `lead_visibility_test.go`, `internal/integration/lead_visibility_integration_test.go` |
+| Leads | admin, sales (own leads only) | email or phone required; conversion rules from settings; one visibility policy; CSV export of the leads the caller may list in one totally ordered statement | `internal/service/lead_conversion_rules_test.go`, `lead_visibility_test.go`, `internal/integration/lead_visibility_integration_test.go`, `internal/repository/lead_export_traversal_test.go` |
 | Customers | create admin+sales; export and delete admin | unique email (409); CSV export in one totally ordered statement | `internal/service/customer_service_test.go`, `internal/repository/customer_export_traversal_test.go` |
 | Companies | read admin+sales+support; write admin+sales | normalised unique domain; delete clears links in one transaction | `internal/service/company_service_test.go`, `internal/repository/company_domain_normalization_test.go` |
 | Deals | admin, sales (own) | five stages; one history row per stage change in the same transaction; integer money | `internal/service/deal_service_test.go`, `internal/repository/deal_repository_test.go` |
@@ -59,8 +59,8 @@ Checked by searching the tracked tree on `4dfe404`:
 - No external id on customers (`internal/models/customer.go`); a mapping table is #212.
 - No internationalisation framework in `gocrm-ui/package.json`.
 - No quote PDF and no tax lines (`docs/FEATURES.md`, rows 4d.3 and 4d.7; #233).
-- CSV export covers customers only (`internal/handler/customer_handler.go:567`; listed in
-  `docs/ROADMAP.md` as "Data export"; #234).
+- CSV export covers customers and leads only (`internal/handler/customer_handler.go:567`,
+  `lead_handler.go:915`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
 - The CSRF middleware is not installed (`internal/middleware/csrf.go`; README "Known Limitations";
   #235).
 - An issued JWT ends early only through logout, a password change or a password reset, which

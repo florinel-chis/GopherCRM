@@ -579,6 +579,16 @@ writes a byte. Regression roots: `TestCustomerExportTraversal{SQLite,MySQL}`
 `TEST_MYSQL_DSN`, skip without it and fail when it is unreachable. If a whole-book read ever needs
 to be chunked again, continue on a composite `(sort column, id)` keyset that handles NULL
 explicitly, never on the primary key alone.
+`LeadRepository.ListAllForExport` (`GET /leads/export`, #234) follows the same rule: one statement
+over the live leads matching a `LeadExportFilter` (owner, search, exact classification, each
+applied only when given), ordered by the validated column and then `leads.id` in the same
+direction, or by `id` ascending; converted leads are included and erased ones are not.
+`LeadService.ExportForActor` applies the list's scope: an admin gets the search with the sort,
+else the classification in id order, else the sort, else id order; a sales user its own leads in
+id order with every parameter ignored; any other role `apperrors.ErrForbidden` without a read.
+Regression roots: `TestLeadExportTraversal{SQLite,MySQL}`
+(`internal/repository/lead_export_traversal_test.go`) and `TestLeadExportCSV{SQLite,MySQL}` and
+`TestLeadExportRoles{SQLite,MySQL}` (`tests/lead_export_csv_test.go`), under the same MySQL rules.
 
 **Paginated reads walk a total order (#110).** OFFSET/LIMIT pages are separate statements, so
 an `ORDER BY` that leaves rows tied lets the engine return the tied rows in a different order on
