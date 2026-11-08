@@ -134,6 +134,8 @@ type identityGraph struct {
 	run                        *models.AutomationRun
 	task                       *models.Task
 	deal                       *models.Deal
+	quote                      *models.Quote
+	product                    *models.Product
 	needles                    []string
 }
 
@@ -255,9 +257,18 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 
 	g.task = &models.Task{Title: "Send brochure", AssignedToID: g.sales.ID, LeadID: &g.leadLive.ID, CustomerID: &g.customerLive.ID}
 	require.NoError(t, db.Create(g.task).Error)
-	g.deal = &models.Deal{Title: "Printer fleet", Currency: "EUR", Probability: 10, OwnerID: g.sales.ID,
-		CustomerID: &g.customerLive.ID, LeadID: &g.leadLive.ID}
+	// Staff-typed text that names the person (#245): the deal's title, notes and
+	// lost_reason, and a quote on the deal with one line.
+	g.deal = &models.Deal{Title: "Printer fleet for " + first, Currency: "EUR", Probability: 10, AmountCents: 420000, OwnerID: g.sales.ID,
+		CustomerID: &g.customerLive.ID, LeadID: &g.leadLive.ID, Notes: "Ask " + last + " about the lease", LostReason: "Price, says " + first}
 	require.NoError(t, db.Create(g.deal).Error)
+	g.product = &models.Product{Name: "Printer lease " + tag, SKU: "PL-" + tag, UnitPriceCents: 21000, Currency: "EUR", IsActive: true}
+	require.NoError(t, db.Create(g.product).Error)
+	g.quote = &models.Quote{Title: "Lease offer for " + last, Status: models.QuoteStatusSent, Currency: "EUR", SubtotalCents: 42000,
+		TotalCents: 42000, Notes: "Send to " + liveEmail, DealID: &g.deal.ID, CustomerID: &g.customerLive.ID, OwnerID: g.sales.ID}
+	require.NoError(t, db.Create(g.quote).Error)
+	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: g.quote.ID, ProductID: g.product.ID, Position: 1,
+		Description: "Lease for " + first + " " + last, Quantity: 2, UnitPriceCents: 21000, LineTotalCents: 42000}).Error)
 
 	// The rows soft-deleted before deletion became an erasure: hidden from
 	// every ordinary query, still holding the person.
@@ -268,7 +279,8 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 	// The sweep must see every copy before the erasure, or its silence after
 	// it proves nothing.
 	holding := identityTablesHolding(t, db, g.needles)
-	for _, table := range []string{"users", "customers", "leads", "ticket_comments", "form_submissions", "notifications"} {
+	for _, table := range []string{"users", "customers", "leads", "ticket_comments", "form_submissions", "notifications",
+		"deals", "quotes", "quote_lines"} {
 		require.Contains(t, holding, table, "the seeded person must be visible in %s before the erasure", table)
 	}
 	hits := identitySweep(t, db, g.needles)
@@ -457,6 +469,7 @@ func assertGraphErased(t *testing.T, db *gorm.DB, g *identityGraph) {
 
 	assert.Empty(t, identitySweep(t, db, g.needles), "personal data survived the erasure")
 	assertStaffIntact(t, db, g)
+	assertIdentityBusinessTextRedacted(t, db, g)
 }
 
 func assertCommentRedacted(t *testing.T, db *gorm.DB, id uint, wasDeleted bool) {
@@ -488,6 +501,36 @@ func assertStaffIntact(t *testing.T, db *gorm.DB, g *identityGraph) {
 	assert.Equal(t, g.sales.ID, deal.OwnerID)
 	require.NotNil(t, deal.CustomerID)
 	assert.Equal(t, g.customerLive.ID, *deal.CustomerID)
+	require.NotNil(t, deal.LeadID)
+	assert.Equal(t, g.leadLive.ID, *deal.LeadID)
+	assert.Equal(t, int64(420000), deal.AmountCents)
+}
+
+// assertIdentityBusinessTextRedacted checks the graph's deal and quote are kept with
+// their owner, links and amounts and hold the redacted values (#245).
+func assertIdentityBusinessTextRedacted(t *testing.T, db *gorm.DB, g *identityGraph) {
+	t.Helper()
+	var deal models.Deal
+	require.NoError(t, db.First(&deal, g.deal.ID).Error, "the deal is kept")
+	assert.Equal(t, RedactedBusinessTitle, deal.Title)
+	assert.Empty(t, deal.Notes)
+	assert.Empty(t, deal.LostReason)
+
+	var quote models.Quote
+	require.NoError(t, db.Preload("Lines").First(&quote, g.quote.ID).Error, "the quote is kept")
+	assert.Equal(t, RedactedBusinessTitle, quote.Title)
+	assert.Empty(t, quote.Notes)
+	assert.Equal(t, g.sales.ID, quote.OwnerID)
+	require.NotNil(t, quote.DealID)
+	assert.Equal(t, g.deal.ID, *quote.DealID)
+	require.NotNil(t, quote.CustomerID)
+	assert.Equal(t, g.customerLive.ID, *quote.CustomerID)
+	assert.Equal(t, models.QuoteStatusSent, quote.Status)
+	assert.Equal(t, int64(42000), quote.TotalCents)
+	require.Len(t, quote.Lines, 1)
+	assert.Equal(t, g.product.Name, quote.Lines[0].Description)
+	assert.Equal(t, int64(2), quote.Lines[0].Quantity)
+	assert.Equal(t, int64(42000), quote.Lines[0].LineTotalCents)
 }
 
 // identityRoot erases the person starting from one node, through the plain
@@ -552,7 +595,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 			// The other person, structured identically and sharing nothing,
 			// is still there in full.
 			holding := identityTablesHolding(t, db, other.needles)
-			for _, table := range []string{"users", "customers", "leads", "ticket_comments", "form_submissions"} {
+			for _, table := range []string{"users", "customers", "leads", "ticket_comments", "form_submissions", "deals", "quotes", "quote_lines"} {
 				assert.Contains(t, holding, table, "an unlinked person lost data in %s", table)
 			}
 		})

@@ -460,6 +460,14 @@ before this rule existed are not repaired automatically: `docs/DEVELOPMENT.md` l
 that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
 are all soft-deleted have no supported path yet.
 
+Deals and quotes of the erased customers and leads are kept with their links, stages, amounts,
+statuses, totals and history, but the text staff typed into them can name the client, so the same
+transaction overwrites it: deal titles become `[redacted]` and their notes and lost reasons are
+emptied, quote titles become `[redacted]` and their notes are emptied whatever the quote status,
+quote line descriptions are reset to the product names, and notifications about those deals are
+deleted (#245). Ticket and task text is kept; see `docs/DEVELOPMENT.md` for the ticket redaction
+procedure.
+
 Two consequences:
 
 - **Erasure cannot be undone.** The only way to get the data back is to restore a database backup.
@@ -805,8 +813,10 @@ expired, or if its owner has been deactivated or erased.
   (`title`, `body?`, recipient); an invalid trigger or step, more than 20 steps, more than 90 days
   of waits, a backward or out-of-range `else_position` or an unknown `{{placeholder}}` is 400
   `INVALID_INPUT` and writes nothing; a `create_task` title or description accepts only the
-  non-personal placeholders — `lead.id`, `lead.status`, `lead.source` or the `deal.*` fields —
-  because a task survives the erasure of its lead; an unknown, inactive or non-staff user is 400
+  placeholders `lead.id`, `lead.status`, `lead.source` or the `deal.*` fields — never a lead's
+  name, email, phone, company or owner — because a task survives the erasure of its lead; note
+  that `deal.title` is staff-typed and may name the client: the erasure redacts the deal (#245),
+  but a task already rendered from `{{deal.title}}` keeps that text (accepted limitation); an unknown, inactive or non-staff user is 400
   `INVALID_REFERENCE`; every refused field is listed in `error.details.fields` as
   `{field, code, message}` — `field` a path into the body such as `name`, `trigger.hour_utc` or
   `steps[2].config.title` (steps counted from zero) — while `error.message` and `error.code` are

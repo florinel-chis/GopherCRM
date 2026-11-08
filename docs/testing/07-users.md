@@ -35,7 +35,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   and it must never be deleted.
 - Deleting a user is an irreversible GDPR Article 17 erasure (`internal/repository/erasure.go`):
   personal fields are overwritten in place, API keys and refresh tokens are purged, then the row is
-  soft-deleted. **Only ever delete a user the test itself created**, and only in the cases that
+  soft-deleted. Erasing a customer-role login also redacts the deal and quote text of the
+  customers and leads it reaches (#245); erasing a staff user leaves the deals and quotes it owns
+  untouched. **Only ever delete a user the test itself created**, and only in the cases that
   explicitly say so.
 - Cases that log in as a non-admin need a login helper for arbitrary credentials. `LoginPage`
   (`gocrm-ui/e2e/pages/login.page.ts`) can already do it; `AdminAuthHelper` cannot, because

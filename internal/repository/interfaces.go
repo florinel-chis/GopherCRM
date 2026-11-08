@@ -258,8 +258,10 @@ type DealPipelineFilter struct {
 	CompanyID *uint
 }
 
-// DealRepository backs the deals module. Deals hold no personal data, so
-// nothing here takes part in the erasure; the stage history is append-only.
+// DealRepository backs the deals module. Nothing here takes part in the
+// erasure: the erasure of a deal's customer or lead redacts the deal's text
+// itself, inside its own unit (business_text_erasure.go, #245). The stage
+// history is append-only.
 type DealRepository interface {
 	Create(deal *models.Deal) error
 	// GetByID returns the deal with Owner, Company, Customer and Lead
@@ -340,8 +342,10 @@ type QuoteStatusStamps struct {
 	ClosedAt *time.Time
 }
 
-// QuoteRepository backs the quotes module. Quotes copy no personal data, so
-// nothing here takes part in the erasure; the status history is append-only.
+// QuoteRepository backs the quotes module. Nothing here takes part in the
+// erasure: the erasure of a quote's customer, or of the customer or lead of
+// its deal, redacts the quote's text itself, inside its own unit
+// (business_text_erasure.go, #245). The status history is append-only.
 //
 // The conditional updates (UpdateDraft, UpdateTotals, ClaimStatus,
 // StampEmailed) report how many rows matched their WHERE clause. On MySQL the

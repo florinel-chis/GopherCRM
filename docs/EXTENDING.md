@@ -200,31 +200,34 @@ wrong mock lets a test pass for the wrong reason (`REVIEW.md`, last paragraph).
 
 Decide first whether the new table stores personal data or only refers to people by id.
 
-- **Ids only**: erasure leaves the rows in place. Quotes are the nearest example: they copy no
-  field from the customer and read the recipient at send time (`internal/models/quote.go:71-74`).
-  They are not free of personal data, though. The quote title and notes and each line description
-  are text typed by staff (`quote.go:77,92,202`; `QuoteRequest`, `internal/handler/quote_handler.go:36-44`),
-  can name the client, and survive customer erasure, because `customerErasurePlan`
-  (`internal/repository/customer_repository.go:166`) does not reach quote tables. That is a known
-  gap: #245. A new table with free-text columns belongs in the next bullet.
+- **Ids only**: erasure leaves the rows in place. Deals and quotes show why "ids only" is rarer
+  than it looks: they copy no field from the customer, and a quote reads its recipient at send
+  time, but their title, notes, `lost_reason` and line descriptions are typed by staff and can name
+  the client. Since #245 the erasure reaches them through a step of the cascade
+  (`internal/repository/business_text_erasure.go`, run by `eraseGraph` once the person's rows have
+  been traversed): the linked deals and quotes are kept with their links and amounts and their
+  text is overwritten. A new table with free-text columns belongs in the next bullet.
   For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
   (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
-  `TestThePersonalDataSweepCoversQuoteTables` (line 313) that writes the person into the table and
+  `TestThePersonalDataSweepCoversQuoteTables` (line 314) that writes the person into the table and
   asserts the sweep sees it. A sweep that cannot see a table proves nothing; the quote canary
-  proves the sweep can see quote rows, not that erasure clears them.
+  proves the sweep can see quote rows, and `business_text_erasure_sweep_test.go` proves the
+  erasure clears them.
 - **Personal fields** (names, email, phone, address, free text typed by or about a person): the
   erasure must reach them in the same transaction. Staff-typed text about a person counts. Either extend a plan in
   `internal/repository/erasure_cascade.go` (`leadErasurePlan`; `customerErasurePlan` and
   `userErasurePlan` live in their repositories), using `Scrub` for columns and `AfterScrub` /
   `BeforeScrub` for rows outside the entity's own table (as `scrubLeadFormSubmissions` does), or add
-  a step to the cascade. A unique column gets a placeholder, never a blank. Rows keyed by an
+  a step to the cascade (as `scrubBusinessText` does for deals and quotes, probing each table with
+  `tx.Migrator().HasTable`). A unique column gets a placeholder, never a blank. Rows keyed by an
   external identifier under a unique key must be **deleted**, not blanked.
 - Extend `TestIdentityErasure{SQLite,MySQL}` (`internal/repository/identity_erasure_test.go`) and
   the sweep tests so the person is seeded into the new table before the erasure.
 - Update the matrix in [DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data). Known gaps you
   inherit: ticket free text, which the erasure keeps and an operator redacts first through the
-  documented procedure (#214), quote free text (#245), and the missing lock protocol between
+  documented procedure (#214), tasks rendered from `{{deal.title}}` before an erasure (they keep
+  the text; deal and quote text itself is scrubbed since #245), and the missing lock protocol between
   erasure and conversion or authentication (#183). A new table that copies a person's email
   without a link to the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
 

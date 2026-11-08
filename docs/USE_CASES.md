@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1046`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1054`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1068`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1079`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -82,7 +82,7 @@ These caveats apply to every recipe that takes in leads through forms.
   and `leads.conversion.auto_assign_owner` (on by default) makes the lead's owner the customer's
   account manager (`ConvertToCustomer`, `internal/service/lead_service.go:736`). The UI offers
   Convert only on the allowed statuses (#192). A lead without an email cannot be converted (400),
-  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:850-852`).
+  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:851-853`).
 
 ## 1. Small agency: website forms to leads
 
@@ -241,7 +241,7 @@ renewals are not modelled.
 - Quote limits, which apply to every quote recipe: no tax lines; integer quantities (1 to
   1,000,000, `internal/models/quote.go:203,280`); staff record acceptance, and there is no client
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
-  once `valid_until` has passed, `internal/models/quote.go:88-91`); no PDF, only browser print
+  once `valid_until` has passed, `internal/models/quote.go:92-95`); no PDF, only browser print
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
 - A task's `deal_id` (set by a deal rule or through the API, listed by `GET /deals/{id}/tasks`) has
   no screen yet: the web client does not show it. Tasks created by a deal rule before #240 are not
@@ -358,7 +358,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   submission or external key, so idempotent import is a schema change (#213). Mapping customers
   to an external system's ids is #212.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1051`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1076`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - No ticket automation triggers (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1
@@ -385,6 +385,12 @@ A supplier that answers requests for quotation from business customers.
     with the other quote limits from recipe 2.
   - Product SKUs are indexed but not unique (`internal/models/product.go:19`), so they are not safe
     as a key into an ERP: #239.
+- **Erasure:** erasing a customer or lead keeps its deals and quotes, links, totals and history,
+  and overwrites their staff-typed text in the same transaction, whatever the quote status: deal
+  title `[redacted]` with empty notes and lost reason, quote title `[redacted]` with empty notes,
+  and each line's description reset to its product's name (#245; `docs/DEVELOPMENT.md`, *Deleting
+  personal data*). Keep anything an Article 17(3) exemption requires outside those fields, for
+  example in the accounting system.
 - **Do not promise:** an order, a delivery date, an inventory commitment, or a stock, order or ERP
   handoff.
 
@@ -427,7 +433,8 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1156-1224`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1046,1051,1054` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1068,1076,1079` | #214 |
+| Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |

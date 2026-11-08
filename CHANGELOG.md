@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-submission can deadlock with the retention purge, so `storePendingSubmission` now runs under
   `WithTransactionAndRetry`, with a fresh submission id on each attempt and one confirmation mail
   after the commit.
+- **Erasure redacts the deal and quote text that can name the person (#245).** Erasing a customer
+  or lead (directly, through a converted lead or through a customer-role login) now also, in the
+  same transaction, sets the title of every linked deal to `[redacted]` and empties its notes and
+  lost reason; sets the title of every quote addressed to an erased customer or grown from such a
+  deal to `[redacted]` and empties its notes, whatever its status; resets each line description of
+  those quotes to its product's name; and hard-deletes the notifications about those deals. Live
+  and soft-deleted rows are reached alike. The rows, their links, stages, amounts, statuses, totals
+  and history stay, `deals.source` is kept, and deals and quotes reached only through `owner_id`
+  are untouched. A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps
+  its text, and graphs erased before this release are not repaired. No schema change and no API
+  response change.
 
 ### Fixed
 
@@ -262,8 +273,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
   neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
   step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
-  only the non-personal placeholders (`lead.id`, `lead.status`, `lead.source`, the `deal.*`
-  fields) because a task survives the erasure of its lead; the name, email, phone, company and
+  only the placeholders `lead.id`, `lead.status`, `lead.source` and the `deal.*` fields because
+  a task survives the erasure of its lead (`deal.title` is staff-typed and may name the client; a
+  task rendered from it before an erasure keeps that text, see #245); the name, email, phone, company and
   owner placeholders stay available to the email and notification text, which does not outlive
   the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
   `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
@@ -294,8 +306,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quote email takes the same logging fallback as the password reset: it is logged, not delivered,
   and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
   recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
-  the code of a relay reply without the text, which can echo the recipient. Quotes copy no personal
-  data, so customer erasure leaves them intact and the PII sweep covers the four new tables. Schema:
+  the code of a relay reply without the text, which can echo the recipient. Customer erasure keeps
+  the quotes, and since #245 redacts their title, notes and line descriptions; the PII sweep
+  covers the four new tables. Schema:
   AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
   frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
   (#158)
@@ -438,8 +451,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shipped as `EUR`, admin-editable, and exposed on `GET /configurations/ui`).
     `expected_close_date` is a plain `YYYY-MM-DD` date on the wire.
   - Companies report `deal_count`, and deleting a company also clears `company_id` on its deals.
-  - Deals hold no personal data: erasing a linked customer, lead or user leaves them and their
-    history intact.
+  - Erasing a linked customer, lead or user keeps the deals and their history; since #245 erasing
+    the customer or lead (or a customer-role login reaching them) redacts their title, notes and
+    lost reason. Erasing a staff owner does not.
   - Migration `20260930120000_add_deals` for MySQL and MariaDB (two new tables, nothing altered);
     auto-migration covers SQLite, populated files included.
 - **Companies.** A curated organisation record next to the free-text company field of leads and

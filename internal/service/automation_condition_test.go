@@ -231,6 +231,6 @@ func TestAutomationTaskPlaceholdersExcludePersonalData(t *testing.T) {
 		dealTask := &models.AutomationRule{Name: "Deal task", EntityType: models.AutomationEntityDeal, TriggerType: models.AutomationEventDealCreated, Steps: []models.AutomationStep{
 			dealTaskStep(models.AutomationRecipientOwner, 0, 1),
 		}}
-		require.NoError(t, env.svc.CreateRule(dealTask, env.admin.ID), "every deal placeholder is allowed in a task: deals hold no personal data")
+		require.NoError(t, env.svc.CreateRule(dealTask, env.admin.ID), "every deal placeholder is allowed in a task, deal.title included (a task rendered from it before an erasure keeps its text: an accepted limitation, #245)")
 	})
 }

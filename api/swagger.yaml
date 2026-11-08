@@ -11895,19 +11895,9 @@ paths:
       - customers
   /customers/{id}:
     delete:
-      description: 'Admin only (route guard, repeated in the handler). A GDPR Article
-        17 erasure, not an archive: in one transaction every personal field (names,
-        email, phone, company, website, position, postal address, notes) is overwritten
-        in place, the email becoming an unrelated random address in the reserved .invalid
-        domain, and the row is soft-deleted so references from tickets, tasks and
-        deals still resolve. The same person is erased everywhere in that transaction:
-        every lead converted into the customer (with its linked form submissions scrubbed)
-        and, when user_id names a customer-role account, that login (credentials purged)
-        and its other customer records. A staff account in user_id, the account manager
-        (assigned_to_id), company_id and deals are left as they are. Any failure before
-        the commit rolls the whole erasure back. A failed COMMIT is the exception:
-        its outcome is ambiguous (the erasure may have been applied), so read the
-        record again before retrying.'
+      description: |-
+        Admin only (route guard, repeated in the handler). A GDPR Article 17 erasure, not an archive: in one transaction every personal field (names, email, phone, company, website, position, postal address, notes) is overwritten in place, the email becoming an unrelated random address in the reserved .invalid domain, and the row is soft-deleted so references from tickets, tasks and deals still resolve. The same person is erased everywhere in that transaction: every lead converted into the customer (with its linked form submissions scrubbed) and, when user_id names a customer-role account, that login (credentials purged) and its other customer records. A staff account in user_id, the account manager (assigned_to_id), company_id and the deal and quote links are left as they are. Any failure before the commit rolls the whole erasure back. A failed COMMIT is the exception: its outcome is ambiguous (the erasure may have been applied), so read the record again before retrying.
+        Deals and quotes stay as business records with their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: every deal whose customer_id or lead_id is an erased customer or lead (live or deleted) gets title [redacted] and empty notes and lost_reason; every quote whose customer_id is an erased customer or whose deal_id is such a deal (any status, live or deleted) gets title [redacted] and empty notes, and each of its lines gets its product's name as description. Notifications about those deals are deleted. Deals and quotes reached only through owner_id are not touched.
       parameters:
       - description: Customer ID
         in: path
@@ -13700,8 +13690,11 @@ paths:
     delete:
       description: 'Soft-delete a deal. Role: admin. The stage history rows stay,
         and quotes and tasks keep their deal_id (their deal summary is then omitted).
-        Deals hold no personal data, so this is not an erasure. No automation event
-        is recorded.'
+        This is not an erasure: the deal''s title, notes and lost_reason stay on the
+        deleted row. They are overwritten (title [redacted], notes and lost_reason
+        empty) only when the linked customer or lead is erased through DELETE /customers/{id},
+        /leads/{id} or /users/{id}, which reaches deleted deals too. No automation
+        event is recorded.'
       parameters:
       - description: Deal ID
         in: path
@@ -16313,17 +16306,9 @@ paths:
       - leads
   /leads/{id}:
     delete:
-      description: 'GDPR erasure, irreversible. Roles: admin (any lead) and sales
-        (only the leads it owns, and only leads that were never converted). The lead''s
-        personal fields are overwritten in place (the email becomes a random address
-        in the reserved .invalid domain; names, phone, company, position, external
-        id and notes are cleared), linked form submissions are scrubbed, and the row
-        is then soft-deleted, all in one transaction. A converted lead is the same
-        person as the customer it became, so erasing it also erases that customer,
-        the customer''s own customer-role login (credentials included) and every other
-        lead converted into it; staff accounts, owners and assignees are never erased.
-        company_id and deal links stay. A sales user asking to delete a converted
-        lead gets 403 and nothing changes.'
+      description: |-
+        GDPR erasure, irreversible. Roles: admin (any lead) and sales (only the leads it owns, and only leads that were never converted). The lead's personal fields are overwritten in place (the email becomes a random address in the reserved .invalid domain; names, phone, company, position, external id and notes are cleared), linked form submissions are scrubbed, and the row is then soft-deleted, all in one transaction. A converted lead is the same person as the customer it became, so erasing it also erases that customer, the customer's own customer-role login (credentials included) and every other lead converted into it; staff accounts, owners and assignees are never erased. company_id and deal links stay. A sales user asking to delete a converted lead gets 403 and nothing changes.
+        Deals and quotes stay as business records with their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: every deal whose lead_id is an erased lead or whose customer_id is an erased customer (live or deleted) gets title [redacted] and empty notes and lost_reason; every quote on such a deal or addressed to such a customer (any status, live or deleted) gets title [redacted] and empty notes, and each of its lines gets its product's name as description. Notifications about those deals are deleted. A refused erasure changes none of them.
       parameters:
       - description: Lead ID
         in: path
@@ -18018,7 +18003,11 @@ paths:
     delete:
       description: 'Soft-delete a quote. Roles: admin (any quote, any status) and
         sales (only its own quotes, and only drafts). The lines and the history rows
-        stay in their tables. Quotes hold no personal data, so this is not an erasure.'
+        stay in their tables. This is not an erasure: the title, notes and line descriptions
+        stay on the deleted rows. They are overwritten (title [redacted], notes empty,
+        each line description set to its product''s name) only when the quote''s customer,
+        or the customer or lead of its deal, is erased through DELETE /customers/{id},
+        /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.'
       parameters:
       - description: Quote ID
         in: path
@@ -20829,6 +20818,7 @@ paths:
       description: |-
         Admin only (route guard, repeated in the handler); an admin cannot erase its own account. This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
         Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. To suspend an account reversibly use POST /users/{id}/deactivate instead.
+        When a customer-role user is erased, the deals and quotes of the customers and leads it reaches keep their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: deal title [redacted] with empty notes and lost_reason, quote title [redacted] with empty notes, each quote line's description set to its product's name; notifications about those deals are deleted. Deals and quotes owned by an erased staff user are not touched (owner_id is never followed).
       parameters:
       - description: User ID
         in: path

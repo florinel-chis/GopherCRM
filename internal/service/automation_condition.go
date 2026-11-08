@@ -332,10 +332,16 @@ var automationPlaceholders = map[string]map[string]bool{
 // description of a create_task step. A task is a business record that
 // survives the erasure of the lead it links to (the link resolves, the person
 // does not), so its text may carry only what the erasure keeps: ids, the
-// lead's status and source, and the deal's fields, which hold no personal
-// data. The lead's name, email, phone and company — scrubbed by the erasure —
-// and the owner's name and address are not available here, so an erased
-// person cannot outlive the erasure through a task the rule created.
+// lead's status and source, and the deal's fields. The lead's name, email,
+// phone and company — scrubbed by the erasure — and the owner's name and
+// address are not available here, so an erased person cannot outlive the
+// erasure through a task the rule created.
+//
+// deal.title is the one exception that can carry a person: it is staff-typed
+// and may name the client. The erasure of the deal's customer or lead redacts
+// the deal's own title (#245), but a task already rendered from it keeps the
+// text it was given. That is an accepted, documented limitation; deal.title
+// stays allowed so existing rules keep working.
 var automationTaskPlaceholders = map[string]map[string]bool{
 	models.AutomationEntityLead: {
 		"lead.id": true, "lead.status": true, "lead.source": true,

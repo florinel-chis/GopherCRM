@@ -28,7 +28,11 @@ depend on that are flagged.
 
 - All customer records must be created by the test itself using `generateCustomerData()` from
   `gocrm-ui/e2e/fixtures/admin-user.ts`. Deleting a customer is irreversible erasure and cascades to
-  the lead it was converted from, so no case may delete a record it did not create.
+  the lead it was converted from, so no case may delete a record it did not create. It also
+  redacts the text of the customer's deals and quotes and of the quotes on those deals (titles
+  `[redacted]`, notes and lost reasons empty, quote line descriptions reset to the product names)
+  and deletes the notifications about those deals, keeping the rows, links, stages, statuses and
+  totals (#245; `TestBusinessTextErasureAPISQLite` in `tests/business_text_erasure_test.go`).
 - Only `AdminAuthHelper` exists in `gocrm-ui/e2e/helpers/`. Sales and support sessions require a user
   created through the admin Users page (`POST /users`) plus a new role-login helper; those cases are
   marked accordingly. A customer-role session can be obtained from the public `/auth/register` flow,

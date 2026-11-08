@@ -306,10 +306,11 @@ func seedAttributedSubmission(t *testing.T, db *gorm.DB, subject erasureSubject,
 	return submission
 }
 
-// The quotes release added four tables. A quote copies no personal data by
-// design, but the sweep is what proves it: it has to run against a schema
-// that has the tables, and it has to be able to see the person through them
-// before the erasure for its silence afterwards to mean anything.
+// The quotes release added four tables. A quote copies no contact data, but
+// its staff-typed text can name the client, which the erasure now scrubs
+// (#245; business_text_erasure_sweep_test.go). The sweep has to run against a
+// schema that has the tables, and it has to be able to see the person through
+// them before the erasure for its silence afterwards to mean anything.
 func TestThePersonalDataSweepCoversQuoteTables(t *testing.T) {
 	db := setupFullSchemaDB(t)
 
@@ -341,8 +342,8 @@ func TestThePersonalDataSweepCoversQuoteTables(t *testing.T) {
 // --- Customers with quotes ----------------------------------------------------
 
 // A customer with a deal, a quote on that deal with lines and history. The
-// quote links the customer by id and copies nothing, so the erasure leaves
-// the quote, its lines and its history exactly where they are and the sweep
+// quote links the customer by id and copies nothing, so the erasure keeps the
+// quote, its lines and its history (their text redacted, #245) and the sweep
 // finds nothing of the person in any table.
 func TestCustomerErasureWithQuotesLeavesNoPersonalData(t *testing.T) {
 	db := setupFullSchemaDB(t)

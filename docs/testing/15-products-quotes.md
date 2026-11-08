@@ -331,9 +331,20 @@ asserts the core outcome, the rest is pinned in Vitest).
   sweep finds none of the email, names or phone in any table; the quote survives with its
   `customer_id`, `deal_id`, status, line and history; the deal keeps its link; the email path now
   answers `ErrQuoteNoRecipient`. The sweep schema contains `products`, `quotes`, `quote_lines` and
-  `quote_status_changes` and reads soft-deleted rows of them.
+  `quote_status_changes` and reads soft-deleted rows of them. Text that names the person (#245):
+  a quote whose `customer_id` is the erased customer, or whose `deal_id` is a deal of an erased
+  customer or lead (even when it names another customer), live or deleted and in every status, an
+  accepted one included, reads `title` `[redacted]` and empty `notes` afterwards, and each line's
+  `description` is its product's name (a deleted product's too); status, totals, dates, line
+  amounts and `quote_status_changes` are unchanged; a quote of another customer is unchanged.
 - **Automation:** automated — `test/integration/erasure_pii_sweep_test.go`
-  `TestCustomerErasureWithQuotesLeavesNoPersonalData`, `TestThePersonalDataSweepCoversQuoteTables`.
+  `TestCustomerErasureWithQuotesLeavesNoPersonalData`, `TestThePersonalDataSweepCoversQuoteTables`;
+  `test/integration/business_text_erasure_sweep_test.go`
+  `TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData`,
+  `TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData`;
+  `internal/repository/business_text_erasure_test.go` `TestCustomerErasureScrubsQuoteText{SQLite,MySQL}`,
+  `TestBusinessTextErasureAtomic{SQLite,MySQL}`; `tests/business_text_erasure_test.go`
+  `TestBusinessTextErasureAPISQLite`.
 
 ### TC-PQ-017 — The migration matches AutoMigrate and rolls back cleanly
 - **Priority:** P1
