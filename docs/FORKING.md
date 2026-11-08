@@ -56,10 +56,9 @@ Checked by searching the tracked tree on `4dfe404`:
   are #211.
 - No ticket channel and no inbound mail (`internal/models/ticket.go`). Every ticket is created
   through the API or the UI. Ticket replies by email, with inbound mail as later work, are #219.
-- No external id on customers (`internal/models/customer.go`); a mapping table is #212.
 - No internationalisation framework in `gocrm-ui/package.json`.
 - No quote PDF and no tax lines (`docs/FEATURES.md`, rows 4d.3 and 4d.7; #233).
-- CSV export covers customers and leads only (`internal/handler/customer_handler.go:567`,
+- CSV export covers customers and leads only (`internal/handler/customer_handler.go:582`,
   `lead_handler.go:915`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
 - The CSRF middleware is not installed (`internal/middleware/csrf.go`; README "Known Limitations";
   #235).
@@ -89,7 +88,7 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:744`). Everything under `[Unreleased]`
+The latest release is 1.2.0 (`CHANGELOG.md:1040`). Everything under `[Unreleased]`
 (`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
@@ -537,7 +536,7 @@ it from `go.mod` instead is #223.
 |---|---|
 | `setupDependencies` in `cmd/main.go:257` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
-| the AutoMigrate list in `internal/models/database.go:111-151` | append your models at the end, in one block |
+| the AutoMigrate list in `internal/models/database.go:114-156` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
 | seeded settings in `internal/models/configuration.go` | a fork-specific key prefix, appended at the end |
 | `CHANGELOG.md` | a separate fork section, or a separate file |

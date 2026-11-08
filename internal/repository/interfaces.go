@@ -107,6 +107,26 @@ type CustomerRepository interface {
 	WithTx(tx *gorm.DB) CustomerRepository
 }
 
+// CustomerExternalIDRepository stores the (source, scope, external_id) →
+// customer mappings (#212). Comparisons are exact and case-sensitive on every
+// engine. Every method binds its statements to ctx.
+type CustomerExternalIDRepository interface {
+	// LockLiveCustomer reads the live customer row with a locking read (FOR
+	// UPDATE on MySQL/MariaDB, a plain read on SQLite) and returns
+	// gorm.ErrRecordNotFound when there is no live customer with that id.
+	LockLiveCustomer(ctx context.Context, customerID uint) error
+	// Create inserts the mapping. A triple that is already mapped returns an
+	// error matching apperrors.ErrCustomerExternalIDTaken and writes nothing.
+	Create(ctx context.Context, mapping *models.CustomerExternalID) error
+	// FindCustomerByIdentity returns the live customer the exact triple maps
+	// to, or nil and no error when no live customer does.
+	FindCustomerByIdentity(ctx context.Context, source, scope, externalID string) (*models.Customer, error)
+	// DeleteForCustomer hard-deletes the mapping only when it belongs to the
+	// customer; gorm.ErrRecordNotFound when no row of that customer has the id.
+	DeleteForCustomer(ctx context.Context, customerID, mappingID uint) error
+	WithTx(tx *gorm.DB) CustomerExternalIDRepository
+}
+
 // TicketAssigneeScope narrows a ticket collection to the tickets assigned to
 // one user, optionally intersected with one customer and a free-text search.
 // It is how support callers are scoped: the predicate is part of the query, so

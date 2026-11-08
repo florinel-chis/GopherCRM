@@ -549,6 +549,28 @@ Represents confirmed customers in the system.
 ### Relationships
 - May have an associated User account
 - Has many Tickets
+- Has many external identity mappings (`customer_external_ids`, below); not embedded in its JSON
+
+### Customer External ID
+
+`customer_external_ids` (#212) — one integrator identity mapped to a customer. The triple is unique
+and compared exactly (case-sensitive): SQLite compares with `BINARY`, MySQL and MariaDB carry
+`utf8mb4_bin` on the three text columns (migration `20261111120000_add_customer_external_ids`, or
+the collation guard of `MigrateDatabase` on a schema the application alone created). No
+`deleted_at`: a mapping is hard-deleted by `DELETE /customers/{id}/external-ids/{mappingId}` and by
+every erasure of its customer.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Mapping id |
+| created_at, updated_at | timestamp | - | now | - | Set by the server; a mapping is never updated in place |
+| customer_id | uint | Yes | - | FK to customers; index `idx_customer_external_ids_customer_id` | The mapped customer |
+| source | string | Yes | - | `varchar(64)`, 1-64 characters | System that issued the identifier |
+| scope | string | Yes | `''` | `varchar(128)`, 0-128 characters | Namespace inside the source, for example a storefront site |
+| external_id | string | Yes | - | `varchar(255)`, 1-255 characters | The identifier |
+
+The table's only unique index is `idx_customer_external_ids_identity (source, scope, external_id)`.
+Every value must be valid UTF-8 without control characters or leading or trailing whitespace.
 
 ## Ticket Model
 

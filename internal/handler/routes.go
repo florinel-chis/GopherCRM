@@ -281,3 +281,15 @@ func SetupBulkStatusRoutes(router *gin.RouterGroup, bulkHandler *BulkHandler) {
 	router.POST("/tickets/bulk/status", bulkHandler.BulkUpdateTicketStatus)
 	router.POST("/tasks/bulk/status", bulkHandler.BulkUpdateTaskStatus)
 }
+
+// SetupCustomerExternalIDRoutes mounts the write half of the customer
+// external-id mappings (#212): admin and sales, the roles that may update a
+// customer, create and delete mappings; the handler repeats the check. The
+// lookup is GET /customers with source, scope and external_id, served by the
+// list route of SetupCustomerRoutes. It is a separate function so that
+// SetupCustomerRoutes, and the line numbers the docs cite, stay unchanged.
+func SetupCustomerExternalIDRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
+	writers := middleware.RequireRole(models.RoleAdmin, models.RoleSales)
+	router.POST("/customers/:id/external-ids", writers, handler.CreateExternalID)
+	router.DELETE("/customers/:id/external-ids/:mappingId", writers, handler.DeleteExternalID)
+}

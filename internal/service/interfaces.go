@@ -124,6 +124,25 @@ type CustomerService interface {
 	GetCount() (int64, error)
 }
 
+// CustomerExternalIDService maps integrators' (source, scope, external_id)
+// identities to customers (#212). Every method validates its input before any
+// read or write (see ValidateCustomerExternalIdentity) and returns
+// ErrCustomerExternalIDsUnavailable when the service was built without its
+// repository or transaction manager.
+type CustomerExternalIDService interface {
+	// AddExternalID maps the triple to the live customer in one transaction
+	// on ctx: the customer row is locked, then the mapping inserted.
+	// apperrors.ErrNotFound for a missing or erased customer,
+	// apperrors.ErrCustomerExternalIDTaken for a triple already mapped.
+	AddExternalID(ctx context.Context, customerID uint, source, scope, externalID string) (*models.CustomerExternalID, error)
+	// RemoveExternalID hard-deletes the customer's mapping;
+	// apperrors.ErrNotFound when the customer has no mapping with that id.
+	RemoveExternalID(ctx context.Context, customerID, mappingID uint) error
+	// LookupCustomer returns the live customer the exact triple maps to, or
+	// nil and no error when there is none.
+	LookupCustomer(ctx context.Context, source, scope, externalID string) (*models.Customer, error)
+}
+
 type TicketService interface {
 	Create(ticket *models.Ticket) error
 	GetByID(id uint) (*models.Ticket, error)

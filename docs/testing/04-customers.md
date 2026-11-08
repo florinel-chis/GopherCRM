@@ -17,12 +17,13 @@ depend on that are flagged.
 - `gocrm-ui/src/api/endpoints/customers.ts`, `endpoints/tickets.ts`, `src/api/client.ts`
 - `gocrm-ui/src/components/DataTable.tsx`, `src/routes/index.tsx`, `src/layouts/MainLayout.tsx`
 - `internal/handler/customer_handler.go`, `internal/handler/ticket_handler.go` (`ListByCustomer`,
-  `List`), `internal/handler/routes.go` (`SetupCustomerRoutes`, `SetupTicketRoutes`)
-- `internal/models/customer.go`
+  `List`), `internal/handler/routes.go` (`SetupCustomerRoutes`, `SetupTicketRoutes`,
+  `SetupCustomerExternalIDRoutes`), `internal/handler/customer_external_id_handler.go`
+- `internal/models/customer.go`, `internal/models/customer_external_id.go`
 - `gocrm-ui/e2e/tests/admin-customers.spec.ts`, `gocrm-ui/e2e/pages/customers.page.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/screenshots/04-customers.spec.ts`
-- `docs/FEATURES.md` rows 4.1–4.7, row 5.9, section 10b "Customers", section 12; `docs/ROADMAP.md`
+- `docs/FEATURES.md` rows 4.1–4.9, row 5.9, section 10b "Customers", section 12; `docs/ROADMAP.md`
 
 **Constraints**
 
@@ -827,3 +828,140 @@ depend on that are flagged.
   toolbar and never opened.
 - **Automation:** automated (Vitest) — `CustomerList.rowActions.test.tsx`; the browser case is
   planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts` (admin half)
+
+---
+
+## 4.9 — External identity mappings (`/customers/{id}/external-ids`, #212)
+
+An integrator maps its own `(source, scope, external_id)` identity of a person to a customer, so a
+multi-site storefront can find the customer without relying on the globally unique email. The
+triple is unique and compared exactly (case-sensitive) on SQLite, MySQL and MariaDB. There is no
+UI: every case here is API-level. Mappings are not embedded in the customer JSON and cannot be
+listed per customer or updated in place.
+
+### TC-CUST-045 — Admin and sales map an external identity to a customer
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin and sales tokens; a customer created by the test.
+- **Steps:**
+  1. As admin, `POST /api/v1/customers/{id}/external-ids` with
+     `{"source":"storefront","scope":"site-eu","external_id":"Cust-1001"}`.
+  2. Repeat as sales with another triple and no `scope` key.
+  3. Send bodies that break a rule: `source` empty or over 64 characters, `scope` over 128,
+     `external_id` empty or over 255, a value with a control character or a leading or trailing
+     space; then a body that does not bind (`{"source":5}` or malformed JSON) and a non-numeric id.
+- **Expected:** Steps 1–2 → **201** with `data` holding `id`, `customer_id`, `source`, `scope`
+  (`""` when absent), `external_id`, `created_at` and `updated_at`, and no embedded customer. Step 3
+  → **400** `VALIDATION_ERROR` with `error.details.field` naming `source`, `scope` or
+  `external_id` and `details.reason` the rule, never the value; a body that does not bind or an
+  invalid id → **400** `BAD_REQUEST`. A customer id that does not exist or is erased → **404**.
+  Nothing is written by a refused request, and no log line carries a submitted value.
+- **Automation:** automated (backend) — `tests/customer_external_id_test.go`
+  (`TestCustomerExternalIDAPISQLite`), `internal/handler/customer_external_id_handler_test.go`
+  (`TestCustomerExternalIDHandlerErrorMapping`, `TestCustomerExternalIDHandlerLogsOmitValues`),
+  `internal/service/customer_external_id_service_test.go` (`TestCustomerExternalIDValidation`,
+  `TestCustomerExternalIDLogsOmitValues`)
+
+### TC-CUST-046 — A triple maps to at most one customer, compared exactly
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** Admin token; customers A and B created by the test; A holds
+  `("Shop-A", "", "X1")`.
+- **Steps:**
+  1. Post `("Shop-A", "", "X1")` again for A, then for B.
+  2. Post `("shop-a", "", "x1")` for B.
+- **Expected:** Step 1 → **409** `CONFLICT` both times, nothing written. Step 2 → **201**: a triple
+  that differs only in letter case (or accents) is a different identity; on MySQL and MariaDB the
+  three columns carry `utf8mb4_bin`.
+- **Automation:** automated (backend) — `TestCustomerExternalIDAPISQLite`,
+  `internal/repository/customer_external_id_repository_test.go`
+  (`TestCustomerExternalIDRepository{SQLite,MySQL}`), `internal/models/customer_external_id_test.go`
+  (`TestCustomerExternalIDSchemaSQLite`)
+
+### TC-CUST-047 — Support and customer accounts cannot write mappings
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Support and customer-role tokens; a customer with one mapping.
+- **Steps:**
+  1. `POST /api/v1/customers/{id}/external-ids` with each token.
+  2. `DELETE /api/v1/customers/{id}/external-ids/{mappingId}` with each token.
+- **Expected:** **403** every time (`RequireRole(admin, sales)` on both routes, repeated in the
+  handler); the mapping count is unchanged and the mapping still exists.
+- **Automation:** automated (backend) — `TestCustomerExternalIDAPISQLite`,
+  `cmd/customer_external_id_wiring_test.go` (`TestCustomerExternalIDProductionWiring`)
+
+### TC-CUST-048 — Look up a customer by external identity
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin, sales, support and customer-role tokens; a customer holding
+  `("storefront", "site-eu", "Cust-1001")`.
+- **Steps:**
+  1. `GET /api/v1/customers?source=storefront&scope=site-eu&external_id=Cust-1001` with each
+     staff token, adding `search`, `sort_by`, `page` and `offset`.
+  2. Repeat with the customer-role token.
+  3. Look up `external_id=cust-1001`, and the same triple without `scope`.
+  4. Send `external_id` without `source`, `source` without `external_id`, only `scope`, and a
+     `scope` with a leading space.
+- **Expected:** Step 1 → **200** with the list shape `{customers:[<that customer>], total:1}` and
+  `meta.page` 1; the other parameters are ignored. Step 2 → **403** (the role check runs first).
+  Step 3 → 200 with `customers: []`, `total: 0` (exact comparison; an absent scope means `''`).
+  Step 4 → **400** `VALIDATION_ERROR` with `error.details.field` `source`, `external_id`, `source`
+  and `scope`, and no lookup is made. An erased customer is never returned.
+- **Automation:** automated (backend) — `TestCustomerExternalIDAPISQLite`,
+  `internal/handler/customer_external_id_handler_test.go` (`TestCustomerListExternalIDLookup`)
+
+### TC-CUST-049 — Delete a mapping and map the triple again
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin or sales token; customers A and B; A holds a mapping M.
+- **Steps:**
+  1. `DELETE /api/v1/customers/{B}/external-ids/{M}`.
+  2. `DELETE /api/v1/customers/{A}/external-ids/{M}`.
+  3. Look the triple up, then post it for B.
+- **Expected:** Step 1 → **404** (M is not B's), nothing deleted. Step 2 → **204** with no body; the
+  row is hard-deleted. Step 3 → the lookup answers `total: 0`, and the post → **201**.
+- **Automation:** automated (backend) — `TestCustomerExternalIDAPISQLite`,
+  `TestCustomerExternalIDRepository{SQLite,MySQL}`
+
+### TC-CUST-050 — Erasing the customer deletes its mappings
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** A customer with two mappings, a lead converted into it and its customer-role
+  login; another customer with one mapping.
+- **Steps:**
+  1. Erase the person through `DELETE /customers/{id}`, `DELETE /leads/{id}` of the converted lead
+     or `DELETE /users/{id}` of the login.
+  2. Post one of the erased customer's triples for the other customer.
+  3. Race a mapping create against the erasure.
+- **Expected:** Step 1 → the erased customer's `customer_external_ids` rows are hard-deleted in the
+  same transaction; the other customer's mapping stays, and the whole-schema sweep finds the
+  person's external id nowhere. An erasure that fails or that a `WithTx` caller rolls back keeps
+  every mapping. Step 2 → **201**. Step 3 → either the create commits first and the erasure deletes
+  its mapping, or the erasure commits first and the create answers **404**; no mapping is ever left
+  on an erased customer, and on MySQL neither ordering deadlocks.
+- **Automation:** automated (backend) — `internal/repository/customer_external_id_erasure_test.go`
+  (`TestCustomerExternalIDErasure{SQLite,MySQL,WithoutTable}`),
+  `test/integration/customer_external_id_erasure_test.go`
+  (`TestCustomerExternalIDErasureLeavesNoPersonalDataInAnyTable`),
+  `internal/service/customer_external_id_race_test.go`
+  (`TestCustomerExternalIDCreateRacesErasure{SQLite,MySQL}`)
+
+### TC-CUST-051 — The table arrives on upgrade and compares exactly on every engine
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A SQLite file from before the change; a MySQL/MariaDB schema at migration
+  `20261110120000`, and one that only the application ever migrated.
+- **Steps:**
+  1. Start the application on the SQLite file.
+  2. Run `migrate up` on MySQL (fresh, upgraded from an AutoMigrated schema, and after the
+     application's AutoMigrate created the table first), then start the application.
+  3. Start the application twice on the schema only the application migrated.
+- **Expected:** Step 1 → `customer_external_ids` exists with its unique
+  `idx_customer_external_ids_identity (source, scope, external_id)` and
+  `idx_customer_external_ids_customer_id`. Step 2 → every path ends with the same table and
+  `utf8mb4_bin` on the three columns (`20261111120000_add_customer_external_ids`; the down half drops
+  the table). Step 3 → the first start converts the columns to `utf8mb4_bin`, the second issues no
+  DDL on the table.
+- **Automation:** automated (backend) — `TestCustomerExternalIDSQLiteUpgrade`,
+  `cmd/migrate/customer_external_ids_migration_test.go` (`TestCustomerExternalIDsMigrationFiles`,
+  `TestCustomerExternalIDsMigration`); the MySQL roots skip without `TEST_MYSQL_DSN`

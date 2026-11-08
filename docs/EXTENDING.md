@@ -18,18 +18,18 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 
 | Rule | Where it lives | Long form |
 |---|---|---|
-| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:484,537`), the lead CSV export (`lead_handler.go:915,968`), and deletes that answer an empty 204 (`customer_handler.go:465`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
+| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:582,617`), the lead CSV export (`lead_handler.go:915,968`), and deletes that answer an empty 204 (`customer_handler.go:547`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 459) |
 | Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
-| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:258`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
+| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:261`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
 | A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
 | Lead visibility has one policy: admin sees all leads, sales its own, every other role none | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
 | A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
-| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:111`, `migrations/` | [Database](DEVELOPMENT.md#database) |
+| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:114`, `migrations/` | [Database](DEVELOPMENT.md#database) |
 | Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 748) |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
@@ -87,8 +87,8 @@ dependency injection is manual.
 
 ### 3.2 AutoMigrate (the SQLite half)
 
-Add the model to `autoMigrateModels` in `internal/models/database.go:111`, after the models it
-references (products and quotes sit at lines 120-123). On SQLite this is the only schema path;
+Add the model to `autoMigrateModels` in `internal/models/database.go:114`, after the models it
+references (products and quotes sit at lines 125-128). On SQLite this is the only schema path;
 `cmd/migrate` refuses database commands there (`ErrSQLiteUnsupported`, `cmd/migrate/main.go:26`).
 
 ### 3.3 SQL migration pair (the MySQL/MariaDB half)
@@ -168,9 +168,9 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 - Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Put the role guard on the group with
   `middleware.RequireRole(...)` and narrow individual routes where needed
   (`SetupProductRoutes`, `routes.go:99-107`: group admin+sales, writes admin).
-- In `cmd/main.go`, `setupDependencies` (line 182): construct the repository with `models.DB`
-  (line 195), the service (line 238), the handler (line 298), and register the routes in the
-  `protected` group (line 404). There is no container; the wiring is plain code.
+- In `cmd/main.go`, `setupDependencies` (line 257): construct the repository with `models.DB`
+  (line 270), the service (line 314), the handler (line 378), and register the routes in the
+  `protected` group (line 487). There is no container; the wiring is plain code.
 - If a static path sits next to a `/:id` route, extend `TestAllRouteSetupsCoexist`
   (`internal/handler/routes_test.go:16`).
 
@@ -399,8 +399,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
   A key acts with its user's full role; keys have no scopes (`internal/models/apikey.go`, #211).
   A support identity sees only tickets assigned to it, and a sales identity gets 403 on ticket
   create (`internal/handler/ticket_handler.go:87,195`), so one identity that does both must be an
-  admin. External ids for customers are not modelled yet (#212); the lead external-id lookup is
-  not routed (#215).
+  admin. The lead external-id lookup is not routed (#215).
 - **Export.** Copy `ListAllForExport`: one ordered statement with a total order, filtered and
   sorted through the allowlist; never `FindInBatches` with a non-id order.
 
@@ -464,9 +463,9 @@ it is the cleanest removal.
 | Layer | Remove or change |
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
-| Wiring | `cmd/main.go` (import line 12; construction lines 321-346; handler line 384; reconcile and scheduler lines 418-438; route line 495); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)` (line 516) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker, the form retention purge and the stale bulk operation sweep |
+| Wiring | `cmd/main.go` (import line 12; construction lines 321-346; handler line 384; reconcile and scheduler lines 418-438; route line 496); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)` (line 517) and `drainAEO` (`cmd/aeo_runtime.go:94`) runs it, so keep a drain for the automation worker, the form retention purge and the stale bulk operation sweep |
 | Configuration | `AEOConfig` and its block (`internal/config/config.go:145,330`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
-| Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:134-138`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity`; their names in `expectedTables` and in the sweep table list |
+| Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:319-346`), the AEO nav group (`MainLayout.tsx`, from line 161), the AEO case in `ConfigurationSettings.test.tsx` |
 | Tests and CI | AEO tests; `aeo-providers.spec.ts`; screenshot spec `10-aeo.spec.ts`; the `aeo` profile, `AEO_REQUIRED_ROOTS` and the `aeo` entry in `validation.py` (imported by `scripts/ci/check-go.py:7`); the AEO port and variables in `scripts/e2e/run.sh`; `internal/aeo/tls_roots_e2e.go` goes with the package |
@@ -477,7 +476,7 @@ it is the cleanest removal.
 | Module | Prefer | Coupling to watch |
 |---|---|---|
 | Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:302-349`). Erasure skips the automation tables if they are absent (`erasure.go:450-494`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,486-487`; AutoMigrate `database.go:120-123`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
 | Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:251`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of

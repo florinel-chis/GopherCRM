@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External identity mappings for customers (#212).** A new `customer_external_ids` table maps an
+  integrator's `(source, scope, external_id)` to a customer, unique on the exact, case-sensitive
+  triple (source 1-64, scope 0-128 and `''` by default, external_id 1-255 characters; no control
+  characters and no leading or trailing whitespace; `utf8mb4_bin` on MySQL/MariaDB). Admin and sales
+  create one with `POST /customers/{id}/external-ids` (201; 409 when the triple is already mapped,
+  to this or another customer; 404 for a missing or erased customer) and delete it with
+  `DELETE /customers/{id}/external-ids/{mappingId}` (204; 404 for another customer's mapping).
+  `GET /customers?source=&scope=&external_id=` answers the list shape with at most one live
+  customer to admin, sales and support. Every customer erasure path hard-deletes the customer's
+  mappings in the same transaction. Customer email stays globally unique; no UI. MySQL and MariaDB
+  get the table from `20261111120000_add_customer_external_ids`, SQLite from `MigrateDatabase`,
+  which also converts the three columns to `utf8mb4_bin` on a MySQL schema the application alone
+  created. Registering the migration roots in the Database migrations workflow is an operator
+  follow-up.
 - **CSV export of leads (#234).** `GET /leads/export` downloads `leads-export.csv`
   (`text/csv; charset=utf-8`) holding exactly the leads the caller may list: an admin gets every
   live lead under the list's precedence (a non-empty `search` with the sort, else an exact

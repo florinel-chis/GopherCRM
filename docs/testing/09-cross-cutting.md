@@ -72,7 +72,7 @@ the in-handler role checks (API gate). It is the specification the cases in this
 | `/login`, `/register`, `/unauthorized` | none (public) | — | — |
 | `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`routes.go:105`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
 | `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `requiredRole=['admin','sales']` (pathless layout, #120) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
-| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:157`, `:239`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:252`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
 | `/customers/new` | `requiredRole=['admin','sales']` (shares the lead guard, #120) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
 | `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:135`, `:354`) — sales reads, read-only |
 | `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:69`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
@@ -226,7 +226,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   exist.
 - **Steps:** Navigate to `/customers`, then `/tickets`, then `/tickets/new`.
 - **Expected:** `/customers` and `/tickets` both render their page shells with an empty table;
-  `GET /api/v1/customers` returns **403** (`customer_handler.go:157`) and `GET /api/v1/tickets`
+  `GET /api/v1/customers` returns **403** (`customer_handler.go:252`) and `GET /api/v1/tickets`
   returns **403** (`ticket_handler.go:135`). `/tickets/new` is the only one that is properly
   refused: it redirects to `/unauthorized`.
 - **Known issue:** Read routes for other people's business data are gated only by the API; the SPA
@@ -594,7 +594,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
   is in `ticket_handler.go:161`, `task_handler.go:222`, `user_handler.go:142` and
-  `customer_handler.go:178`; the deeper `utils.ValidateSort` allowlist
+  `customer_handler.go:279`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
 

@@ -16,6 +16,9 @@ import (
 
 type CustomerHandler struct {
 	customerService service.CustomerService
+	// externalIDs serves the external-id mappings (#212) and the lookup mode
+	// of GET /customers; see WithExternalIDs. Nil answers those with 500.
+	externalIDs service.CustomerExternalIDService
 }
 
 func NewCustomerHandler(customerService service.CustomerService) *CustomerHandler {
@@ -219,6 +222,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 // @Summary List customers
 // @Description Admin, sales and support (checked in the handler; customer gets 403). All three roles see the same unfiltered set of live customers; there is no ownership narrowing. data holds customers and total; meta repeats the pagination (page, per_page, total, total_pages, each omitted when 0). Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then id, in the requested direction. search matches a substring (SQL LIKE) of first_name, last_name, email, company, phone or notes and combines with the sort. The embedded user (the customer's login) is loaded only for the default listing without search and sort_by.
 // @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0; page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
+// @Description External-id lookup: when the query contains source, scope or external_id (even empty), the request is an exact lookup of one mapped identity instead of a listing (#212). The role check still runs first. source and external_id are required, scope is optional and absent means ”; each must be valid UTF-8 without control characters or leading or trailing whitespace, source at most 64, scope at most 128 and external_id at most 255 characters. The comparison is exact and case-sensitive. The answer has the list shape with at most one live customer (total 0 or 1, meta page 1); search, sort_by, page and offset are ignored. An erased customer is never returned.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth
@@ -229,7 +233,11 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 // @Param sort_by query string false "Sort column; any other value is ignored (ascending id order)" Enums(created_at, updated_at, first_name, last_name, email, company)
 // @Param sort_order query string false "Sort direction; any other value falls back to asc" Enums(asc, desc) default(asc)
 // @Param search query string false "Substring matched against first_name, last_name, email, company, phone and notes"
-// @Success 200 {object} utils.APIResponse{data=CustomerListResponse,meta=utils.APIMeta} "A page of customers"
+// @Param source query string false "External-id lookup: the system that issued the identifier (1-64 characters, exact). Its presence selects lookup mode, where it is required" maxlength(64)
+// @Param scope query string false "External-id lookup: the namespace inside the source (0-128 characters, exact); absent means ”. Its presence selects lookup mode" maxlength(128)
+// @Param external_id query string false "External-id lookup: the identifier (1-255 characters, exact, case-sensitive). Its presence selects lookup mode, where it is required" maxlength(255)
+// @Success 200 {object} utils.APIResponse{data=CustomerListResponse,meta=utils.APIMeta} "A page of customers, or the lookup result (total 0 or 1)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: lookup mode with source or external_id missing or invalid, or scope invalid; details.field names the parameter and details.reason the rule, never the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is a customer (Insufficient permissions to list customers)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
@@ -245,6 +253,13 @@ func (h *CustomerHandler) List(c *gin.Context) {
 		currentUserRole != string(models.RoleSales) &&
 		currentUserRole != string(models.RoleSupport) {
 		utils.RespondForbidden(c, "Insufficient permissions to list customers")
+		return
+	}
+
+	// External-id lookup (#212): any of the three parameters selects it, after
+	// the role check.
+	if h.isExternalIDLookup(c) {
+		h.listByExternalID(c, logger)
 		return
 	}
 

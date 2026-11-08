@@ -36,6 +36,8 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupFormRoutes(group, &FormHandler{})
 	SetupAutomationRoutes(group, &AutomationHandler{})
 	SetupNotificationRoutes(group, &NotificationHandler{})
+	// Registered right after SetupCustomerRoutes in cmd/main.go (#212).
+	SetupCustomerExternalIDRoutes(group, &CustomerHandler{})
 	// The forms module registers two groups on the same mount point from two
 	// different files: the CRM routes above and the unauthenticated ones here.
 	// Between them they put a static segment (/forms/public), a parameter
@@ -156,6 +158,11 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodGet, "/api/v1/deals/1/quotes"},
 		{http.MethodGet, "/api/v1/deals/1/tasks"},
 		{http.MethodGet, "/api/v1/customers/1/quotes"},
+		// Customer external ids (#212): /customers/:id/external-ids and
+		// /:mappingId one level deeper, next to /customers/:id/assign.
+		{http.MethodPost, "/api/v1/customers/1/external-ids"},
+		{http.MethodDelete, "/api/v1/customers/1/external-ids/2"},
+		{http.MethodPost, "/api/v1/customers/1/assign"},
 		// Automation: two groups under one static prefix, three POST
 		// sub-resources next to /:id on three verbs, and the runs group's
 		// admin-only cancel. Notifications: two static segments

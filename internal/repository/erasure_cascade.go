@@ -157,6 +157,29 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 	return nil
 }
 
+// purgeCustomerExternalIDs hard-deletes the customer's external identity
+// mappings (#212) inside the erasure unit. It runs as the customer plan's
+// AfterScrub, so every path that reaches a customer — DELETE /customers/{id},
+// the erasure of a lead converted into it, the erasure of its customer-role
+// login — removes them in the same transaction, and a unit that rolls back
+// keeps them. An external id identifies the person in another system, so it
+// is personal data like the lead's external_id. Once the rows are gone the
+// triple is free to be mapped again.
+//
+// A schema without the table (a fixture that migrates a subset) is skipped by
+// a migrator probe, never by swallowing an error: when the table exists every
+// failure propagates and rolls the erasure back. The error names the table and
+// the customer id only.
+func purgeCustomerExternalIDs(tx *gorm.DB, customerID uint) error {
+	if !tx.Migrator().HasTable(&models.CustomerExternalID{}) {
+		return nil
+	}
+	if err := tx.Where("customer_id = ?", customerID).Delete(&models.CustomerExternalID{}).Error; err != nil {
+		return fmt.Errorf("purging customer_external_ids of customer %d: %w", customerID, err)
+	}
+	return nil
+}
+
 // ErrConvertedLeadNeedsAdmin refuses the erasure of a converted lead by a
 // caller that may erase only unconverted ones. A converted lead is the same
 // person as the customer it became (and that customer's login), so erasing it
