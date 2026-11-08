@@ -141,6 +141,12 @@ var (
 	// sentinel that wraps no not-found or forbidden error and is not an
 	// AppError, so the bulk status handler answers it with the generic 500.
 	ErrBulkOperationNotPending = errors.New("bulk operation is no longer pending")
+
+	// ErrCustomerExternalIDTaken refuses a customer external-id mapping whose
+	// (source, scope, external_id) triple is already mapped, to the same
+	// customer or to another one (#212). It is answered with 409 CONFLICT; the
+	// message never carries the triple.
+	ErrCustomerExternalIDTaken = errors.New("external id is already mapped to a customer")
 )
 
 // Error codes

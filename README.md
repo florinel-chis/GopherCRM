@@ -627,7 +627,8 @@ authentication and live on the moderate tier:
   *(sales may only touch leads they own)*
 
 ### Customers
-- `GET /api/v1/customers` - List customers *(admin, sales, support)*
+- `GET /api/v1/customers` - List customers *(admin, sales, support)*; with `source`, `scope` and
+  `external_id` it is an exact external-id lookup answering at most one live customer
 - `POST /api/v1/customers` - Create new customer *(admin, sales)*
 - `GET /api/v1/customers/:id` - Get specific customer *(admin, sales, support)*
 - `PUT /api/v1/customers/:id` - Update customer *(admin, sales)*
@@ -637,6 +638,11 @@ authentication and live on the moderate tier:
 - `GET /api/v1/customers/export` - Download all matching customers as CSV *(admin only — mass PII
   egress; supports `search`, `sort_by`, `sort_order`)*
 - `POST /api/v1/customers/:id/assign` - Assign the customer to an active admin or sales user
+  *(admin, sales)*
+- `POST /api/v1/customers/:id/external-ids` - Map an external `(source, scope, external_id)`
+  identity to the customer; the triple is unique and case-sensitive, 409 when already mapped
+  *(admin, sales)*
+- `DELETE /api/v1/customers/:id/external-ids/:mappingId` - Delete one of the customer's mappings
   *(admin, sales)*
 
 ### Companies *(read: admin, sales, support; write: admin, sales; delete: admin)*

@@ -1162,6 +1162,7 @@ What the erasure touches, and what it keeps on purpose:
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
+| `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
@@ -1200,6 +1201,50 @@ every status, soft-deleted rows and forms, a spendable confirmation token found 
 namesake lead, blank and placeholder originals, an injected failure after the scrub, a caller
 rollback, and a schema without `form_submissions`) and
 `TestUnlinkedSubmissionErasureLeavesNoPersonalDataInAnyTable` (`test/integration`).
+
+**Customer external ids (#212).** `customer_external_ids` maps an integrator's `(source, scope,
+external_id)` to a customer: `source varchar(64)`, `scope varchar(128) NOT NULL DEFAULT ''`,
+`external_id varchar(255)`, all `NOT NULL`, a foreign key to `customers.id`, no `deleted_at`. Its
+only unique index is `idx_customer_external_ids_identity (source, scope, external_id)`, so
+`isDuplicateKeyError` can attribute a hit there to the triple
+(`apperrors.ErrCustomerExternalIDTaken`, 409); `idx_customer_external_ids_customer_id` is not
+unique. Comparison is exact on every engine: SQLite compares with `BINARY`, MySQL and MariaDB carry
+`utf8mb4_bin` on the three columns, from `20261111120000_add_customer_external_ids` (which creates
+the table only when missing) or from the collation guard in `models.MigrateDatabase`, which reads
+`information_schema.COLUMNS` and issues the `ALTER TABLE … MODIFY` only when a column differs, so a
+schema the application alone created is converted once and later starts take no DDL. `utf8mb4_bin`
+is a PAD SPACE collation on MySQL, which is one reason `service.ValidateCustomerExternalIdentity`
+refuses leading and trailing whitespace; it also refuses invalid UTF-8 and control characters and
+counts the limits (64/128/255) in runes. `CustomerExternalIDService.AddExternalID` validates, then
+runs one transaction on the request context that locks the live customer row
+(`CustomerExternalIDRepository.LockLiveCustomer`, `FOR UPDATE` on MySQL, a plain read on SQLite)
+and inserts. Every customer erasure scrubs, and so locks, that row before its `AfterScrub`
+(`purgeCustomerExternalIDs`, `erasure_cascade.go`) hard-deletes the customer's mappings, so a create
+racing an erasure either commits first and loses its mapping to the erasure, or waits and answers
+`ErrNotFound` (404); no mapping survives on an erased customer and neither ordering deadlocks. The
+purge probes the table with `tx.Migrator().HasTable`; when it exists every failure rolls the unit
+back with an error naming the table and the customer id only. `DELETE
+/customers/{id}/external-ids/{mappingId}` deletes only a row of that customer (else 404).
+`GET /customers` enters lookup mode when the query carries `source`, `scope` or `external_id`: after
+the role check (admin, sales, support) the handler validates the three values, with no service call
+on a refusal, and answers the list shape with at most one live customer. A service built without
+its repository or transaction manager returns `service.ErrCustomerExternalIDsUnavailable` from
+every method. Log lines carry operation names, `customer_id`, `mapping_id`, counts and presence
+flags only, never a value of the triple. Regression roots: `TestCustomerExternalIDSchemaSQLite`,
+`TestCustomerExternalIDSQLiteUpgrade`, `TestCustomerExternalIDJSON` (`internal/models`);
+`TestCustomerExternalIDsMigrationFiles`, `TestCustomerExternalIDsMigration` (`cmd/migrate`);
+`TestCustomerExternalIDRepository{SQLite,MySQL}`, `TestCustomerExternalIDErasure{SQLite,MySQL,WithoutTable}`
+(`internal/repository`); `TestCustomerExternalIDValidation`,
+`TestCustomerExternalIDMaxLengthsMatchTheColumns`, `TestCustomerExternalIDServiceRefusedWhenUnwired`,
+`TestCustomerExternalIDLogsOmitValues`, `TestCustomerExternalIDCreateRacesErasure{SQLite,MySQL}` (the
+MySQL root forces both orderings, each wait seen in `information_schema.PROCESSLIST` on two
+consecutive polls) (`internal/service`); `TestCustomerExternalIDHandlerErrorMapping`,
+`TestCustomerListExternalIDLookup`, `TestCustomerExternalIDHandlerLogsOmitValues`
+(`internal/handler`); `TestCustomerExternalIDAPISQLite` (`tests`);
+`TestCustomerExternalIDErasureLeavesNoPersonalDataInAnyTable` (`test/integration`);
+`TestCustomerExternalIDProductionWiring` (`cmd`). The MySQL roots use a disposable `TEST_MYSQL_DSN`
+schema and skip without it; registering the migration roots in the Database migrations workflow is
+an operator follow-up.
 
 **Operator procedure for ticket text.** `tickets.title`, `description` and `resolution` stay as
 business records; the erasure does not scrub them. When a customer's tickets name the person,

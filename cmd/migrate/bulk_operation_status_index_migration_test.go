@@ -29,8 +29,8 @@ const (
 )
 
 // TestBulkOperationStatusIndexMigrationFiles needs no database: the pair
-// exists, creates and drops exactly the guarded non-unique index, changes no
-// row, and is the newest migration of the directory.
+// exists, creates and drops exactly the guarded non-unique index and changes
+// no row.
 func TestBulkOperationStatusIndexMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, bulkStatusIndexName+".up.sql"))
@@ -50,17 +50,8 @@ func TestBulkOperationStatusIndexMigrationFiles(t *testing.T) {
 	assert.NotContains(t, upSQL, "alter table", "no column changes")
 	assert.NotContains(t, upSQL, "create table", "no new table")
 	assert.NotContains(t, downSQL, "drop table", "rollback keeps the rows")
-
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, bulkStatusIndexName+".up.sql", newest, "the newest migration")
-	assert.Equal(t, bulkStatusIndexVersion, latestMigrationVersion)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestCustomerExternalIDsMigrationFiles when #212 added a later pair.
 }
 
 // bulkStatusIndexes returns the status index lines of bulk_operations.

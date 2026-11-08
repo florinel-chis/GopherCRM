@@ -356,8 +356,9 @@ history. This is a staff-maintained register, not a shared helpdesk.
   tickets (`docs/FEATURES.md`, 5.5).
 - No inbound mail, and no reply email to the customer: #219.
 - No intake path from a form or an external system that is safe to retry: a ticket has no
-  submission or external key, so idempotent import is a schema change (#213). Mapping customers
-  to an external system's ids is #212.
+  submission or external key, so idempotent import is a schema change (#213). Customers, unlike
+  tickets, can be mapped to an external system's ids (delivered, #212): `POST
+  /customers/{id}/external-ids` and the exact lookup `GET /customers?source=&scope=&external_id=`.
 - Ticket title, description and resolution survive erasure, as business records
   (`docs/DEVELOPMENT.md:1161`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
@@ -439,7 +440,7 @@ planning around an issue number.
 | One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
-| External identity mapping for customers, as a `(source, scope, external_id)` table rather than columns, because customer email is globally unique | 3, 4 | `internal/models/customer.go:9` | #212 |
+| Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:218` | #215 |
 | Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #259 |

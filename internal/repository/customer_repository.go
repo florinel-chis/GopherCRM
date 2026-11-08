@@ -181,6 +181,9 @@ func customerErasurePlan() erasurePlan {
 			"postal_code": "",
 			"notes":       "",
 		},
+		// The external identity mappings (#212) single the person out in
+		// another system; they go with the customer (erasure_cascade.go).
+		AfterScrub: purgeCustomerExternalIDs,
 	}
 }
 
