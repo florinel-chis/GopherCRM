@@ -88,9 +88,11 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 ### TC-XCUT-001 — Redirect an unauthenticated visitor from a protected route to /login
 - **Priority:** P0
 - **Type:** rbac
-- **Preconditions:** Logged out; both storages cleared of `gophercrm_token` / `gophercrm_refresh_token`.
+- **Preconditions:** Logged out; both storages cleared of the session record `gophercrm_session`
+  and its write-only mirrors `gophercrm_token` / `gophercrm_refresh_token` (#184).
 - **Steps:**
-  1. Clear the tokens from `localStorage` and `sessionStorage`.
+  1. Clear the session record and the mirror keys from `localStorage` and `sessionStorage`
+     (removing the `gophercrm_token` mirror alone also makes the client read no session).
   2. Navigate to `/users`.
 - **Expected:** `ProtectedRoute` sees `isAuthenticated === false` and renders
   `<Navigate to="/login" state={{from: location}} replace />`; the URL becomes `/login` and the login
@@ -291,28 +293,41 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 
 ## Session expiry and the 401 interceptor (FEATURES 1.3/1.4, section 10b)
 
+Since #184 the client reads the session only from one JSON record, `gophercrm_session`
+(`{v: 1, id, access, refresh, subject, persist}`), in `sessionStorage` (used whole when present) or
+`localStorage`. `gophercrm_token` and `gophercrm_refresh_token` are write-only mirrors: changing
+them changes neither the bearer sent nor the refresh token presented. Cases that tamper with the
+session therefore edit the record's `access` / `refresh` fields and must keep it valid — valid JSON,
+`v: 1`, a string `id` and a string `access`, the same `id` as before — and leave the
+`gophercrm_token` mirror key present in the same storage. A malformed record is removed as no
+session, and a record without its mirror reads as no session, so either mistake turns these cases
+into a sign-out test.
+
 ### TC-XCUT-016 — An expired access token is refreshed silently and the request retried
 - **Priority:** P0
 - **Type:** functional
 - **Preconditions:** Logged in as the seeded admin with a valid refresh token in storage.
 - **Steps:**
-  1. Overwrite `gophercrm_token` in the active storage with an expired or malformed JWT, leaving
-     `gophercrm_refresh_token` intact.
+  1. In the active storage, parse `gophercrm_session`, set its `access` field to an expired or
+     malformed JWT, leave `refresh`, `id` and the other fields intact, and write it back.
   2. Navigate to `/customers`.
-- **Expected:** `GET /api/v1/customers` returns **401**, the response interceptor
-  (`api/client.ts:58`) posts to `/auth/refresh` through a bare axios instance, stores the new access
-  token **and** the rotated refresh token in the same storage the old ones lived in, replays the
-  original request, and the customer list renders. The user is never sent to `/login`.
+- **Expected:** `GET /api/v1/customers` returns **401**; the client takes the origin-wide session
+  lock (`navigator.locks` `gophercrm-session`, or an in-tab lock where it is unavailable), re-reads
+  the record, posts to `/auth/refresh` through a bare axios instance, rewrites the whole record in
+  the same storage with the new access token **and** the rotated refresh token under the same
+  session `id` (the mirrors follow), replays the original request, and the customer list renders.
+  The user is never sent to `/login`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
 
 ### TC-XCUT-017 — A 401 with no refresh token hard-redirects to /login
 - **Priority:** P0
 - **Type:** negative
-- **Preconditions:** Logged in as the seeded admin, then remove `gophercrm_refresh_token` from both
-  storages and replace `gophercrm_token` with an expired JWT.
+- **Preconditions:** Logged in as the seeded admin, then rewrite the `gophercrm_session` record
+  (kept valid, same `id`, mirror key present) with `refresh: null` and an expired JWT as `access`.
+  A refresh token left in the other storage, under any key, must not be used.
 - **Steps:** Navigate to `/leads`.
-- **Expected:** The interceptor throws "No refresh token available", `clearTokens()` empties both
-  storages and `window.location.href = '/login'` performs a **full page navigation** (not a React
+- **Expected:** No `POST /auth/refresh` is sent. The client throws "No refresh token available",
+  `clearTokens()` removes the record and both mirror keys from both storages and `window.location.href = '/login'` performs a **full page navigation** (not a React
   Router transition), so the SPA remounts on the login page. Nothing of the previous session
   survives a reload.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
@@ -321,10 +336,12 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Priority:** P1
 - **Type:** negative
 - **Preconditions:** Logged in as the seeded admin. Capture the current refresh token, force one
-  successful refresh (TC-XCUT-016), then restore the **old** refresh token into storage.
-- **Steps:** Expire the access token again and navigate to any list page.
+  successful refresh (TC-XCUT-016), then write the **old** refresh token back into the record's
+  `refresh` field (record kept valid, same `id`, mirror key present).
+- **Steps:** Set the record's `access` to an expired JWT again and navigate to any list page.
 - **Expected:** `POST /auth/refresh` returns **401** because rotation is strict and the presented
-  token is already dead; the interceptor clears both storages and hard-redirects to `/login`. The
+  token is already dead; since the record still holds the token that was presented, the client
+  removes the record and mirrors from both storages and hard-redirects to `/login`. The
   replay neither adds a refresh token row nor touches the successor issued by the earlier
   refresh: the rotation claims the presented token by a conditional update inside the transaction
   that inserts the successor, so a spent token can never produce a second one (#103; backend
@@ -338,7 +355,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Steps:** Submit the login form with the seeded admin email and a wrong password.
 - **Expected:** The error alert "Invalid email or password" is shown on the login form, the URL stays
   `/login`, and **no** `POST /auth/refresh` request is made — the interceptor skips any URL
-  containing `/auth/` (`api/client.ts:57`), which is what stops the redirect loop.
+  containing `/auth/` (`api/client.ts:262`), which is what stops the redirect loop.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with wrong
   password" asserts the message but not the absence of the refresh call; extend it.
 
@@ -348,16 +365,20 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Preconditions:** Logged in as the seeded admin with a valid refresh token; access token expired.
 - **Steps:** Land on `/` (the dashboard fires four parallel `dashboard/*` queries) and observe the
   network log.
-- **Expected:** Exactly one `POST /auth/refresh` is issued. The first failing request sets
-  `isRefreshing`; the rest push a callback into `refreshSubscribers` and are replayed with the new
-  token once it arrives.
-- **Known issue:** If the refresh **fails**, the queued subscribers are never invoked or rejected —
-  their promises never settle. The hard redirect to `/login` masks it in practice. Recorded in
-  `docs/ROADMAP.md` as "Concurrent-refresh stampede". Should the client ever send the same refresh
-  token twice at once (a second tab, a race the interceptor's flag does not cover), the backend
-  commits exactly one successor and answers the other request with the generic 401 (#103); the
-  losing tab is logged out, which is the client-side coalescing still deferred to #115.
-- **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
+- **Expected:** Exactly one `POST /auth/refresh` is issued. All 401s of the session share one
+  refresh and are replayed once with the new token; a failed refresh rejects every waiter and signs
+  out once, and a refresh with no answer settles every waiter after 15 s (#115).
+- **Cross-tab (#184):** a second tab of the same remembered session does not spend the refresh
+  token again. Refreshes run under the origin-wide `gophercrm-session` lock and re-read the record
+  once they hold it, so the later tab adopts the successor the first tab stored (same record `id`)
+  without calling `/auth/refresh`. Where locks are not shared (no `navigator.locks`, e.g. the
+  bundled plain-HTTP nginx), both tabs may present the same token: the backend commits one successor
+  and answers the other 401 (#103), and the losing tab, finding a record of the same session whose
+  refresh token differs from the one it presented, adopts the stored access token instead of signing
+  out. A 401 that finds another session's record clears nothing.
+- **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new). Vitest:
+  `gocrm-ui/src/api/client.refresh.test.ts` (single tab), `client.crossTab.test.ts` (two clients
+  sharing storage and a lock, both response orders).
 
 ### TC-XCUT-021 — Logout revokes the refresh token and clears both storages
 - **Priority:** P1
@@ -367,8 +388,9 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   1. Open the avatar menu and click **Logout**.
   2. After landing on `/login`, replay `POST /api/v1/auth/refresh` with the noted token from an
      `APIRequestContext`.
-- **Expected:** `POST /api/v1/auth/logout` returns **200**, `AuthContext.logout` clears
-  `gophercrm_token` and `gophercrm_refresh_token` from `localStorage` *and* `sessionStorage`, and the
+- **Expected:** `POST /api/v1/auth/logout` returns **200**, `AuthContext.logout` removes the
+  `gophercrm_session` record and the `gophercrm_token` / `gophercrm_refresh_token` mirrors from
+  `localStorage` *and* `sessionStorage` (at once, without waiting for another tab's lock), and the
   app navigates to `/login`. The replayed refresh returns **401**.
 - **Known issue:** None for the access token since #236: the logout increments
   `users.token_version`, so a token captured before it answers **401** `Invalid credentials` at once
@@ -452,7 +474,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   2. Trigger a duplicate-email conflict by creating a customer with the email of an existing one.
 - **Expected:** The wire body is `{"success":true,"data":{...},"meta":{...}}`, while the page code
   receives `data` directly — the response interceptor replaces `response.data` with
-  `response.data.data` whenever `success` is true and `data` is defined (`api/client.ts:47`). On the
+  `response.data.data` whenever `success` is true and `data` is defined (`api/client.ts:247`). On the
   conflict, the wire body is `{"success":false,"error":{"code":"CONFLICT","message":...}}` and the
   interceptor replaces `error.response.data` with the inner `error` object, which is what the form
   renders.
