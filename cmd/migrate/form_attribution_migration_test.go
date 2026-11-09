@@ -170,7 +170,8 @@ func TestFormAttributionMigration(t *testing.T) {
 		}
 	}
 	for _, line := range want.Events {
-		assert.Contains(t, line, "bigint unsigned")
+		// MySQL 8 omits the display width that MariaDB still reports (bigint(20) unsigned).
+		assert.Regexp(t, `bigint(\(\d+\))? unsigned`, line)
 		assert.Contains(t, line, "nullable=YES")
 	}
 
