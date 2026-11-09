@@ -15,6 +15,9 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestProductsAndQuotesMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationAutomationSchema'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestTaskDealLinkMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestFormMailDeliveriesMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestTicketSLAFieldsMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestCustomerExternalIDsMigration'),
     }
     migration_roots = len(required)
     if migrations_only:
