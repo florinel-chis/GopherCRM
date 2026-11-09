@@ -1,131 +1,79 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { apiClient, TOKEN_KEY, REFRESH_TOKEN_KEY } from './client';
+import { apiClient, SESSION_KEY, TOKEN_KEY, REFRESH_TOKEN_KEY } from './client';
 
-// Regression tests for token storage: tokens must only be written to
-// localStorage when the user opted into "remember me" (persist=true);
-// otherwise they belong in sessionStorage so the session ends with the tab.
+// Regression tests for token storage: a session goes to localStorage only when
+// the user opted into "remember me" (persist=true); otherwise it belongs in
+// sessionStorage so the session ends with the tab. The session is one record
+// (#184); the legacy keys are only mirrors (see client.sessionRecord.test.ts).
 describe('ApiClient token storage', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
   });
 
-  describe('setToken', () => {
-    it('stores the token in localStorage (not sessionStorage) when persist=true', () => {
-      apiClient.setToken('persistent-token', true);
+  describe('startSession', () => {
+    it('stores the session in localStorage (not sessionStorage) when persist=true', () => {
+      apiClient.startSession('persistent-token', 'persistent-refresh', true);
 
+      expect(localStorage.getItem(SESSION_KEY)).not.toBeNull();
       expect(localStorage.getItem(TOKEN_KEY)).toBe('persistent-token');
+      expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
       expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+      expect(apiClient.getToken()).toBe('persistent-token');
+      expect(apiClient.getRefreshToken()).toBe('persistent-refresh');
     });
 
-    it('stores the token in sessionStorage only when persist=false (regression: previously always wrote localStorage)', () => {
-      apiClient.setToken('session-token', false);
+    it('stores the session in sessionStorage only when persist=false (regression: previously always wrote localStorage)', () => {
+      apiClient.startSession('session-token', 'session-refresh', false);
 
       expect(sessionStorage.getItem(TOKEN_KEY)).toBe('session-token');
+      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBe('session-refresh');
+      expect(localStorage.getItem(SESSION_KEY)).toBeNull();
       expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     });
 
-    it('defaults to persist=true when the persist argument is omitted', () => {
-      apiClient.setToken('default-token');
+    it('removes the remembered session when switching persist true -> false', () => {
+      apiClient.startSession('remembered', 'r1', true);
+      apiClient.startSession('not-remembered', 'r2', false);
 
-      expect(localStorage.getItem(TOKEN_KEY)).toBe('default-token');
-      expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
-    });
-
-    it('removes the stale localStorage copy when switching persist true -> false', () => {
-      apiClient.setToken('remembered', true);
-      apiClient.setToken('not-remembered', false);
-
+      expect(localStorage.getItem(SESSION_KEY)).toBeNull();
       expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
-      expect(sessionStorage.getItem(TOKEN_KEY)).toBe('not-remembered');
+      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
       expect(apiClient.getToken()).toBe('not-remembered');
+      expect(apiClient.getRefreshToken()).toBe('r2');
     });
 
-    it('removes the stale sessionStorage copy when switching persist false -> true', () => {
-      apiClient.setToken('not-remembered', false);
-      apiClient.setToken('remembered', true);
+    it('removes the tab session when switching persist false -> true', () => {
+      apiClient.startSession('not-remembered', 'r1', false);
+      apiClient.startSession('remembered', 'r2', true);
 
+      expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
       expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
-      expect(localStorage.getItem(TOKEN_KEY)).toBe('remembered');
       expect(apiClient.getToken()).toBe('remembered');
     });
   });
 
   describe('getToken', () => {
-    it('prefers sessionStorage when both storages hold a token', () => {
-      localStorage.setItem(TOKEN_KEY, 'local-token');
-      sessionStorage.setItem(TOKEN_KEY, 'session-token');
-
-      expect(apiClient.getToken()).toBe('session-token');
-    });
-
-    it('falls back to localStorage when sessionStorage is empty', () => {
-      localStorage.setItem(TOKEN_KEY, 'local-token');
-
-      expect(apiClient.getToken()).toBe('local-token');
-    });
-
-    it('returns null when no token is stored anywhere', () => {
+    it('returns null when no session is stored anywhere', () => {
       expect(apiClient.getToken()).toBeNull();
-    });
-  });
-
-  describe('setRefreshToken / getRefreshToken', () => {
-    it('stores the refresh token in localStorage when persist=true', () => {
-      apiClient.setRefreshToken('refresh-persistent', true);
-
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-persistent');
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-    });
-
-    it('stores the refresh token in sessionStorage only when persist=false', () => {
-      apiClient.setRefreshToken('refresh-session', false);
-
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-session');
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-    });
-
-    it('defaults to persist=true when the persist argument is omitted', () => {
-      apiClient.setRefreshToken('refresh-default');
-
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-default');
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-    });
-
-    it('removes the copy in the other storage when the persist choice changes', () => {
-      apiClient.setRefreshToken('first', true);
-      apiClient.setRefreshToken('second', false);
-
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBe('second');
-
-      apiClient.setRefreshToken('third', true);
-
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('third');
-    });
-
-    it('getRefreshToken prefers sessionStorage when both storages hold a token', () => {
-      localStorage.setItem(REFRESH_TOKEN_KEY, 'local-refresh');
-      sessionStorage.setItem(REFRESH_TOKEN_KEY, 'session-refresh');
-
-      expect(apiClient.getRefreshToken()).toBe('session-refresh');
+      expect(apiClient.getRefreshToken()).toBeNull();
     });
   });
 
   describe('clearTokens', () => {
-    it('removes access and refresh tokens from BOTH storages', () => {
-      localStorage.setItem(TOKEN_KEY, 'local-token');
+    it('removes the record and both legacy keys from BOTH storages', () => {
+      apiClient.startSession('local-token', 'local-refresh', true);
+      sessionStorage.setItem(SESSION_KEY, 'not even json');
       sessionStorage.setItem(TOKEN_KEY, 'session-token');
-      localStorage.setItem(REFRESH_TOKEN_KEY, 'local-refresh');
       sessionStorage.setItem(REFRESH_TOKEN_KEY, 'session-refresh');
 
       apiClient.clearTokens();
 
-      expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
-      expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
-      expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-      expect(sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+      for (const storage of [localStorage, sessionStorage]) {
+        expect(storage.getItem(SESSION_KEY)).toBeNull();
+        expect(storage.getItem(TOKEN_KEY)).toBeNull();
+        expect(storage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+      }
       expect(apiClient.getToken()).toBeNull();
       expect(apiClient.getRefreshToken()).toBeNull();
     });

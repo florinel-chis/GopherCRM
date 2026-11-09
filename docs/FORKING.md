@@ -258,7 +258,8 @@ These are safe to keep. Renaming any of them costs a conflict on every upstream 
 
 | Identifier | Where | Renaming it… |
 |---|---|---|
-| `gophercrm_token`, `gophercrm_refresh_token` | `gocrm-ui/src/api/client.ts:29-30` | signs every user out once |
+| `gophercrm_session` (the stored session record), `gophercrm_token`, `gophercrm_refresh_token` (its mirrors, which the browser specs read) | `gocrm-ui/src/api/sessionRecord.ts` | signs every user out once; renaming the mirrors also breaks the Playwright helpers that read or remove `gophercrm_token` |
+| Web Lock name `gophercrm-session` | `gocrm-ui/src/api/sessionLock.ts` | lets tabs running the old and the new build refresh one session at the same time until they reload |
 | API-key prefix `gcrm_` | `internal/service/apikey_service.go:47`, `internal/utils/crypto.go:14-29` | breaks keys already issued |
 | `.gcrm-form`, `gcrm-form-styles`, `--gcrm-*` | `internal/handler/assets/form_embed.js` | breaks CSS that host pages wrote against the embedded form |
 

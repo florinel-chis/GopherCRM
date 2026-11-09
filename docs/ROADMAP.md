@@ -112,11 +112,12 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   ends nothing; revoking a single access token would need a `jti` denylist, which is not planned.
   The web client's Profile copy still says access held elsewhere "ends when it expires"; that
   frontend text is a separate ticket.
-- **Cross-tab refresh coordination** — within one tab the refresh is shared and every request
-  settles (#115). Tabs that share a remembered session (`localStorage`) still refresh
-  independently: two tabs presenting the same token at once commit one rotation, and the loser's
-  401 signs both out. Coordinating refresh and session replacement across tabs (Web Locks or
-  BroadcastChannel) and storing the session as one record are #184.
+- **Live session updates across tabs** — refreshes and password changes are coordinated across
+  tabs by the Web Lock `gophercrm-session` and the session is stored as one record (#184), but
+  other open tabs are not told about a sign-in or sign-out: they notice on their next request.
+  Without `navigator.locks` (plain HTTP) the lock is per tab and a losing refresh relies on
+  re-reading the record, which adopts a successor stored first but cannot help when the losing
+  tab's 401 reaches it before the winner stored the successor.
 - **Login issued from an obsolete verification** — a login that verified the old password a moment
   before a password change commits still gets its session inserted after the change; login should
   re-verify the hash and the active state under the owner lock in the issuing transaction, with one

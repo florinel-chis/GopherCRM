@@ -169,10 +169,12 @@ file, not by trusting the coverage matrix.
 - **Steps:**
   1. Register through the form and wait for `/`.
   2. Read `localStorage` and `sessionStorage` for `gophercrm_token` and `gophercrm_refresh_token`.
-- **Expected:** `localStorage.gophercrm_token` is set and `sessionStorage.gophercrm_token` is null —
-  `AuthContext.register()` calls `apiClient.setToken(response.token)` with no `persist` argument, so
-  the default `persist = true` applies. Neither storage holds a refresh token: the `Register` handler
-  builds an `AuthResponse` without `RefreshToken`, so `refresh_token` is absent from the 201 body.
+- **Expected:** `localStorage.gophercrm_session` holds the record with `refresh: null` and
+  `persist: true`, `localStorage.gophercrm_token` is set and `sessionStorage.gophercrm_token` is
+  null — `AuthContext.register()` calls `apiClient.startSession(response.token,
+  response.refresh_token, true)`. Neither storage holds a refresh token: the `Register` handler
+  builds an `AuthResponse` without `RefreshToken`, so `refresh_token` is absent from the 201 body,
+  and the record's `refresh: null` is never filled from the other storage.
 - **Known issue:** Login and registration disagree about persistence — login honours the "Remember me"
   checkbox (`AuthContext.tsx` `login()`), registration always persists. A newly registered session
   also has no refresh token, so the first 401 in `client.ts` throws "No refresh token available" and
@@ -396,11 +398,12 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** Fresh browser context, both storages empty. Seeded admin exists.
 - **Steps:**
   1. Log in as the seeded admin leaving "Remember me" unticked.
-  2. Read `gophercrm_token` and `gophercrm_refresh_token` from both storages.
-- **Expected:** Both tokens are in `sessionStorage`; both are absent from `localStorage`.
-  `AuthContext.login()` passes
-  `persist = Boolean(data.remember_me)` into `setToken` / `setRefreshToken`, and `writeToken`
-  removes the key from the other storage before writing.
+  2. Read `gophercrm_session`, `gophercrm_token` and `gophercrm_refresh_token` from both storages.
+- **Expected:** The session record `gophercrm_session` (`{v: 1, id, access, refresh, subject,
+  persist: false}`) and both mirror keys are in `sessionStorage`; all three are absent from
+  `localStorage`. `AuthContext.login()` passes `persist = Boolean(data.remember_me)` into
+  `apiClient.startSession`, which removes the record and both keys from both storages before
+  writing the record and then its mirrors (#184).
 - **Known issue:** Any helper that asserts `localStorage.getItem('gophercrm_token')` after an
   unticked login fails — `gocrm-ui/e2e/helpers/admin-auth.ts:47` still does exactly that.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new)
@@ -413,9 +416,11 @@ file, not by trusting the coverage matrix.
   1. Log in as the seeded admin with `input[name="remember_me"]` checked.
   2. Read both storages.
   3. Open a new page in the same context and navigate to `/`.
-- **Expected:** Both tokens are in `localStorage` and absent from `sessionStorage`. The new page
-  is authenticated without a further login, because `readToken` falls back from `sessionStorage`
-  to `localStorage`.
+- **Expected:** The record (`persist: true`) and both mirror keys are in `localStorage` and absent
+  from `sessionStorage`. The new page is authenticated without a further login, because the
+  client reads the record from `sessionStorage` first and, finding none there, from
+  `localStorage`. Removing `localStorage.gophercrm_token` signs both pages out on their next read:
+  a record whose `gophercrm_token` mirror is missing is no session.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new)
 
 ---
@@ -431,9 +436,10 @@ file, not by trusting the coverage matrix.
   2. Click the **Logout** menu item.
 - **Expected:** `POST /api/v1/auth/logout` fires with the `Authorization: Bearer` header and returns
   **200** with `data.message = "Logged out successfully"`. The SPA navigates to `/login`;
-  `gophercrm_token` and `gophercrm_refresh_token` are gone from *both* `localStorage` and
-  `sessionStorage` (`apiClient.clearTokens()` loops over both). Navigating back to `/` redirects to
-  `/login`.
+  `gophercrm_session`, `gophercrm_token` and `gophercrm_refresh_token` are gone from *both*
+  `localStorage` and `sessionStorage` (`apiClient.clearTokens()` loops over both). The record is
+  removed at once, without waiting for a refresh another tab may be running under the session lock;
+  that refresh then stores nothing (#184). Navigating back to `/` redirects to `/login`.
 - **Known issue:** FEATURES.md row 1.4 still says "There is no server-side logout endpoint"; that row
   is superseded by section 10b — the route is registered at `cmd/main.go:211` behind the auth
   middleware. Closes gap **G11**.
@@ -465,33 +471,42 @@ file, not by trusting the coverage matrix.
 - **Type:** functional
 - **Preconditions:** Logged in as the seeded admin with "Remember me" ticked, on `/customers`.
 - **Steps:**
-  1. Overwrite `localStorage.gophercrm_token` with a syntactically valid but bogus JWT, leaving the
-     refresh token intact.
+  1. Overwrite the `access` field of the `localStorage.gophercrm_session` record with a
+     syntactically valid but bogus JWT, leaving its `refresh` and `id` intact. (Overwriting the
+     `gophercrm_token` mirror changes nothing: the client never reads tokens from the mirror keys
+     while a record exists.)
   2. Reload or trigger a list fetch (e.g. navigate to `/leads`).
 - **Expected:** The first `GET` returns **401**; the client then issues one `POST /auth/refresh`
   through a bare axios instance (no `Authorization` header) and gets **200**; the original request
   is replayed once, marked as retried, with the new bearer token and succeeds; the page renders data
   without a visit to `/login`. Every other request that hit a 401 meanwhile waits on the same
-  refresh and is replayed with the same token — the page sends exactly one refresh. Both
-  `gophercrm_token` and the rotated `gophercrm_refresh_token` in storage differ from their previous
-  values — rotation is strict, so the replacement must be persisted.
+  refresh and is replayed with the same token — the page sends exactly one refresh. The record keeps
+  its `id` while its `access` and rotated `refresh` (and the two mirror keys) differ from their
+  previous values — rotation is strict, so the replacement must be persisted. A second tab of the
+  same remembered session whose request was rejected meanwhile waits for the session lock, finds the
+  successor in the record and replays with it without a second `POST /auth/refresh` (#184).
 - **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new). The interceptor
   itself is covered by Vitest with the real interceptors (`gocrm-ui/src/api/client.refresh.test.ts`,
-  "concurrent 401s share one refresh and replay every request with the new token").
+  "concurrent 401s share one refresh and replay every request with the new token"); two tabs by
+  `gocrm-ui/src/api/client.crossTab.test.ts`.
 
 ### TC-AUTH-032 — A failed refresh logs the user out and hard-redirects to /login
 - **Priority:** P1
 - **Type:** negative
 - **Preconditions:** Logged in as the seeded admin, on any list page.
 - **Steps:**
-  1. Overwrite both `gophercrm_token` and `gophercrm_refresh_token` with garbage.
+  1. Overwrite both the `access` and the `refresh` field of the stored `gophercrm_session` record
+     with garbage, keeping its `id`.
   2. Navigate to `/customers`.
-- **Expected:** The data request 401s, `POST /auth/refresh` 401s, and the client ends the session
-  once: `clearTokens()` and then `window.location.href = '/login'` (skipped when already on
-  `/login`) — a full page load, not a React Router navigation. Every request waiting on that
-  refresh is rejected; none stays pending. Both storages end up empty. A refresh that fails with a
-  **503** (`SESSION_REFRESH_UNAVAILABLE`), a network error or no answer within 15 s rejects the
-  waiting requests but keeps the stored tokens and does not redirect.
+- **Expected:** The data request 401s, `POST /auth/refresh` 401s while the record still holds the
+  token that was presented, and the client ends the session once: `clearTokens()` and then
+  `window.location.href = '/login'` (skipped when already on `/login`) — a full page load, not a
+  React Router navigation. Every request waiting on that refresh is rejected; none stays pending.
+  Both storages end up empty, and another open tab of the session finds no session on its next
+  request and goes to `/login` without calling `/auth/refresh`. A refresh that fails with a
+  **503** (`SESSION_REFRESH_UNAVAILABLE`), a network error or no answer within 15 s (the wait for
+  the session lock included) rejects the waiting requests but keeps the stored tokens and does not
+  redirect.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new). Vitest:
   `client.refresh.test.ts` "a failed refresh rejects every waiting request and signs out once",
   "a refresh that never answers settles every waiter after the timeout", "a 503 from refresh keeps
@@ -503,12 +518,12 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** Logged in as the seeded admin **without** "Remember me" (tokens in
   `sessionStorage`), on a list page.
 - **Steps:**
-  1. Invalidate only `sessionStorage.gophercrm_token`.
+  1. Invalidate only the `access` field of `sessionStorage.gophercrm_session`.
   2. Trigger a data request and wait for the refresh round-trip.
-- **Expected:** The new access and refresh tokens land back in `sessionStorage`, and `localStorage`
-  stays empty. `client.ts` reads the session from the storage that holds the access token and
-  writes the rotated pair back there, so a non-remembered session is not silently promoted to a
-  persistent one; a refresh token is never taken from the other storage.
+- **Expected:** The new access and refresh tokens land back in the `sessionStorage` record (same
+  `id`, `persist: false`) and its mirrors, and `localStorage` stays empty. `client.ts` reads the
+  session record whole from one storage and rewrites it there, so a non-remembered session is not
+  silently promoted to a persistent one; a refresh token is never taken from the other storage.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session-refresh.spec.ts` (new)
 
 ### TC-AUTH-033a — Refresh rotation is atomic and single-use
@@ -538,8 +553,10 @@ file, not by trusting the coverage matrix.
   succeeds, logging out with the successor revokes exactly that session and a second logout still
   succeeds (every logout also ends the caller's earlier access tokens, #236).
 - **Known issue:** a JWT issued before a rotation stays valid until it expires (a logout, a password
-  change or a reset ends it, #236). Two tabs sharing a remembered session still refresh
-  independently (#184).
+  change or a reset ends it, #236). The web client serialises the refreshes of tabs sharing a
+  remembered session through the Web Lock `gophercrm-session` (#184); on plain HTTP, where browsers
+  offer no Web Locks, two tabs can still present one token at once, and the loser adopts the
+  winner's successor only if the winner stored it before the loser's 401 arrived.
 - **Automation:** `internal/service/auth_refresh_rotation_regression_test.go` runs every scenario
   on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
   created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
@@ -592,9 +609,24 @@ file, not by trusting the coverage matrix.
   token is renewed privately once for the same purpose. Another tab replacing the shared session
   (sign-out, sign-in of another account) never makes this tab refresh, replay, write or revoke
   as the wrong account.
-- **Known issue:** tabs sharing a remembered session do not coordinate (#184).
+  Across tabs (#184): refreshes and password changes run under the origin-wide Web Lock
+  `gophercrm-session` and re-read the session record once they hold it. Two tabs of one remembered
+  session rejected at the same time — in either order — send exactly one `POST /auth/refresh`;
+  both replay once with the successor and neither signs out, and the record keeps its session id.
+  A tab that acquires the lock after another tab stored a successor adopts it without calling
+  `/auth/refresh`. Without a shared lock, a refresh that loses to another tab adopts the successor
+  if it is already stored (same session id, another refresh token), and clears nothing when the
+  record belongs to another session (`SessionChangedError`). A 400/401 while the record still holds
+  the presented token ends the session in that tab; the other tab's next request finds no session
+  and signs out without calling `/auth/refresh`. Sign-out never waits for another tab's lock, and a
+  refresh answered after it stores nothing. A refresh still queued for the lock at the 15 s deadline
+  never runs and keeps the stored session.
+- **Known issue:** other open tabs are not updated live on a sign-in or sign-out; they notice on
+  their next request. On plain HTTP (no Web Locks) the lock does not span tabs.
 - **Automation:** Vitest — `gocrm-ui/src/api/client.refresh.test.ts` (`ApiClient 401 refresh`,
   `ApiClient session storage`), driving the real interceptors through an injected adapter;
+  `gocrm-ui/src/api/client.crossTab.test.ts` (two clients over shared storage and one memory lock),
+  `gocrm-ui/src/api/client.sessionRecord.test.ts` and `gocrm-ui/src/api/sessionLock.test.ts`;
   `AuthContext.test.tsx` covers the stale `/users/me` answer, the stale 401 and competing sign-ins.
 
 ### TC-AUTH-034 — "Forgot password?" leads to the 404 page
@@ -738,8 +770,11 @@ file, not by trusting the coverage matrix.
   before the commit leaves the old password, the version and every session as they
   were, and the same request then succeeds. A presented token that is unknown, revoked, expired or
   another user's is **409** `SESSION_STALE` with nothing changed; the UI tells the user to sign in
-  again (it is never retried: following a rotation made by another tab needs cross-tab
-  coordination, #184). If another tab signs out or signs in another account while the change is
+  again (it is never retried). The web client runs the change under the cross-tab session lock and
+  reads the stored session after acquiring it, so a rotation another tab made before the change
+  took the lock is followed (the request carries the rotated refresh token and stored access token,
+  no 409), and a refresh in another tab waits for the change and adopts its renewed pair (#184). If
+  another tab signs out or signs in another account while the change is
   queued or in flight, nothing is sent under, or written over, that session. Without a
   refresh token, and always for an API-key request, every refresh token is revoked and no
   credentials are returned. A sibling refresh racing the change never makes it fail: committed

@@ -24,13 +24,11 @@ const session = vi.hoisted(() => ({ generation: 0 }));
 vi.mock('@/api/client', () => ({
   apiClient: {
     getToken: vi.fn(),
-    setToken: vi.fn(),
-    setRefreshToken: vi.fn(),
     clearTokens: vi.fn(),
     startSession: vi.fn(),
     endSession: vi.fn(),
     getSessionGeneration: vi.fn(() => session.generation),
-    captureSession: vi.fn(() => ({ generation: session.generation, subject: null, refreshToken: null })),
+    captureSession: vi.fn(() => ({ generation: session.generation, id: null, subject: null, refreshToken: null })),
     isCurrentSession: vi.fn((snapshot: { generation: number }) => snapshot.generation === session.generation),
   },
   TOKEN_KEY: 'gophercrm_token',
@@ -57,6 +55,7 @@ describe('AuthContext', () => {
     vi.mocked(apiClient.getSessionGeneration).mockImplementation(() => session.generation);
     vi.mocked(apiClient.captureSession).mockImplementation(() => ({
       generation: session.generation,
+      id: null,
       subject: null,
       refreshToken: null,
     }));
@@ -174,10 +173,11 @@ describe('AuthContext', () => {
       });
     });
 
-    // startSession replaces both keys, so no predecessor refresh token
-    // survives next to the new access token (storage covered in client tests).
+    // startSession writes one record without a refresh token, so no
+    // predecessor refresh token survives next to the new access token
+    // (storage covered in client.sessionRecord.test.ts).
+    expect(apiClient.startSession).toHaveBeenCalledTimes(1);
     expect(apiClient.startSession).toHaveBeenCalledWith('test-token', undefined, true);
-    expect(apiClient.setRefreshToken).not.toHaveBeenCalled();
   });
 
   it('handles logout', async () => {

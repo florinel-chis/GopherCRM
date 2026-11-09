@@ -5,6 +5,7 @@ import {
   ApiClient,
   REFRESH_TOKEN_KEY,
   RefreshTimeoutError,
+  SESSION_KEY,
   SessionChangedError,
   TOKEN_KEY,
 } from './client';
@@ -88,8 +89,18 @@ const jwtFor = (userId: number, tag: string) => {
   return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ user_id: userId, tag })}.signature`;
 };
 
+// A session written under the legacy two-key layout; the client migrates it
+// into a record on its first read.
 const seedSession = (access: string, refresh: string, persist = false) => {
   const store = persist ? localStorage : sessionStorage;
+  store.setItem(TOKEN_KEY, access);
+  store.setItem(REFRESH_TOKEN_KEY, refresh);
+};
+
+/** Another tab rotating the stored session: same record id, new pair. */
+const rotateStoredSession = (store: Storage, access: string, refresh: string) => {
+  const record = JSON.parse(store.getItem(SESSION_KEY) ?? '{}') as Record<string, unknown>;
+  store.setItem(SESSION_KEY, JSON.stringify({ ...record, access, refresh }));
   store.setItem(TOKEN_KEY, access);
   store.setItem(REFRESH_TOKEN_KEY, refresh);
 };
@@ -526,15 +537,13 @@ describe('ApiClient.changePassword', () => {
     ]);
   });
 
-  it('surfaces the 409 when another tab of the same account rotated the session', async () => {
-    // Following a rotation made by another tab needs cross-tab coordination
-    // (#184); until then the token it stored is not part of this session's
-    // lineage, so nothing is retried with it.
+  it('surfaces the 409 when another tab of the same account rotated the session during the request', async () => {
+    // The change read the record when it took the lock; a rotation that lands
+    // while its request is on the wire is not retried, and the 409 surfaces.
     const before = jwtFor(1, 'before');
     const { client, sent } = setup({
       'POST /auth/change-password': (config) => {
-        localStorage.setItem(TOKEN_KEY, jwtFor(1, 'renewed-by-other-tab'));
-        localStorage.setItem(REFRESH_TOKEN_KEY, 'r-other-tab');
+        rotateStoredSession(localStorage, jwtFor(1, 'renewed-by-other-tab'), 'r-other-tab');
         return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
       },
     });
@@ -544,17 +553,17 @@ describe('ApiClient.changePassword', () => {
       response: { status: 409 },
     });
     expect(sent.map((s) => s.body?.refresh_token)).toEqual(['r0']);
-    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('r-other-tab');
+    expect(client.getRefreshToken()).toBe('r-other-tab');
   });
 
   it('does not retry a stale password change under another account signed in by another tab', async () => {
     const accountA = jwtFor(1, 'a');
     const accountB = jwtFor(2, 'b');
+    const otherTab = setup({});
     const { client, sent } = setup({
       'POST /auth/change-password': (config) => {
         // Another tab logged A out and signed B in, in the shared storage.
-        localStorage.setItem(TOKEN_KEY, accountB);
-        localStorage.setItem(REFRESH_TOKEN_KEY, 'b-refresh');
+        otherTab.client.startSession(accountB, 'b-refresh', true);
         return reply(config, 409, { success: false, error: { code: 'SESSION_STALE', message: 'stale' } });
       },
     });
@@ -571,11 +580,11 @@ describe('ApiClient.changePassword', () => {
   it('does not renew or retry under another account when the access token expired', async () => {
     const accountA = jwtFor(1, 'a-expired');
     const accountB = jwtFor(2, 'b');
+    const otherTab = setup({});
     const { client, sent, refreshes } = setup({
       'POST /auth/refresh': (config) => ok(config, { token: jwtFor(2, 'b-new'), refresh_token: 'b-r1' }),
       'POST /auth/change-password': (config) => {
-        localStorage.setItem(TOKEN_KEY, accountB);
-        localStorage.setItem(REFRESH_TOKEN_KEY, 'b-refresh');
+        otherTab.client.startSession(accountB, 'b-refresh', true);
         return unauthorized(config);
       },
     });
@@ -651,10 +660,11 @@ describe('ApiClient session storage', () => {
   });
 });
 
-// Another tab of a remembered session writes the same localStorage. Without
-// cross-tab coordination (#184) this tab cannot follow it, but it must never
-// act on, or write over, a session other than the one an operation started
-// with. Each test uses two ApiClient instances sharing the browser storage.
+// Another tab of a remembered session writes the same localStorage. A tab
+// must never act on, or write over, a session other than the one an operation
+// started with (another sign-in, or a sign-out). Each test uses two ApiClient
+// instances sharing the browser storage; their locks are not shared here, the
+// coordinated case is in client.crossTab.test.ts.
 describe('ApiClient with another tab replacing the shared session', () => {
   beforeEach(() => {
     localStorage.clear();

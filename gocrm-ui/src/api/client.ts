@@ -1,6 +1,20 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosAdapter, AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import type { APIError, ChangePasswordResponse } from '@/types';
+import { createSessionLock, type SessionLock } from './sessionLock';
+import {
+  REFRESH_TOKEN_KEY,
+  SESSION_KEY,
+  TOKEN_KEY,
+  legacySessionId,
+  newSessionId,
+  parseSessionRecord,
+  serializeSessionRecord,
+  type SessionRecord,
+} from './sessionRecord';
+
+export { REFRESH_TOKEN_KEY, SESSION_KEY, TOKEN_KEY };
+export type { SessionRecord };
 
 // The `meta` block of the backend envelope. Only paginated list endpoints fill
 // anything beyond the request id.
@@ -26,13 +40,11 @@ interface ApiErrorEnvelope {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1';
 const API_TIMEOUT = Number(import.meta.env.VITE_API_TIMEOUT) || 30000;
 
-export const TOKEN_KEY = 'gophercrm_token';
-export const REFRESH_TOKEN_KEY = 'gophercrm_refresh_token';
-
-// A refresh that has not answered within this time settles every request
-// waiting on it. The deadline rejects on its own: aborting the HTTP call is
-// only cleanup, because an adapter that ignores the abort would otherwise keep
-// every waiter pending forever.
+// A refresh that has not answered within this time — counted from the moment
+// it was requested, so the wait for the session lock is included — settles
+// every request waiting on it. The deadline rejects on its own: aborting the
+// lock request and the HTTP call is only cleanup, because an adapter that
+// ignores the abort would otherwise keep every waiter pending forever.
 export const REFRESH_TIMEOUT_MS = 15000;
 
 /**
@@ -61,28 +73,40 @@ type SessionRequestConfig = InternalAxiosRequestConfig & {
 
 /**
  * Which session an operation belongs to, captured when the operation is
- * requested (before it waits for any lock). Another tab of a remembered
- * session writes the same localStorage without changing this tab's
- * generation, so the generation alone cannot tell sessions apart: the account
- * (`subject`) and the refresh token are compared too.
+ * requested (before it waits for any lock): this tab's generation and the
+ * stored record's session id, plus the account and refresh token read with it.
+ * A session keeps its id across refreshes and password changes — in every
+ * tab — and a sign-in always gets a new one, so the id tells sessions apart
+ * even when another tab rewrites the shared storage.
  */
 export interface SessionSnapshot {
   readonly generation: number;
+  readonly id: string | null;
   readonly subject: string | null;
   readonly refreshToken: string | null;
 }
 
 /** A token pair this tab obtained for a session it may no longer store. */
 interface RetainedPair {
-  subject: string | null;
-  /** The refresh token the pair was rotated from. */
-  from: string;
+  id: string;
   pair: TokenPair;
 }
 
 interface TokenPair {
   token: string;
   refresh_token: string;
+}
+
+/** The record currently stored, and the storage that holds it. */
+interface StoredSession {
+  record: SessionRecord;
+  storage: Storage;
+}
+
+interface Deadline {
+  signal: AbortSignal;
+  expired: Promise<never>;
+  cancel: () => void;
 }
 
 export interface ApiClientOptions {
@@ -93,6 +117,14 @@ export interface ApiClientOptions {
   refreshTimeoutMs?: number;
   /** Called once when a session ends because it can no longer be renewed. */
   onSessionExpired?: () => void;
+  /**
+   * The origin-wide lock refreshes and password changes run under. Defaults
+   * to the Web Lock `gophercrm-session` (in-tab fallback without
+   * `navigator.locks`); tests share one memory lock between clients.
+   */
+  sessionLock?: SessionLock;
+  /** The browser storages (tests inject instrumented ones). */
+  storage?: { local: Storage; session: Storage };
 }
 
 const defaultSessionExpired = () => {
@@ -126,52 +158,51 @@ const statusOf = (error: unknown): number | undefined =>
  * The HTTP client and the owner of the browser session.
  *
  * Session rules:
+ * - The session is one record (`gophercrm_session`: id, access token, refresh
+ *   token, account, persistence) read whole from one storage, sessionStorage
+ *   first. The legacy keys are write-only mirrors; a record whose
+ *   `gophercrm_token` mirror is gone is no session.
  * - Every operation (request, refresh, password change, logout) captures a
- *   SessionSnapshot when it is requested: this tab's generation, the account
- *   of the access token and the refresh token. Before it sends, retries or
- *   writes, storage must still hold that session — same generation, same
- *   account, and the snapshot's refresh token or one this tab rotated from
- *   it. Another tab of a remembered session writes the same localStorage
- *   without changing this tab's generation; the account and the refresh
- *   token lineage catch that, so no operation acts on or writes over a
- *   session other than its own.
+ *   SessionSnapshot when it is requested. Before it sends, retries or writes,
+ *   storage must still hold that session: same generation in this tab and
+ *   the same record id. Another tab's refresh keeps the id (the operation
+ *   follows it); another tab's sign-in or sign-out changes or removes it (the
+ *   operation stops with SessionChangedError).
  * - Signing in, signing out and an expired session start a new generation; a
  *   refresh or a password change renews the current one.
- * - One refresh at a time: every request that hits a 401 waits on the same
- *   in-flight refresh and is resolved or rejected with it. Refreshes and
- *   session-replacing operations (password change) are serialised through one
- *   lock, so they never overlap in this tab.
- * - A refresh rejected with 400/401 ends the session; a timeout, network
- *   failure or 5xx keeps the stored tokens (the server may still accept them,
- *   or may already have rotated them — the next attempt will tell).
- *
- * Coordinating refreshes across several tabs that share a remembered session
- * is not handled here (#184).
+ * - Refreshes and password changes run under one origin-wide exclusive lock
+ *   (Web Locks `gophercrm-session`) and re-read the record once they hold it:
+ *   a successor another tab already stored is adopted instead of spending the
+ *   refresh token again. Sign-in and sign-out never wait for the lock.
+ * - In one tab, every request that hits a 401 waits on the same refresh.
+ * - A refresh rejected with 400/401 ends the session only while storage still
+ *   holds the refresh token that was presented; if another tab stored a
+ *   successor meanwhile it is adopted. A timeout, network failure or 5xx keeps
+ *   the stored tokens.
  */
 export class ApiClient {
   private client: AxiosInstance;
   private sessionHttp: AxiosInstance;
   private refreshTimeoutMs: number;
   private onSessionExpired: () => void;
+  private lock: SessionLock;
+  private storages?: { local: Storage; session: Storage };
   private generation = 0;
-  private refreshInFlight: { generation: number; promise: Promise<string> } | null = null;
+  private refreshInFlight: { generation: number; id: string | null; promise: Promise<string> } | null = null;
   // Refreshes and password changes still running, so logout can wait for
   // them and revoke whatever successor they commit.
   private sessionOps = new Set<{ generation: number; promise: Promise<unknown> }>();
-  // Rotations this tab performed itself (spent refresh token -> successor).
-  // A stored refresh token belongs to a snapshot's session only if it is the
-  // snapshot's token or descends from it through this map.
-  private rotations = new Map<string, string>();
   // Pairs obtained after their session stopped being the stored one. They are
   // never stored; logout uses the one that belongs to the session it ends to
   // authenticate the revocation (the operation spent the stored token).
   private retained: RetainedPair[] = [];
-  private lockTail: Promise<void> = Promise.resolve();
 
   constructor(options: ApiClientOptions = {}) {
     const baseURL = options.baseURL ?? API_BASE_URL;
     this.refreshTimeoutMs = options.refreshTimeoutMs ?? REFRESH_TIMEOUT_MS;
     this.onSessionExpired = options.onSessionExpired ?? defaultSessionExpired;
+    this.lock = options.sessionLock ?? createSessionLock();
+    this.storages = options.storage;
     this.client = axios.create({
       baseURL,
       timeout: options.timeout ?? API_TIMEOUT,
@@ -264,22 +295,20 @@ export class ApiClient {
     return this.client(replay);
   }
 
-  /** Joins the in-flight refresh of this generation, or starts one. */
+  /** Joins this tab's in-flight refresh of the same session, or starts one. */
   private refreshFor(session: SessionSnapshot, sentToken?: string): Promise<string> {
-    if (this.refreshInFlight && this.refreshInFlight.generation === session.generation) {
-      return this.refreshInFlight.promise;
+    const inFlight = this.refreshInFlight;
+    if (inFlight && inFlight.generation === session.generation && inFlight.id === session.id) {
+      return inFlight.promise;
     }
-    return this.registerRefresh(
-      session.generation,
-      this.withLock(() => this.performRefresh(session, sentToken))
-    );
+    return this.registerRefresh(session, this.refreshUnderLock(session, sentToken));
   }
 
   /** Makes a refresh joinable by other 401s and visible to logout. */
-  private registerRefresh(generation: number, promise: Promise<string>): Promise<string> {
-    const entry = { generation, promise };
+  private registerRefresh(session: SessionSnapshot, promise: Promise<string>): Promise<string> {
+    const entry = { generation: session.generation, id: session.id, promise };
     this.refreshInFlight = entry;
-    this.trackSessionOp(generation, promise);
+    this.trackSessionOp(session.generation, promise);
     promise
       .finally(() => {
         if (this.refreshInFlight === entry) {
@@ -302,52 +331,30 @@ export class ApiClient {
 
   /** The session currently stored, for later comparison. */
   public captureSession(): SessionSnapshot {
+    const stored = this.readStored();
     return {
       generation: this.generation,
-      subject: tokenSubject(this.getToken()),
-      refreshToken: this.getRefreshToken(),
+      id: stored?.record.id ?? null,
+      subject: stored?.record.subject ?? null,
+      refreshToken: stored?.record.refresh ?? null,
     };
   }
 
   /**
-   * Whether storage still holds the session of `snapshot`: same generation,
-   * same account, and a refresh token that is the snapshot's or one this tab
-   * rotated from it.
+   * Whether storage still holds the session of `snapshot`: same generation in
+   * this tab and the same record id (null for no session).
    */
   public isCurrentSession(snapshot: SessionSnapshot): boolean {
-    return (
-      snapshot.generation === this.generation &&
-      tokenSubject(this.getToken()) === snapshot.subject &&
-      this.descendsFrom(snapshot.refreshToken, this.getRefreshToken())
-    );
+    return this.matches(snapshot, this.readStored());
   }
 
-  private descendsFrom(from: string | null, token: string | null): boolean {
-    if (from === null) {
-      return token === null;
-    }
-    const seen = new Set<string>();
-    let current: string | undefined = from;
-    while (current !== undefined && !seen.has(current)) {
-      if (current === token) {
-        return true;
-      }
-      seen.add(current);
-      current = this.rotations.get(current);
-    }
-    return false;
+  private matches(snapshot: SessionSnapshot, stored: StoredSession | null): boolean {
+    return snapshot.generation === this.generation && (stored?.record.id ?? null) === snapshot.id;
   }
 
-  private recordRotation(from: string, to: string): void {
-    this.rotations.set(from, to);
-    if (this.rotations.size > 100) {
-      const oldest = this.rotations.keys().next().value;
-      if (oldest !== undefined) this.rotations.delete(oldest);
-    }
-  }
-
-  private retain(subject: string | null, from: string, pair: TokenPair): void {
-    this.retained.push({ subject, from, pair });
+  private retain(id: string | null, pair: TokenPair): void {
+    if (id === null) return;
+    this.retained.push({ id, pair });
     if (this.retained.length > 10) {
       this.retained.shift();
     }
@@ -357,7 +364,7 @@ export class ApiClient {
   private takeRetained(ending: SessionSnapshot): TokenPair | null {
     for (let i = this.retained.length - 1; i >= 0; i--) {
       const candidate = this.retained[i];
-      if (candidate.subject === ending.subject && this.descendsFrom(ending.refreshToken, candidate.from)) {
+      if (ending.id !== null && candidate.id === ending.id) {
         this.retained.splice(i, 1);
         return candidate.pair;
       }
@@ -366,74 +373,124 @@ export class ApiClient {
   }
 
   /**
-   * Serialises refreshes and session replacements. A rejected step does not
-   * break the chain.
+   * One refresh under the session lock, bounded by the refresh deadline from
+   * the moment it is requested. A refresh still queued for the lock at the
+   * deadline is withdrawn and never runs.
    */
-  private withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.lockTail.then(fn, fn);
-    this.lockTail = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
+  private async refreshUnderLock(session: SessionSnapshot, sentToken?: string): Promise<string> {
+    const deadline = this.startDeadline();
+    try {
+      return await Promise.race([
+        this.lock.run(() => this.performRefresh(session, sentToken, deadline), deadline.signal),
+        deadline.expired,
+      ]);
+    } finally {
+      deadline.cancel();
+    }
+  }
+
+  private startDeadline(): Deadline {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new RefreshTimeoutError();
+        reject(error);
+        controller.abort(error);
+      }, this.refreshTimeoutMs);
+    });
+    expired.catch(() => undefined);
+    return { signal: controller.signal, expired, cancel: () => clearTimeout(timer) };
   }
 
   /**
-   * Renews the session of `generation`. Must only run while holding the lock;
-   * it never takes the lock itself, so a lock holder (the password change)
-   * can call it without waiting on work queued behind it.
+   * Renews the session of `session`. Must only run while holding the lock; it
+   * never takes the lock itself, so a lock holder (the password change) can
+   * call it without acquiring the lock a second time.
+   *
+   * `sentToken` is the access token the failed request carried: if the
+   * record now holds another one, a refresh (in this tab or another) already
+   * renewed the session and its access token is adopted without spending the
+   * refresh token again.
    */
-  private async performRefresh(session: SessionSnapshot, sentToken?: string): Promise<string> {
-    if (!this.isCurrentSession(session)) {
+  private async performRefresh(session: SessionSnapshot, sentToken?: string, deadline?: Deadline): Promise<string> {
+    const stored = this.readStored();
+    if (!this.matches(session, stored)) {
       throw new SessionChangedError();
     }
-    // A refresh that completed while this one waited for the lock already
-    // renewed the session the failed request was sent under.
-    const current = this.getToken();
-    if (sentToken && current && current !== sentToken) {
-      return current;
+    if (!stored) {
+      // No session to renew (the snapshot was taken without one).
+      this.expireSession(session);
+      throw new Error('No refresh token available');
+    }
+    if (sentToken && stored.record.access !== sentToken) {
+      return stored.record.access;
     }
 
-    const presented = this.getRefreshToken();
+    const presented = stored.record.refresh;
     if (!presented) {
       this.expireSession(session);
       throw new Error('No refresh token available');
     }
-    const persist = this.isPersistent();
 
     let pair: TokenPair;
     try {
-      pair = await this.requestRefresh(presented);
+      pair = await this.requestRefresh(presented, deadline);
     } catch (error) {
-      if (!this.isCurrentSession(session)) {
-        throw new SessionChangedError();
-      }
       const status = statusOf(error);
       if (status === 400 || status === 401) {
-        this.expireSession(session);
+        return this.recoverRejectedRefresh(session, presented, error);
+      }
+      if (!this.isCurrentSession(session)) {
+        throw new SessionChangedError();
       }
       throw error;
     }
 
-    // The session ended or was replaced (here or by another tab) while the
-    // refresh was in flight: the late pair must not resurrect or overwrite
-    // anything. It is kept privately so a logout of this session can still
-    // authenticate its revocation.
-    if (!this.isCurrentSession(session) || this.getRefreshToken() !== presented) {
-      this.retain(session.subject, presented, pair);
+    const now = this.readStored();
+    if (!this.matches(session, now) || !now) {
+      // The session ended or was replaced (here or by another tab) while the
+      // refresh was in flight: the late pair must not resurrect or overwrite
+      // anything. It is kept privately so a logout of this session can still
+      // authenticate its revocation.
+      this.retain(session.id, pair);
       throw new SessionChangedError();
     }
-    this.setToken(pair.token, persist);
-    this.setRefreshToken(pair.refresh_token, persist);
-    this.recordRotation(presented, pair.refresh_token);
+    if (now.record.refresh !== presented) {
+      // Another writer of this session (a tab without a shared lock) stored a
+      // newer pair meanwhile; keep it and follow it.
+      this.retain(session.id, pair);
+      return now.record.access;
+    }
+    this.writeRecord(now.storage, { ...now.record, access: pair.token, refresh: pair.refresh_token });
     return pair.token;
   }
 
+  /**
+   * A refresh answered 400/401. That ends the session only while storage still
+   * holds the token that was presented: a tab whose locks are not shared (no
+   * Web Locks) may have spent it first and stored the successor, which is then
+   * adopted. A record of another session (or none) is left alone.
+   */
+  private recoverRejectedRefresh(session: SessionSnapshot, presented: string, error: unknown): string {
+    const now = this.readStored();
+    if (!this.matches(session, now) || !now) {
+      throw new SessionChangedError();
+    }
+    if (now.record.refresh !== presented) {
+      return now.record.access;
+    }
+    this.expireSession(session);
+    throw error;
+  }
+
   /** POST /auth/refresh under the refresh deadline; writes nothing. */
-  private async requestRefresh(refreshToken: string): Promise<TokenPair> {
-    const response = await this.withDeadline((signal) =>
-      this.sessionHttp.post('/auth/refresh', { refresh_token: refreshToken }, { signal })
-    );
+  private async requestRefresh(refreshToken: string, deadline?: Deadline): Promise<TokenPair> {
+    const call = (signal: AbortSignal) =>
+      this.sessionHttp.post('/auth/refresh', { refresh_token: refreshToken }, { signal });
+    const response = deadline
+      ? await Promise.race([call(deadline.signal), deadline.expired])
+      : await this.withDeadline(call);
     // The bare instance does not unwrap the { success, data } envelope.
     const payload = (response.data?.data ?? response.data) as Partial<TokenPair> | undefined;
     if (!payload?.token || !payload.refresh_token) {
@@ -448,18 +505,11 @@ export class ApiClient {
   }
 
   private async withDeadline<T>(call: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new RefreshTimeoutError());
-      }, this.refreshTimeoutMs);
-    });
+    const deadline = this.startDeadline();
     try {
-      return await Promise.race([call(controller.signal), deadline]);
+      return await Promise.race([call(deadline.signal), deadline.expired]);
     } finally {
-      clearTimeout(timer);
+      deadline.cancel();
     }
   }
 
@@ -469,26 +519,31 @@ export class ApiClient {
     if (!this.isCurrentSession(session)) {
       return;
     }
-    this.clearTokens();
+    // A snapshot without a session has nothing to remove: a record another
+    // tab is writing right now must survive.
+    if (session.id !== null) {
+      this.clearTokens();
+    }
     this.onSessionExpired();
   }
 
   /**
-   * Changes the password and keeps this session renewable: the current
-   * refresh token goes with the request and the replacement pair the server
-   * returns is stored in the same storage (remember-me choice). Runs under
-   * the session lock, after any in-flight refresh. An expired access token is
-   * renewed once and the request rebuilt from the renewed pair.
+   * Changes the password and keeps this session renewable. Runs under the
+   * session lock and reads the record once it holds it, so the request
+   * carries the pair another tab may have rotated to meanwhile; the
+   * replacement pair the server returns is written over the same record
+   * (same id, same storage). An expired access token is renewed inside the
+   * same lock hold and the request rebuilt from the renewed pair.
    */
   public async changePassword(currentPassword: string, newPassword: string): Promise<{ renewed: boolean }> {
     // The session this change is for, captured before waiting for the lock.
     // Every attempt, retry and write below is checked against it.
     const session = this.captureSession();
-    const operation = this.withLock(async () => {
-      if (!this.isCurrentSession(session)) {
+    const operation = this.lock.run(async () => {
+      const start = this.readStored();
+      if (!this.matches(session, start)) {
         throw new SessionChangedError();
       }
-      const persist = this.isPersistent();
       // Every attempt is authenticated with the pair read for it, so the
       // request interceptor cannot substitute whatever another tab stored.
       const send = (accessToken: string | null, refreshToken: string | null) =>
@@ -505,39 +560,40 @@ export class ApiClient {
           } as Partial<SessionRequestConfig>
         );
 
-      let presented = this.getRefreshToken();
+      let access = start?.record.access ?? null;
+      let presented = start?.record.refresh ?? null;
       let response: AxiosResponse<ChangePasswordResponse>;
       try {
-        response = await send(this.getToken(), presented);
+        response = await send(access, presented);
       } catch (error) {
         // Only an expired access token of this same session is recovered: it
         // is renewed (as a registered refresh, so logout waits for it) and the
         // body rebuilt from the renewed pair, the old refresh token being
-        // spent. A 409 SESSION_STALE always surfaces — following a rotation
-        // made by another tab needs cross-tab coordination (#184).
+        // spent. A 409 SESSION_STALE always surfaces.
         if (statusOf(error) !== 401 || !presented || !this.isCurrentSession(session)) {
           throw error;
         }
-        await this.registerRefresh(session.generation, this.performRefresh(session));
-        if (!this.isCurrentSession(session)) {
+        await this.registerRefresh(session, this.performRefresh(session, access ?? undefined));
+        const renewed = this.readStored();
+        if (!this.matches(session, renewed) || !renewed) {
           throw new SessionChangedError();
         }
-        presented = this.getRefreshToken();
-        response = await send(this.getToken(), presented);
+        access = renewed.record.access;
+        presented = renewed.record.refresh;
+        response = await send(access, presented);
       }
 
       const data = response.data;
       if (data?.token && data.refresh_token) {
         const pair = { token: data.token, refresh_token: data.refresh_token };
-        if (!this.isCurrentSession(session)) {
+        const now = this.readStored();
+        if (!this.matches(session, now) || !now) {
           // Signed out, or another account signed in (here or in another
           // tab), while the request was in flight: never write over that.
-          if (presented) this.retain(session.subject, presented, pair);
+          this.retain(session.id, pair);
           throw new SessionChangedError();
         }
-        this.setToken(pair.token, persist);
-        this.setRefreshToken(pair.refresh_token, persist);
-        if (presented) this.recordRotation(presented, pair.refresh_token);
+        this.writeRecord(now.storage, { ...now.record, access: pair.token, refresh: pair.refresh_token });
         return { renewed: true };
       }
       return { renewed: false };
@@ -547,24 +603,25 @@ export class ApiClient {
   }
 
   /**
-   * Ends the session: the stored tokens are dropped at once (so no refresh
-   * or replay can store or use them any more) and the server is asked to
-   * revoke every refresh session of the user. When the access token has
-   * expired, it is renewed privately — without storing anything — so the
-   * revocation is still authenticated.
+   * Ends the session: the stored record is dropped at once — without waiting
+   * for the session lock, so another tab's refresh cannot delay a sign-out —
+   * and the server is asked to revoke every refresh session of the user. When
+   * the access token has expired, it is renewed privately — without storing
+   * anything — so the revocation is still authenticated.
    */
   public async endSession(revoke: (accessToken: string) => Promise<void>): Promise<void> {
+    const stored = this.readStored();
     const ending = this.captureSession();
-    const access = this.getToken();
+    const access = stored?.record.access ?? null;
     const running = [...this.sessionOps].filter((op) => op.generation === ending.generation).map((op) => op.promise);
     this.clearTokens();
-    // Let refreshes and password changes already running settle first, so
-    // the server-side revocation also covers any successor they commit.
+    // Let refreshes and password changes of this tab already running settle
+    // first, so the server-side revocation also covers any successor they
+    // commit.
     await Promise.allSettled(running);
     // Such an operation spent the stored refresh token; its successor (kept
     // privately, never stored) is the freshest credential of the ending
-    // session — but only one that belongs to this session (same account,
-    // rotated from this session's refresh token) may be used.
+    // session — but only one obtained for this very session may be used.
     const successor = this.takeRetained(ending);
     const accessToken = successor?.token ?? access;
     const refreshToken = successor?.refresh_token ?? ending.refreshToken;
@@ -583,73 +640,128 @@ export class ApiClient {
   }
 
   /**
-   * Starts a new session (sign-in, registration): a new generation, and both
-   * keys replaced together. A response without a refresh token leaves none,
-   * rather than keeping the previous session's.
+   * Starts a new session (sign-in, registration): a new generation and a new
+   * record with a fresh random id, in localStorage when `persist` is true and
+   * in sessionStorage otherwise. Anything stored before, in either storage,
+   * is removed first. A response without a refresh token stores none.
    */
   public startSession(token: string, refreshToken: string | undefined, persist: boolean): void {
     this.clearTokens();
-    this.setToken(token, persist);
-    if (refreshToken) {
-      this.setRefreshToken(refreshToken, persist);
-    }
+    this.writeRecord(persist ? this.localArea() : this.sessionArea(), {
+      v: 1,
+      id: newSessionId(),
+      access: token,
+      refresh: refreshToken ?? null,
+      subject: tokenSubject(token),
+      persist,
+    });
   }
 
   public getSessionGeneration(): number {
     return this.generation;
   }
 
-  // Tokens live in localStorage only when the user opted into "remember me";
-  // otherwise they go to sessionStorage so the session ends with the browser
-  // tab. The session is read from ONE storage: the one holding the access
-  // token (sessionStorage first). Its refresh token is never taken from the
-  // other storage, so a pair cannot be assembled from two different sessions.
-  private sessionStorageArea(): Storage | null {
-    if (sessionStorage.getItem(TOKEN_KEY) !== null) return sessionStorage;
-    if (localStorage.getItem(TOKEN_KEY) !== null) return localStorage;
-    if (sessionStorage.getItem(REFRESH_TOKEN_KEY) !== null) return sessionStorage;
-    if (localStorage.getItem(REFRESH_TOKEN_KEY) !== null) return localStorage;
-    return null;
-  }
-
-  private isPersistent(): boolean {
-    return this.sessionStorageArea() === localStorage;
-  }
-
-  private writeToken(key: string, token: string, persist: boolean): void {
-    const target = persist ? localStorage : sessionStorage;
-    const other = persist ? sessionStorage : localStorage;
-    other.removeItem(key);
-    target.setItem(key, token);
-  }
-
   public getToken(): string | null {
-    return this.sessionStorageArea()?.getItem(TOKEN_KEY) ?? null;
-  }
-
-  public setToken(token: string, persist = true): void {
-    this.writeToken(TOKEN_KEY, token, persist);
+    return this.readStored()?.record.access ?? null;
   }
 
   public getRefreshToken(): string | null {
-    return this.sessionStorageArea()?.getItem(REFRESH_TOKEN_KEY) ?? null;
+    return this.readStored()?.record.refresh ?? null;
   }
 
-  public setRefreshToken(token: string, persist = true): void {
-    this.writeToken(REFRESH_TOKEN_KEY, token, persist);
-  }
-
-  /** Drops both tokens from both storages and ends the current generation. */
+  /** Drops the record and the legacy keys from both storages and ends the current generation. */
   public clearTokens(): void {
     this.generation += 1;
-    for (const key of [TOKEN_KEY, REFRESH_TOKEN_KEY]) {
-      localStorage.removeItem(key);
-      sessionStorage.removeItem(key);
+    for (const storage of [this.sessionArea(), this.localArea()]) {
+      storage.removeItem(SESSION_KEY);
+      storage.removeItem(TOKEN_KEY);
+      storage.removeItem(REFRESH_TOKEN_KEY);
     }
   }
 
   public getClient(): AxiosInstance {
     return this.client;
+  }
+
+  private localArea(): Storage {
+    return this.storages?.local ?? localStorage;
+  }
+
+  private sessionArea(): Storage {
+    return this.storages?.session ?? sessionStorage;
+  }
+
+  /**
+   * Writes the whole record in one setItem, then the legacy mirrors of the
+   * same storage (always after the record).
+   */
+  private writeRecord(storage: Storage, record: SessionRecord): void {
+    storage.setItem(SESSION_KEY, serializeSessionRecord(record));
+    storage.setItem(TOKEN_KEY, record.access);
+    if (record.refresh !== null) {
+      storage.setItem(REFRESH_TOKEN_KEY, record.refresh);
+    } else {
+      storage.removeItem(REFRESH_TOKEN_KEY);
+    }
+  }
+
+  /**
+   * The stored session, read whole from one storage (sessionStorage first).
+   * A malformed record is removed with its mirrors. A record without its
+   * `gophercrm_token` mirror is no session but stays where it is (it may be
+   * mid-write by another tab, or signed out by a browser spec). Legacy keys
+   * are migrated only when neither storage holds any record.
+   */
+  private readStored(): StoredSession | null {
+    let sawRecord = false;
+    for (const storage of [this.sessionArea(), this.localArea()]) {
+      const raw = storage.getItem(SESSION_KEY);
+      if (raw === null) continue;
+      sawRecord = true;
+      const record = parseSessionRecord(raw);
+      if (!record) {
+        storage.removeItem(SESSION_KEY);
+        storage.removeItem(TOKEN_KEY);
+        storage.removeItem(REFRESH_TOKEN_KEY);
+        continue;
+      }
+      if (storage.getItem(TOKEN_KEY) === null) {
+        return null;
+      }
+      return { record, storage };
+    }
+    return sawRecord ? null : this.migrateLegacy();
+  }
+
+  /**
+   * Turns a session stored under the two legacy keys into a record, once.
+   * The storage holding `gophercrm_token` (sessionStorage first) is taken
+   * with its own refresh token or none; a refresh token without an access
+   * token beside it is dropped.
+   */
+  private migrateLegacy(): StoredSession | null {
+    const areas = [this.sessionArea(), this.localArea()];
+    for (const storage of areas) {
+      if (storage.getItem(TOKEN_KEY) === null && storage.getItem(REFRESH_TOKEN_KEY) !== null) {
+        storage.removeItem(REFRESH_TOKEN_KEY);
+      }
+    }
+    for (const storage of areas) {
+      const access = storage.getItem(TOKEN_KEY);
+      if (access === null) continue;
+      const refresh = storage.getItem(REFRESH_TOKEN_KEY);
+      const record: SessionRecord = {
+        v: 1,
+        id: legacySessionId(access, refresh),
+        access,
+        refresh,
+        subject: tokenSubject(access),
+        persist: storage === this.localArea(),
+      };
+      this.writeRecord(storage, record);
+      return { record, storage };
+    }
+    return null;
   }
 }
 
