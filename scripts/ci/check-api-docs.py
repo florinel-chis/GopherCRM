@@ -103,6 +103,10 @@ CLOSED_SETS = {
     'AutomationOutcome': [('prefix', 'AutomationOutcome')],
     'AutomationRecipient': [('prefix', 'AutomationRecipient')],
     'AutomationElse': [('prefix', 'AutomationElse')],
+    # untyped constants in internal/models/form_mail_delivery.go (#216, #275)
+    'FormMailKind': [('prefix', 'FormMailKind')],
+    'FormMailStatus': [('prefix', 'FormMailStatus')],
+    'FormMailErrorCode': [('prefix', 'FormMailError')],
     # binding oneof on CompanyRequest.EmployeeRange (internal/handler/company_handler.go)
     'EmployeeRange': [('values', ['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'])],
     # activity literals in internal/handler/dashboard_handler.go
@@ -125,6 +129,9 @@ ENUM_EXPECTATIONS = [
     ('models.FormSubmissionStatus', None, 'FormSubmissionStatus', False),
     ('models.ConfigurationType', None, 'ConfigurationType', False),
     ('models.ConfigurationCategory', None, 'ConfigurationCategory', False),
+    ('models.FormMailDelivery', 'kind', 'FormMailKind', False),
+    ('models.FormMailDelivery', 'status', 'FormMailStatus', False),
+    ('models.FormMailDelivery', 'error_code', 'FormMailErrorCode', True),
     ('models.User', 'role', 'UserRole', False),
     ('handler.CreateUserRequest', 'role', 'UserRole', False),
     ('handler.UpdateUserRequest', 'role', 'UserRole', False),
