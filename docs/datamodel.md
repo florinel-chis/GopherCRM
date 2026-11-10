@@ -694,8 +694,8 @@ Represents system configuration settings that control application behavior.
 - `integration` - Third-party integrations
 
 ### Key Configuration Settings
-- `general.company_name` - Company name. Stored and served on `GET /configurations/ui`, but no screen or mail uses it yet: the UI shows `VITE_APP_NAME` and mail subjects are fixed in code (#221)
-- `ui.theme.primary_color` - Primary theme color. Stored and served, but the MUI palette is fixed in `gocrm-ui/src/theme/index.ts`, so changing it has no visible effect yet (#221)
+- `general.company_name` - Company name. Served on `GET /configurations/ui`; for signed-in users a non-blank value is the product name in the navigation drawer and on the printable quote (`useProductName`, falling back to `VITE_APP_NAME`, then `GoCRM`). The sign-in and registration pages always show the build-time name, and mail subjects are still fixed in code (#221)
+- `ui.theme.primary_color` - Primary theme color. Served on `GET /configurations/ui`; for signed-in users it sets the light theme's primary colour when it is a 3- or 6-digit hex, `rgb()`/`rgba()` or `hsl()`/`hsla()` value, otherwise the default `#1976d2` is kept (`gocrm-ui/src/theme/primaryColor.ts`, #291)
 - `leads.conversion.allowed_statuses` - Lead statuses that allow conversion (any of `new`, `contacted`, `qualified`, `unqualified`; enforced by the convert endpoint; also served on `GET /configurations/ui`)
 - `leads.conversion.require_notes` - Whether non-blank conversion notes are required (enforced; also on `GET /configurations/ui`)
 - `leads.conversion.auto_assign_owner` - Make the lead owner the customer's `assigned_to_id` on conversion (enforced; also on `GET /configurations/ui`)

@@ -182,10 +182,13 @@ values. One shared installation does not work for several clients, for two reaso
 - Form mail: `GET /forms/deliveries` lists failed, log-only and stuck mails; admin and sales retry
   one with `POST /forms/deliveries/{id}/retry`. Old spam and unconfirmed submissions: set
   `FORM_RETENTION_DAYS` (see the shared caveats).
-- Branding: mail subjects are hard-coded (`internal/mailer/smtp.go:84`,
-  `internal/service/quote_email.go:12-15`), and the `general.company_name` and
-  `ui.theme.primary_color` settings have no consumer in the UI
-  (`gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93`). Tracked in #221.
+- Branding: for signed-in users the UI shows the `general.company_name` setting as the product name
+  (navigation drawer, printed quote) and uses a supported `ui.theme.primary_color` (hex, `rgb()`,
+  `hsl()`) as the light theme's primary colour (`gocrm-ui/src/hooks/useProductName.ts`,
+  `gocrm-ui/src/theme/BrandThemeProvider.tsx`, #291). The sign-in and registration pages show the
+  build-time `VITE_APP_NAME` (else `GoCRM`). Mail subjects are still hard-coded
+  (`internal/mailer/smtp.go:84`, `internal/service/quote_email.go:12-15`; #221), and the Docker UI
+  image takes no `VITE_APP_NAME` build argument (#222).
 - AEO export or client reporting: #244.
 
 ### Do not promise
@@ -230,7 +233,8 @@ lost deal.
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
   (`internal/handler/routes.go:225`).
 - The quote email subject reads "Quote Q-… from GopherCRM" (`internal/service/quote_email.go:12-15`).
-  Changing it is a code edit until #221 lands.
+  Changing it is a code edit until #221 lands. The printed quote's heading already shows the
+  `general.company_name` setting (#291).
 
 **Variant: sponsorship or partnership sales.** The same objects work: the partner organisation is a
 company, each package is a product, each proposal is a deal with a quote. Recurring gifts and
@@ -438,7 +442,7 @@ planning around an issue number.
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
 | Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1153,1161,1164` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
-| One product-name source for UI, mail subjects and Docker builds | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` | #221 |
+| Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291). Still open: mail subjects and the Docker `VITE_APP_NAME` build argument | 1, 2 | `internal/mailer/smtp.go:84`; `internal/service/quote_email.go:12-15`; `gocrm-ui/Dockerfile` | #221, #222 |
 | Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |

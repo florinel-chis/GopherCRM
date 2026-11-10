@@ -20,6 +20,7 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
+import { useProductName } from '@/hooks/useProductName';
 import { authApi } from '@/api/endpoints';
 import type { RegisterRequest } from '@/types';
 
@@ -45,6 +46,7 @@ type RegisterFormData = z.infer<typeof registerSchema>;
 export const Register: React.FC = () => {
   const navigate = useNavigate();
   const { register: registerUser } = useAuth();
+  const productName = useProductName();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +137,7 @@ export const Register: React.FC = () => {
             Sign Up
           </Typography>
           <Typography variant="body2" color="text.secondary" align="center" gutterBottom>
-            Create your {import.meta.env.VITE_APP_NAME || 'GoCRM'} account
+            Create your {productName} account
           </Typography>
 
           {error && (
