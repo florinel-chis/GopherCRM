@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Product name and primary colour from the settings (#291).** The web app names itself through
+  one hook, `useProductName`: the stored `general.company_name` when a signed-in user's
+  configuration holds a non-blank value, otherwise `VITE_APP_NAME`, otherwise `GoCRM`. The
+  navigation drawer, the printed quote heading and the sign-in and registration pages use it; the
+  sign-in and registration pages render signed out, so they show the build-time name from the first
+  render and request no configuration. A fresh install stores `GopherCRM`, so signed-in users see
+  that name until an admin changes it. The light theme's primary colour now follows
+  `ui.theme.primary_color` (`BrandThemeProvider`, under the configuration provider): 3- or 6-digit
+  hex, `rgb()`/`rgba()` and `hsl()`/`hsla()` values are applied and MUI derives the light and dark
+  variants; any other value, and every signed-out page, keeps `#1976d2`. The dark theme, secondary
+  colour and snackbars are unchanged. Frontend only; no API change. Mail subjects (#221) and the
+  Docker build argument (#222) remain open.
 - **External identity mappings for products (#239).** A new `product_external_ids` table maps an
   integrator's `(source, scope, external_id)` to a product, unique on the exact, case-sensitive
   triple with the customer mappings' rules (source 1-64, scope 0-128 and `''` by default,

@@ -1,5 +1,8 @@
 import { createTheme } from '@mui/material/styles';
 import type { ThemeOptions } from '@mui/material/styles';
+import { DEFAULT_PRIMARY_COLOR, isDefaultPrimaryColor, resolvePrimaryColor } from './primaryColor';
+
+export { DEFAULT_PRIMARY_COLOR, resolvePrimaryColor } from './primaryColor';
 
 const themeOptions: ThemeOptions = {
   palette: {
@@ -112,7 +115,25 @@ const themeOptions: ThemeOptions = {
   },
 };
 
-export const theme = createTheme(themeOptions);
+/**
+ * The light theme with the given primary colour. The colour is validated
+ * again (resolvePrimaryColor), so an unsupported value can never reach
+ * createTheme. The default keeps its hand-picked light and dark variants; any
+ * other colour passes only `main`, so MUI computes light, dark and
+ * contrastText from it instead of keeping the default's stale variants.
+ */
+export const createAppTheme = (colour: string = DEFAULT_PRIMARY_COLOR) => {
+  const main = resolvePrimaryColor(colour);
+  const primary = isDefaultPrimaryColor(main)
+    ? { main: DEFAULT_PRIMARY_COLOR, light: '#42a5f5', dark: '#1565c0' }
+    : { main };
+  return createTheme({
+    ...themeOptions,
+    palette: { ...themeOptions.palette, primary },
+  });
+};
+
+export const theme = createAppTheme();
 
 // Dark theme variant
 export const darkTheme = createTheme({

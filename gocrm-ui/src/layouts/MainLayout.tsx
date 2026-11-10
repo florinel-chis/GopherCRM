@@ -52,6 +52,7 @@ import {
 } from '@mui/icons-material';
 import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
+import { useProductName } from '@/hooks/useProductName';
 
 const drawerWidth = 280;
 
@@ -224,6 +225,7 @@ export const MainLayout: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const productName = useProductName();
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -255,7 +257,7 @@ export const MainLayout: React.FC = () => {
     <Box>
       <Toolbar>
         <Typography variant="h6" noWrap component="div">
-          {import.meta.env.VITE_APP_NAME || 'GoCRM'}
+          {productName}
         </Typography>
         <IconButton
           sx={{ ml: 'auto', display: { sm: 'none' } }}

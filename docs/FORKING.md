@@ -220,23 +220,30 @@ conflict on each upstream sync.
 | What | Where |
 |---|---|
 | Browser title and meta description | `gocrm-ui/index.html:7-8` |
-| App name in the UI | `VITE_APP_NAME` (`gocrm-ui/.env.example:6`), plus the `'GoCRM'` fallbacks in `gocrm-ui/src/layouts/MainLayout.tsx:256`, `src/pages/auth/Login.tsx:87`, `src/pages/auth/Register.tsx:138`, `src/pages/quotes/QuotePrint.tsx:58` |
+| App name in the UI | one hook, `useProductName` (`gocrm-ui/src/hooks/useProductName.ts`), used by the layout, the printable quote and the sign-in and registration pages. Order: the stored `general.company_name` when a signed-in user's configuration holds a non-blank value, else `VITE_APP_NAME` (`gocrm-ui/.env.example:6`), else `GoCRM` (`FALLBACK_PRODUCT_NAME`). The sign-in and registration pages render before sign-in and always show the build-time name |
 | Settings fallback name | `DEFAULT_COMPANY_NAME` in `gocrm-ui/src/contexts/ConfigurationContext.tsx:26` |
 | Favicon (the only logo asset) | `gocrm-ui/public/favicon.svg` |
-| Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` |
+| Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` (`createAppTheme`); the light theme's primary colour follows the `ui.theme.primary_color` setting for signed-in users |
 | Mail subjects and body | `internal/mailer/smtp.go:84,91` (password reset), `internal/service/quote_email.go:15` (quote email) |
 | API title | `// @title` in `cmd/main.go:24`, then `make swagger` |
 | README images | `docs/img/gophercrm-*.png` |
 
-Three things that look like rebrand controls and are not:
+The **Settings** company name (`general.company_name`) and primary colour
+(`ui.theme.primary_color`) apply to the signed-in UI (#291): the name appears in the navigation
+drawer and on the printed quote, and the colour becomes the light theme's primary colour
+(`gocrm-ui/src/theme/BrandThemeProvider.tsx`; the dark theme, secondary colour and snackbars are
+unchanged). Accepted colours are 3- or 6-digit hex, `rgb()`/`rgba()` and `hsl()`/`hsla()`; a named
+colour, `var(...)`, 4/8-digit hex, `color()`, `oklch()` or anything malformed keeps `#1976d2`
+(`gocrm-ui/src/theme/primaryColor.ts`). A fresh install stores `GopherCRM`, so the name changes from
+the build-time `GoCRM` on the sign-in page to `GopherCRM` after sign-in until you set your own.
 
-- The **Settings** company name (`general.company_name`) and primary colour
-  (`ui.theme.primary_color`) change nothing visible today. `getCompanyName` and `getPrimaryColor`
-  in `gocrm-ui/src/contexts/ConfigurationContext.tsx:92-93` have no production consumer, and the
-  palette is hard-coded. A single product-name source is #221.
+Things that look like rebrand controls and are not:
+
+- The **Settings** company name does not reach mail subjects, which are fixed in code (#221).
 - The **Docker UI image ignores `VITE_APP_NAME`.** `gocrm-ui/Dockerfile` accepts only
-  `VITE_API_BASE_URL` as a build argument, and `gocrm-ui/.dockerignore` excludes `.env` files. Edit
-  the source fallbacks or add a build argument (part of #221).
+  `VITE_API_BASE_URL` as a build argument, and `gocrm-ui/.dockerignore` excludes `.env` files, so
+  the image shows `GoCRM` before sign-in. Edit `FALLBACK_PRODUCT_NAME` or add a build argument
+  (#222).
 - **A changed seed default does not reach an existing database.** Seeding refreshes metadata but
   keeps the stored value (`internal/repository/configuration_repository.go:78-94`). Change existing
   installs through Settings or the configuration API.

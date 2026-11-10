@@ -17,6 +17,7 @@ import { ArrowBack as BackIcon, Print as PrintIcon } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { quotesApi } from '@/api/endpoints';
 import { quoteStatusLabel } from '@/types';
+import { useProductName } from '@/hooks/useProductName';
 import { formatDate } from '@/utils/date';
 import { formatCalendarDate } from '@/pages/deals/dealFormat';
 import { formatDiscountPercent, formatMoney, quoteCustomerName } from './quoteFormat';
@@ -31,6 +32,7 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const quoteId = Number(id);
+  const productName = useProductName();
 
   const { data: quote, isLoading, isError } = useQuery({
     queryKey: ['quote', quoteId],
@@ -55,7 +57,6 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  const appName = import.meta.env.VITE_APP_NAME || 'GoCRM';
   // The issue date is the day the quote went out, or the day it was drafted.
   const issueDate = quote.sent_at ?? quote.created_at;
 
@@ -78,7 +79,7 @@ export const Component: React.FC = () => {
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={2}>
           <Box>
             <Typography variant="h4" component="h1" id="quote-print-heading">
-              {appName}
+              {productName}
             </Typography>
             <Typography variant="h5" component="h2" data-testid="quote-print-number">
               Quote {quote.number}

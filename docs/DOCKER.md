@@ -99,12 +99,15 @@ Notes on the wiring:
   `docker compose build ui --build-arg VITE_API_BASE_URL=https://api.example.com/api/v1`.
 - `VITE_API_BASE_URL` is the only build argument `gocrm-ui/Dockerfile`
   accepts, and `gocrm-ui/.dockerignore` keeps `.env` and `.env.*` out of the
-  build context. `VITE_APP_NAME` therefore never reaches the UI image, which
-  always shows the fallback name from the source (`MainLayout.tsx:256` and
-  three other places). To brand the image, add `ARG VITE_APP_NAME` and
+  build context. `VITE_APP_NAME` therefore never reaches the UI image. The
+  product name comes from one helper, `gocrm-ui/src/hooks/useProductName.ts`:
+  the stored `general.company_name` for a signed-in user, otherwise
+  `VITE_APP_NAME`, otherwise `GoCRM`. So the image shows `GoCRM` on the
+  sign-in and registration pages, and the stored company name (Settings) once
+  signed in. To brand the build-time name, add `ARG VITE_APP_NAME` and
   `ENV VITE_APP_NAME=$VITE_APP_NAME` before `RUN npm run build` in
-  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. A single
-  product-name source is tracked in #221.
+  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. Shipping that
+  build argument is tracked in #222.
 - AEO: configure API keys, models, and base URLs as an admin under **AEO >
   Settings**. Changes take effect on the next run and on prompt generation
   without rebuilding. Keys are encrypted; model and endpoint overrides are

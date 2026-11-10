@@ -21,6 +21,7 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
+import { useProductName } from '@/hooks/useProductName';
 import { authApi } from '@/api/endpoints';
 import type { LoginRequest } from '@/types';
 
@@ -34,6 +35,7 @@ export const Login: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
+  const productName = useProductName();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,7 +86,7 @@ export const Login: React.FC = () => {
             Sign In
           </Typography>
           <Typography variant="body2" color="text.secondary" align="center" gutterBottom>
-            Welcome to {import.meta.env.VITE_APP_NAME || 'GoCRM'}
+            Welcome to {productName}
           </Typography>
 
           {error && (
