@@ -2,11 +2,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../client';
 import { leadsApi } from './leads';
 
-vi.mock('../client', () => ({ api: { post: vi.fn(), put: vi.fn() } }));
+vi.mock('../client', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
 
 beforeEach(() => {
+  vi.mocked(api.get).mockReset();
   vi.mocked(api.post).mockReset();
   vi.mocked(api.put).mockReset();
+});
+
+// The export ignores the list's filters (#290): the request carries no query
+// parameters at all, so nobody expects a filtered download.
+it('exportLeads requests GET /leads/export as a blob without query parameters and returns the Blob', async () => {
+  const blob = new Blob(['id,email\n1,a@example.com\n'], { type: 'text/csv' });
+  vi.mocked(api.get).mockResolvedValue({ data: blob });
+
+  const result = await leadsApi.exportLeads();
+
+  expect(result).toBe(blob);
+  expect(api.get).toHaveBeenCalledTimes(1);
+  expect(api.get).toHaveBeenCalledWith('/leads/export', { responseType: 'blob' });
+  const config = vi.mocked(api.get).mock.calls[0][1] as Record<string, unknown>;
+  expect('params' in config).toBe(false);
+  expect(Object.keys(config)).toEqual(['responseType']);
 });
 
 it('sends the conversion website and returns the created customer id for navigation', async () => {

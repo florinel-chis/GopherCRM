@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lead list CSV export button (#290).** Admins see "Export all leads (CSV)", sales users "Export
+  my leads (CSV)"; support and customer users see no button. It downloads `GET /leads/export` as
+  `leads-export.csv` and ignores the list filters (no query parameters are sent); the button is
+  disabled while the request is pending, and a failure shows "Could not export leads." and saves
+  no file. Frontend only; no API change.
 - **Task–deal link in the web client (#240).** The task form has a Deal picker for admin and sales
   users (sales see only their own deals), searched on the server and offering won and lost deals
   too; its search results are cached apart from the quote dialog's open-only deal picker. Support
