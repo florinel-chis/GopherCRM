@@ -127,6 +127,29 @@ type CustomerExternalIDRepository interface {
 	WithTx(tx *gorm.DB) CustomerExternalIDRepository
 }
 
+// ProductExternalIDRepository stores the (source, scope, external_id) →
+// product mappings (#239). Comparisons are exact and case-sensitive on every
+// engine. Every method binds its statements to ctx.
+type ProductExternalIDRepository interface {
+	// LockLiveProduct reads the live product row with a locking read (FOR
+	// UPDATE on MySQL/MariaDB, a plain read on SQLite) and returns
+	// gorm.ErrRecordNotFound when there is no live product with that id.
+	LockLiveProduct(ctx context.Context, productID uint) error
+	// Create inserts the mapping. A triple that is already mapped returns an
+	// error matching apperrors.ErrProductExternalIDTaken and writes nothing.
+	Create(ctx context.Context, mapping *models.ProductExternalID) error
+	// FindProductByIdentity returns the live product (active or not) the exact
+	// triple maps to, or nil and no error when no live product does.
+	FindProductByIdentity(ctx context.Context, source, scope, externalID string) (*models.Product, error)
+	// DeleteForProduct hard-deletes the mapping only when it belongs to the
+	// product; gorm.ErrRecordNotFound when no row of that product has the id.
+	DeleteForProduct(ctx context.Context, productID, mappingID uint) error
+	// PurgeForProduct hard-deletes every mapping of the product and returns
+	// how many rows it removed (0 is not an error).
+	PurgeForProduct(ctx context.Context, productID uint) (int64, error)
+	WithTx(tx *gorm.DB) ProductExternalIDRepository
+}
+
 // TicketAssigneeScope narrows a ticket collection to the tickets assigned to
 // one user, optionally intersected with one customer and a free-text search.
 // It is how support callers are scoped: the predicate is part of the query, so

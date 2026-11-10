@@ -237,6 +237,14 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 
 			require.ErrorIs(t, tdb.m.Migrate(quotesMigrationVersion), migrate.ErrNoChange)
 
+			// product_external_ids (#239, a later migration that AutoMigrate
+			// created above) references products, so MySQL would refuse the
+			// rollback's DROP TABLE products. In a real rollback its own down
+			// migration runs first; here it is dropped by hand to the same end.
+			_, err = tdb.sql.Exec("DROP TABLE IF EXISTS product_external_ids")
+			require.NoError(t, err)
+			tablesMigrated = without(tablesMigrated, []string{"product_external_ids"})
+
 			// Rollback: the four tables go, every other table stays.
 			require.NoError(t, tdb.m.Steps(-1))
 			version, dirty, err = tdb.m.Version()

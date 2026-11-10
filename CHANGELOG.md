@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External identity mappings for products (#239).** A new `product_external_ids` table maps an
+  integrator's `(source, scope, external_id)` to a product, unique on the exact, case-sensitive
+  triple with the customer mappings' rules (source 1-64, scope 0-128 and `''` by default,
+  external_id 1-255 characters; no control characters and no leading or trailing whitespace;
+  `utf8mb4_bin` on MySQL/MariaDB). Rows are hard-deleted. Admins create one with
+  `POST /products/{id}/external-ids` (201; 409 when the triple is already mapped, to this or another
+  product; 404 for a missing or deleted product) and delete it with
+  `DELETE /products/{id}/external-ids/{mappingId}` (204; 404 for another product's mapping); sales
+  gets 403 on both. `GET /products?source=&scope=&external_id=` answers the list shape with at most
+  one live product, inactive ones included, to admin and sales. `DELETE /products/{id}` now
+  hard-deletes the product's mappings and soft-deletes the product in one transaction, so its keys
+  can be mapped again; quote lines keep their `product_id`. `products.sku` stays non-unique; no UI.
+  MySQL and MariaDB get the table from `20261112120000_add_product_external_ids`, SQLite from
+  `MigrateDatabase`, which also converts the three columns to `utf8mb4_bin` on a MySQL schema the
+  application alone created. Registering the migration roots in the Database migrations workflow is
+  an operator follow-up.
 - **Lead list CSV export button (#290).** Admins see "Export all leads (CSV)", sales users "Export
   my leads (CSV)"; support and customer users see no button. It downloads `GET /leads/export` as
   `leads-export.csv` and ignores the list filters (no query parameters are sent); the button is

@@ -693,13 +693,23 @@ authentication and live on the moderate tier:
 - `GET /api/v1/products` - List the catalogue (`page`/`offset`/`limit` through the shared parser —
   `limit=0` is 20, the cap is 100 — `search` over name and SKU, `is_active`, `currency`, `sort_by` in
   `id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, anything else is
-  400, `sort_order`); soft-deleted products never appear
+  400, `sort_order`); soft-deleted products never appear. With `source`, `scope` or `external_id`
+  present (even empty) it is an exact external-id lookup instead: the three values are validated
+  (400 `VALIDATION_ERROR`), the other list parameters are ignored, and `data` holds at most one live
+  product, inactive products included *(admin, sales)*
 - `POST /api/v1/products` - Create a product `{name, sku?, description?, unit_price_cents, currency?, is_active?}`
   *(the price is an integer in minor units, 0 to 10^12; currency defaults to `deals.default_currency`;
   active by default)*
 - `GET /api/v1/products/:id` - Get a product
 - `PUT /api/v1/products/:id` - Partial update *(existing quote lines keep the name and price they copied)*
-- `DELETE /api/v1/products/:id` - Soft-delete a product *(its quote lines keep their copied values)*
+- `DELETE /api/v1/products/:id` - Soft-delete a product *(its quote lines keep their copied values;
+  its external-id mappings are hard-deleted in the same transaction, so their triples can be mapped
+  again)*
+- `POST /api/v1/products/:id/external-ids` - Map an external `(source, scope, external_id)` identity
+  to the product; the triple is unique and case-sensitive, 409 when already mapped (to this or
+  another product), 404 for a missing or deleted product *(admin)*
+- `DELETE /api/v1/products/:id/external-ids/:mappingId` - Delete one of the product's mappings
+  *(admin; 404 for another product's mapping)*
 
 ### Quotes *(admin and sales; sales sees and edits its own quotes only; support and customer get 403)*
 - `GET /api/v1/quotes` - List quotes without their lines (`status`, `deal_id`, `customer_id`,

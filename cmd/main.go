@@ -311,7 +311,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		service.WithDealAutomationEvents(automationRepo))
 	// Products take the deals' default currency; quotes email through the
 	// same mailer as the password reset and the forms.
-	productService := service.NewProductService(productRepo, configService)
+	// Product external-id mappings (#239): the product delete purges them in
+	// its own transaction, so the service gets the repository and txManager.
+	productExternalIDRepo := repository.NewProductExternalIDRepository(models.DB)
+	productService := service.NewProductService(productRepo, configService,
+		service.WithProductExternalIDs(productExternalIDRepo, txManager))
 	quoteService := service.NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager)
 	bulkService := service.NewBulkStatusService(
 		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
@@ -375,7 +379,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	labelHandler := handler.NewLabelHandler(labelService)
 	companyHandler := handler.NewCompanyHandler(companyService)
 	dealHandler := handler.NewDealHandler(dealService)
-	productHandler := handler.NewProductHandler(productService)
+	productHandler := handler.NewProductHandler(productService).WithExternalIDs(service.NewProductExternalIDService(productExternalIDRepo, txManager))
 	quoteHandler := handler.NewQuoteHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)

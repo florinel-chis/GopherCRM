@@ -18,6 +18,9 @@ import (
 
 type ProductHandler struct {
 	productService service.ProductService
+	// externalIDs backs the mapping routes and the lookup mode of GET
+	// /products (#239); see product_external_id_handler.go.
+	externalIDs service.ProductExternalIDService
 }
 
 func NewProductHandler(productService service.ProductService) *ProductHandler {
@@ -135,10 +138,14 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Summary List products
 // @Description One page of live products. Roles: admin and sales. Filters combine (AND): search (substring of name or sku; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), is_active and currency. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc. Soft-deleted products never appear.
 // @Description data is the array of products; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
+// @Description Lookup mode (#239): when the query carries source, scope or external_id (even empty), the request is a lookup of the one live product (active or not) that the exact, case-sensitive (source, scope, external_id) triple is mapped to. The three values are validated before anything is read (source 1-64, scope 0-128 with absent meaning the empty string, external_id 1-255 characters; valid UTF-8, no control characters, no leading or trailing whitespace); a refused value is 400 VALIDATION_ERROR with details.field and details.reason, never the value. search, is_active, currency, sort_by, sort_order, page and offset are ignored and limit only fills meta.per_page. data is an array of 0 or 1 product and meta.page is 1; a triple mapped to nothing, or whose product was deleted, answers 200 with an empty array.
 // @Tags products
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
+// @Param source query string false "Lookup mode: the system that issued the identifier (1-64 characters)"
+// @Param scope query string false "Lookup mode: the namespace inside the source (0-128 characters); absent or empty means the empty string"
+// @Param external_id query string false "Lookup mode: the identifier in that source and scope (1-255 characters), compared exactly"
 // @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
 // @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
 // @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
@@ -148,7 +155,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Param sort_by query string false "Sort column" Enums(id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at) default(created_at)
 // @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
 // @Success 200 {object} utils.APIResponse{data=[]models.Product,meta=utils.APIMeta} "One page of products"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), is_active is not a boolean ('is_active must be true or false'), or currency is not three upper-case letters ('currency must be three upper-case letters')"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), is_active is not a boolean ('is_active must be true or false'), or currency is not three upper-case letters ('currency must be three upper-case letters'). VALIDATION_ERROR (lookup mode): a refused source, scope or external_id; details.field names it and details.reason the rule, never the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -156,6 +163,11 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Router /products [get]
 func (h *ProductHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ProductHandler.List")
+
+	if isProductExternalIDLookup(c) {
+		h.listByExternalID(c, logger)
+		return
+	}
 
 	offset, limit := utils.ParseOffsetLimit(c)
 	if page, _ := strconv.Atoi(c.DefaultQuery("page", "0")); page > 0 {
@@ -301,6 +313,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // Delete godoc
 // @Summary Delete a product
 // @Description Soft-delete a product. Role: admin. Quote lines that reference it keep their product_id and their copied description and price; it can no longer be added to new lines. Products hold no personal data, so this is not an erasure.
+// @Description The product's external-id mappings (#239) are hard-deleted in the same transaction, which first locks the live product row, so their (source, scope, external_id) triples can be mapped again, to this or another product. A failure rolls the whole delete back and the mappings remain.
 // @Tags products
 // @Produce json
 // @Security BearerAuth
@@ -321,7 +334,7 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.productService.Delete(id); err != nil {
+	if err := h.productService.Delete(c.Request.Context(), id); err != nil {
 		h.respondError(c, logger, err)
 		return
 	}

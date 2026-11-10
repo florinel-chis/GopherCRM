@@ -55,6 +55,9 @@ func MigrateDatabase() error {
 		if err := ensureCustomerExternalIDCollation(tx); err != nil {
 			return err
 		}
+		if err := ensureProductExternalIDCollation(tx); err != nil {
+			return err
+		}
 		return normalizeCompanyDomains(tx)
 	})
 }
@@ -123,6 +126,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&DealStageChange{},
 		// Product and Quote before QuoteLine: the line references both.
 		&Product{},
+		// Product external identity mappings (#239) reference products.
+		&ProductExternalID{},
 		&Quote{},
 		&QuoteLine{},
 		&QuoteStatusChange{},

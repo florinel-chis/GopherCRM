@@ -149,7 +149,7 @@ func TestProductHandler_RoleGuards(t *testing.T) {
 		svc.On("GetByID", uint(1)).Return(product, nil).Maybe()
 		svc.On("Create", mock.Anything).Return(nil).Maybe()
 		svc.On("Update", mock.Anything).Return(nil).Maybe()
-		svc.On("Delete", uint(1)).Return(nil).Maybe()
+		svc.On("Delete", mock.Anything, uint(1)).Return(nil).Maybe()
 		router := newProductTestRouter(svc, tc.role)
 		status, envelope := doJSON(t, router, tc.method, tc.path, tc.body)
 		assert.Equalf(t, tc.want, status, "%s %s as %s: %v", tc.method, tc.path, tc.role, envelope.Error)
@@ -172,7 +172,7 @@ func TestProductHandler_UpdateMergesAndMapsErrors(t *testing.T) {
 		updated = args.Get(0).(*models.Product)
 	}).Return(nil).Once()
 	svc.On("Create", mock.Anything).Return(fmt.Errorf("product name is required: %w", apperrors.ErrValidation)).Once()
-	svc.On("Delete", uint(2)).Return(fmt.Errorf("product 2 not found: %w", apperrors.ErrProductNotFound)).Once()
+	svc.On("Delete", mock.Anything, uint(2)).Return(fmt.Errorf("product 2 not found: %w", apperrors.ErrProductNotFound)).Once()
 	router := newProductTestRouter(svc, models.RoleAdmin)
 
 	status, _ := doJSON(t, router, http.MethodPut, "/products/1", gin.H{"unit_price_cents": 2500, "is_active": false})

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -105,9 +106,15 @@ func TestProductService_ValidationFailuresNeverReachTheWrite(t *testing.T) {
 // A missing product is the product sentinel on get, update and delete; the
 // list never returns a nil slice.
 func TestProductService_NotFoundAndList(t *testing.T) {
-	svc, repo := newProductServiceUnderTest(t, nil)
+	utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"})
+	repo := new(mocks.ProductRepository)
+	// Delete runs its transaction on a real SQLite schema (#239); product 9
+	// does not exist there, so the locking read reports the miss before the
+	// product repository is reached.
+	db := openExternalIDSQLite(t)
+	svc := NewProductService(repo, nil,
+		WithProductExternalIDs(repository.NewProductExternalIDRepository(db), utils.NewTransactionManager(db)))
 	repo.On("GetByID", uint(9)).Return(nil, gorm.ErrRecordNotFound)
-	repo.On("Delete", uint(9)).Return(gorm.ErrRecordNotFound)
 	repo.On("List", 0, 20, repository.ProductListFilter{}).Return(nil, int64(0), nil)
 
 	_, err := svc.GetByID(9)
@@ -115,8 +122,10 @@ func TestProductService_NotFoundAndList(t *testing.T) {
 	err = svc.Update(&models.Product{BaseModel: models.BaseModel{ID: 9}, Name: "X", UnitPriceCents: 1, Currency: "EUR"})
 	assert.True(t, errors.Is(err, apperrors.ErrProductNotFound), "%v", err)
 	repo.AssertNotCalled(t, "Update", mock.Anything)
-	err = svc.Delete(9)
+	err = svc.Delete(context.Background(), 9)
 	assert.True(t, errors.Is(err, apperrors.ErrProductNotFound), "%v", err)
+	repo.AssertNotCalled(t, "Delete", mock.Anything)
+	repo.AssertNotCalled(t, "WithTx", mock.Anything)
 
 	products, total, err := svc.List(0, 20, repository.ProductListFilter{})
 	require.NoError(t, err)
