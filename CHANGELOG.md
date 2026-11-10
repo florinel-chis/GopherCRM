@@ -223,7 +223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deal, decided on every read. `GET /deals/{id}/tasks` lists a deal's live tasks: every task for an
   admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
   rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
-  created by earlier runs are not backfilled, and the web client does not show the link yet.
+  created by earlier runs are not backfilled.
 - **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
   `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
   neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body

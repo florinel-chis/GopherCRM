@@ -10,7 +10,7 @@ the handlers, service and repository; every automated browser case names the exa
 35 cases: 17 automated, 13 by `gocrm-ui/e2e/tests/admin-deals.spec.ts` and 3 by
 `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of those
 16 partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
-in Go or Vitest) and 1 by Go tests alone (TC-DEAL-035, an endpoint the web client does not list),
+in Go or Vitest) and 1 by Go tests alone (TC-DEAL-035, whose web Tasks section is pinned in Vitest only),
 9 planned (7 against `admin-deals.spec.ts`, 2 against
 `admin-deals-board.spec.ts`), 9 blocked on the sales/support role-login helper. Every case
 names the Go test that already pins its API behaviour.
@@ -651,4 +651,5 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Expected:** Step 1: **200** with `data.tasks`, `data.total` and pagination `meta`. The admin gets every live task of the deal; A only the tasks assigned to A, narrowed before the limit, with `total` counting only those. Tied sort values end in the id, so pages neither repeat nor lose a row. Step 2: **403**. Step 3: **404** "Deal not found". Step 4: **400**. A task never carries the deal's amount or notes.
 - **Automation:** automated (backend) — `internal/integration/task_deal_integration_test.go`
   `TestDealTasksEndpoint{SQLite,MySQL}`; `internal/repository/task_deal_link_test.go`
-  `TestTaskDealLinkRepository{SQLite,MySQL}`. No browser case: the web client does not list these.
+  `TestTaskDealLinkRepository{SQLite,MySQL}`. No browser case; the DealDetail Tasks section is
+  pinned in Vitest (`src/pages/deals/DealTasksSection.test.tsx`, `src/pages/deals/DealDetail.test.tsx`).

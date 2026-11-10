@@ -200,7 +200,7 @@ each a candidate follow-up:
 - **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer,
   ticket and company triggers** — none of them exist. A deal run records the deal on its task
   (`deal_id`, #240) and links the deal's customer, else its lead; tasks created by earlier runs are
-  not backfilled, and the web client does not show the link yet (the API does).
+  not backfilled. The task form, task detail and deal detail show and edit the link.
 
 ## Sensitive settings — follow-ups
 
