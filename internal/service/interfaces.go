@@ -143,6 +143,25 @@ type CustomerExternalIDService interface {
 	LookupCustomer(ctx context.Context, source, scope, externalID string) (*models.Customer, error)
 }
 
+// ProductExternalIDService manages the (source, scope, external_id) → product
+// mappings (#239). Every method validates the triple it receives before any
+// read or write (see ValidateProductExternalIdentity) and returns
+// ErrProductExternalIDsUnavailable when the service was built without its
+// repository or transaction manager.
+type ProductExternalIDService interface {
+	// AddExternalID maps the triple to the live product in one transaction on
+	// ctx: the product row is locked, then the mapping inserted.
+	// apperrors.ErrNotFound for a missing or deleted product,
+	// apperrors.ErrProductExternalIDTaken for a triple already mapped.
+	AddExternalID(ctx context.Context, productID uint, source, scope, externalID string) (*models.ProductExternalID, error)
+	// RemoveExternalID hard-deletes the product's mapping;
+	// apperrors.ErrNotFound when the product has no mapping with that id.
+	RemoveExternalID(ctx context.Context, productID, mappingID uint) error
+	// LookupProduct returns the live product (active or not) the exact triple
+	// maps to, or nil and no error when there is none.
+	LookupProduct(ctx context.Context, source, scope, externalID string) (*models.Product, error)
+}
+
 type TicketService interface {
 	Create(ticket *models.Ticket) error
 	GetByID(id uint) (*models.Ticket, error)
@@ -343,8 +362,13 @@ type ProductService interface {
 	// Update saves the product as given. Existing quote lines are not touched:
 	// they copied the name and the price when they were added.
 	Update(product *models.Product) error
-	// Delete soft-deletes the product; quote lines keep their copied values.
-	Delete(id uint) error
+	// Delete soft-deletes the product and hard-deletes its external-id
+	// mappings in one transaction on ctx (#239), so their triples can be
+	// mapped again; quote lines keep their product_id and copied values.
+	// apperrors.ErrProductNotFound for a missing or already-deleted product;
+	// ErrProductExternalIDsUnavailable when built without
+	// WithProductExternalIDs.
+	Delete(ctx context.Context, id uint) error
 	// List returns one page plus the total matching the filter; the sort
 	// column is checked against the products allowlist.
 	List(offset, limit int, filter repository.ProductListFilter) ([]models.Product, int64, error)

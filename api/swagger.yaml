@@ -3069,6 +3069,57 @@ definitions:
         readOnly: true
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.ProductExternalID:
+    description: A mapping of an external (source, scope, external_id) identity to
+      a product. The triple is unique and compared exactly (case-sensitive).
+    properties:
+      created_at:
+        description: When the mapping was created (RFC 3339 date-time). Read-only.
+        example: "2026-11-12T09:30:00Z"
+        readOnly: true
+        type: string
+      external_id:
+        description: |-
+          The identifier in that source and scope: 1-255 characters, same
+          character rules as source. Compared exactly (case-sensitive).
+        example: MAT-100042
+        maxLength: 255
+        minLength: 1
+        type: string
+      id:
+        description: Unique identifier of the mapping, assigned by the server. Read-only.
+        example: 9
+        readOnly: true
+        type: integer
+      product_id:
+        description: Product the identity maps to. Read-only.
+        example: 42
+        readOnly: true
+        type: integer
+      scope:
+        description: |-
+          Namespace inside the source, for example a company code: 0-128
+          characters, '' when the source has a single namespace. Same character
+          rules as source. Compared exactly.
+        example: plant-01
+        maxLength: 128
+        type: string
+      source:
+        description: |-
+          System that issued the identifier: 1-64 characters, no control
+          characters, no leading or trailing whitespace. Compared exactly.
+        example: erp
+        maxLength: 64
+        minLength: 1
+        type: string
+      updated_at:
+        description: |-
+          When the mapping was last written (RFC 3339 date-time). Mappings are
+          never updated in place, so it equals created_at. Read-only.
+        example: "2026-11-12T09:30:00Z"
+        readOnly: true
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.QuoteCustomerSummary:
     properties:
       company:
@@ -5180,6 +5231,35 @@ definitions:
     required:
     - first_name
     - last_name
+    type: object
+  internal_handler.CreateProductExternalIDRequest:
+    description: Body of POST /products/{id}/external-ids. Each value must be valid
+      UTF-8 without control characters and without leading or trailing whitespace;
+      it is stored and compared exactly (case-sensitive). The service, not the binder,
+      enforces the required fields.
+    properties:
+      external_id:
+        description: The identifier in that source and scope; required, 1-255 characters.
+        example: MAT-100042
+        maxLength: 255
+        minLength: 1
+        type: string
+      scope:
+        description: |-
+          Namespace inside the source, for example a company code; optional,
+          0-128 characters, absent or empty means ''.
+        example: plant-01
+        maxLength: 128
+        type: string
+      source:
+        description: System that issued the identifier; required, 1-64 characters.
+        example: erp
+        maxLength: 64
+        minLength: 1
+        type: string
+    required:
+    - external_id
+    - source
     type: object
   internal_handler.CreateTaskRequest:
     description: Body of POST /tasks.
@@ -17653,7 +17733,22 @@ paths:
       description: |-
         One page of live products. Roles: admin and sales. Filters combine (AND): search (substring of name or sku; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), is_active and currency. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc. Soft-deleted products never appear.
         data is the array of products; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
+        Lookup mode (#239): when the query carries source, scope or external_id (even empty), the request is a lookup of the one live product (active or not) that the exact, case-sensitive (source, scope, external_id) triple is mapped to. The three values are validated before anything is read (source 1-64, scope 0-128 with absent meaning the empty string, external_id 1-255 characters; valid UTF-8, no control characters, no leading or trailing whitespace); a refused value is 400 VALIDATION_ERROR with details.field and details.reason, never the value. search, is_active, currency, sort_by, sort_order, page and offset are ignored and limit only fills meta.per_page. data is an array of 0 or 1 product and meta.page is 1; a triple mapped to nothing, or whose product was deleted, answers 200 with an empty array.
       parameters:
+      - description: 'Lookup mode: the system that issued the identifier (1-64 characters)'
+        in: query
+        name: source
+        type: string
+      - description: 'Lookup mode: the namespace inside the source (0-128 characters);
+          absent or empty means the empty string'
+        in: query
+        name: scope
+        type: string
+      - description: 'Lookup mode: the identifier in that source and scope (1-255
+          characters), compared exactly'
+        in: query
+        name: external_id
+        type: string
       - description: 1-based page number; when greater than 0 it overrides offset
           (offset = (page-1) x limit). Non-numeric values are ignored
         in: query
@@ -17728,7 +17823,9 @@ paths:
           description: 'BAD_REQUEST: sort_by is not an allowed column (''Invalid sort
             column''), is_active is not a boolean (''is_active must be true or false''),
             or currency is not three upper-case letters (''currency must be three
-            upper-case letters'')'
+            upper-case letters''). VALIDATION_ERROR (lookup mode): a refused source,
+            scope or external_id; details.field names it and details.reason the rule,
+            never the value'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -17881,10 +17978,9 @@ paths:
       - products
   /products/{id}:
     delete:
-      description: 'Soft-delete a product. Role: admin. Quote lines that reference
-        it keep their product_id and their copied description and price; it can no
-        longer be added to new lines. Products hold no personal data, so this is not
-        an erasure.'
+      description: |-
+        Soft-delete a product. Role: admin. Quote lines that reference it keep their product_id and their copied description and price; it can no longer be added to new lines. Products hold no personal data, so this is not an erasure.
+        The product's external-id mappings (#239) are hard-deleted in the same transaction, which first locks the live product row, so their (source, scope, external_id) triples can be mapped again, to this or another product. A failure rolls the whole delete back and the mappings remain.
       parameters:
       - description: Product ID
         in: path
@@ -18158,6 +18254,210 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: Update a product
+      tags:
+      - products
+  /products/{id}/external-ids:
+    post:
+      consumes:
+      - application/json
+      description: 'Admin only (route guard, repeated in the handler); sales gets
+        403, support and customer get 403 on every product route. Maps the (source,
+        scope, external_id) triple to the live product, active or not, in one transaction
+        that locks the product row and inserts the mapping (#239). The triple is unique
+        across all products and compared exactly (case-sensitive): a triple already
+        mapped, to this product or another one, is 409. source is 1-64, scope 0-128
+        (absent means the empty string) and external_id 1-255 characters; each must
+        be valid UTF-8 without control characters or leading or trailing whitespace.
+        A missing or deleted product is 404 and nothing is written. Deleting the product
+        later hard-deletes its mappings, after which the triple can be mapped again.
+        products.sku is unrelated and stays non-unique. There is no update: delete
+        and re-create instead.'
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The external identity
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateProductExternalIDRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Mapping created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.ProductExternalID'
+              type: object
+        "400":
+          description: 'BAD_REQUEST: Invalid product ID, or a body that does not bind
+            (Invalid request format). VALIDATION_ERROR: a refused field; details.field
+            names it (source, scope or external_id) and details.reason the rule, never
+            the value'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller is not admin (Insufficient permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: no live product with this id (''Product not found'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'CONFLICT: the triple is already mapped to a product'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the mapping could not be stored'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Map an external identity to a product
+      tags:
+      - products
+  /products/{id}/external-ids/{mappingId}:
+    delete:
+      description: Admin only (route guard, repeated in the handler); sales gets 403,
+        support and customer get 403 on every product route. Hard-deletes the mapping
+        when it belongs to the product at the path (#239); the triple can then be
+        mapped again. A mapping id that does not exist or belongs to another product
+        is 404 and nothing is deleted.
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Mapping ID
+        in: path
+        name: mappingId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted; no body
+        "400":
+          description: 'BAD_REQUEST: Invalid product ID or Invalid mapping ID'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller is not admin (Insufficient permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: the product has no mapping with this id (''External
+            id mapping not found'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the mapping could not be deleted'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete an external identity mapping of a product
       tags:
       - products
   /quotes:

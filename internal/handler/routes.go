@@ -105,6 +105,10 @@ func SetupProductRoutes(router *gin.RouterGroup, handler *ProductHandler) {
 		products.GET("/:id", handler.Get)
 		products.PUT("/:id", middleware.RequireRole(models.RoleAdmin), handler.Update)
 		products.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), handler.Delete)
+		// External-id mappings (#239): admin only, as every product write is.
+		// The lookup is the list route above with source/scope/external_id.
+		products.POST("/:id/external-ids", middleware.RequireRole(models.RoleAdmin), handler.CreateExternalID)
+		products.DELETE("/:id/external-ids/:mappingId", middleware.RequireRole(models.RoleAdmin), handler.DeleteExternalID)
 	}
 }
 

@@ -147,6 +147,12 @@ var (
 	// customer or to another one (#212). It is answered with 409 CONFLICT; the
 	// message never carries the triple.
 	ErrCustomerExternalIDTaken = errors.New("external id is already mapped to a customer")
+
+	// ErrProductExternalIDTaken refuses a product external-id mapping whose
+	// (source, scope, external_id) triple is already mapped, to the same
+	// product or to another one (#239). It is answered with 409 CONFLICT; the
+	// message never carries the triple.
+	ErrProductExternalIDTaken = errors.New("external id is already mapped to a product")
 )
 
 // Error codes

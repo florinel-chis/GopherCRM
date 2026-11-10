@@ -15,10 +15,10 @@ import (
 // #224: 20261031120000_retire_inert_configurations deletes the two seeded
 // settings nothing read. The fresh and upgrade roots in main_test.go also check
 // that it ran. latestMigrationVersion is the newest migration of the directory,
-// 20261111120000_add_customer_external_ids (#212).
+// 20261112120000_add_product_external_ids (#239).
 
 const (
-	latestMigrationVersion      = 20261111120000
+	latestMigrationVersion      = 20261112120000
 	retireConfigurationsMigName = "20261031120000_retire_inert_configurations"
 )
 

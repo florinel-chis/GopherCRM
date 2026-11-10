@@ -390,8 +390,11 @@ A supplier that answers requests for quotation from business customers.
   - No VAT or tax lines (`docs/FEATURES.md`, 4d.3), which most EU business-to-business quotes need,
     and integer quantities only (`internal/models/quote.go:203`). Both are part of #233,
     with the other quote limits from recipe 2.
-  - Product SKUs are indexed but not unique (`internal/models/product.go:19`), so they are not safe
-    as a key into an ERP: #239.
+  - Product SKUs stay indexed but not unique on purpose (`internal/models/product.go`), so do not
+    key an ERP sync on them. Map the ERP's identifiers instead: `POST /products/{id}/external-ids`
+    stores an exact, case-sensitive `(source, scope, external_id)` and
+    `GET /products?source=&scope=&external_id=` finds the live product (#239; admin writes, admin
+    and sales lookups). There is no UI for the mappings.
 - **Erasure:** erasing a customer or lead keeps its deals and quotes, links, totals and history,
   and overwrites their staff-typed text in the same transaction, whatever the quote status: deal
   title `[redacted]` with empty notes and lost reason, quote title `[redacted]` with empty notes,
@@ -454,7 +457,7 @@ planning around an issue number.
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
-| Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
+| Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |

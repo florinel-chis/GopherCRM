@@ -139,7 +139,11 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	dealRepo := repository.NewDealRepository(suite.db)
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager)
 	productRepo := repository.NewProductRepository(suite.db)
-	productService := service.NewProductService(productRepo, configService)
+	// The product delete purges the product's external-id mappings (#239) in
+	// its own transaction, so it needs the manager and the mapping repository.
+	productExternalIDRepo := repository.NewProductExternalIDRepository(suite.db)
+	productService := service.NewProductService(productRepo, configService,
+		service.WithProductExternalIDs(productExternalIDRepo, txManager))
 	// The suite records every quote email instead of delivering it; a test
 	// that needs a failing mailer swaps suite.mailer.err before the call.
 	suite.mailer = &recordingMailer{}
@@ -155,7 +159,8 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	customerHandler := handler.NewCustomerHandler(customerService)
 	companyHandler := handler.NewCompanyHandler(companyService)
 	dealHandler := handler.NewDealHandler(dealService)
-	productHandler := handler.NewProductHandler(productService)
+	productHandler := handler.NewProductHandler(productService).
+		WithExternalIDs(service.NewProductExternalIDService(productExternalIDRepo, txManager))
 	quoteHandler := handler.NewQuoteHandler(quoteService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)

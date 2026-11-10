@@ -5,7 +5,7 @@ on deals and customers with lines and server-computed totals, the status lifecyc
 the plaintext quote email, and the erasure and migration guarantees. The frontend slice
 (2026-10-28, issue #167) added the list and form pages, the quote detail with its status actions,
 the DealDetail section, the print page, the email dialog, the nav entries and the route guards;
-its cases are section 15.8.
+its cases are section 15.8. Product external-id mappings (2026-11, issue #239) are section 15.9.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -14,8 +14,8 @@ single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin 
 to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
 asserts the core outcome, the rest is pinned in Vitest).
 
-22 cases: 22 automated (17 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 13 P0,
-7 P1, 2 P2.
+29 cases: 29 automated (24 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 17 P0,
+10 P1, 2 P2.
 
 **Sources**
 
@@ -502,3 +502,115 @@ runs on SQLite, MySQL and MariaDB like the other admin suites.
   navigation entries for admin and sales and hides them for support and customer". The
   support/customer and sales cases are Vitest-only until a role-login e2e helper exists
   (lesson 8).
+
+## 15.9 Product external-id mappings (#239)
+
+`product_external_ids` maps an integrator's exact, case-sensitive `(source, scope, external_id)`
+to a live product. Backend only: no UI. Sources: `internal/models/product_external_id.go`,
+`internal/repository/product_external_id_repository.go`,
+`internal/service/product_external_id_service.go`, `internal/service/product_service.go`
+(`Delete`), `internal/handler/product_external_id_handler.go`, `internal/handler/routes.go`
+(`SetupProductRoutes`), `migrations/20261112120000_add_product_external_ids.{up,down}.sql`.
+
+### TC-PQ-023 — Create a mapping; a duplicate triple is 409
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin; two products.
+- **Steps:**
+  1. `POST /products/{a}/external-ids` with `{"source":"erp","scope":"plant-01","external_id":"MAT-100042"}`.
+  2. Repeat on `{a}`, then on `{b}`.
+- **Expected:** Step 1: **201** with `id`, `product_id`, `source`, `scope`, `external_id`,
+  `created_at`, `updated_at` and no embedded product. Step 2: **409** `CONFLICT` both times
+  ("external id is already mapped to a product"), nothing written. `products.sku` is unaffected
+  and stays non-unique.
+- **Automation:** automated — `tests/product_external_id_api_test.go` `TestProductExternalIDAPISQLite`;
+  `internal/repository/product_external_id_repository_test.go` `TestProductExternalIDRepository{SQLite,MySQL}`;
+  `internal/handler/product_external_id_handler_test.go` `TestProductExternalIDHandlerErrorMapping`.
+
+### TC-PQ-024 — The identity is exact and case-sensitive; validation names the field
+- **Priority:** P1
+- **Type:** validation
+- **Preconditions:** A mapping `("erp","plant-01","MAT-100042")`.
+- **Steps:**
+  1. Map `("erp","plant-01","mat-100042")` and `("erp","Plant-01","MAT-100042")` to another product.
+  2. `POST` with a trailing space, a control character, invalid UTF-8, an empty source, a 65-rune
+     source, a 129-rune scope, a 256-rune external_id.
+- **Expected:** Step 1: **201** both times; each triple resolves to its own product. Step 2:
+  **400** `VALIDATION_ERROR` with `details.field` (`source`, `scope` or `external_id`) and
+  `details.reason`; the value is never echoed and nothing is written. On MySQL/MariaDB the three
+  columns carry `utf8mb4_bin`.
+- **Automation:** automated — `TestProductExternalIDAPISQLite`; `internal/service/product_external_id_service_test.go`
+  `TestProductExternalIDValidation`; `internal/models/product_external_id_test.go` `TestProductExternalIDSchemaSQLite`.
+
+### TC-PQ-025 — Lookup on GET /products
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A mapping on an active product and one on an inactive product.
+- **Steps:**
+  1. As admin and as sales, `GET /products?source=erp&scope=plant-01&external_id=MAT-100042`.
+  2. The inactive product's triple; a triple mapped to nothing; the right triple with `scope`
+     absent; `?external_id=x` alone; the triple plus `search=zzz&is_active=maybe&page=3`.
+  3. As support and customer, the same lookup.
+- **Expected:** Step 1: **200**, `data` an array holding the product, `meta.page` 1,
+  `meta.total` 1. Step 2: the inactive product is returned; no match is **200** with `data: []`;
+  an absent scope means `''`, so no match; `?external_id=x` is **400** `VALIDATION_ERROR` with
+  `details.field` `source` and no service call; the other list parameters are ignored. Step 3:
+  **403**.
+- **Automation:** automated — `TestProductExternalIDAPISQLite`; `TestProductListExternalIDLookup`.
+
+### TC-PQ-026 — Sales cannot write a mapping
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** A mapping; users of every role.
+- **Steps:**
+  1. As sales, support and customer, `POST /products/{id}/external-ids` and
+     `DELETE /products/{id}/external-ids/{mappingId}`.
+- **Expected:** **403** `FORBIDDEN` everywhere; the mapping table is unchanged.
+- **Automation:** automated — `TestProductExternalIDAPISQLite`; `TestProductExternalIDRoutesRoles`.
+
+### TC-PQ-027 — Deleting another product's mapping is 404
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Mapping `m` on product `a`; product `b`.
+- **Steps:**
+  1. `DELETE /products/{b}/external-ids/{m}`; then `DELETE /products/{a}/external-ids/{m}`.
+- **Expected:** **404** `NOT_FOUND` and nothing deleted; then **204**, the row is hard-deleted and
+  the triple can be mapped again.
+- **Automation:** automated — `TestProductExternalIDAPISQLite`; `TestProductExternalIDRepository{SQLite,MySQL}`.
+
+### TC-PQ-028 — Deleting a product frees its keys
+- **Priority:** P0
+- **Type:** regression
+- **Preconditions:** Product `a` with several mappings and a quote line; product `b` with a mapping.
+- **Steps:**
+  1. `DELETE /products/{a}`; look up `a`'s triples; map one of them to `b`; `POST` a mapping on `a`.
+- **Expected:** **204**. In one transaction the product row is locked, every mapping of `a` is
+  hard-deleted and `a` is soft-deleted; a failure in the soft delete rolls the purge back. The
+  lookup answers `data: []`; the triple maps to `b` (**201**); `b`'s own mapping is untouched; the
+  quote line keeps its `product_id`; the mapping on `a` is **404**. A second delete is **404**
+  and writes nothing. A mapping create racing the delete either commits first (and is purged) or
+  answers **404**; no mapping ever survives on a deleted product.
+- **Automation:** automated — `TestProductExternalIDAPISQLite`; `internal/service/product_delete_purge_test.go`
+  `TestProductDeleteFreesExternalIDs{SQLite,MySQL}`; `internal/service/product_external_id_race_test.go`
+  `TestProductExternalIDCreateRacesDelete{SQLite,MySQL}`; `cmd/product_external_id_wiring_test.go`
+  `TestProductExternalIDProductionWiring`.
+
+### TC-PQ-029 — Migration on a fresh database and on one holding products
+- **Priority:** P1
+- **Type:** migration
+- **Preconditions:** A disposable MySQL/MariaDB schema (`TEST_MYSQL_DSN`); a SQLite file.
+- **Steps:**
+  1. Apply every migration on a fresh schema; roll `20261112120000_add_product_external_ids` back
+     and reapply; roll everything back.
+  2. Migrate to `20261111120000`, insert a live and a soft-deleted product, apply the migration
+     (with and without the table created by AutoMigrate first), roll it back and reapply.
+  3. On SQLite, start the application on a database migrated before the change.
+- **Expected:** The table, its `utf8mb4_bin` columns, the unique identity index, the
+  `product_id` index and `fk_product_external_ids_product` match what `MigrateDatabase` creates;
+  the products are unchanged by the up, the down and the reapply; mappings are insertable
+  afterwards; the down drops only `product_external_ids`. On SQLite `MigrateDatabase` creates the
+  table and a second start changes nothing.
+- **Automation:** automated — `cmd/migrate/product_external_ids_migration_test.go`
+  `TestProductExternalIDsMigrationFiles`, `TestProductExternalIDsMigration`;
+  `TestProductExternalIDSQLiteUpgrade`. The MySQL root skips without a server; registering it in
+  the Database migrations workflow is an operator follow-up.
