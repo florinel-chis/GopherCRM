@@ -120,6 +120,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Browser tabs sharing a remembered session no longer sign each other out (#184).** The web
+  client runs every refresh and password change under one origin-wide exclusive lock (the Web Lock
+  `gophercrm-session`; an in-tab lock where `navigator.locks` is missing, as on plain HTTP) and
+  re-reads the stored session once it holds it: a tab whose request was rejected after another tab
+  renewed the session adopts the stored successor instead of spending the refresh token again, and
+  a password change presents the pair another tab rotated to. A refresh rejected with 400/401 ends
+  the session only while storage still holds the token that was presented; one that finds another
+  session stored clears nothing. The refresh deadline (15 s) now includes the wait for the lock,
+  and a refresh still queued at the deadline never runs. Sign-out does not wait for the lock. The
+  session is stored as one record under `gophercrm_session` (session id, both tokens, account,
+  persistence choice) read whole from one storage, so a session without a refresh token never takes
+  one from the other storage; `gophercrm_token` and `gophercrm_refresh_token` remain as write-only
+  mirrors (removing `gophercrm_token` still signs the tab out), and a session stored under the two
+  legacy keys is migrated once on the first read, so nobody is signed out by the upgrade. Other
+  open tabs still learn about a sign-in or sign-out only on their next request.
 - **Bulk status history rows no longer stay `pending` for good (#196).** A bulk status batch
   (`POST /leads|tickets|tasks/bulk/status`) now writes its `bulk_operations` row `completed` as the
   last write of its own transaction, with a conditional update from `pending`, so the row commits

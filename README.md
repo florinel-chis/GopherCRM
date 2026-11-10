@@ -966,11 +966,14 @@ gophercrm/
   issued before them is refused at once (deactivation and erasure reject it too). Refresh rotation
   does not: the access token it replaces stays valid until `JWT_EXPIRY_HOURS` elapses, and so does
   every token of an account whose role changes. There is no per-token denylist.
-- **Session handling has two known gaps.** Browser tabs sharing a remembered session
-  (`localStorage`) do not coordinate their refreshes, so two tabs refreshing at the same moment can
-  sign each other out (#184). A login that verified the old password a moment before a password
-  change commits can still be issued a session afterwards, and login is not yet serialised against
-  erasure under the owner lock (#183).
+- **Session handling has known gaps.** Browser tabs sharing a remembered session coordinate their
+  refreshes through the Web Locks API (#184), which browsers offer only in secure contexts: served
+  over plain HTTP (the bundled nginx without TLS) each tab locks on its own, and two tabs
+  refreshing at the same moment can still sign each other out when the losing tab's rejection
+  arrives before the winner stored the successor. Other open tabs learn about a sign-in or
+  sign-out only on their next request. A login that verified the old password a moment before a
+  password change commits can still be issued a session afterwards, and login is not yet
+  serialised against erasure under the owner lock (#183).
 - **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
   password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
   automation rule — goes to the application log instead of a mailbox, and the sending code cannot

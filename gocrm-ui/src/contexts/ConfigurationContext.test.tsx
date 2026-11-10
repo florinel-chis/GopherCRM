@@ -52,7 +52,7 @@ vi.mock('@/api/client', () => ({
       session.token = null;
       await revoke('captured-access-token');
     }),
-    captureSession: vi.fn(() => ({ generation: session.generation, subject: null, refreshToken: null })),
+    captureSession: vi.fn(() => ({ generation: session.generation, id: null, subject: null, refreshToken: null })),
     isCurrentSession: vi.fn((snapshot: { generation: number }) => snapshot.generation === session.generation),
   },
   TOKEN_KEY: 'gophercrm_token',

@@ -411,32 +411,73 @@ discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the tr
 and full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN
 and skips them, so a `contextual` PR's CI does not execute them.
 
-**Web client session** (#115, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the stored
-session. Every operation — a request, a refresh, a password change, a logout — captures a session
-snapshot when it is requested (before waiting for any lock): this tab's generation, the account of
-the access token (the `user_id` claim, read unverified only to tell sessions apart) and the refresh
-token. Before it sends, retries or writes anything, storage must still hold that session: same
-generation, same account, and the snapshot's refresh token or one this tab rotated from it. That
-matters because another tab of a remembered session writes the same `localStorage` without changing
-this tab's generation; with the check, nothing is ever sent under, or written over, a session other
-than the operation's own (a late pair is kept privately, only for revocation). Sign-in, sign-out and
-an expired session start a new generation; a refresh or password change renews the current one.
-Requests are replayed (once, marked `_retry`) only under the session they were sent with. All 401s
-of a generation share one refresh; refreshes and the password change run under one lock. The
-password change recovers only an expired access token of its own session — through a registered
-refresh, so logout waits for it — and rebuilds its body from the renewed pair; each attempt carries
-the bearer read for it, and a 409 `SESSION_STALE` always surfaces (following another tab's rotation
-needs cross-tab coordination, #184). The refresh has its own
-15 s deadline that rejects every waiter even if the transport ignores the abort; a 400/401 from
-refresh ends the session, a timeout, network failure or 5xx keeps the tokens. Logout
-(`endSession`) drops the tokens at once and waits for the refreshes and password changes of the
-ending generation still running. If one of them spent the stored refresh token, its successor pair
-— kept privately, never stored, and used only when it belongs to the session being ended (same
-account, rotated from that session's refresh token) — authenticates the revocation. Otherwise the captured access token is used, and if it
-has expired the client renews privately once, so the no-body revoke-all is still authenticated. The
-refresh token is read only from the storage that holds the access token, and `startSession`
-replaces both keys. Tabs sharing a remembered session do not coordinate their refreshes yet (#184).
-Tests: `src/api/client.refresh.test.ts` drives the real interceptors through an injected adapter.
+**Web client session** (#115, #184, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the
+stored session.
+
+- **One record** (`src/api/sessionRecord.ts`). The session is one JSON record under
+  `gophercrm_session`: `{ v: 1, id, access, refresh, subject, persist }`, in `localStorage` when
+  "Remember me" was ticked and in `sessionStorage` otherwise. `startSession` removes everything
+  from both storages, then writes the record with a fresh id (32 lowercase hex characters from
+  `crypto.getRandomValues`); `subject` is the access token's `user_id` claim, read unverified only to
+  tell sessions apart. A refresh or password change rewrites the whole record in one `setItem`,
+  keeping the id, the subject and the storage. The record is read whole from one storage,
+  sessionStorage first, so a session without a refresh token never takes one from the other
+  storage. Every write also sets the legacy keys `gophercrm_token` and (or removes)
+  `gophercrm_refresh_token` in the same storage, after the record. They are write-only mirrors for
+  the browser specs: the client never reads a token from them while a record exists, but a record
+  whose `gophercrm_token` mirror is missing is no session (that is how the specs sign out). Such a
+  read removes nothing; only `clearTokens()` or an expiry whose snapshot matches the record does. A
+  malformed record (not JSON, `v !== 1`, no string id or access token) is removed with its mirrors.
+  When neither storage holds any record, a legacy two-key session is migrated once: the storage
+  holding `gophercrm_token` (sessionStorage first) with its own refresh token or none, under the
+  deterministic id `legacy-<sha256 of the refresh token, or of the access token>` so two tabs
+  migrating at once agree (a synchronous SHA-256, because `crypto.subtle` is asynchronous and absent
+  on plain HTTP). A storage holding only a refresh token is not migrated and the key is removed.
+- **Snapshots.** Every operation — a request, a refresh, a password change, a logout — captures a
+  snapshot when it is requested (before waiting for any lock): this tab's generation and the record's
+  session id (with the account and refresh token read alongside). Before it sends, retries or
+  writes anything, storage must still hold that session: same generation, same id. Another tab's
+  refresh keeps the id, so the operation follows it; another tab's sign-in (new id) or sign-out (no
+  record) stops it with `SessionChangedError`, and a late pair is kept privately, only for
+  revocation. Sign-in, sign-out and an expired session start a new generation; a refresh or
+  password change renews the current one. Requests are replayed (once, marked `_retry`) only under
+  the session they were sent with.
+- **The session lock** (`src/api/sessionLock.ts`). Every refresh and password change runs as a
+  holder of one origin-wide exclusive lock: `navigator.locks.request('gophercrm-session', { mode:
+  'exclusive', signal }, fn)`. Without `navigator.locks` (a non-secure context such as the bundled
+  plain-HTTP nginx) `createSessionLock()` falls back to an in-tab promise-chain lock, and tabs are
+  coordinated only by the record checks below. `ApiClientOptions.sessionLock` injects the lock;
+  tests pass one `createMemorySessionLock()` (with a read-only `acquisitions` counter) to several
+  clients. In one tab all 401s of a session share one refresh. Once it holds the lock, a refresh
+  re-reads the record: if it holds another access token than the one the failed request carried,
+  another refresh (in any tab) already renewed the session, and that token is adopted without
+  calling `/auth/refresh`. The password change reads the record after acquiring the lock, so it
+  presents the pair another tab rotated to; it renews an expired access token through the internal
+  refresh inside the same lock hold (the lock is never taken twice) and rebuilds its body from the
+  renewed pair. A 409 `SESSION_STALE` from the server still surfaces.
+- **Failures.** The refresh deadline (15 s) counts from the moment the refresh is requested, the
+  wait for the lock included: a refresh still queued at the deadline is withdrawn (its holder never
+  runs, nothing is sent) and every waiter rejects with `RefreshTimeoutError`, even if the
+  transport ignores the abort. A 400/401 from refresh ends the session (record removed,
+  `onSessionExpired` once in that tab) only while the record still holds the refresh token that
+  was presented: if the record holds another refresh token of the same session id (a tab whose
+  lock was not shared spent it first), its access token is adopted; if it holds another session or
+  none, nothing is cleared and the waiters reject with `SessionChangedError`. Another tab notices an
+  ended session on its next request, whose refresh ends without calling `/auth/refresh`. A timeout,
+  network failure or 5xx keeps the tokens.
+- **Logout** (`endSession`) removes the record at once, without waiting for the lock, so another
+  tab's refresh cannot delay it; that refresh then stores nothing and its waiters reject with
+  `SessionChangedError`. Logout waits for the refreshes and password changes of this tab's ending
+  generation still running. If one of them spent the stored refresh token, its successor pair —
+  kept privately, never stored, and used only when it was obtained for the session id being ended —
+  authenticates the revocation. Otherwise the captured access token is used, and if it has expired
+  the client renews privately once, so the no-body revoke-all is still authenticated.
+
+Other open tabs are not updated live on a sign-in or sign-out; they notice on their next request.
+Tests drive the real interceptors through an injected adapter: `src/api/client.refresh.test.ts`
+(single tab), `src/api/client.sessionRecord.test.ts` (the record, including a read injected between
+the record write and the mirror write), `src/api/client.crossTab.test.ts` (two clients sharing
+storage and one memory lock, in both response orders) and `src/api/sessionLock.test.ts`.
 
 **CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
 `CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
