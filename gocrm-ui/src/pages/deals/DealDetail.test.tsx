@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as DealDetail } from './DealDetail';
-import { automationApi, dealsApi, quotesApi } from '@/api/endpoints';
+import { automationApi, dealsApi, quotesApi, tasksApi } from '@/api/endpoints';
 import {
   createMockCompany,
   createMockCustomer,
@@ -10,6 +10,7 @@ import {
   createMockDealStageChange,
   createMockLead,
   createMockQuote,
+  createMockTask,
   createMockUser,
 } from '@/test/factories';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -34,6 +35,9 @@ vi.mock('@/api/endpoints', () => ({
   },
   automationApi: {
     listRuns: vi.fn(),
+  },
+  tasksApi: {
+    getDealTasks: vi.fn(),
   },
   // Reached by the Quotes section's create dialog, which stays closed here.
   customersApi: {
@@ -120,6 +124,36 @@ describe('DealDetail', () => {
       ],
       total: 1,
     });
+    vi.mocked(tasksApi.getDealTasks).mockResolvedValue({ tasks: [], total: 0 });
+  });
+
+  it('renders the Tasks section for the deal', async () => {
+    vi.mocked(tasksApi.getDealTasks).mockResolvedValue({
+      tasks: [
+        createMockTask({
+          id: 31,
+          title: 'Send the proposal',
+          status: 'in_progress',
+          deal_id: 9,
+          deal: { id: 9, title: 'Website redesign', stage: 'proposal' },
+        }),
+      ],
+      total: 1,
+    });
+    render(<DealDetail />);
+    await screen.findByRole('heading', { name: 'Website redesign' });
+
+    const section = (await screen.findByRole('heading', { name: 'Tasks (1)' })).closest(
+      'section'
+    ) as HTMLElement;
+    expect(section).not.toBeNull();
+    expect(tasksApi.getDealTasks).toHaveBeenCalledWith(9, { offset: 0, limit: 5 });
+    const row = within(section).getByTestId('deal-task-row');
+    expect(within(row).getByRole('link', { name: 'Send the proposal' })).toHaveAttribute(
+      'href',
+      '/tasks/31'
+    );
+    expect(within(row).getByText('In Progress')).toBeInTheDocument();
   });
 
   it('renders the Quotes section for the deal', async () => {

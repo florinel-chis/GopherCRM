@@ -43,6 +43,7 @@ import { DealQuotesSection } from '@/pages/quotes/DealQuotesSection';
 import { AutomationRunsSection } from '@/pages/automation/AutomationRunsSection';
 import { DealStageChip } from './DealStageChip';
 import { DealHistory } from './DealHistory';
+import { DealTasksSection } from './DealTasksSection';
 import { LostReasonDialog } from './LostReasonDialog';
 import { formatCalendarDate, formatDealAmount, isPastCalendarDate } from './dealFormat';
 import { invalidateDealQueries } from './dealQueries';
@@ -295,6 +296,10 @@ export const Component: React.FC = () => {
       {/* Quotes share the deal guard (admin and sales); the section hides
           "New quote" once the deal is won or lost, which the API refuses. */}
       <DealQuotesSection deal={deal} canWrite={canWrite} />
+
+      {/* The deal's tasks (admin every task; sales only its own assignments,
+          filtered by the API). Tasks are linked from the task form. */}
+      <DealTasksSection deal={deal} />
 
       {/* The deal's automation runs (admin and sales, scoped by the API). */}
       <AutomationRunsSection entityType="deal" entityId={deal.id} />

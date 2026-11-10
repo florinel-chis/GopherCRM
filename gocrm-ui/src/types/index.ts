@@ -369,6 +369,12 @@ export interface Task {
   created_by: number;
   creator?: User;
   labels?: Label[];
+  // The linked deal (#240). `deal_id` is present only when the caller may see
+  // the deal (admins also get it after the deal is deleted) and is never
+  // rendered on its own; `deal` is present only for a live deal the caller may
+  // see, and is the only source for showing a deal on a task.
+  deal_id?: number;
+  deal?: QuoteDealSummary;
   created_at: string;
   updated_at: string;
   completed_at?: string;
@@ -418,6 +424,8 @@ export interface BackendTask {
   assigned_to_id: number;
   assigned_to?: User;
   labels?: Label[];
+  deal_id?: number;
+  deal?: QuoteDealSummary;
   created_at: string;
   updated_at: string;
 }

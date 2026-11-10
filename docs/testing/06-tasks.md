@@ -659,5 +659,6 @@ regression anchors, not endorsements.
 - **Automation:** automated (backend) — `internal/integration/task_deal_integration_test.go`
   (`TestTaskDealReadRoutes{SQLite,MySQL}`, `TestTaskDealLinkIntegration{SQLite,MySQL}`);
   `internal/service/task_deal_link_test.go` (`TestTaskDealLinkWriteRules`, `TestTaskDealLinkClear`,
-  `TestTaskDealLogsOmitDealTitle`); `internal/handler/task_deal_handler_test.go`. No browser case:
-  the web client does not show the link yet.
+  `TestTaskDealLogsOmitDealTitle`); `internal/handler/task_deal_handler_test.go`. No browser case;
+  the web client's picker, task detail block and deal tasks section are pinned in Vitest
+  (`src/pages/tasks/TaskForm.deal.test.tsx`, `src/pages/tasks/TaskDetail.test.tsx`).

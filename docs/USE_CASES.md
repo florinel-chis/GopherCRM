@@ -243,9 +243,10 @@ renewals are not modelled.
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:92-95`); no PDF, only browser print
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
-- A task's `deal_id` (set by a deal rule or through the API, listed by `GET /deals/{id}/tasks`) has
-  no screen yet: the web client does not show it. Tasks created by a deal rule before #240 are not
-  backfilled (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts"). Tracked in #240.
+- A task's `deal_id` (set by a deal rule, through the API, or with the task form's deal picker by
+  admin and sales) is shown on task detail and listed in the deal detail Tasks section from
+  `GET /deals/{id}/tasks`. Tasks created by a deal rule before #240 are not backfilled
+  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts").
 
 ### Do not promise
 
@@ -450,7 +451,7 @@ planning around an issue number.
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Unique product SKUs | 5 | `internal/models/product.go:19` | #239 |
-| No screen for a task's deal link | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
+| Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Ticket automation triggers | 4 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

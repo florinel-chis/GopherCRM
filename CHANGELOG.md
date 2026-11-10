@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Task–deal link in the web client (#240).** The task form has a Deal picker for admin and sales
+  users (sales see only their own deals), searched on the server and offering won and lost deals
+  too; its search results are cached apart from the quote dialog's open-only deal picker. Support
+  and customer users get no picker and never send `deal_id`. Editing a task sends `deal_id` only
+  when the picker was changed; clearing it sends `deal_id: 0`, and after every update the form
+  re-reads the task and opens it as the API returned it, so a clear the API refused (a link to a
+  deal the user cannot see) still shows the link. Task detail shows the linked deal's title, as a
+  link to the deal, and its stage whenever the API returned a deal summary. Deal detail has a
+  paginated Tasks section (sales see only the tasks assigned to them). Every task save marks the
+  cached deal task lists stale. Frontend only; no API change.
 - **External identity mappings for customers (#212).** A new `customer_external_ids` table maps an
   integrator's `(source, scope, external_id)` to a customer, unique on the exact, case-sensitive
   triple (source 1-64, scope 0-128 and `''` by default, external_id 1-255 characters; no control
@@ -213,7 +223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deal, decided on every read. `GET /deals/{id}/tasks` lists a deal's live tasks: every task for an
   admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
   rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
-  created by earlier runs are not backfilled, and the web client does not show the link yet.
+  created by earlier runs are not backfilled.
 - **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
   `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
   neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body

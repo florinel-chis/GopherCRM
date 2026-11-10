@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
@@ -10,6 +10,7 @@ import {
   Divider,
   Stack,
   IconButton,
+  Link,
   List,
   ListItem,
   ListItemIcon,
@@ -28,14 +29,22 @@ import {
   Schedule as ScheduleIcon,
   Description as DescriptionIcon,
   History as HistoryIcon,
+  Handshake as DealIcon,
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LabelChip } from '@/components/LabelChip';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { tasksApi } from '@/api/endpoints';
+import { DealStageChip } from '@/pages/deals/DealStageChip';
 import type { Task } from '@/types';
 import { formatDate, formatDistance } from '@/utils/date';
+
+// A deal's Tasks section (['deal', <id>, 'tasks', paging]) shows the status
+// and the presence of every linked task, so a status change or a delete here
+// marks those lists stale too.
+const isDealTaskList = (query: { queryKey: readonly unknown[] }): boolean =>
+  query.queryKey[0] === 'deal' && query.queryKey[2] === 'tasks';
 
 const getStatusColor = (status: Task['status']) => {
   switch (status) {
@@ -86,6 +95,7 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       // Deleting a task detaches it from its labels, so the counts move.
       queryClient.invalidateQueries({ queryKey: ['labels'] });
+      queryClient.invalidateQueries({ predicate: isDealTaskList });
       navigate('/tasks');
     },
     onError: () => {
@@ -100,6 +110,7 @@ export const Component: React.FC = () => {
       showSuccess('Task status updated successfully');
       queryClient.invalidateQueries({ queryKey: ['task', id] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ predicate: isDealTaskList });
     },
     onError: () => {
       showError('Failed to update task status');
@@ -268,6 +279,25 @@ export const Component: React.FC = () => {
                   </Box>
                 </Box>
                 
+                {/* Only the summary is rendered: the API sends it only for a
+                    live deal the caller may see. A bare deal_id is never shown. */}
+                {task.deal && (
+                  <Box display="flex" alignItems="center" gap={1} mb={2} data-testid="task-deal">
+                    <DealIcon color="action" />
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Deal
+                      </Typography>
+                      <Box display="flex" alignItems="center" gap={1}>
+                        <Link component={RouterLink} to={`/deals/${task.deal.id}`}>
+                          {task.deal.title}
+                        </Link>
+                        <DealStageChip stage={task.deal.stage} />
+                      </Box>
+                    </Box>
+                  </Box>
+                )}
+
                 {task.completed_at && (
                   <Box display="flex" alignItems="center" gap={1}>
                     <CheckCircle color="success" />
