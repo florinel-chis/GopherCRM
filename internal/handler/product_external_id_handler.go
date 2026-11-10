@@ -29,8 +29,7 @@ func (h *ProductHandler) WithExternalIDs(externalIDs service.ProductExternalIDSe
 //
 // @Description Body of POST /products/{id}/external-ids. Each value must be valid UTF-8 without control characters and without leading or trailing whitespace; it is stored and compared exactly (case-sensitive). The service, not the binder, enforces the required fields.
 type CreateProductExternalIDRequest struct {
-	// System that issued the identifier, for example an ERP; required, 1-64
-	// characters.
+	// System that issued the identifier; required, 1-64 characters.
 	Source string `json:"source" validate:"required" minLength:"1" maxLength:"64" example:"erp"`
 	// Namespace inside the source, for example a company code; optional,
 	// 0-128 characters, absent or empty means ''.
