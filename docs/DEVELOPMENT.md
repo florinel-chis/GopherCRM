@@ -1287,6 +1287,54 @@ consecutive polls) (`internal/service`); `TestCustomerExternalIDHandlerErrorMapp
 schema and skip without it; registering the migration roots in the Database migrations workflow is
 an operator follow-up.
 
+**Product external ids (#239).** `product_external_ids` copies the customer pattern for the
+catalogue: `product_id` (NOT NULL, `fk_product_external_ids_product` to `products.id`), `source
+varchar(64)`, `scope varchar(128) NOT NULL DEFAULT ''`, `external_id varchar(255)`, no
+`deleted_at`. Its only unique index is `idx_product_external_ids_identity (source, scope,
+external_id)`, so `isDuplicateKeyError` attributes a hit to the triple
+(`apperrors.ErrProductExternalIDTaken`, 409); `idx_product_external_ids_product_id` is not unique.
+`products.sku` stays indexed and non-unique on purpose (a unique index on a soft-deleted table
+either blocks the reuse of a code or means nothing). Comparison is exact: SQLite's `BINARY`, and
+`utf8mb4_bin` on MySQL/MariaDB from `20261112120000_add_product_external_ids` (created only when
+missing) or from `ensureProductExternalIDCollation` in `models.MigrateDatabase`, which, like the
+customer guard, issues the `ALTER TABLE … MODIFY` only when `information_schema.COLUMNS` shows a
+column with another collation. `service.ValidateProductExternalIdentity` delegates to
+`ValidateCustomerExternalIdentity` (same widths and rules, the same
+`*CustomerExternalIDFieldError`). `ProductExternalIDService.AddExternalID` validates, then runs one
+transaction on the request context that locks the live product (`LockLiveProduct`, `FOR UPDATE` on
+MySQL, a plain read on SQLite; an inactive product is live) and inserts. **`ProductService.Delete(ctx,
+id)` is now one `WithTransaction`**: the same locking read, `PurgeForProduct` (hard delete of every
+mapping of the product), then the product's soft delete, through the transaction-bound
+repositories; a failure anywhere rolls the purge back, and a missing or already-deleted product is
+`ErrProductNotFound` with nothing written. Because both writes lock the product row first, a create
+racing a delete either commits first and is purged, or waits and answers `ErrNotFound` (404); no
+mapping survives on a deleted product and neither ordering deadlocks. Quote lines keep their
+`product_id`. **A `ProductService` built without `WithProductExternalIDs(repo, txManager)` refuses
+`Delete` with `service.ErrProductExternalIDsUnavailable` (500) and writes nothing**, and a
+`ProductExternalIDService` without its repository or manager returns the same error from every
+method; `cmd/main.go` and `test/integration/base_test.go` wire both. `POST
+/products/{id}/external-ids` and `DELETE /products/{id}/external-ids/{mappingId}` are admin only (the
+route guard, repeated in the handler); the delete removes only a row of that product (else 404).
+`GET /products` enters lookup mode when the query carries `source`, `scope` or `external_id`, even
+empty: the handler validates the three before any service call, ignores the other list parameters
+and answers `data` as an array of 0 or 1 live product with `meta.page` 1 (admin and sales). There
+is no erasure step: products hold no personal data. Log lines carry operation names, `product_id`,
+`mapping_id`, `mappings_removed`, counts and presence flags only. Regression roots:
+`TestProductExternalIDSchemaSQLite`, `TestProductExternalIDSQLiteUpgrade`,
+`TestProductExternalIDJSON` (`internal/models`); `TestProductExternalIDsMigrationFiles`,
+`TestProductExternalIDsMigration` (`cmd/migrate`, which now holds the newest-migration assertion);
+`TestProductExternalIDRepository{SQLite,MySQL}` (`internal/repository`);
+`TestProductExternalIDValidation`, `TestProductExternalIDServiceRefusedWhenUnwired`,
+`TestProductDeleteRefusedWhenUnwired`, `TestProductExternalIDLogsOmitValues`,
+`TestProductDeleteFreesExternalIDs{SQLite,MySQL}` (an injected soft-delete failure, captured
+statement order), `TestProductExternalIDCreateRacesDelete{SQLite,MySQL}` (the MySQL root forces both
+orderings, each wait seen in `information_schema.PROCESSLIST` on two consecutive polls)
+(`internal/service`); `TestProductExternalIDHandlerErrorMapping`, `TestProductListExternalIDLookup`,
+`TestProductExternalIDRoutesRoles` (`internal/handler`); `TestProductExternalIDAPISQLite` (`tests`);
+`TestProductExternalIDProductionWiring` (`cmd`). The MySQL roots use a disposable `TEST_MYSQL_DSN`
+schema and skip without it; registering the migration roots in the Database migrations workflow and
+`scripts/ci/check-go.py` is an operator follow-up.
+
 **Operator procedure for ticket text.** `tickets.title`, `description` and `resolution` stay as
 business records; the erasure does not scrub them. When a customer's tickets name the person,
 redact them before the erasure:

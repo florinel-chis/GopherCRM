@@ -236,7 +236,36 @@ convention.
 
 The SKU is deliberately not unique: a unique index over a soft-deleted table either blocks the
 reuse of a code or, scoped by `deleted_at`, stops meaning anything (see the gotchas in
-[DEVELOPMENT.md](DEVELOPMENT.md)).
+[DEVELOPMENT.md](DEVELOPMENT.md)). An ERP or catalogue sync keys products through the external
+identity mappings below instead.
+
+### Relationships
+- Has many external identity mappings (`product_external_ids`, below); not embedded in its JSON
+- Referenced by quote lines (`quote_lines.product_id`, `fk_quote_lines_product`), which survive its
+  soft delete
+
+### Product External ID
+
+`product_external_ids` (#239) — one integrator identity mapped to a product, the same shape as the
+customer mappings. The triple is unique and compared exactly (case-sensitive): SQLite compares with
+`BINARY`, MySQL and MariaDB carry `utf8mb4_bin` on the three text columns (migration
+`20261112120000_add_product_external_ids`, or the collation guard of `MigrateDatabase` on a schema
+the application alone created). No `deleted_at`: a mapping is hard-deleted by `DELETE
+/products/{id}/external-ids/{mappingId}`, and `DELETE /products/{id}` hard-deletes every mapping of
+the product in the transaction that soft-deletes it, so the triples can be mapped again. Products
+hold no personal data, so no erasure step touches the table.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Mapping id |
+| created_at, updated_at | timestamp | - | now | - | Set by the server; a mapping is never updated in place |
+| product_id | uint | Yes | - | FK `fk_product_external_ids_product` to products (no cascade); index `idx_product_external_ids_product_id` | The mapped product (live, active or not) |
+| source | string | Yes | - | `varchar(64)`, 1-64 characters | System that issued the identifier, for example an ERP |
+| scope | string | Yes | `''` | `varchar(128)`, 0-128 characters | Namespace inside the source, for example a company code |
+| external_id | string | Yes | - | `varchar(255)`, 1-255 characters | The identifier |
+
+The table's only unique index is `idx_product_external_ids_identity (source, scope, external_id)`.
+Every value must be valid UTF-8 without control characters or leading or trailing whitespace.
 
 ## Quote Model
 

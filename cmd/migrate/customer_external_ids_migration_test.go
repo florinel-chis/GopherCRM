@@ -66,22 +66,13 @@ func TestCustomerExternalIDsMigrationFiles(t *testing.T) {
 	assert.Contains(t, downSQL, "drop table if exists customer_external_ids;")
 	assert.Equal(t, 1, strings.Count(downSQL, "drop table"), "rollback drops one table")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestBulkOperationStatusIndexMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, customerExternalIDsName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestProductExternalIDsMigrationFiles (#239). This one stays in sequence.
+	version, err := strconv.Atoi(strings.SplitN(customerExternalIDsName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, customerExternalIDsVersion, version)
-	assert.Equal(t, customerExternalIDsVersion, latestMigrationVersion)
 	assert.Greater(t, customerExternalIDsVersion, customerExternalIDsPreviousVersion)
+	assert.Less(t, customerExternalIDsVersion, latestMigrationVersion, "a newer migration follows it")
 
 	source, err := os.ReadFile("main_test.go")
 	require.NoError(t, err)

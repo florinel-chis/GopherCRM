@@ -4,6 +4,8 @@
 package mocks
 
 import (
+	context "context"
+
 	models "github.com/florinel-chis/gophercrm/internal/models"
 	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
@@ -68,9 +70,9 @@ func (_m *ProductService) Update(product *models.Product) error {
 	return r0
 }
 
-// Delete provides a mock function with given fields: id
-func (_m *ProductService) Delete(id uint) error {
-	ret := _m.Called(id)
+// Delete provides a mock function with given fields: ctx, id
+func (_m *ProductService) Delete(ctx context.Context, id uint) error {
+	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")

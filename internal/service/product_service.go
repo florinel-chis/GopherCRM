@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,13 +15,36 @@ import (
 type productService struct {
 	productRepo repository.ProductRepository
 	currency    DealCurrencySource
+	// externalIDs and txManager back Delete (#239): the product's external-id
+	// mappings are hard-deleted in the transaction that soft-deletes it.
+	externalIDs repository.ProductExternalIDRepository
+	txManager   *utils.TransactionManager
+}
+
+// ProductServiceOption configures NewProductService.
+type ProductServiceOption func(*productService)
+
+// WithProductExternalIDs gives Delete the mapping repository and the
+// transaction manager it needs to purge a product's external-id mappings in
+// the same transaction as the soft delete. Without it (or with a nil
+// argument) Delete returns ErrProductExternalIDsUnavailable and writes
+// nothing.
+func WithProductExternalIDs(repo repository.ProductExternalIDRepository, txManager *utils.TransactionManager) ProductServiceOption {
+	return func(s *productService) {
+		s.externalIDs = repo
+		s.txManager = txManager
+	}
 }
 
 // NewProductService wires the catalogue service. currency is the configuration
 // read behind the default currency (deals.default_currency); nil means the
 // shipped EUR.
-func NewProductService(productRepo repository.ProductRepository, currency DealCurrencySource) ProductService {
-	return &productService{productRepo: productRepo, currency: currency}
+func NewProductService(productRepo repository.ProductRepository, currency DealCurrencySource, opts ...ProductServiceOption) ProductService {
+	s := &productService{productRepo: productRepo, currency: currency}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *productService) Create(product *models.Product) error {
@@ -78,19 +103,54 @@ func (s *productService) Update(product *models.Product) error {
 	return nil
 }
 
-func (s *productService) Delete(id uint) error {
+// Delete runs one transaction on ctx: the locking read of the live product
+// (the lock a concurrent mapping create takes too), the hard delete of every
+// product_external_ids row of the product, then the product's soft delete. A
+// failure anywhere rolls the purge back. Quote lines keep their product_id.
+func (s *productService) Delete(ctx context.Context, id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("product_id", id), "ProductService", "Delete")
 
-	if err := s.productRepo.Delete(id); err != nil {
-		if isNotFound(err) {
-			logger.WithError(utils.LogError(err)).Warn("Product not found")
-			return fmt.Errorf("product %d not found: %w", id, apperrors.ErrProductNotFound)
+	if s.externalIDs == nil || s.txManager == nil {
+		logger.Error("Product delete refused: no external-id repository or transaction manager is wired")
+		return ErrProductExternalIDsUnavailable
+	}
+
+	var purged int64
+	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		mappings := s.externalIDs.WithTx(tx)
+		if err := mappings.LockLiveProduct(ctx, id); err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("product %d not found: %w", id, apperrors.ErrProductNotFound)
+			}
+			return err
+		}
+		removed, err := mappings.PurgeForProduct(ctx, id)
+		if err != nil {
+			return err
+		}
+		purged = removed
+		if err := s.productRepo.WithTx(tx).Delete(id); err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("product %d not found: %w", id, apperrors.ErrProductNotFound)
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, apperrors.ErrProductNotFound) {
+			logger.Warn("Product not found")
+			return err
 		}
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
 
-	logger.Info("Product deleted successfully")
+	logger.WithField("mappings_removed", purged).Info("Product deleted successfully")
 	return nil
 }
 
