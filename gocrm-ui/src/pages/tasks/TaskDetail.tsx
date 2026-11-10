@@ -46,7 +46,7 @@ import { formatDate, formatDistance } from '@/utils/date';
 const isDealTaskList = (query: { queryKey: readonly unknown[] }): boolean =>
   query.queryKey[0] === 'deal' && query.queryKey[2] === 'tasks';
 
-const getStatusColor =(status: Task['status']) => {
+const getStatusColor = (status: Task['status']) => {
   switch (status) {
     case 'pending':
       return 'default';
