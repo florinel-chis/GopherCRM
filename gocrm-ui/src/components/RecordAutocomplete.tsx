@@ -17,6 +17,14 @@ export interface RecordAutocompleteProps<T extends { id: number }> {
   queryKeys: [string, string];
   /** Server-side search, one page of matches for the typed text. */
   search: (term: string) => Promise<T[]>;
+  /**
+   * Extra parts of the search cache key, placed between 'search' and the term.
+   * A caller whose `search` filters differently from another caller over the
+   * same plural root (the open-only and the any-deal pickers) must pass a
+   * distinct value here so the two never share a cached page. Empty by
+   * default, which keeps the key `[plural, 'search', term]`.
+   */
+  searchKey?: readonly unknown[];
   /** Fetch by id, for a value that arrives without its record. */
   lookup: (id: number) => Promise<T>;
   getOptionLabel: (record: T) => string;
@@ -29,6 +37,8 @@ export interface RecordAutocompleteProps<T extends { id: number }> {
 }
 
 const SEARCH_DEBOUNCE_MS = 300;
+
+const NO_SEARCH_KEY: readonly unknown[] = [];
 
 /**
  * Search-as-you-type picker over a server-side list, generic over the record.
@@ -45,6 +55,7 @@ export function RecordAutocomplete<T extends { id: number }>({
   label,
   queryKeys,
   search,
+  searchKey = NO_SEARCH_KEY,
   lookup,
   getOptionLabel,
   noOptionsText,
@@ -96,7 +107,7 @@ export function RecordAutocomplete<T extends { id: number }>({
   }, [lookedUp, value]);
 
   const { data: searchResult, isFetching } = useQuery({
-    queryKey: [pluralKey, 'search', searchTerm],
+    queryKey: [pluralKey, 'search', ...searchKey, searchTerm],
     queryFn: () => search(searchTerm),
     enabled: open,
   });

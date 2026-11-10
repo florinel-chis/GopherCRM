@@ -3,7 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useForm, FormProvider, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import {
   Box,
   Paper,
@@ -20,6 +25,7 @@ import { FormTextField, FormSelect, FormDatePicker } from '@/components/form';
 import { LabelChip } from '@/components/LabelChip';
 import { nextPaletteColor } from '@/components/labelColors';
 import { Loading } from '@/components/Loading';
+import { DealAutocomplete } from '@/components/DealAutocomplete';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
@@ -66,6 +72,14 @@ const priorityOptions = [
   { value: 'high', label: 'High' },
 ];
 
+// Every cached deal task list (DealTasksSection's ['deal', <id>, 'tasks',
+// paging]) goes stale when a task is saved: its link, title or status may
+// have moved, and the save does not say which deal it left.
+const invalidateDealTaskLists = (queryClient: QueryClient) =>
+  queryClient.invalidateQueries({
+    predicate: (query) => query.queryKey[0] === 'deal' && query.queryKey[2] === 'tasks',
+  });
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -80,8 +94,17 @@ export const Component: React.FC = () => {
   const canCreateLabels =
     user?.role === 'admin' || user?.role === 'sales' || user?.role === 'support';
 
+  // Only admin and sales may list deals (GET /deals), so only they get the
+  // picker; support and customer never send deal_id and leave the link alone.
+  const canLinkDeal = user?.role === 'admin' || user?.role === 'sales';
+
   const [selectedAssignee, setSelectedAssignee] = useState<User | null>(null);
   const [selectedLabels, setSelectedLabels] = useState<Label[]>([]);
+  const [dealId, setDealId] = useState<number | null>(null);
+  // Set only by the picker's onChange. An untouched picker sends no deal_id on
+  // an update, so a pre-filled link, or a deal_id the API returned without a
+  // summary (an empty picker), is never rewritten or cleared by accident.
+  const [dealTouched, setDealTouched] = useState(false);
 
   const methods = useForm<TaskFormData>({
     resolver: zodResolver(taskSchema),
@@ -119,6 +142,7 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       // Label task counts move whenever a task's label set changes.
       queryClient.invalidateQueries({ queryKey: ['labels'] });
+      invalidateDealTaskLists(queryClient);
       navigate('/tasks');
     },
     onError: (error) => {
@@ -130,12 +154,27 @@ export const Component: React.FC = () => {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: UpdateTaskData }) =>
       tasksApi.updateTask(id, data),
-    onSuccess: () => {
+    onSuccess: async (_updated, variables) => {
       showSuccess('Task updated successfully');
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['task', id] });
       queryClient.invalidateQueries({ queryKey: ['labels'] });
-      navigate('/tasks');
+      invalidateDealTaskLists(queryClient);
+      // The PUT body is not trusted for the deal link: a clear of a link the
+      // caller cannot see answers 200 and keeps it. Re-read the task and show
+      // what the API holds, so a refused clear never looks cleared.
+      try {
+        await queryClient.fetchQuery({
+          queryKey: ['task', id],
+          queryFn: () => tasksApi.getTask(variables.id),
+          staleTime: 0,
+          retry: false,
+        });
+      } catch {
+        // Never fill the entry from the PUT body; mark it stale so TaskDetail
+        // fetches it again and shows its own loading or error state.
+        await queryClient.invalidateQueries({ queryKey: ['task', id], refetchType: 'none' });
+      }
+      navigate(`/tasks/${variables.id}`);
     },
     onError: (error) => {
       console.error('Failed to update task:', error);
@@ -212,6 +251,10 @@ export const Component: React.FC = () => {
         setSelectedAssignee(task.assignee);
       }
       setSelectedLabels(task.labels || []);
+      // Pre-filled from the summary only; a deal_id without a summary (a
+      // deal the caller cannot see, or a deleted one) leaves the picker empty.
+      setDealId(task.deal?.id ?? null);
+      setDealTouched(false);
     }
   }, [task, methods]);
 
@@ -245,11 +288,19 @@ export const Component: React.FC = () => {
       label_ids: selectedLabels.map((label) => label.id),
     };
 
-
     if (isEditMode) {
-      updateMutation.mutate({ id: Number(id), data: submitData });
+      const updateData: UpdateTaskData = { ...submitData };
+      // Only a touched picker sends deal_id: an id replaces the link, 0 clears it.
+      if (canLinkDeal && dealTouched) {
+        updateData.deal_id = dealId ?? 0;
+      }
+      updateMutation.mutate({ id: Number(id), data: updateData });
     } else {
-      createMutation.mutate(submitData);
+      const createData: CreateTaskData = { ...submitData };
+      if (canLinkDeal && dealId !== null) {
+        createData.deal_id = dealId;
+      }
+      createMutation.mutate(createData);
     }
   };
 
@@ -334,6 +385,21 @@ export const Component: React.FC = () => {
                   )}
                 />
               </Box>
+
+              {canLinkDeal && (
+                <DealAutocomplete
+                  openOnly={false}
+                  testId="task-deal-autocomplete"
+                  value={dealId}
+                  initialDeal={task?.deal ?? null}
+                  onChange={(nextId) => {
+                    setDealId(nextId);
+                    setDealTouched(true);
+                  }}
+                  label="Deal"
+                  helperText="Optional. Closed deals can be linked too."
+                />
+              )}
 
               <Autocomplete
                 multiple

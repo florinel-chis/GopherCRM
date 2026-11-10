@@ -36,6 +36,11 @@ vi.mock('@/api/endpoints', () => ({
     getLabels: vi.fn(),
     createLabel: vi.fn(),
   },
+  // Reached by the deal picker admin and sales get; it stays closed here.
+  dealsApi: {
+    getDeals: vi.fn(),
+    getDeal: vi.fn(),
+  },
 }));
 
 const authState = (user: User) => ({

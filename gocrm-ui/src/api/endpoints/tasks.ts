@@ -20,6 +20,9 @@ export interface CreateTaskData {
   due_date: string;
   assigned_to?: number;
   label_ids?: number[];
+  // The deal to link (#240). Sent only when a deal was picked; the deal must be
+  // live and visible to the caller (closed deals are allowed).
+  deal_id?: number;
 }
 
 export interface UpdateTaskData {
@@ -31,6 +34,20 @@ export interface UpdateTaskData {
   assigned_to?: number;
   // Replaces the whole label set; omit the field to leave labels untouched.
   label_ids?: number[];
+  // Omit to keep the stored link, an id to replace it, 0 to clear it. The API
+  // answers 200 and keeps a link the caller cannot see when asked to clear it,
+  // so callers re-read the task instead of trusting the response for the link.
+  deal_id?: number;
+}
+
+export interface DealTasksParams {
+  offset?: number;
+  limit?: number;
+}
+
+export interface DealTasksResult {
+  tasks: Task[];
+  total: number;
 }
 
 interface TasksResponse {
@@ -81,7 +98,11 @@ export const tasksApi = {
       assigned_to_id: data.assigned_to,
     };
     delete transformedData.assigned_to;
-    
+    // deal_id passes through unchanged when given; an undefined one is not sent.
+    if (transformedData.deal_id === undefined) {
+      delete transformedData.deal_id;
+    }
+
     const response = await api.post<BackendTask>('/tasks', transformedData);
     return transformTaskFromBackend(response.data);
   },
@@ -93,7 +114,12 @@ export const tasksApi = {
       transformedData.assigned_to_id = data.assigned_to;
       delete transformedData.assigned_to;
     }
-    
+    // An absent deal_id keeps the stored link, so an undefined one must not
+    // reach the body as a key; 0 (clear) and an id pass through unchanged.
+    if (transformedData.deal_id === undefined) {
+      delete transformedData.deal_id;
+    }
+
     const response = await api.put<BackendTask>(`/tasks/${id}`, transformedData);
     return transformTaskFromBackend(response.data);
   },
@@ -123,5 +149,16 @@ export const tasksApi = {
     // This endpoint might return an array directly or wrapped
     const tasks = Array.isArray(response.data) ? response.data : (response.data.tasks || []);
     return tasks.map(transformTaskFromBackend);
+  },
+
+  // GET /deals/:id/tasks (admin any deal; sales only a deal it owns, and only
+  // the tasks assigned to it, which `total` counts as well).
+  getDealTasks: async (dealId: number, params?: DealTasksParams): Promise<DealTasksResult> => {
+    const response = await api.get<TasksResponse>(`/deals/${dealId}/tasks`, { params });
+    const tasks = Array.isArray(response.data?.tasks) ? response.data.tasks : [];
+    return {
+      tasks: tasks.map(transformTaskFromBackend),
+      total: response.data?.total ?? tasks.length,
+    };
   },
 };
