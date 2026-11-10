@@ -194,18 +194,22 @@ describe('LeadList CSV export', () => {
     vi.mocked(leadsApi.exportLeads).mockResolvedValue(new Blob(['id\n'], { type: 'text/csv' }));
     await renderList();
 
+    // Every filter change switches the query key, which sends the page down its
+    // loading branch and remounts the controls, so wait for the list to come
+    // back and query the controls afresh after each change.
     fireEvent.change(screen.getByPlaceholderText('Search leads...'), {
       target: { value: 'Alpha' },
     });
-    const chooseOption = async (select: HTMLElement, option: string) => {
-      fireEvent.mouseDown(select);
+    await screen.findByText('Alpha Leads');
+    const chooseOption = async (selectIndex: number, option: string) => {
+      fireEvent.mouseDown(screen.getAllByRole('combobox')[selectIndex]);
       const listbox = await screen.findByRole('listbox');
       fireEvent.click(within(listbox).getByRole('option', { name: option }));
       await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+      await screen.findByText('Alpha Leads');
     };
-    const [statusSelect, classificationSelect] = screen.getAllByRole('combobox');
-    await chooseOption(statusSelect, 'Qualified');
-    await chooseOption(classificationSelect, 'Hot Lead');
+    await chooseOption(0, 'Qualified');
+    await chooseOption(1, 'Hot Lead');
 
     // The list really is filtered now.
     await waitFor(() =>
