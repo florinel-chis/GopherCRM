@@ -142,4 +142,13 @@ export const leadsApi = {
   bulkUpdateStatus: async (leadIds: number[], status: Lead['status']): Promise<void> => {
     await api.post('/leads/bulk/status', { lead_ids: leadIds, status });
   },
+
+  // GET /leads/export as raw CSV (#234). Deliberately takes no filters and
+  // sends no query parameters: the export covers every lead the caller may
+  // list (admin: all live leads, sales: own leads, both in id order), whatever
+  // the list on screen is filtered to.
+  exportLeads: async (): Promise<Blob> => {
+    const response = await api.get<Blob>('/leads/export', { responseType: 'blob' });
+    return response.data;
+  },
 };

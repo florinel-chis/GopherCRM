@@ -904,12 +904,12 @@ the frontend gating.
   `TestListLeads_ByExternalID`, `TestListLeads_ByExternalIDSharedByTwoOwners`,
   `TestListLeads_ByExternalIDTooLong`.
 
-## 3.13 Export leads as CSV (API only)
+## 3.13 Export leads as CSV
 
-`GET /leads/export` (#234) has no UI control yet; an export button is a later frontend ticket. The
-cases below are API-level, driven through Playwright's `request` fixture or Go. Like the customer
-export, the success body is the raw CSV, not the JSON envelope; every refusal or failure before
-the file starts is the JSON envelope.
+`GET /leads/export` (#234) is reached from the lead list's export button (#290, TC-LEAD-074 to
+TC-LEAD-077). TC-LEAD-069 to TC-LEAD-073 are API-level, driven through Playwright's `request`
+fixture or Go. Like the customer export, the success body is the raw CSV, not the JSON envelope;
+every refusal or failure before the file starts is the JSON envelope.
 
 ### TC-LEAD-069 — Admin downloads every live lead as CSV
 - **Priority:** P1
@@ -997,6 +997,63 @@ the file starts is the JSON envelope.
 - **Automation:** automated (backend) — `internal/repository/lead_export_traversal_test.go`
   `TestLeadExportTraversal{SQLite,MySQL}`; `tests/lead_export_csv_test.go`
   `TestLeadExportCSV{SQLite,MySQL}`
+
+### TC-LEAD-074 — The export button is shown per role, with a role-specific label
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** Admin and sales sessions.
+- **Steps:**
+  1. Open `/leads` as admin.
+  2. Open `/leads` as sales.
+- **Expected:** Step 1: one outlined button "Export all leads (CSV)" beside "Add Lead", and no
+  "Export my leads (CSV)". Step 2: "Export my leads (CSV)" and no "Export all leads (CSV)". No
+  filter chips, counts or filter text are shown next to the button. Support and customer users
+  never reach the page (the `/leads` route guard redirects them); the component renders no button
+  whose name contains "export" for either role all the same, and never calls the export.
+- **Automation:** automated (Vitest) — `gocrm-ui/src/pages/leads/LeadList.export.test.tsx`
+  "LeadList CSV export shows the Export all leads (CSV) button to an admin", "… shows the Export my
+  leads (CSV) button to a sales user", "… hides the export button from a support user", "… hides
+  the export button from a customer user"
+
+### TC-LEAD-075 — Clicking the button downloads leads-export.csv, whatever the list filters
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin or sales session; several leads.
+- **Steps:**
+  1. Type a search term and choose a status and a classification on the list.
+  2. Click the export button.
+- **Expected:** One `GET /api/v1/leads/export` with no query parameters (no search, status,
+  classification or sort). The browser saves `leads-export.csv` holding every lead the caller may
+  list (admin: every live lead; sales: its own), not the filtered page. No error snackbar.
+- **Automation:** automated (Vitest) — `gocrm-ui/src/api/endpoints/leads.test.ts` "exportLeads
+  requests GET /leads/export as a blob without query parameters and returns the Blob";
+  `LeadList.export.test.tsx` "LeadList CSV export downloads the export as leads-export.csv when
+  clicked" (attached anchor with `download="leads-export.csv"` and the object URL, removed after the
+  click, the URL revoked on a later tick), "… ignores the list filters when exporting". No E2E spec.
+
+### TC-LEAD-076 — The button is disabled while the export is in flight
+- **Priority:** P2
+- **Type:** functional
+- **Preconditions:** Admin or sales session; a slow export (for example, network throttling).
+- **Steps:**
+  1. Click the export button and look at it before the download starts.
+- **Expected:** The button is disabled until the request settles (success or failure), then
+  enabled again; repeated clicks start no parallel exports.
+- **Automation:** automated (Vitest) — `LeadList.export.test.tsx` "LeadList CSV export disables
+  the button while the export is in flight"
+
+### TC-LEAD-077 — A failed export shows an error and saves no file
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** Admin or sales session; the export answers 403, 429 or 500 (for example, a
+  role changed after sign-in, the rate limit exhausted, or a database failure).
+- **Steps:**
+  1. Click the export button.
+- **Expected:** The error snackbar "Could not export leads." appears; no file is saved (no object
+  URL is created, no download anchor is clicked); the button is enabled again. The server's message
+  in the error body is not shown (the body arrives as a Blob and is not decoded).
+- **Automation:** automated (Vitest) — `LeadList.export.test.tsx` "LeadList CSV export shows an
+  error and saves no file when the export answers 403", "… 500", "… 429"
 
 ---
 

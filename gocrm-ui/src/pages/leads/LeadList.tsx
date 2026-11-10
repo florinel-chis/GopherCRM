@@ -20,6 +20,7 @@ import {
   Add as AddIcon,
   Search as SearchIcon,
   PersonAdd as ConvertIcon,
+  FileDownload as ExportIcon,
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { RowActionsMenu } from '@/components/RowActionsMenu';
@@ -27,6 +28,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLeadDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { useAuth } from '@/hooks/useAuth';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi, type LeadFilters } from '@/api/endpoints';
 import { leadConversionRefusal } from '@/api/endpoints/configurations';
@@ -91,7 +93,20 @@ export const Component: React.FC = () => {
   const { getLeadConversion, refreshConfigurations } = useConfiguration();
   const conversion = getLeadConversion();
   const conversionSettings = conversion.status === 'ready' ? conversion.settings : null;
-  
+  const { user } = useAuth();
+
+  // GET /leads/export answers admin (every live lead) and sales (own leads)
+  // and ignores the list's filters, so the label says what is downloaded and
+  // no filter state is shown beside it. Other roles never see the button (the
+  // /leads route guard already keeps them off this page; the API answers 403).
+  const exportLabel =
+    user?.role === 'admin'
+      ? 'Export all leads (CSV)'
+      : user?.role === 'sales'
+        ? 'Export my leads (CSV)'
+        : null;
+  const [exporting, setExporting] = useState(false);
+
   const [filters, setFilters] = useState<LeadFilters>({
     page: 1,
     limit: 10,
@@ -278,6 +293,31 @@ export const Component: React.FC = () => {
     resetConvertMutation();
   }, [resetConvertMutation]);
 
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      // No filters are passed on purpose: the export is the caller's whole
+      // scope, whatever the list shows.
+      const blob = await leadsApi.exportLeads();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'leads-export.csv';
+      // Firefox ignores a click on a detached anchor, and revoking the URL in
+      // the same tick can cancel the download, so attach it and revoke later.
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // The error body arrives as a Blob (responseType 'blob'), which
+      // getAPIError cannot read, so a fixed message is shown.
+      showError('Could not export leads.');
+    } finally {
+      setExporting(false);
+    }
+  }, [showError]);
+
   const handleSearch = useCallback((value: string) => {
     setFilters(prev => ({ ...prev, search: value, page: 1 }));
   }, []);
@@ -323,13 +363,25 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Leads</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => navigate('/leads/new')}
-        >
-          Add Lead
-        </Button>
+        <Box display="flex" gap={2}>
+          {exportLabel && (
+            <Button
+              variant="outlined"
+              startIcon={<ExportIcon />}
+              onClick={() => void handleExport()}
+              disabled={exporting}
+            >
+              {exportLabel}
+            </Button>
+          )}
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate('/leads/new')}
+          >
+            Add Lead
+          </Button>
+        </Box>
       </Box>
 
       {conversion.status === 'unavailable' && (
