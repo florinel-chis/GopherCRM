@@ -223,8 +223,8 @@ func (e *ticketMailEnv) serviceWithName(m mailer.Mailer, source MailProductNameS
 }
 
 func TestMailProductNameTicketSubject(t *testing.T) {
-	db := openTicketMailSQLite(t)
-
+	// newTicketMailEnv gives every customer the same canary address, so each
+	// env gets its own database (customers.email is unique).
 	for _, tc := range []struct {
 		name     string
 		stub     *mailNameStub
@@ -238,7 +238,7 @@ func TestMailProductNameTicketSubject(t *testing.T) {
 		{"without WithTicketProductName", nil, false, DefaultMailProductName},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := newTicketMailEnv(t, db)
+			e := newTicketMailEnv(t, openTicketMailSQLite(t))
 			recorder := &ticketMailRecorder{}
 			var source MailProductNameSource
 			if tc.withName {
@@ -291,7 +291,7 @@ func TestMailProductNameTicketSubject(t *testing.T) {
 			}, true, models.TicketMailErrorNoRecipient},
 		} {
 			t.Run(skip.name, func(t *testing.T) {
-				e := newTicketMailEnv(t, db)
+				e := newTicketMailEnv(t, openTicketMailSQLite(t))
 				skip.prepare(t, e)
 				stub := &mailNameStub{value: "Acme Ltd"}
 				recorder := &ticketMailRecorder{}
@@ -478,9 +478,9 @@ func TestMailProductNameLogsOmitValue(t *testing.T) {
 	})
 
 	t.Run("ticket send path", func(t *testing.T) {
-		db := openTicketMailSQLite(t)
 		for name, value := range values {
-			e := newTicketMailEnv(t, db)
+			// One database per env: every env's customer shares the canary address.
+			e := newTicketMailEnv(t, openTicketMailSQLite(t))
 			output, hook := capturePrivacyLogs(t)
 			recorder := &ticketMailRecorder{}
 			svc := e.serviceWithName(recorder, &mailNameStub{value: value})
