@@ -99,13 +99,17 @@ To run it against your own repository:
      (it must be a subset of `issues`);
    - `completion_target`: `"pr"` to stop at a reviewed, green PR, or `"merge"` to let the runner merge it.
 2. Leave `required_checks` (line 45) alone. The policy loader refuses a configuration that drops any of
-   the six upstream check names (`REQUIRED_CHECKS` in `gophercrm_runner/config.py:9-13`, enforced at
-   `:202-203`), and the runner reads the pull request's own check results: it waits until a successful
-   check with each of those exact names is present (`check_state`, `gophercrm_runner/gates.py:44-63`,
-   used by the CI wait in `engine.py:1072` and by `merge_gate` at `gates.py:77`). Branch protection does
-   not change what the runner looks for. A fork that runs the runner must therefore keep emitting those
-   six check names from its CI (the job `name:` values in `.github/workflows/ci.yml:70,93,174,206`), or
-   change `REQUIRED_CHECKS`, its `config.json` and its branch protection together.
+   the four upstream pull-request check names (`REQUIRED_CHECKS` in `gophercrm_runner/config.py`:
+   hygiene, backend, frontend and the database gates job; the browser suite is release-only and not
+   a pull-request check), and the runner reads the pull request's own check results: it waits until a
+   successful check with each of those exact names is present (`check_state`, `gophercrm_runner/gates.py`,
+   used by the CI wait and by `merge_gate`). Branch protection does not change what the runner looks
+   for. A fork that runs the runner must therefore keep emitting those check names from its CI (the
+   job `name:` values in `.github/workflows/ci.yml`), or change `REQUIRED_CHECKS`, its `config.json`
+   and its branch protection together. A `config.json` deployed before 11 November 2026 that still lists
+   the three `E2E (Playwright on …)` names must have them replaced by `Database gates (MariaDB 10.11)`,
+   not merely extended: the loader would accept the longer list, but `check_state` would then wait
+   forever for browser checks that a pull request never produces.
 3. Use fresh private state outside the checkout; the loader refuses a `state_dir` inside it
    (`gophercrm_runner/config.py:213-214`). Never copy another installation's state directory or journals.
 4. Run `gophercrm-runner doctor --config <config.json>` and resolve every finding before the first
@@ -219,7 +223,7 @@ The legacy queue requires a frozen contract for every ticket. Pre-freezing multi
 
 The default repair budget is three rounds shared by local test failures, review findings, and actionable CI failures. Every repair creates a new commit and repeats local validation and independent review. When a required check fails while other jobs of the same workflow run are still in progress, the runner waits, within the CI deadline, for the whole workflow run to finish before it collects the failed-job logs. Authentication failures, missing database coverage, cancellation, exhausted repairs, missing CI checks, and unrecognized failures stop execution and preserve the journal/worktree. GitHub transport or API failures (a failed `gh` invocation, such as a TLS handshake timeout) stop execution as environment failures, are recorded with the `environment` category, and are resumed by running the same command again; they never consume a provider call or a repair round. An exhausted repair budget never grants another automatic round; the execution continues only through an audited maintainer commit adopted with `adopt-commit` (see [Inspect and resume](#inspect-and-resume) and the [operations runbook](OPERATIONS.md#adopt-a-maintainer-commit)).
 
-All six existing repository CI checks must succeed. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
+All four pull-request CI checks (hygiene, backend, frontend, database gates) must succeed; the browser suite is release-only and is not a pull-request check. Additional failing checks also block merging. Tests and review must reference the exact PR head. The runner checks the base commit, draft state, mergeability, and GitHub review requirements, then uses `gh pr merge --squash --match-head-commit`. It never uses an admin bypass or force push. GitHub branch protection/merge queue remains responsible for an atomic check against concurrent changes to main.
 
 ## Inspect and resume
 

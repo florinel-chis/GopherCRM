@@ -46,9 +46,7 @@
     "Repository hygiene",
     "Backend (build, vet, test)",
     "Frontend (build, lint, test)",
-    "E2E (Playwright on MySQL 8)",
-    "E2E (Playwright on MariaDB 10.11)",
-    "E2E (Playwright on SQLite)"
+    "Database gates (MariaDB 10.11)"
   ],
   "test_commands": [
     [

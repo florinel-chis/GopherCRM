@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -515,6 +516,39 @@ class ValidationSelectionTests(unittest.TestCase):
             self.assertIn("profile == 'bounded'", line)
         self.assertEqual(ci.count('[ "$VALIDATION_PROFILE" = full ]'), ci.count('[ "$VALIDATION_PROFILE" = bounded ]'))
         self.assertIn('[ "$VALIDATION_PROFILE" = bounded ]', ci)
+
+    def test_browser_jobs_never_run_in_pull_request_ci_and_the_required_names_agree(self):
+        # 11 November 2026: end-to-end tests run for releases only, never in pull-request CI.
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        jobs = ci.split('\njobs:\n', 1)[1]
+        blocks, current = {}, None
+        for line in jobs.splitlines():
+            top = re.fullmatch(r'  ([a-z0-9-]+):', line)
+            if top:
+                current = top.group(1)
+                blocks[current] = ''
+            elif current is not None:
+                blocks[current] += line + '\n'
+        e2e = blocks['e2e']
+        self.assertIn('if: ${{ !cancelled() && inputs.full == true }}', e2e)
+        self.assertNotIn('inputs.full', ci.split('workflow_dispatch:')[1].split('pull_request:')[0])
+        # Playwright appears in no other job, and no other job carries an E2E name.
+        for name, body in blocks.items():
+            if name != 'e2e':
+                self.assertNotIn('playwright', body.lower(), name)
+                self.assertNotIn('name: E2E', body, name)
+        self.assertIn('name: Database gates (MariaDB 10.11)', blocks['db-gates'])
+        self.assertIn('if: ${{ !cancelled() }}', blocks['db-gates'])
+        # The runner's required checks and its example configuration name exactly the pull-request checks.
+        config = (ROOT / 'automation/langflow/gophercrm_runner/config.py').read_text()
+        required = config.split('REQUIRED_CHECKS = (', 1)[1].split('\n)\n', 1)[0]
+        names = ['Repository hygiene', 'Backend (build, vet, test)', 'Frontend (build, lint, test)', 'Database gates (MariaDB 10.11)']
+        # The whole tuple, not just presence: a misspelt required name would make the runner wait forever.
+        self.assertEqual(re.findall(r"'([^']+)'", required), names)
+        example = json.loads((ROOT / 'automation/langflow/gophercrm_runner/config.example.json').read_text())
+        self.assertEqual(example['required_checks'], names)
+        for name in example['required_checks']:
+            self.assertIn(f'name: {name}', ci)
 
     def test_bounded_run_keeps_specs_recorded_outside_features(self):
         with tempfile.TemporaryDirectory() as folder:
