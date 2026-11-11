@@ -55,6 +55,20 @@ class GateTests(unittest.TestCase):
         checks = green_checks() + [dict(name='Extra check', status='COMPLETED', conclusion='FAILURE')]
         self.assertEqual(check_state(checks, REQUIRED_CHECKS), 'failed')
 
+    def test_optional_browser_checks_never_block_or_satisfy_the_gate(self):
+        # 11 November 2026: the browser jobs are release-only, so a pull request has no E2E check run at all.
+        self.assertFalse(any(name.startswith('E2E') for name in REQUIRED_CHECKS))
+        self.assertIn('Database gates (MariaDB 10.11)', REQUIRED_CHECKS)
+        self.assertEqual(check_state(green_checks(), REQUIRED_CHECKS), 'success')
+        skipped = green_checks() + [{'__typename': 'CheckRun', 'name': 'E2E (Playwright on SQLite)', 'status': 'COMPLETED', 'conclusion': 'SKIPPED'}]
+        self.assertEqual(check_state(skipped, REQUIRED_CHECKS), 'success')
+        failed = green_checks() + [{'__typename': 'CheckRun', 'name': 'E2E (Playwright on MySQL 8)', 'status': 'COMPLETED', 'conclusion': 'FAILURE'}]
+        self.assertEqual(check_state(failed, REQUIRED_CHECKS), 'failed')
+        running = green_checks() + [{'__typename': 'CheckRun', 'name': 'E2E (Playwright on MySQL 8)', 'status': 'IN_PROGRESS'}]
+        self.assertEqual(check_state(running, REQUIRED_CHECKS), 'pending')
+        browsers_only = [dict(c, name=c['name'].replace('Database gates (MariaDB 10.11)', 'E2E (Playwright on MariaDB 10.11)')) for c in green_checks()]
+        self.assertEqual(check_state(browsers_only, REQUIRED_CHECKS), 'pending')
+
     def test_merge_rejects_stale_review_head_base_and_github_blocks(self):
         record = dict(head='head', tested_head='head', reviewed_head='head', base='base')
         merge_gate(record, ready_pr(), REQUIRED_CHECKS)
