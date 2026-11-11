@@ -35,5 +35,5 @@ func TestLogMailerReportsLogOnly(t *testing.T) {
 
 type plainMailer struct{}
 
-func (plainMailer) SendPasswordReset(string, string) error { return nil }
-func (plainMailer) Send(string, string, string) error      { return nil }
+func (plainMailer) SendPasswordReset(string, string, string) error { return nil }
+func (plainMailer) Send(string, string, string) error              { return nil }

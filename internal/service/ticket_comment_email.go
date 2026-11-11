@@ -47,10 +47,12 @@ var ErrTicketCommentMailUnavailable = errors.New("ticket comment mail is not ava
 // Nothing is written and nothing is sent.
 var ErrTicketCommentEmailNotAllowed = errors.New("only a staff comment that is not an internal note may be emailed to the customer")
 
-// TicketCommentEmailSubject is the fixed subject of a ticket comment mail: no
-// request value reaches a header.
-func TicketCommentEmailSubject(ticketID uint) string {
-	return fmt.Sprintf("Ticket %s from GopherCRM", models.TicketNumber(ticketID))
+// TicketCommentEmailSubject is the subject of a ticket comment mail: the ticket
+// number and the product name (#292), which the caller resolves with
+// ResolveMailProductName (the stored general.company_name, else "GopherCRM").
+// No request value reaches a header.
+func TicketCommentEmailSubject(ticketID uint, productName string) string {
+	return fmt.Sprintf("Ticket %s from %s", models.TicketNumber(ticketID), productName)
 }
 
 // RenderTicketCommentEmail is the plaintext body: the ticket number, the ticket
@@ -218,9 +220,14 @@ func (s *ticketService) sendTicketComment(ctx context.Context, ticket *models.Ti
 		return repository.TicketMailDeliveryOutcome{Status: models.TicketMailStatusSkipped, ErrorCode: models.TicketMailErrorNoRecipient}
 	}
 
+	// The product name is read only now that a send will happen, after the
+	// commit and with no transaction held; a failed read falls back to
+	// "GopherCRM" and never blocks the send (#292).
+	subject := TicketCommentEmailSubject(ticket.ID, ResolveMailProductName(s.productName))
+
 	// The mailer's own error is classified, never logged or stored: a
 	// transport error may quote the address.
-	if err := s.mailer.Send(to, TicketCommentEmailSubject(ticket.ID), RenderTicketCommentEmail(ticket.ID, ticket.Title, comment.Body)); err != nil {
+	if err := s.mailer.Send(to, subject, RenderTicketCommentEmail(ticket.ID, ticket.Title, comment.Body)); err != nil {
 		return repository.TicketMailDeliveryOutcome{Status: models.TicketMailStatusFailed, ErrorCode: ticketMailErrorCode(err)}
 	}
 	if reporter, ok := s.mailer.(mailer.LogOnlyReporter); ok && reporter.LogsOnly() {

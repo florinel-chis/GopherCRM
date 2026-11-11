@@ -46,7 +46,7 @@ func TestSMTPInternationalisedDomains(t *testing.T) {
 			addr, done := startRelay(t, relayOptions{smtputf8: true})
 			m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
 			err, _ := sendWithin(t, func() error {
-				return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+				return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 			})
 			require.NoError(t, err)
 			s := awaitSession(t, done)
@@ -69,7 +69,7 @@ func TestSMTPInternationalisedDomains(t *testing.T) {
 			addr, done = startRelay(t, relayOptions{})
 			m = newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{})
 			resetErr, _ := sendWithin(t, func() error {
-				return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+				return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 			})
 			require.Error(t, resetErr)
 			assert.ErrorIs(t, resetErr, ErrInvalidAddress)
@@ -168,7 +168,7 @@ func TestSMTPInternationalisedDomains(t *testing.T) {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tc.want)
 				resetErr, _ := sendWithin(t, func() error {
-					return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+					return m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 				})
 				require.Error(t, resetErr)
 				assert.ErrorIs(t, resetErr, tc.want)

@@ -28,7 +28,9 @@ type quoteService struct {
 }
 
 // NewQuoteService wires the quotes module. currency is the configuration read
-// behind the default currency (deals.default_currency); m delivers the quote
+// behind the default currency (deals.default_currency) and, through
+// ResolveMailProductName, the product name of the quote email subject
+// (general.company_name, #292; nil means "GopherCRM"); m delivers the quote
 // email and may be nil, in which case every email is refused as a delivery
 // failure.
 func NewQuoteService(

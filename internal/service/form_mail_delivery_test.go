@@ -41,7 +41,7 @@ type deliveryMailer struct {
 	calls  atomic.Int64
 }
 
-func (m *deliveryMailer) SendPasswordReset(string, string) error { return nil }
+func (m *deliveryMailer) SendPasswordReset(string, string, string) error { return nil }
 
 func (m *deliveryMailer) Send(to, subject, body string) error {
 	m.calls.Add(1)

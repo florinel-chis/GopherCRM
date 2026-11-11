@@ -59,7 +59,7 @@ func TestQuoteEmailDelivery(t *testing.T) {
 		mail := messages[0]
 		assert.Equal(t, current, mail.To)
 		assert.Equal(t, fmt.Sprintf("Quote Q-%06d from GopherCRM", quote.ID), mail.Subject)
-		assert.Equal(t, QuoteEmailSubject(quote.ID), mail.Subject)
+		assert.Equal(t, QuoteEmailSubject(quote.ID, DefaultMailProductName), mail.Subject)
 		for _, fragment := range []string{
 			fmt.Sprintf("Quote Q-%06d", quote.ID),
 			"Title: Engine licences",

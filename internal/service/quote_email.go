@@ -9,10 +9,12 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
-// QuoteEmailSubject is the fixed subject of a quote email: no request value
+// QuoteEmailSubject is the subject of a quote email: the quote number and the
+// product name (#292), which the caller resolves with ResolveMailProductName
+// (the stored general.company_name, else "GopherCRM"). No request value
 // reaches a header, and the mailer refuses CR and LF regardless.
-func QuoteEmailSubject(quoteID uint) string {
-	return fmt.Sprintf("Quote %s from GopherCRM", models.QuoteNumber(quoteID))
+func QuoteEmailSubject(quoteID uint, productName string) string {
+	return fmt.Sprintf("Quote %s from %s", models.QuoteNumber(quoteID), productName)
 }
 
 // Email is the flow of the design. The latest history id is read first, then
@@ -78,7 +80,10 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 		logger.WithError(utils.LogError(err)).Error("Quote email failed")
 		return nil, err
 	}
-	if err := s.mailer.Send(to, QuoteEmailSubject(quote.ID), RenderQuoteEmail(quote)); err != nil {
+	// The product name is read now, with no transaction held; a failed read
+	// falls back to "GopherCRM" and never blocks the send (#292).
+	productName := ResolveMailProductName(s.currency)
+	if err := s.mailer.Send(to, QuoteEmailSubject(quote.ID, productName), RenderQuoteEmail(quote)); err != nil {
 		// The mailer's own error is kept for errors.Is but not logged here:
 		// a transport error may quote the address.
 		logger.Error("Quote email failed: mail delivery error")

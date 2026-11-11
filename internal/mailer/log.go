@@ -15,7 +15,9 @@ func NewLogMailer() *LogMailer {
 // Send means the message was logged (see LogOnlyReporter).
 func (m *LogMailer) LogsOnly() bool { return true }
 
-func (m *LogMailer) SendPasswordReset(to, resetURL string) error {
+// SendPasswordReset logs the recipient and the redacted link. The product name
+// is not logged: it changes nothing a developer needs to see.
+func (m *LogMailer) SendPasswordReset(to, resetURL, _ string) error {
 	log().
 		WithField("to", to).
 		WithField("reset_url", redactResetURL(resetURL)).

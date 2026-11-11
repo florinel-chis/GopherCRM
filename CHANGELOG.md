@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VALIDATION_ERROR`; customer, sales and unassigned support callers keep their 403). The comment,
   its `first_responded_at` stamp and a `pending` delivery record commit in one transaction; after
   the commit one plaintext mail goes to the ticket customer's current address (subject
-  `Ticket T-000042 from GopherCRM`; the ticket number, the title and this comment's text only), and
+  `Ticket T-000042 from GopherCRM`, since #292 the configured product name; the ticket number, the title and this comment's text only), and
   the record is stamped `sent`, `failed` (`mail_failed`, `timeout`, `invalid_recipient`,
   `lookup_failed`), `log_only` (no `SMTP_HOST`) or `skipped` (`no_mailer`, `no_recipient`,
   `customer_unavailable` for an erased or missing customer). The 201 carries it as `delivery`
@@ -158,6 +158,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mail names the configured product (#292, backend).** The password reset mail (subject and
+  first body line), the quote mail subject and the ticket reply mail subject now use the stored
+  `general.company_name` setting, read at send time, instead of the fixed `GopherCRM`. The value is
+  used trimmed when it is non-blank, valid UTF-8, free of control characters and at most 100
+  characters; otherwise, and when the setting is missing or cannot be read, the mail names
+  `GopherCRM` and is still sent. A fallback other than a blank value logs one warning with the key
+  and a reason, never the value. No configuration row is written, seeded or migrated. For forks:
+  `Mailer.SendPasswordReset` takes a third `productName` argument, and `QuoteEmailSubject` and
+  `TicketCommentEmailSubject` take the name as a second argument.
 - **CI runs the full browser suite only for a release.** Pull requests, the merge queue and
   pushes to `main` run the smoke spec and the changed features' specs on every database, even
   when a change touches shared code, and keep the backend and database gates. A release still

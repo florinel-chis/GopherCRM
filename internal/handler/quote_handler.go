@@ -698,7 +698,7 @@ func (h *QuoteHandler) History(c *gin.Context) {
 
 // Email godoc
 // @Summary Email a quote to its customer
-// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from GopherCRM' for quote 42.
+// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
 // @Description Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
 // @Tags quotes
 // @Produce json

@@ -122,7 +122,7 @@ type quoteTestMailer struct {
 	beforeSend func(to, subject, body string) error
 }
 
-func (m *quoteTestMailer) SendPasswordReset(to, resetURL string) error {
+func (m *quoteTestMailer) SendPasswordReset(to, resetURL, _ string) error {
 	return m.Send(to, "password reset", resetURL)
 }
 

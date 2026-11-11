@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -46,8 +48,11 @@ func validateHeaders(to, subject string) error {
 type Mailer interface {
 	// SendPasswordReset delivers a password-reset link to the recipient.
 	// resetURL contains the raw single-use token; implementations must never
-	// log it — only the mail transport may see the full link.
-	SendPasswordReset(to, resetURL string) error
+	// log it — only the mail transport may see the full link. productName
+	// is the product the subject and the greeting name (#292); a blank value,
+	// or one holding CR, LF or another control character, is replaced with
+	// DefaultProductName.
+	SendPasswordReset(to, resetURL, productName string) error
 
 	// Send delivers a plaintext message. Bodies may embed single-use links,
 	// so implementations must never log the body — only the recipient and
@@ -70,6 +75,26 @@ func NewFromConfig(cfg config.SMTPConfig) Mailer {
 		return NewSMTPMailer(cfg)
 	}
 	return NewLogMailer()
+}
+
+// DefaultProductName is the product name a password reset mail uses when the
+// caller passes none it can put in a header.
+const DefaultProductName = "GopherCRM"
+
+// passwordResetProductName trims productName and returns it, or
+// DefaultProductName when it is blank or holds a control character (CR and LF
+// included), which would break or inject into the Subject header.
+func passwordResetProductName(productName string) string {
+	name := strings.TrimSpace(productName)
+	if name == "" || !utf8.ValidString(name) {
+		return DefaultProductName
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return DefaultProductName
+		}
+	}
+	return name
 }
 
 // log returns the application logger, falling back to the logrus standard

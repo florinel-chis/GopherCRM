@@ -47,7 +47,8 @@ asserts the core outcome, the rest is pinned in Vitest).
   conditional claim (`WHERE id = ? AND status = <from>`) plus one history row in one transaction;
   `draft → sent` counts the lines after the claim and rolls back on zero.
 - **The email is a plaintext rendering, not the printable document.** It goes to the linked
-  customer's current address with a fixed subject; nothing personal is copied onto the quote.
+  customer's current address with the subject `Quote Q-… from <general.company_name>`, or
+  `GopherCRM` when that setting is blank (#292); nothing personal is copied onto the quote.
 - **Deals are not touched by quotes.** Accepting a quote changes neither the deal's stage nor its
   amount; expiry is manual (acceptance is refused after `valid_until`).
 - **Run the MySQL roots with `TEST_MYSQL_DSN`.** `TestQuoteStatusConcurrentMySQL` and
@@ -275,7 +276,9 @@ asserts the core outcome, the rest is pinned in Vitest).
      customer is soft-deleted; one whose customer was erased.
   3. Make the mailer fail and email a sent quote.
 - **Expected:** Step 1: `Mailer.Send` is called once with the *current* address, the subject exactly
-  `Quote Q-000042 from GopherCRM` and a body listing the number, title, every line (description,
+  `Quote Q-000042 from <general.company_name>` (the stored name read at send time, trimmed; or
+  `GopherCRM` when it is blank, missing, unreadable, holds a control character or exceeds 100
+  characters — #292) and a body listing the number, title, every line (description,
   quantity, unit price, discount, line total), subtotal, discount, total with currency,
   `valid_until` and notes; **200** with `last_emailed_at` set by a conditional update. Step 2:
   **409** `CONFLICT` each time and no mail. Step 3: **502** `MAIL_DELIVERY_FAILED` and

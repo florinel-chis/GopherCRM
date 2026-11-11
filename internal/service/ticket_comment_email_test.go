@@ -124,7 +124,7 @@ type ticketMailRecorder struct {
 	onSend   func()
 }
 
-func (m *ticketMailRecorder) SendPasswordReset(to, resetURL string) error {
+func (m *ticketMailRecorder) SendPasswordReset(to, resetURL, _ string) error {
 	return m.Send(to, "reset", resetURL)
 }
 
@@ -264,7 +264,8 @@ func armAfterDeliveryInsert(t *testing.T, db *gorm.DB, flag *atomic.Bool) {
 }
 
 func TestTicketCommentEmailSubjectAndBody(t *testing.T) {
-	assert.Equal(t, "Ticket T-000042 from GopherCRM", TicketCommentEmailSubject(42))
+	assert.Equal(t, "Ticket T-000042 from GopherCRM", TicketCommentEmailSubject(42, DefaultMailProductName))
+	assert.Equal(t, "Ticket T-000042 from Acme Ltd", TicketCommentEmailSubject(42, "Acme Ltd"))
 	body := RenderTicketCommentEmail(42, "Title here", "Reply here")
 	assert.Contains(t, body, "T-000042")
 	assert.Contains(t, body, "Title here")
@@ -287,7 +288,7 @@ func TestTicketCommentEmailDelivery(t *testing.T) {
 		assert.Equal(t, ticketMailCanaryEmail, strings.ToLower(message.To), "the customer's current address")
 		assert.Equal(t, strings.TrimSpace(message.To), message.To, "trimmed")
 		assert.Equal(t, fmt.Sprintf("Ticket %s from GopherCRM", models.TicketNumber(e.ticket.ID)), message.Subject)
-		assert.Equal(t, TicketCommentEmailSubject(e.ticket.ID), message.Subject)
+		assert.Equal(t, TicketCommentEmailSubject(e.ticket.ID, DefaultMailProductName), message.Subject)
 		assert.Contains(t, message.Body, models.TicketNumber(e.ticket.ID))
 		assert.Contains(t, message.Body, ticketMailCanaryTitle)
 		assert.Contains(t, message.Body, body)

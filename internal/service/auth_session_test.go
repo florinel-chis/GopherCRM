@@ -26,8 +26,8 @@ type mockMailer struct {
 	mock.Mock
 }
 
-func (m *mockMailer) SendPasswordReset(to, resetURL string) error {
-	args := m.Called(to, resetURL)
+func (m *mockMailer) SendPasswordReset(to, resetURL, productName string) error {
+	args := m.Called(to, resetURL, productName)
 	return args.Error(0)
 }
 
@@ -553,7 +553,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 		d.mailer.On("SendPasswordReset", user.Email, mock.MatchedBy(func(u string) bool {
 			sentURL = u
 			return strings.HasPrefix(u, "http://localhost:5173/reset-password?token=")
-		})).Return(nil)
+		}), DefaultMailProductName).Return(nil)
 
 		err := d.svc.RequestPasswordReset(user.Email)
 
@@ -580,7 +580,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 
 		assert.NoError(t, err)
 		d.resetRepo.AssertNotCalled(t, "Create", mock.Anything)
-		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything)
+		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("inactive account succeeds silently without mail", func(t *testing.T) {
@@ -593,7 +593,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 
 		assert.NoError(t, err)
 		d.resetRepo.AssertNotCalled(t, "Create", mock.Anything)
-		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything)
+		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("mailer failure is swallowed to keep responses uniform", func(t *testing.T) {
@@ -602,7 +602,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
 		d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil)
 		d.resetRepo.On("Create", mock.Anything).Return(nil)
-		d.mailer.On("SendPasswordReset", user.Email, mock.Anything).Return(errors.New("smtp down"))
+		d.mailer.On("SendPasswordReset", user.Email, mock.Anything, mock.Anything).Return(errors.New("smtp down"))
 
 		err := d.svc.RequestPasswordReset(user.Email)
 

@@ -51,7 +51,7 @@ type fakeFormMailer struct {
 	err  error
 }
 
-func (m *fakeFormMailer) SendPasswordReset(to, resetURL string) error {
+func (m *fakeFormMailer) SendPasswordReset(to, resetURL, _ string) error {
 	return m.Send(to, "password reset", resetURL)
 }
 
