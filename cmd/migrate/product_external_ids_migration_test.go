@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -63,23 +62,8 @@ func TestProductExternalIDsMigrationFiles(t *testing.T) {
 	assert.NotContains(t, body, "sku", "products.sku is not touched")
 	assert.Contains(t, downSQL, "drop table if exists product_external_ids;")
 	assert.Equal(t, 1, strings.Count(downSQL, "drop table"), "rollback drops one table")
-
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestCustomerExternalIDsMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, productExternalIDsName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, productExternalIDsVersion, version)
-	assert.Equal(t, productExternalIDsVersion, latestMigrationVersion)
 	assert.Greater(t, productExternalIDsVersion, productExternalIDsPreviousVersion)
+	// The newest-migration assertion moved to TestTicketMailDeliveriesMigrationFiles (#219).
 
 	source, err := os.ReadFile("main_test.go")
 	require.NoError(t, err)
@@ -209,7 +193,9 @@ func TestProductExternalIDsMigration(t *testing.T) {
 		ids := insertMigrationProducts(t, tdb.sql, "fresh")
 		assertProductMappingsCaseSensitive(t, tdb.sql, ids[0])
 
-		// Rollback of this migration alone, then reapply.
+		// Rollback of this migration alone, then reapply. The migrations that
+		// sort after it (#219) are rolled back to it first.
+		require.NoError(t, tdb.m.Migrate(productExternalIDsVersion))
 		tablesBefore := listTables(t, tdb.sql, tdb.name)
 		require.NoError(t, tdb.m.Steps(-1))
 		assert.Equal(t, without(tablesBefore, []string{productExternalIDsTable}), listTables(t, tdb.sql, tdb.name))

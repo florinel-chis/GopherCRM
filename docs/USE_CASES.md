@@ -452,7 +452,7 @@ planning around an issue number.
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:218` | #215 |
 | Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #259 |
-| Customer-visible ticket replies by email | 4 | no ticket path sends mail | #219 |
+| Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |

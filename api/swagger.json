@@ -22961,7 +22961,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a ticket. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. Its comments are left in place but are no longer reachable through the API.",
+                "description": "Soft-delete a ticket. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. Its comments are left in place but are no longer reachable through the API. The ticket's comment mail delivery records are hard-deleted in the same transaction.",
                 "produces": [
                     "application/json"
                 ],
@@ -23261,7 +23261,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. No notification or email is sent.",
+                "description": "Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. Without email_customer (absent or false) no notification or email is sent and the response has no delivery key. With email_customer true (only on a comment that is not an internal note; with is_internal true it is 400 VALIDATION_ERROR and nothing is written), the comment, the first_responded_at stamp and a pending delivery record are written in one transaction; after the commit the ticket's customer is read live and one plaintext mail is sent to the customer's current address, with the subject Ticket T-000042 from GopherCRM and a body holding the ticket number, the title and this comment's text only. The delivery record is then stamped sent, failed (error_code mail_failed, timeout, invalid_recipient or lookup_failed), log_only (no SMTP_HOST, nothing delivered) or skipped (no_mailer, no_recipient, or customer_unavailable for an erased or missing customer) and returned as delivery in this response only; it holds ids, a status and an error code, never an address or content. The answer is 201 whatever the mail outcome, and there is no automatic retry.",
                 "consumes": [
                     "application/json"
                 ],
@@ -23292,7 +23292,7 @@
                 ],
                 "responses": {
                     "201": {
-                        "description": "The new comment with its author",
+                        "description": "The new comment with its author; with email_customer true it also carries delivery, the outcome of the mail",
                         "schema": {
                             "allOf": [
                                 {
@@ -23310,7 +23310,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the body is not valid JSON, or body, comment and content are all blank",
+                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the body is not valid JSON, or body, comment and content are all blank; VALIDATION_ERROR (error.details.email_customer) when email_customer and is_internal are both true, nothing is written",
                         "schema": {
                             "allOf": [
                                 {
@@ -28590,6 +28590,15 @@
                     "x-nullable": true,
                     "readOnly": true
                 },
+                "delivery": {
+                    "description": "Outcome of emailing this comment to the ticket's customer. Present only on the 201 of POST /tickets/{id}/comments sent with email_customer true; never stored on the comment and never returned by a read.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.TicketMailDelivery"
+                        }
+                    ],
+                    "readOnly": true
+                },
                 "id": {
                     "description": "Unique identifier, assigned by the server on creation. Read-only.",
                     "type": "integer",
@@ -28626,6 +28635,84 @@
                     "type": "integer",
                     "readOnly": true,
                     "example": 5
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.TicketMailDelivery": {
+            "description": "Outcome of emailing one staff ticket comment to the ticket's customer. Returned only on the 201 of POST /tickets/{id}/comments with email_customer true. Holds ids, a status, an error code and timestamps; never an address or content.",
+            "type": "object",
+            "properties": {
+                "comment_id": {
+                    "description": "The emailed comment; at most one delivery per comment.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 108
+                },
+                "created_at": {
+                    "description": "When the row was written (RFC 3339), in the comment's transaction. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-13T09:30:00Z"
+                },
+                "customer_id": {
+                    "description": "The ticket's customer when the comment was written (an id, never an address).",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 3
+                },
+                "error_code": {
+                    "description": "Why a delivery failed (mail_failed, timeout, invalid_recipient, lookup_failed) or was skipped (no_mailer, no_recipient, customer_unavailable). Empty otherwise.",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "mail_failed",
+                        "timeout",
+                        "invalid_recipient",
+                        "lookup_failed",
+                        "no_mailer",
+                        "no_recipient",
+                        "customer_unavailable"
+                    ],
+                    "readOnly": true,
+                    "example": ""
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 17
+                },
+                "sent_at": {
+                    "description": "When the relay accepted the message (RFC 3339); null unless status is sent.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-13T09:30:01Z"
+                },
+                "status": {
+                    "description": "Delivery state: pending (written with the comment; left so only when the outcome could not be recorded), sent (accepted by the relay), failed, log_only (logged by the development mailer, nothing delivered) or skipped (nothing attempted).",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "sent",
+                        "failed",
+                        "log_only",
+                        "skipped"
+                    ],
+                    "readOnly": true,
+                    "example": "sent"
+                },
+                "ticket_id": {
+                    "description": "Ticket the comment belongs to.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 42
+                },
+                "updated_at": {
+                    "description": "When the row last changed state (RFC 3339): the outcome stamp. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-13T09:30:01Z"
                 }
             }
         },
@@ -30295,6 +30382,11 @@
                     "description": "Alias of body, used only when body and comment are blank.",
                     "type": "string",
                     "example": ""
+                },
+                "email_customer": {
+                    "description": "True to email this comment to the ticket's customer after it is saved. Only on a comment that is not an internal note (true together with is_internal is 400), and only for admin or the assigned support user. Defaults to false. The mail goes to the customer's current address and holds the ticket number, title and this comment's text; the 201 carries the outcome in delivery, whatever it is.",
+                    "type": "boolean",
+                    "example": false
                 },
                 "is_internal": {
                     "description": "True for an internal note, visible to staff only and never returned to customer callers. Defaults to false.",

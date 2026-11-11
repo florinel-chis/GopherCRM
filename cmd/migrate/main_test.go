@@ -120,7 +120,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"aeo_answers", "aeo_citations", "forms", "form_submissions", "form_confirmation_tokens", "form_mail_deliveries",
 		"products", "quotes", "quote_lines", "quote_status_changes",
 		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
-		"customer_external_ids", "product_external_ids",
+		"customer_external_ids", "product_external_ids", "ticket_mail_deliveries",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())

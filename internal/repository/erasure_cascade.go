@@ -180,6 +180,48 @@ func purgeCustomerExternalIDs(tx *gorm.DB, customerID uint) error {
 	return nil
 }
 
+// customerAfterScrub is the customer plan's AfterScrub: the external identity
+// mappings (#212), then the ticket comment mail delivery records (#219).
+func customerAfterScrub(tx *gorm.DB, customerID uint) error {
+	if err := purgeCustomerExternalIDs(tx, customerID); err != nil {
+		return err
+	}
+	return purgeCustomerTicketMailDeliveries(tx, customerID)
+}
+
+// purgeCustomerTicketMailDeliveries hard-deletes the ticket comment mail
+// delivery records (#219) of an erased customer inside the erasure unit: every
+// row whose customer_id is the customer, and every row whose ticket_id names a
+// ticket of the customer, soft-deleted tickets included. A row records that
+// mail went to the person, so it goes with them. It runs from the customer
+// plan's AfterScrub, so all three roots — DELETE /customers/{id}, the erasure
+// of a lead converted into the customer and the erasure of its customer-role
+// login — reach it.
+//
+// A schema without the table is skipped by a migrator probe; when the table
+// exists every failure propagates and rolls the erasure back. The error names
+// the table and the customer id only.
+func purgeCustomerTicketMailDeliveries(tx *gorm.DB, customerID uint) error {
+	if !tx.Migrator().HasTable(&models.TicketMailDelivery{}) {
+		return nil
+	}
+	var ticketIDs []uint
+	if tx.Migrator().HasTable(&models.Ticket{}) {
+		if err := tx.Unscoped().Model(&models.Ticket{}).
+			Where("customer_id = ?", customerID).Pluck("id", &ticketIDs).Error; err != nil {
+			return fmt.Errorf("purging ticket_mail_deliveries of customer %d: %w", customerID, err)
+		}
+	}
+	query := tx.Where("customer_id = ?", customerID)
+	if len(ticketIDs) > 0 {
+		query = tx.Where("customer_id = ? OR ticket_id IN ?", customerID, ticketIDs)
+	}
+	if err := query.Delete(&models.TicketMailDelivery{}).Error; err != nil {
+		return fmt.Errorf("purging ticket_mail_deliveries of customer %d: %w", customerID, err)
+	}
+	return nil
+}
+
 // ErrConvertedLeadNeedsAdmin refuses the erasure of a converted lead by a
 // caller that may erase only unconverted ones. A converted lead is the same
 // person as the customer it became (and that customer's login), so erasing it

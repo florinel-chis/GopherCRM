@@ -55,7 +55,10 @@ Checked by searching the tracked tree on `4dfe404`:
   holds only name, hash, prefix, owner, expiry and an active flag). Least-privilege credentials
   are #211.
 - No ticket channel and no inbound mail (`internal/models/ticket.go`). Every ticket is created
-  through the API or the UI. Ticket replies by email, with inbound mail as later work, are #219.
+  through the API or the UI. Outbound ticket replies by email shipped in #219: a staff comment sent
+  with `email_customer: true` is mailed once to the ticket's customer and its outcome recorded in
+  `ticket_mail_deliveries` (backend only; no retry). A ticket channel field and inbound mail remain
+  later work.
 - No internationalisation framework in `gocrm-ui/package.json`.
 - No quote PDF and no tax lines (`docs/FEATURES.md`, rows 4d.3 and 4d.7; #233).
 - CSV export covers customers and leads only (`internal/handler/customer_handler.go:582`,
@@ -355,7 +358,8 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   confirmation links; the second is the UI's, used in password-reset links. Left at their
 >   defaults, both send recipients to `localhost`.
 > - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
->   reports success (README "Known Limitations"); form mail is then recorded `log_only`. A form mail
+>   reports success (README "Known Limitations"); form mail and ticket comment mail
+>   (`email_customer`, #219) are then recorded `log_only`. A form mail
 >   that fails is recorded per mail and shown to staff (`GET /forms/deliveries`), and admin and
 >   sales retry it by hand; nothing retries automatically.
 

@@ -756,7 +756,14 @@ authentication and live on the moderate tier:
 - `GET /api/v1/tickets/:id` - Get specific ticket
 - `PUT /api/v1/tickets/:id` - Update ticket *(admin any; support only their own assignments; sales
   is read-only)*
-- `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; ordinary soft delete)*
+- `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; ordinary soft delete; its comment mail
+  delivery records are hard-deleted with it)*
+- `GET /api/v1/tickets/:id/comments` - List a ticket's comments *(customers never see internal notes)*
+- `POST /api/v1/tickets/:id/comments` - Add a comment or internal note *(admin; support on their own
+  assignments)*. With `email_customer: true` (not on an internal note, which is 400) the comment is
+  also emailed once to the ticket customer's current address after it is saved, and the `201`
+  carries the outcome as `delivery` (`sent`, `failed`, `log_only` or `skipped`); there is no retry
+  and no read returns it
 - `POST /api/v1/tickets/bulk/status` - Set the status of up to 100 tickets, all-or-nothing *(admin
   any; support only their assignments; a closed ticket cannot be reopened)*
 
@@ -988,9 +995,9 @@ gophercrm/
   password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
   automation rule — goes to the application log instead of a mailbox, and the sending code cannot
   tell: `POST /api/v1/quotes/:id/email` still answers `200` and stamps `last_emailed_at`, and an
-  automation email step is logged as `succeeded`, although nothing was delivered. Form mail is the
-  exception: each delivery is recorded `log_only`, not `sent`. Fine for development, useless in
-  production.
+  automation email step is logged as `succeeded`, although nothing was delivered. Form mail and
+  ticket comment mail (`email_customer`) are the exception: each delivery is recorded `log_only`,
+  not `sent`. Fine for development, useless in production.
 - **Form mail is retried by hand only.** Every form mail (confirmation, follow-up, one notification
   per address) is recorded and shown on the submission and in `GET /api/v1/forms/deliveries`;
   admin and sales retry a failed, log-only or stuck one with

@@ -3,6 +3,8 @@
 package mocks
 
 import (
+	context "context"
+
 	models "github.com/florinel-chis/gophercrm/internal/models"
 	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	mock "github.com/stretchr/testify/mock"
@@ -401,6 +403,15 @@ func (_m *TicketService) GetByCustomerAndAssignee(customerID uint, assigneeID ui
 // CreateComment provides a mock function with given fields: comment
 func (_m *TicketService) CreateComment(comment *models.TicketComment) error {
 	ret := _m.Called(comment)
+	return ret.Error(0)
+}
+
+// CreateCommentWithCustomerEmail provides a mock function with given fields: ctx, comment
+func (_m *TicketService) CreateCommentWithCustomerEmail(ctx context.Context, comment *models.TicketComment) error {
+	ret := _m.Called(ctx, comment)
+	if rf, ok := ret.Get(0).(func(context.Context, *models.TicketComment) error); ok {
+		return rf(ctx, comment)
+	}
 	return ret.Error(0)
 }
 

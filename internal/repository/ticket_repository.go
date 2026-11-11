@@ -70,8 +70,17 @@ func (r *ticketRepository) Update(ticket *models.Ticket) error {
 	return nil
 }
 
+// Delete soft-deletes the ticket and, in the same transaction (a savepoint of
+// the caller's transaction under WithTx), first hard-deletes the ticket's
+// comment mail delivery records (#219). A failure of either rolls both back.
+// The ticket's comments are left as before.
 func (r *ticketRepository) Delete(id uint) error {
-	return r.db.Delete(&models.Ticket{}, id).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := purgeTicketMailDeliveriesOfTicket(tx, id); err != nil {
+			return err
+		}
+		return tx.Delete(&models.Ticket{}, id).Error
+	})
 }
 
 func (r *ticketRepository) List(offset, limit int) ([]models.Ticket, error) {

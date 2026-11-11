@@ -146,6 +146,8 @@ type TicketComment struct {
 	User *User `gorm:"-" json:"user,omitempty" readonly:"true"`
 	// Read-only alias of body, kept for older clients.
 	Content string `gorm:"-" json:"content,omitempty" example:"Rolled back the firmware; waiting for the customer to confirm." readonly:"true"`
+	// Outcome of emailing this comment to the ticket's customer. Present only on the 201 of POST /tickets/{id}/comments sent with email_customer true; never stored on the comment and never returned by a read.
+	Delivery *TicketMailDelivery `gorm:"-" json:"delivery,omitempty" readonly:"true"`
 }
 
 func (c *TicketComment) AfterFind(tx *gorm.DB) error {

@@ -635,6 +635,36 @@ and tickets created before migration `20261108120000_add_ticket_sla_fields` read
 - `high` - High priority
 - `urgent` - Urgent/critical
 
+A ticket comment (`ticket_comments`) serialises one extra key that is not a column: `delivery`, the
+Ticket Mail Delivery below. It is set only on the 201 of `POST /tickets/{id}/comments` sent with
+`email_customer` true (#219); every other answer, every read included, has no `delivery` key.
+
+## Ticket Mail Delivery
+
+`ticket_mail_deliveries` (#219) — the outcome of emailing one staff ticket comment to the ticket's
+customer. Written `pending` in the transaction that inserts the comment, and stamped after the
+commit by a conditional update on `status = 'pending'`. It holds ids, a status, an error code and
+timestamps: no address, no subject, no title and no comment text. There is no `deleted_at` and no
+foreign key; the links below are logical.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Delivery id |
+| created_at, updated_at | timestamp | - | now | `datetime(3)` on MySQL | Written in the comment transaction; `updated_at` is the time of the stamp |
+| ticket_id | uint | Yes | - | index `idx_ticket_mail_deliveries_ticket_id` | The comment's ticket (`tickets.id`, logical) |
+| comment_id | uint | Yes | - | unique index `idx_ticket_mail_deliveries_comment_id` | The emailed comment (`ticket_comments.id`, logical); at most one delivery per comment |
+| customer_id | uint | Yes | - | index `idx_ticket_mail_deliveries_customer_id` | The ticket's `customer_id` when the comment was written (an id, never an address) |
+| status | string | Yes | - | `pending`, `sent`, `failed`, `log_only`, `skipped`; `varchar(20)` | `sent` means accepted by the relay; `log_only` that the development mailer (no `SMTP_HOST`) only logged it; a row left `pending` means the outcome is unknown (never resent) |
+| error_code | string | Yes | `''` | `varchar(50)` | `failed`: `mail_failed`, `timeout`, `invalid_recipient`, `lookup_failed`; `skipped`: `no_mailer`, `no_recipient`, `customer_unavailable`; empty otherwise. Never transport text |
+| sent_at | datetime | No | NULL | `datetime(3)` on MySQL | Set only for `sent` |
+
+The rows are hard-deleted when their ticket is deleted (`DELETE /tickets/{id}`, in the transaction
+that soft-deletes it) and when the ticket's customer is erased (every row whose `customer_id` is the
+customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included). Erasing the
+comment's staff author keeps them. There is no retry. MySQL and MariaDB get the table from
+`20261113120000_add_ticket_mail_deliveries` (created only when missing); SQLite from
+`MigrateDatabase`.
+
 ## Task Model
 
 Represents tasks and to-dos for users.

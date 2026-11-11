@@ -260,6 +260,9 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		// #239: product mappings hold catalogue identifiers, no personal data,
 		// and no erasure step touches them; the sweep still reads the table.
 		"product_external_ids",
+		// #219: delivery records of ticket comment mail hold ids only, and the
+		// erasure of the customer removes them; the sweep still reads the table.
+		"ticket_mail_deliveries",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)
