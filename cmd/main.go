@@ -303,7 +303,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		service.WithLeadConversionRules(configService))
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
-	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
+	// A staff comment may be emailed to the ticket's customer (#219): the
+	// delivery record is written in the comment's transaction and the mail
+	// goes out after the commit through the shared mailer.
+	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
+		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer))
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)

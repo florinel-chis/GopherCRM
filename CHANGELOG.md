@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Email a staff ticket reply to the customer (#219, backend).** `POST /tickets/{id}/comments`
+  accepts an optional `email_customer` boolean. Admin, and the support user the ticket is assigned
+  to, may set it on a comment that is not an internal note (with `is_internal` it is 400
+  `VALIDATION_ERROR`; customer, sales and unassigned support callers keep their 403). The comment,
+  its `first_responded_at` stamp and a `pending` delivery record commit in one transaction; after
+  the commit one plaintext mail goes to the ticket customer's current address (subject
+  `Ticket T-000042 from GopherCRM`; the ticket number, the title and this comment's text only), and
+  the record is stamped `sent`, `failed` (`mail_failed`, `timeout`, `invalid_recipient`,
+  `lookup_failed`), `log_only` (no `SMTP_HOST`) or `skipped` (`no_mailer`, `no_recipient`,
+  `customer_unavailable` for an erased or missing customer). The 201 carries it as `delivery`
+  whatever the outcome; no read path returns it and nothing retries. The new
+  `ticket_mail_deliveries` table holds ids, a status, an error code and timestamps — never an
+  address or content — and its rows are hard-deleted when their ticket is deleted and when the
+  ticket's customer is erased (all three erasure roots). MySQL/MariaDB get the table from migration
+  `20261113120000_add_ticket_mail_deliveries` (created only when missing), SQLite from
+  `MigrateDatabase`. Registering the migration roots in the Database migrations workflow is an
+  operator follow-up; the comment-form checkbox is a later frontend ticket.
 - **Product name and primary colour from the settings (#291).** The web app names itself through
   one hook, `useProductName`: the stored `general.company_name` when a signed-in user's
   configuration holds a non-blank value, otherwise `VITE_APP_NAME`, otherwise `GoCRM`. The

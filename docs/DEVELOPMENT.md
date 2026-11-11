@@ -183,7 +183,8 @@ tied to the request. The cancellation surfaces as the generic failure answer (50
 invalid-link page for a confirmation) to a client already gone, and is logged like any failure.
 
 These entry points (`LeadService.ConvertToCustomer`, `FormService.SubmitPublic` and
-`ConfirmSubmission`, `BulkStatusService.BulkSet*Status`) are transaction roots. Called with a
+`ConfirmSubmission`, `BulkStatusService.BulkSet*Status`, and `TicketService.CreateCommentWithCustomerEmail`,
+#219, which also runs on the request context) are transaction roots. Called with a
 context that already carries a transaction they return `utils.ErrTransactionRootRequired` before
 reading or writing anything: they send mail or commit an audit row after their own commit, and
 the conversion settings are read on the root handle, so running inside an enclosing transaction
@@ -730,6 +731,87 @@ Regression roots: `TestTicketEnumIsValid` (`internal/models`); `TestTicketListFi
 `TestTicketListFilters{SQLite,MySQL}` (`internal/integration`). The MySQL roots use a disposable
 `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable.
 
+**Ticket comment email (#219).** `POST /tickets/{id}/comments` takes an optional boolean
+`email_customer`. The handler's checks are unchanged (role, id, ticket lookup, assignment, bind,
+blank body); after them, `email_customer` together with `is_internal` is 400 `VALIDATION_ERROR`
+(`error.details.email_customer`) and nothing is written. Customer, sales and unassigned support
+callers keep their 403 before the body is read. Without the flag the handler calls the unchanged
+`TicketService.CreateComment` and the 201 has no `delivery` key; with it,
+`TicketService.CreateCommentWithCustomerEmail(c.Request.Context(), comment)`, and the 201 carries
+the comment with its `delivery`. A not-found error is 404; anything else, including
+`service.ErrTicketCommentMailUnavailable`, is 500.
+
+- **Enabled by an option.** `NewTicketService` keeps its three parameters and takes
+  `service.WithTicketCommentMail(deliveryRepo, txManager, mailer)`; `cmd/main.go` passes the
+  ticket mail delivery repository, the shared `txManager` and the shared `appMailer`. Without the
+  repository or the manager the method returns `ErrTicketCommentMailUnavailable` and writes
+  nothing; a nil mailer is recorded `skipped`/`no_mailer`.
+- **A transaction root.** Called with a context that already carries a transaction it returns
+  `utils.ErrTransactionRootRequired` before reading or writing. Independently of the handler, it
+  returns `service.ErrTicketCommentEmailNotAllowed`, with nothing written and nothing sent, for an
+  internal note or an author (read by the service) who is neither admin nor support.
+- **One transaction.** The ticket and the author are read on the request context, then one
+  `WithTransaction` inserts the comment with its `first_responded_at` stamp
+  (`CreateCommentWithFirstResponse`, a savepoint) and a `pending` `ticket_mail_deliveries` row
+  (`TicketMailDeliveryRepository.WithTx(tx).Create`). A failure rolls all three back and nothing
+  is sent; a cancelled request writes nothing.
+- **After the commit, with no transaction held.** A nil mailer is `skipped`/`no_mailer`, decided
+  before the customer is read. Otherwise the ticket's customer is read live through
+  `customerRepo.GetByID`: not found (erased, soft-deleted, missing) is `skipped`/
+  `customer_unavailable`, a database failure `failed`/`lookup_failed`, a blank address after
+  trimming `skipped`/`no_recipient`. Then `Mailer.Send` is called exactly once with the trimmed
+  address, the fixed subject `Ticket T-000042 from GopherCRM` (`service.TicketCommentEmailSubject`,
+  `models.TicketNumber`) and a plaintext body holding the ticket number, the title and this
+  comment's text only. A send error is `failed` with `timeout` (`os.ErrDeadlineExceeded`),
+  `invalid_recipient` (`mailer.ErrInvalidAddress`, `mailer.ErrInvalidHeader`) or `mail_failed`; a
+  mailer that implements `mailer.LogOnlyReporter` and reports `LogsOnly()` (the `LogMailer`, no
+  `SMTP_HOST`) is `log_only` with `sent_at` null; otherwise `sent` with `sent_at`.
+- **The stamp.** `TicketMailDeliveryRepository.FinishPending` is `UPDATE … WHERE id = ? AND status
+  = 'pending'` on `context.WithoutCancel(ctx)` bounded by 5 s; it matches nothing on a row that is
+  already finished (`repository.ErrTicketMailDeliveryNotPending`), so a second stamp never
+  overwrites the first. A stamp that fails is logged as a Warn line with ids only; the method still
+  returns nil and the returned delivery shows the stored `pending`.
+- **At most once, no retry.** The answer is 201 whatever the mail outcome. Nothing resends: a row
+  left `pending` (the stamp failed, or the process stopped between the commit and the stamp)
+  means the outcome is unknown. There is no retry route, background retry or stuck detection.
+- **Reads.** `delivery` (`gorm:"-"`, `omitempty`) is set only on that 201. `GET /tickets/{id}`,
+  `GET /tickets/{id}/comments` and every other read carry no `delivery` key, for staff and
+  customers alike.
+- **Purge.** `ticketRepository.Delete` runs one transaction (a savepoint under `WithTx`) that
+  hard-deletes the ticket's delivery rows (`HasTable` probe) and then soft-deletes the ticket; the
+  comments stay as before. The customer plan's `AfterScrub` also runs
+  `purgeCustomerTicketMailDeliveries`, which hard-deletes every row whose `customer_id` is the
+  erased customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included, for
+  all three erasure roots (see *Deleting personal data*). Erasing the comment's staff author keeps
+  the rows (that erasure redacts comments, it does not delete them).
+- **Privacy.** A row holds ids, a status, an error code and timestamps: no address, subject, title
+  or comment text. The log lines of the path carry operation names, `ticket_id`, `comment_id`,
+  `delivery_id`, `status` and `error_code` only; the mailer's error, which may quote the address,
+  is classified and never logged.
+- **Schema.** `ticket_mail_deliveries` (see [datamodel.md](datamodel.md#ticket-mail-delivery)) comes
+  from `models.MigrateDatabase` on SQLite and from
+  `migrations/20261113120000_add_ticket_mail_deliveries` (created only when missing) on
+  MySQL/MariaDB.
+
+Regression roots: `TestTicketCommentEmailHandlerFlag`, `TestTicketCommentEmailHandlerErrorMapping`
+(`internal/handler`); `TestTicketCommentEmailDelivery`, `TestTicketCommentEmailSkipReasons`,
+`TestTicketCommentEmailFailures`, `TestTicketCommentEmailLogOnly`,
+`TestTicketCommentEmailAtomicity{SQLite,MySQL}`, `TestTicketCommentEmailRefusedWhenUnwired`,
+`TestTicketCommentEmailTransactionRootRequired`,
+`TestTicketCommentEmailServiceRefusesInternalOrNonStaff`,
+`TestTicketCommentEmailLogsOmitPersonalData`, `TestTicketCommentEmailRecordHoldsNoAddress`
+(`internal/service`); `TestTicketMailDeliveryJSON`, `TestTicketMailDeliverySchemaSQLite`,
+`TestTicketNumber` (`internal/models`); `TestTicketMailDeliveryRepository{SQLite,MySQL}`,
+`TestTicketDeletePurgesMailDeliveries{SQLite,MySQL}`,
+`TestTicketMailDeliveryErasure{SQLite,MySQL,WithoutTable}` (`internal/repository`);
+`TestTicketMailDeliveriesMigrationFiles`, `TestTicketMailDeliveriesMigration` (`cmd/migrate`, which
+now holds the newest-migration assertion); `TestTicketCommentEmailAPISQLite` (`tests`);
+`TestTicketCommentMailProductionWiring` (`cmd`);
+`TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable` (`test/integration`). The MySQL roots
+use a disposable `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable; CI limit:
+`make verify-backend` has no DSN and skips them. Registering the migration roots in the Database
+migrations workflow is an operator follow-up.
+
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
 in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in
@@ -1204,6 +1286,7 @@ What the erasure touches, and what it keeps on purpose:
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |
+| `ticket_mail_deliveries` whose `customer_id` is an erased customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included (#219) | hard-deleted (the customer plan's `AfterScrub`, `purgeCustomerTicketMailDeliveries`, every root that reaches the customer; skipped by a `HasTable` probe when the table is absent) | deliveries of other customers; the rows of a comment whose staff author is erased |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
@@ -1322,7 +1405,8 @@ is no erasure step: products hold no personal data. Log lines carry operation na
 `mapping_id`, `mappings_removed`, counts and presence flags only. Regression roots:
 `TestProductExternalIDSchemaSQLite`, `TestProductExternalIDSQLiteUpgrade`,
 `TestProductExternalIDJSON` (`internal/models`); `TestProductExternalIDsMigrationFiles`,
-`TestProductExternalIDsMigration` (`cmd/migrate`, which now holds the newest-migration assertion);
+`TestProductExternalIDsMigration` (`cmd/migrate`; the newest-migration assertion has since moved to
+`TestTicketMailDeliveriesMigrationFiles`, #219);
 `TestProductExternalIDRepository{SQLite,MySQL}` (`internal/repository`);
 `TestProductExternalIDValidation`, `TestProductExternalIDServiceRefusedWhenUnwired`,
 `TestProductDeleteRefusedWhenUnwired`, `TestProductExternalIDLogsOmitValues`,

@@ -191,6 +191,17 @@ type TicketService interface {
 	GetRecentlyResolved(limit int) ([]models.Ticket, error)
 	GetRecentlyResolvedByAssignee(assigneeID uint, limit int) ([]models.Ticket, error)
 	CreateComment(comment *models.TicketComment) error
+	// CreateCommentWithCustomerEmail (#219) inserts a staff comment that is
+	// not an internal note, its first_responded_at stamp and a pending
+	// ticket_mail_deliveries row in one transaction on ctx, then, after the
+	// commit and with no transaction held, mails the comment to the ticket
+	// customer's current address once and stamps the row. It returns nil
+	// whatever the mail outcome; comment.Delivery carries it. It is a
+	// transaction root (utils.ErrTransactionRootRequired inside one), refuses
+	// with ErrTicketCommentMailUnavailable unless WithTicketCommentMail wired
+	// it, and with ErrTicketCommentEmailNotAllowed for an internal note or an
+	// author who is neither admin nor support.
+	CreateCommentWithCustomerEmail(ctx context.Context, comment *models.TicketComment) error
 	ListComments(ticketID uint, includeInternal bool) ([]models.TicketComment, error)
 }
 

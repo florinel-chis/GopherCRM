@@ -212,6 +212,37 @@ type TicketRepository interface {
 	WithTx(tx *gorm.DB) TicketRepository
 }
 
+// TicketMailDeliveryOutcome is what FinishPending writes on a pending ticket
+// comment mail delivery (#219).
+type TicketMailDeliveryOutcome struct {
+	// Status is sent, failed, log_only or skipped.
+	Status string
+	// ErrorCode is empty for sent and log_only.
+	ErrorCode string
+	// SentAt is set for sent only.
+	SentAt *time.Time
+	// Now is the stamp's clock, written as updated_at in UTC.
+	Now time.Time
+}
+
+// TicketMailDeliveryRepository stores the ticket_mail_deliveries rows (#219):
+// one row per ticket comment a staff user asked to email to the ticket's
+// customer, holding ids, a status, an error code and timestamps only. Every
+// method binds its statements to ctx.
+type TicketMailDeliveryRepository interface {
+	// Create inserts the row (pending). A second row for the same comment_id
+	// is refused by the unique index.
+	Create(ctx context.Context, delivery *models.TicketMailDelivery) error
+	// FinishPending stamps the outcome with one UPDATE … WHERE id = ? AND
+	// status = 'pending'. It returns ErrTicketMailDeliveryNotPending when no
+	// row matched, so a second stamp never overwrites the first.
+	FinishPending(ctx context.Context, id uint, outcome TicketMailDeliveryOutcome) error
+	// GetByCommentID reads the delivery of one comment, or
+	// gorm.ErrRecordNotFound.
+	GetByCommentID(ctx context.Context, commentID uint) (*models.TicketMailDelivery, error)
+	WithTx(tx *gorm.DB) TicketMailDeliveryRepository
+}
+
 type TaskRepository interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)

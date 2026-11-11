@@ -450,8 +450,14 @@ depend on that are flagged.
   delete the customer "<company>"? This action cannot be undone.`
   `DELETE /api/v1/customers/{id}` returns **204** (no body). A success snackbar reads "Customer
   deleted successfully", the customers query is invalidated and the row is gone after the refetch.
-  A subsequent `GET /api/v1/customers/{id}` returns 404.
-- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can delete a customer" (it deletes the row matching its own customer's email and asserts that row disappears)
+  A subsequent `GET /api/v1/customers/{id}` returns 404. The erasure also hard-deletes the
+  `ticket_mail_deliveries` rows (#219) whose `customer_id` is the customer or whose `ticket_id` names
+  one of its tickets, soft-deleted tickets included, in the same transaction — through this route,
+  through the erasure of a lead converted into the customer and through the erasure of its
+  customer-role login; other customers' rows stay, and a failure rolls the whole erasure back.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can delete a customer" (it deletes the row matching its own customer's email and asserts that row disappears); the delivery purge is automated in the backend by
+  `TestTicketMailDeliveryErasure{SQLite,MySQL,WithoutTable}` (`internal/repository`) and
+  `TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable` (`test/integration`)
 
 ### TC-CUST-024 — An erased customer's email can be used again
 - **Priority:** P0

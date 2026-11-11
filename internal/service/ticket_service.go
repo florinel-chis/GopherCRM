@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -13,14 +14,41 @@ type ticketService struct {
 	ticketRepo   repository.TicketRepository
 	customerRepo repository.CustomerRepository
 	userRepo     repository.UserRepository
+
+	// The ticket comment mail (#219), set by WithTicketCommentMail. Without
+	// the delivery repository and the transaction manager,
+	// CreateCommentWithCustomerEmail refuses; a nil mailer is recorded as
+	// skipped (no_mailer).
+	mailDeliveries repository.TicketMailDeliveryRepository
+	txManager      *utils.TransactionManager
+	mailer         mailer.Mailer
 }
 
-func NewTicketService(ticketRepo repository.TicketRepository, customerRepo repository.CustomerRepository, userRepo repository.UserRepository) TicketService {
-	return &ticketService{
+// TicketServiceOption configures NewTicketService.
+type TicketServiceOption func(*ticketService)
+
+// WithTicketCommentMail enables CreateCommentWithCustomerEmail (#219): the
+// delivery records are written through deliveryRepo inside transactions run
+// by txManager, and the mail goes out through m (nil records every requested
+// send as skipped with no_mailer).
+func WithTicketCommentMail(deliveryRepo repository.TicketMailDeliveryRepository, txManager *utils.TransactionManager, m mailer.Mailer) TicketServiceOption {
+	return func(s *ticketService) {
+		s.mailDeliveries = deliveryRepo
+		s.txManager = txManager
+		s.mailer = m
+	}
+}
+
+func NewTicketService(ticketRepo repository.TicketRepository, customerRepo repository.CustomerRepository, userRepo repository.UserRepository, opts ...TicketServiceOption) TicketService {
+	s := &ticketService{
 		ticketRepo:   ticketRepo,
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *ticketService) Create(ticket *models.Ticket) error {

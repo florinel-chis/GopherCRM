@@ -133,6 +133,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&QuoteStatusChange{},
 		&Ticket{},
 		&TicketComment{},
+		// Ticket comment mail deliveries (#219): ids only, no foreign key.
+		&TicketMailDelivery{},
 		&Label{},
 		&Task{},
 		&APIKey{},

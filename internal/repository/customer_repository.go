@@ -182,8 +182,10 @@ func customerErasurePlan() erasurePlan {
 			"notes":       "",
 		},
 		// The external identity mappings (#212) single the person out in
-		// another system; they go with the customer (erasure_cascade.go).
-		AfterScrub: purgeCustomerExternalIDs,
+		// another system, and the ticket comment mail delivery records (#219)
+		// record mail sent to them; both go with the customer
+		// (erasure_cascade.go).
+		AfterScrub: customerAfterScrub,
 	}
 }
 

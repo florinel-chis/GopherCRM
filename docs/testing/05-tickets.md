@@ -580,7 +580,9 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** `DELETE /api/v1/tickets/<id>` returns **204 No Content**. A "Ticket deleted
   successfully" snackbar appears, the app navigates to `/tickets`, and the row is gone. This is an
   ordinary GORM soft delete (`ticket_repository.go` `Delete`) — no field is overwritten, unlike the
-  GDPR erasure applied to users, customers and leads. A subsequent `GET /tickets/<id>` returns 404.
+  GDPR erasure applied to users, customers and leads; in the same transaction the ticket's comment
+  mail delivery records (#219) are hard-deleted (see TC-TICK-071). A subsequent `GET /tickets/<id>`
+  returns 404.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can delete a ticket"
   is `test.fixme` (2026-09-23): it deleted row 0 (not a ticket it created), was skipped on an empty
   list, and asserted `true`. Rewrite on the test's own ticket and assert it disappears.
@@ -1141,3 +1143,110 @@ not show them yet; these cases are API and backend level. Sources: `internal/mod
 - **Expected:** Each payload has exactly the previous key set plus `due_at`, `first_responded_at`
   and `overdue`, and every previous key holds the value it held before #278.
 - **Automation:** automated — `TestTicketResponseShapeUnchanged` (`internal/handler`)
+
+---
+
+## Ticket comment email (#219)
+
+`POST /tickets/{id}/comments` takes an optional boolean `email_customer`. Admin, and the support user
+the ticket is assigned to, may set it on a comment that is not an internal note; the comment, its
+`first_responded_at` stamp and a `pending` `ticket_mail_deliveries` row commit together, then one
+plaintext mail (subject `Ticket T-000042 from GopherCRM`, body: ticket number, title, this comment's
+text) goes to the ticket customer's current address and the row is stamped `sent`, `failed`,
+`log_only` or `skipped`. The 201 carries it as `delivery`; no read does. Backend only: the comment
+form has no checkbox yet (a later frontend ticket). Sources: `internal/handler/ticket_handler.go`
+(`CreateComment`), `internal/service/ticket_comment_email.go`,
+`internal/repository/ticket_mail_delivery_repository.go`, `internal/models/ticket_mail_delivery.go`.
+
+### TC-TICK-065 — A flagged staff comment is mailed once and recorded sent
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** An admin, a support user assigned to a ticket, the ticket's customer with an
+  address, a recording mailer.
+- **Steps:**
+  1. As admin, `POST /tickets/<id>/comments` with `{"body": "...", "email_customer": true}`.
+  2. Repeat as the assigned support user.
+- **Expected:** 201 each time with `data.delivery.status` `sent`, `sent_at` set and `error_code`
+  empty; exactly one send per comment, to the customer's current address (trimmed), with the subject
+  `Ticket T-<id, six digits> from GopherCRM` and a body holding the ticket number, the title and that
+  comment's text only — no internal note and no other comment. The stored row matches the answer and
+  holds no address or content.
+- **Automation:** automated — `TestTicketCommentEmailAPISQLite` (`tests`), `TestTicketCommentEmailDelivery`
+  and `TestTicketCommentEmailRecordHoldsNoAddress` (`internal/service`)
+
+### TC-TICK-066 — The flag on an internal note is 400 and writes nothing
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** As TC-TICK-065.
+- **Steps:**
+  1. As admin, post `{"body": "...", "is_internal": true, "email_customer": true}`.
+- **Expected:** 400 `VALIDATION_ERROR` with `error.details.email_customer`; no comment, no delivery
+  row, no send. A blank body with the same flags is still 400 `BAD_REQUEST` (that check runs first).
+- **Automation:** automated — `TestTicketCommentEmailHandlerFlag` (`internal/handler`),
+  `TestTicketCommentEmailAPISQLite`
+
+### TC-TICK-067 — Customer, sales and unassigned support callers keep their 403
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** A customer-role user, a sales user, a support user not assigned to the ticket.
+- **Steps:**
+  1. As each, post a comment with `email_customer` true (also with an invalid JSON body).
+- **Expected:** 403 every time, before the body is read; nothing is written or sent.
+- **Automation:** automated — `TestTicketCommentEmailHandlerFlag`, `TestTicketCommentEmailAPISQLite`
+
+### TC-TICK-068 — An erased, missing or address-less customer is skipped, not mailed
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** A ticket whose customer was erased through `DELETE /customers/{id}`; tickets
+  whose customer is soft-deleted, missing or has a blank address; a service without a mailer.
+- **Steps:**
+  1. As admin, post a flagged comment on each.
+- **Expected:** 201 with `delivery.status` `skipped` and `error_code` `customer_unavailable`,
+  `no_recipient` or `no_mailer`; no send; the comment and `first_responded_at` are committed.
+- **Automation:** automated — `TestTicketCommentEmailSkipReasons` (`internal/service`),
+  `TestTicketCommentEmailAPISQLite`
+
+### TC-TICK-069 — A mail failure keeps the comment and records failed
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** A mailer that fails (a timeout, an invalid address or header, any other error);
+  a customer read that fails for a database reason.
+- **Steps:**
+  1. Post a flagged comment for each failure.
+- **Expected:** 201; `delivery.status` `failed` with `timeout`, `invalid_recipient`, `mail_failed` or
+  `lookup_failed`; Send is never called a second time (and not at all on `lookup_failed`); the
+  comment is kept; no log line carries the address, the title, the body, the subject or the mailer's
+  text. Without `SMTP_HOST` the development mailer is recorded `log_only`.
+- **Automation:** automated — `TestTicketCommentEmailFailures`, `TestTicketCommentEmailLogOnly`,
+  `TestTicketCommentEmailLogsOmitPersonalData` (`internal/service`), `TestTicketCommentEmailAPISQLite`,
+  `TestTicketCommentMailProductionWiring` (`cmd`)
+
+### TC-TICK-070 — The comment, the stamp and the record commit together; the send follows the commit
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** SQLite and a disposable MySQL schema.
+- **Steps:**
+  1. Inject a failure into the delivery insert; call with a cancelled context; call inside an
+     enclosing transaction; call unwired; fail the stamp.
+- **Expected:** An insert failure rolls back the comment and `first_responded_at` and sends nothing;
+  a cancelled context writes and sends nothing; an enclosing transaction gets
+  `ErrTransactionRootRequired` before any statement; an unwired service gets
+  `ErrTicketCommentMailUnavailable`; the send sees the committed rows; a failed stamp leaves
+  `pending`, returns nil and answers `pending`.
+- **Automation:** automated — `TestTicketCommentEmailAtomicity{SQLite,MySQL}`,
+  `TestTicketCommentEmailTransactionRootRequired`, `TestTicketCommentEmailRefusedWhenUnwired`,
+  `TestTicketCommentEmailServiceRefusesInternalOrNonStaff` (`internal/service`)
+
+### TC-TICK-071 — Read paths never carry a delivery; deleting the ticket removes its records
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A ticket with flagged comments.
+- **Steps:**
+  1. `GET /tickets/<id>` and `GET /tickets/<id>/comments` as admin, as the assigned support user and
+     as the ticket's customer.
+  2. As admin, `DELETE /tickets/<id>`.
+- **Expected:** No read answer contains a `delivery` key. The delete hard-deletes the ticket's
+  `ticket_mail_deliveries` rows in the transaction that soft-deletes it (a failure keeps both);
+  the comments and other tickets' rows stay.
+- **Automation:** automated — `TestTicketCommentEmailAPISQLite`,
+  `TestTicketDeletePurgesMailDeliveries{SQLite,MySQL}` (`internal/repository`)

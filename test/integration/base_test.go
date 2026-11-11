@@ -148,7 +148,10 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	// that needs a failing mailer swaps suite.mailer.err before the call.
 	suite.mailer = &recordingMailer{}
 	quoteService := service.NewQuoteService(repository.NewQuoteRepository(suite.db), productRepo, dealRepo, customerRepo, userRepo, configService, suite.mailer, txManager)
-	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
+	// A flagged staff comment is emailed to the ticket's customer through the
+	// same recording mailer (#219).
+	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
+		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(suite.db), txManager, suite.mailer))
 	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db), repository.NewDealRepository(suite.db))
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
 

@@ -115,6 +115,8 @@ type CreateTicketCommentRequest struct {
 	Content string `json:"content" example:""`
 	// True for an internal note, visible to staff only and never returned to customer callers. Defaults to false.
 	IsInternal bool `json:"is_internal" example:"false"`
+	// True to email this comment to the ticket's customer after it is saved. Only on a comment that is not an internal note (true together with is_internal is 400), and only for admin or the assigned support user. Defaults to false. The mail goes to the customer's current address and holds the ticket number, title and this comment's text; the 201 carries the outcome in delivery, whatever it is.
+	EmailCustomer bool `json:"email_customer" example:"false"`
 }
 
 // TicketListData is the data payload of the ticket list endpoints. It is a
@@ -660,7 +662,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a ticket
-// @Description Soft-delete a ticket. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. Its comments are left in place but are no longer reachable through the API.
+// @Description Soft-delete a ticket. Roles: admin only; the role check runs before the id is parsed, so non-admins always receive 403. Its comments are left in place but are no longer reachable through the API. The ticket's comment mail delivery records are hard-deleted in the same transaction.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth
@@ -778,7 +780,7 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 
 // CreateComment godoc
 // @Summary Create a comment on a ticket
-// @Description Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. No notification or email is sent.
+// @Description Add a comment or, with is_internal true, an internal note. Roles: admin on any ticket, support only on tickets assigned to them; customers and sales get 403 before the id is read. The order of checks is role, id, ticket lookup, assignment, body. The text is taken from body, comment or content (the first that is not blank after trimming) and stored trimmed; the caller becomes the author. The first comment that is not an internal note sets the ticket's first_responded_at to its created_at, in the same transaction as the insert; later comments and internal notes leave it unchanged. Without email_customer (absent or false) no notification or email is sent and the response has no delivery key. With email_customer true (only on a comment that is not an internal note; with is_internal true it is 400 VALIDATION_ERROR and nothing is written), the comment, the first_responded_at stamp and a pending delivery record are written in one transaction; after the commit the ticket's customer is read live and one plaintext mail is sent to the customer's current address, with the subject Ticket T-000042 from GopherCRM and a body holding the ticket number, the title and this comment's text only. The delivery record is then stamped sent, failed (error_code mail_failed, timeout, invalid_recipient or lookup_failed), log_only (no SMTP_HOST, nothing delivered) or skipped (no_mailer, no_recipient, or customer_unavailable for an erased or missing customer) and returned as delivery in this response only; it holds ids, a status and an error code, never an address or content. The answer is 201 whatever the mail outcome, and there is no automatic retry.
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -786,8 +788,8 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param id path int true "Ticket ID"
 // @Param request body CreateTicketCommentRequest true "Comment to add"
-// @Success 201 {object} utils.APIResponse{data=models.TicketComment} "The new comment with its author"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the body is not valid JSON, or body, comment and content are all blank"
+// @Success 201 {object} utils.APIResponse{data=models.TicketComment} "The new comment with its author; with email_customer true it also carries delivery, the outcome of the mail"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here), the body is not valid JSON, or body, comment and content are all blank; VALIDATION_ERROR (error.details.email_customer) when email_customer and is_internal are both true, nothing is written"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - only admin and the assigned support user can comment"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live ticket with this id"
@@ -849,6 +851,13 @@ func (h *TicketHandler) CreateComment(c *gin.Context) {
 		return
 	}
 
+	// email_customer is only for a reply the customer may read (#219).
+	if req.EmailCustomer && req.IsInternal {
+		logger.Warn("email_customer refused on an internal note")
+		utils.RespondValidationError(c, gin.H{"email_customer": "cannot be true on an internal note"})
+		return
+	}
+
 	comment := &models.TicketComment{
 		TicketID:     uint(id),
 		AuthorUserID: currentUserID,
@@ -856,7 +865,12 @@ func (h *TicketHandler) CreateComment(c *gin.Context) {
 		IsInternal:   req.IsInternal,
 	}
 
-	if err := h.ticketService.CreateComment(comment); err != nil {
+	if req.EmailCustomer {
+		err = h.ticketService.CreateCommentWithCustomerEmail(c.Request.Context(), comment)
+	} else {
+		err = h.ticketService.CreateComment(comment)
+	}
+	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create comment")
 		if apperrors.IsNotFound(err) {
 			utils.RespondNotFound(c, err.Error())
