@@ -41,7 +41,7 @@ unknown application paths select the complete browser suite. Runner-only changes
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
 `runner` profile: local `make verify-hygiene`, `make verify-api-docs`, `make verify-runner`, all frozen acceptance
 checks, and SQLite health smoke. CI runs API/frontend build health checks, the affected Go
-probe checks, runner tests and health smoke on its three existing database jobs. It does
+probe checks and runner tests; since 11 November 2026 browser specs run in CI only for a release. It does
 not run unrelated application unit/race suites or the full feature-browser matrix for
 this profile. Mixed runner/application changes retain the application's core and relevant
 feature coverage. Operator and developer tools that the server, the CI gates and
@@ -81,8 +81,8 @@ skipped descendants fail. The file patterns are explicit: a new test location mu
 to the check policy. Retained password-reset and rotation sources include SQL regressions,
 so service-only auth changes must exercise them too: discovery of any MySQL root requires
 `TEST_MYSQL_DSN` before compilation, and CI provisions disposable MySQL for both auth profiles.
-Local browser coverage is health smoke, login and registration on SQLite; CI runs those
-specs on SQLite, MySQL and MariaDB and builds the frontend. Frozen issue checks remain
+Local browser coverage is health smoke, login and registration on SQLite; CI builds the frontend
+and runs the database gates, and runs browser specs only for a release (11 November 2026). Frozen issue checks remain
 mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated
 feature-browser suite is added by this profile. An explicitly frozen database profile still
 requires its MySQL/migration checks; explicit full and releases retain the complete matrix.
@@ -104,8 +104,9 @@ boundaries via `python3 scripts/ci/check-go.py transaction --storage-only`, all 
 acceptance checks, configured migrations, and health/login/registration browsers on SQLite
 and MySQL. The auth checker requires a disposable SQL server and all six exact rotation
 atomicity, concurrency and validation roots across SQLite/MySQL; missing or skipped roots
-and descendants fail. CI adds the same persistence and transaction boundaries on MariaDB,
-keeps migration gates on both SQL engines, and runs the three browser specs on all engines.
+and descendants fail. CI adds the same persistence and transaction boundaries on MariaDB (the
+database gates job) and keeps migration gates on both SQL engines; browser specs run in CI only for a
+release (11 November 2026).
 Frontend build health remains required in CI; unrelated frontend units and entity browsers
 are excluded. Explicit full validation and releases remain complete.
 
@@ -140,9 +141,9 @@ fix, not this policy prerequisite. The checker also rejects missing or skipped r
 defense in depth; they do not silently reduce coverage. The source boundary has
 no persistence change, so local browsers need only SQLite health smoke. SMTP behavior is
 covered by protocol fixtures, and no login/form browser pretends to test a real SMTP relay.
-CI keeps frontend build, health smoke on all three engines and the existing MySQL/MariaDB
-migration gates. Every frozen named acceptance command still runs; explicit full/release
-coverage remains unchanged.
+CI keeps the frontend build, the database gates and the existing MySQL/MariaDB migration gates;
+browser specs run in CI only for a release (11 November 2026). Every frozen named acceptance
+command still runs; explicit full/release coverage remains unchanged.
 
 The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
 repository, handler and their tests/mocks, plus `cmd/aeo_runtime.go` and AEO startup tests.

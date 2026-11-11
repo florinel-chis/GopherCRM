@@ -158,10 +158,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI: the browser suite is release-only.** The `E2E (Playwright on …)` jobs run only when the CI
+  workflow is called with `full: true`, which only the release workflow does; pull requests,
+  merge-queue groups, pushes to `main` and manual dispatches skip them, so no browser spec runs in
+  pull-request CI at all. The profile-specific database regressions moved to a new required job,
+  `Database gates (MariaDB 10.11)`, and the remediation runner's required checks follow (hygiene,
+  backend, frontend, database gates). The runner's local validation is unchanged. This supersedes the
+  bounded browser selection described in the next entry.
 - **CI runs the full browser suite only for a release.** Pull requests, the merge queue and
-  pushes to `main` run the smoke spec and the changed features' specs on every database, even
-  when a change touches shared code, and keep the backend and database gates. A release still
-  forces the complete suite. A manual run can no longer ask for it.
+  pushes to `main` ran the smoke spec and the changed features' specs on every database, even
+  when a change touched shared code, and kept the backend and database gates. A release still
+  forces the complete suite. A manual run can no longer ask for it. (Superseded before release by
+  the entry above: pull-request CI now runs no browser spec.)
 - **The double opt-in submission replays on a deadlock (#217).** Spending the older tokens of a
   re-submission can deadlock with the retention purge, so `storePendingSubmission` now runs under
   `WithTransactionAndRetry`, with a fresh submission id on each attempt and one confirmation mail

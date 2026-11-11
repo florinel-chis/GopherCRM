@@ -18,9 +18,13 @@ make e2e E2E_DB_DRIVER=sqlite                               # whole suite on SQL
 make e2e E2E_DB_DRIVER=sqlite SPECS="e2e/tests/aeo-providers.spec.ts" # AEO provider regression suite
 ```
 
-`scripts/e2e/run.sh` does the rest, and CI runs the same script on every pull request, every
-merge-queue group and every push to `main`, once per database engine (jobs "E2E (Playwright on
-MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on SQLite)"):
+`scripts/e2e/run.sh` does the rest, and CI runs the same script only for a release (`release.yml`
+calls `ci.yml` with `full: true`; a manual dispatch of the CI workflow cannot ask for it), once per database engine
+(jobs "E2E (Playwright on MySQL 8)", "E2E (Playwright on MariaDB 10.11)" and "E2E (Playwright on
+SQLite)"). Pull requests, merge-queue groups and pushes to `main` never run the browser suite in CI
+(decision of 11 November 2026); they run the "Database gates (MariaDB 10.11)" job instead. The
+remediation runner still runs the changed feature's specs on SQLite locally before a candidate is
+published; that local scope is separate from CI.
 
 1. Drops and recreates the **`gocrm_e2e`** database (`E2E_DB_NAME`; it refuses any name not ending
    in `_e2e`), so every run starts empty and never touches the development database.

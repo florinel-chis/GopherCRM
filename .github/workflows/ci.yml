@@ -201,14 +201,78 @@ jobs:
         working-directory: gocrm-ui
         run: npm ci && npm run build
 
+  db-gates:
+    # The profile-specific database regressions that used to run inside the
+    # browser jobs: on every event, on MariaDB 10.11 (what production runs),
+    # so a pull request keeps its database gates while the browser suite
+    # itself is release-only (founder decision, 11 November 2026: end-to-end
+    # tests run for releases, never in pull-request CI).
+    name: Database gates (MariaDB 10.11)
+    needs: plan
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      db:
+        image: mariadb:10.11
+        env:
+          # The MariaDB image accepts the MYSQL_* names as well.
+          MYSQL_ROOT_PASSWORD: e2e-root-password
+          MYSQL_DATABASE: gocrm_e2e
+          MYSQL_USER: gophercrm
+          MYSQL_PASSWORD: e2e-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Require a valid selection
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: AEO runtime and persistence regressions on MariaDB
+        if: needs.plan.outputs.profile == 'aeo'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-go.py aeo
+      - name: Auth persistence on MariaDB
+        if: needs.plan.outputs.profile == 'auth-persistence'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+        run: python3 scripts/ci/check-auth.py --persistence
+      - name: Transaction boundaries on MariaDB
+        if: needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
+        run: |
+          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
+            python3 scripts/ci/check-go.py transaction
+          else
+            python3 scripts/ci/check-go.py transaction --storage-only
+          fi
+
   e2e:
     # One leg per database engine: MySQL 8; MariaDB 10.11, which is what
     # production runs; and SQLite, a supported production backend since 1.2.0.
-    # Required jobs always run the selected smoke/feature specs on all engines.
-    # Release calls force the complete browser suite before publication.
+    # Release-only: this job runs only when the workflow is called with
+    # full: true, which release.yml does before publication. A pull request, a
+    # merge-queue group, a push to main or a manual dispatch has no `full`
+    # input, so the job is skipped there and never runs Playwright (founder
+    # decision, 11 November 2026). Skipped here means no check run with this
+    # name exists, so it must not be a required check; the database gates job
+    # above is.
     name: E2E (Playwright on ${{ matrix.db.name }})
     needs: plan
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.full == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -276,27 +340,6 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: AEO runtime and persistence regressions on MariaDB
-        if: needs.plan.outputs.profile == 'aeo' && matrix.db.id == 'mariadb1011'
-        env:
-          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py aeo
-      - name: Auth persistence on MariaDB
-        if: needs.plan.outputs.profile == 'auth-persistence' && matrix.db.id == 'mariadb1011'
-        env:
-          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-auth.py --persistence
-      - name: Transaction boundaries on MariaDB
-        if: (needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded') && matrix.db.id == 'mariadb1011'
-        env:
-          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
-        run: |
-          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
-            python3 scripts/ci/check-go.py transaction
-          else
-            python3 scripts/ci/check-go.py transaction --storage-only
-          fi
       - name: Generate a per-run JWT secret
         run: echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> "$GITHUB_ENV"
       # The same script as `make e2e` locally: reset gocrm_e2e (or, on the

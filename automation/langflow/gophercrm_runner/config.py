@@ -6,10 +6,12 @@ from pathlib import Path
 import re
 
 
+# The pull-request checks the merge gate waits for. The browser suite is release-only
+# since 11 November 2026, so its jobs are not pull-request checks any more; the
+# database gates job carries the profile-specific database regressions instead.
 REQUIRED_CHECKS = (
     'Repository hygiene', 'Backend (build, vet, test)', 'Frontend (build, lint, test)',
-    'E2E (Playwright on MySQL 8)', 'E2E (Playwright on MariaDB 10.11)',
-    'E2E (Playwright on SQLite)',
+    'Database gates (MariaDB 10.11)',
 )
 DATABASE_CHECKS = (
     ('make', 'e2e', 'E2E_DB_DRIVER=sqlite'), ('make', 'e2e', 'E2E_DB_DRIVER=mysql'),
@@ -200,7 +202,7 @@ class Config:
         if ('make', 'verify') not in self.test_commands:
             raise GateError('make verify must remain registered for application and full validation')
         if not set(REQUIRED_CHECKS).issubset(self.required_checks):
-            raise GateError('All six repository checks must remain required')
+            raise GateError('The four pull-request checks (hygiene, backend, frontend, database gates) must remain required')
         if type(self.max_repair_rounds) is not int or self.max_repair_rounds < 0:
             raise GateError('max_repair_rounds must be a nonnegative integer')
         for name in ('agent_timeout_seconds', 'test_timeout_seconds', 'ci_timeout_seconds',

@@ -222,8 +222,11 @@ class DocumentationTests(unittest.TestCase):
         from gophercrm_runner.batches import policy_hash
         from gophercrm_runner.config import Config
         config = Config(repository='example/repo', checkout=Path('/repo'), state_dir=Path('/state'), issues=(95,))
-        # Captured with the installed, merged v0.5.0 implementation.
-        self.assertEqual(policy_hash(config), 'b8cf2c70dbbd5ffdf6b8fc3138fa54ca1133a0540caf3330a8d6a00938368b68')
+        # Captured with the installed, merged v0.5.0 implementation; re-captured on 11 November 2026 when the
+        # default required checks changed (the browser suite is release-only, so the pull-request checks are
+        # hygiene, backend, frontend and the database gates job). The required checks are part of the policy
+        # identity on purpose: a journal started under the old list cannot silently continue under the new one.
+        self.assertEqual(policy_hash(config), 'd351ce6f045769c91941d9698cf0526b9051550f84552a79856cdd3ee77e126d')
         self.assertNotEqual(policy_hash(config), policy_hash(replace(config, documentation_mode='reviewed')))
 
 
