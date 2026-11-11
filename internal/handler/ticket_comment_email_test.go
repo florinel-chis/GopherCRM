@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -32,6 +33,9 @@ type ticketMailCtxKey struct{}
 // service receives c.Request.Context().
 func serveTicketComment(t *testing.T, svc *mocks.TicketService, userID uint, role models.UserRole, ticketID string, body []byte) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
+	previous := utils.Logger
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	t.Cleanup(func() { utils.Logger = previous })
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	h := NewTicketHandler(svc)

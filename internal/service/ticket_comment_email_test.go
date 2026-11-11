@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -159,6 +160,11 @@ type ticketMailEnv struct {
 
 func newTicketMailEnv(t *testing.T, db *gorm.DB) *ticketMailEnv {
 	t.Helper()
+	// Each root may run alone (-run), so the package logger the service writes
+	// to must exist; captureTicketMailLogs replaces it afterwards when needed.
+	previousLogger := utils.Logger
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	t.Cleanup(func() { utils.Logger = previousLogger })
 	tag := fmt.Sprintf("%d", ticketMailSeq.Add(1))
 	e := &ticketMailEnv{db: db, tm: utils.NewTransactionManager(db), deliveries: repository.NewTicketMailDeliveryRepository(db)}
 	user := func(role models.UserRole) *models.User {
