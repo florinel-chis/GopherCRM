@@ -43,7 +43,7 @@ func TestNewFromConfig_SelectsImplementation(t *testing.T) {
 
 func TestLogMailer_NeverFails(t *testing.T) {
 	require.NoError(t, NewLogMailer().SendPasswordReset(
-		"user@example.com", "http://localhost:5173/reset-password?token=abc"))
+		"user@example.com", "http://localhost:5173/reset-password?token=abc", "GopherCRM"))
 	require.NoError(t, NewLogMailer().Send(
 		"user@example.com", "Confirm your email address",
 		"Open http://localhost:8080/api/v1/forms/public/confirm?token=abc to confirm."))

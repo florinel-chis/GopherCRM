@@ -1151,8 +1151,8 @@ not show them yet; these cases are API and backend level. Sources: `internal/mod
 `POST /tickets/{id}/comments` takes an optional boolean `email_customer`. Admin, and the support user
 the ticket is assigned to, may set it on a comment that is not an internal note; the comment, its
 `first_responded_at` stamp and a `pending` `ticket_mail_deliveries` row commit together, then one
-plaintext mail (subject `Ticket T-000042 from GopherCRM`, body: ticket number, title, this comment's
-text) goes to the ticket customer's current address and the row is stamped `sent`, `failed`,
+plaintext mail (subject `Ticket T-000042 from <general.company_name>`, or `GopherCRM` when that
+setting is blank, #292; body: ticket number, title, this comment's text) goes to the ticket customer's current address and the row is stamped `sent`, `failed`,
 `log_only` or `skipped`. The 201 carries it as `delivery`; no read does. Backend only: the comment
 form has no checkbox yet (a later frontend ticket). Sources: `internal/handler/ticket_handler.go`
 (`CreateComment`), `internal/service/ticket_comment_email.go`,
@@ -1168,8 +1168,10 @@ form has no checkbox yet (a later frontend ticket). Sources: `internal/handler/t
   2. Repeat as the assigned support user.
 - **Expected:** 201 each time with `data.delivery.status` `sent`, `sent_at` set and `error_code`
   empty; exactly one send per comment, to the customer's current address (trimmed), with the subject
-  `Ticket T-<id, six digits> from GopherCRM` and a body holding the ticket number, the title and that
-  comment's text only — no internal note and no other comment. The stored row matches the answer and
+  `Ticket T-<id, six digits> from <general.company_name>` (the stored name read after the commit,
+  trimmed; `GopherCRM` when it is blank, missing, unreadable, holds a control character or exceeds
+  100 characters — #292, `TestMailProductNameTicketSubject`, `TestMailProductNameAPISQLite`) and a
+  body holding the ticket number, the title and that comment's text only — no internal note and no other comment. The stored row matches the answer and
   holds no address or content.
 - **Automation:** automated — `TestTicketCommentEmailAPISQLite` (`tests`), `TestTicketCommentEmailDelivery`
   and `TestTicketCommentEmailRecordHoldsNoAddress` (`internal/service`)

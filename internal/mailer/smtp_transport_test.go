@@ -497,7 +497,7 @@ func TestSMTPHeaders(t *testing.T) {
 			assert.NotContains(t, err.Error(), injected, "the injected value is not echoed")
 
 			if tc.subject == "Hello" {
-				err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+				err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 				require.Error(t, err)
 				assert.ErrorIs(t, err, ErrInvalidHeader)
 				assert.NotContains(t, err.Error(), injected)
@@ -538,7 +538,7 @@ func TestSMTPHeaders(t *testing.T) {
 			if tc.to != "" {
 				assert.NotContains(t, err.Error(), tc.to, "the value is not echoed")
 			}
-			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrInvalidAddress)
 		})
@@ -847,7 +847,7 @@ func TestSMTPFailureRedaction(t *testing.T) {
 			if !tc.opts.auth {
 				m.username, m.password = "", ""
 			}
-			err, _ := sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL) })
+			err, _ := sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL, "GopherCRM") })
 			awaitSession(t, done)
 			logs := renderedLogs(t, hook)
 			// The returned error is the relay's reply for errors.As; it is
@@ -898,7 +898,7 @@ func TestSMTPFailureRedaction(t *testing.T) {
 			hook := captureLogs(t)
 			addr, done := startRelay(t, tc.opts)
 			m := newTestMailer(t, addr, tc.host, config.SMTPConfig{User: user, Password: password})
-			err, _ := sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL) })
+			err, _ := sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL, "GopherCRM") })
 			awaitSession(t, done)
 			assertClean(t, err, renderedLogs(t, hook))
 
@@ -936,7 +936,7 @@ func TestSMTPFailureRedaction(t *testing.T) {
 		addr := listener.Addr().String()
 		require.NoError(t, listener.Close())
 		m := newTestMailer(t, addr, "127.0.0.1", config.SMTPConfig{User: user, Password: password})
-		err, _ = sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL) })
+		err, _ = sendWithin(t, func() error { return m.SendPasswordReset(recipient, resetURL, "GopherCRM") })
 		assertClean(t, err, renderedLogs(t, hook))
 	})
 }

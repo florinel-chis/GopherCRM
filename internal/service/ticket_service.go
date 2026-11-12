@@ -22,6 +22,20 @@ type ticketService struct {
 	mailDeliveries repository.TicketMailDeliveryRepository
 	txManager      *utils.TransactionManager
 	mailer         mailer.Mailer
+
+	// productName is the configuration read behind the product name of the
+	// ticket reply subject (#292), set by WithTicketProductName. Nil means
+	// "GopherCRM".
+	productName MailProductNameSource
+}
+
+// WithTicketProductName makes the ticket reply mail subject read its product
+// name from source (general.company_name, through ResolveMailProductName) on
+// every send. Without it the subject names "GopherCRM".
+func WithTicketProductName(source MailProductNameSource) TicketServiceOption {
+	return func(s *ticketService) {
+		s.productName = source
+	}
 }
 
 // TicketServiceOption configures NewTicketService.

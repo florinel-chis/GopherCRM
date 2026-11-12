@@ -283,15 +283,19 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 	txManager := utils.NewTransactionManager(models.DB)
 
+	// The configuration service is built first: the password reset, quote and
+	// ticket reply mails read their product name from general.company_name
+	// through it on every send (#292).
+	configService := service.NewConfigurationService(configRepo,
+		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	// The password reset confirmation claims the token, writes the password
 	// and revokes the sessions in one transaction, so the auth service takes
 	// the same transaction manager as the other transactional services.
 	authService := service.NewAuthServiceWithSessions(
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
-		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret)
+		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret,
+		service.WithAuthProductName(configService))
 	userService := service.NewUserService(userRepo)
-	configService := service.NewConfigurationService(configRepo,
-		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
 	// Every lead and deal write path records its automation events in the
 	// transaction that commits the write (issue #164): the lead service, the
 	// deal service, the form submission path and the bulk status path all take the
@@ -305,16 +309,19 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail
-	// goes out after the commit through the shared mailer.
+	// goes out after the commit through the shared mailer, its subject naming
+	// the configured product (#292).
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
-		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer))
+		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer),
+		service.WithTicketProductName(configService))
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,
 		service.WithDealAutomationEvents(automationRepo))
 	// Products take the deals' default currency; quotes email through the
-	// same mailer as the password reset and the forms.
+	// same mailer as the password reset and the forms, and read the product
+	// name of their subject from the same configService (#292).
 	// Product external-id mappings (#239): the product delete purges them in
 	// its own transaction, so the service gets the repository and txManager.
 	productExternalIDRepo := repository.NewProductExternalIDRepository(models.DB)

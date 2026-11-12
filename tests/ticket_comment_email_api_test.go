@@ -42,7 +42,7 @@ type ticketMailAPIMailer struct {
 	err  error
 }
 
-func (m *ticketMailAPIMailer) SendPasswordReset(to, resetURL string) error {
+func (m *ticketMailAPIMailer) SendPasswordReset(to, resetURL, _ string) error {
 	return m.Send(to, "reset", resetURL)
 }
 

@@ -741,7 +741,8 @@ authentication and live on the moderate tier:
   history row per move; accepting does not change the deal)*
 - `GET /api/v1/quotes/:id/history` - The status changes, oldest first, with the acting user
 - `POST /api/v1/quotes/:id/email` - Email a sent or accepted quote as plaintext to the linked
-  customer's current address *(fixed subject `Quote Q-000042 from GopherCRM`; 409 without a live
+  customer's current address *(subject `Quote Q-000042 from <name>`, the configured
+  `general.company_name` or `GopherCRM` when it is blank; 409 without a live
   customer or when the quote was revised during the send; 502 `MAIL_DELIVERY_FAILED` when the mailer
   fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
   password reset applies: the mail is logged, not delivered, and the call still answers 200 and

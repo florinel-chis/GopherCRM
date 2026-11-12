@@ -31,7 +31,7 @@ type capturingMailer struct {
 	lastBody    string
 }
 
-func (m *capturingMailer) SendPasswordReset(to, resetURL string) error {
+func (m *capturingMailer) SendPasswordReset(to, resetURL, _ string) error {
 	m.lastTo = to
 	m.lastURL = resetURL
 	return nil

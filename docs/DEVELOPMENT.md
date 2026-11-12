@@ -538,7 +538,9 @@ window in which a stale rendering is recorded as the last email. A `Mailer` fail
 `MAIL_DELIVERY_FAILED` and stamps nothing. The development `LogMailer` (no `SMTP_HOST`) is not a
 failure: its `Send` logs and returns nil, so the quote is stamped although nothing was delivered —
 the same fallback the password reset shares (form mail records it `log_only`, see the README's
-known limitations). The subject is fixed (`Quote Q-000042 from GopherCRM`),
+known limitations). The subject is `Quote Q-000042 from <name>`, the name resolved at send time by
+`service.ResolveMailProductName` from the configuration source the service already holds for the
+default currency (see *Mail product name*, #292; `GopherCRM` when that source is nil),
 the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
 `customer_id` only — a transport error that quotes the address is returned, not logged. Roots:
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
@@ -760,8 +762,10 @@ the comment with its `delivery`. A not-found error is 404; anything else, includ
   `customerRepo.GetByID`: not found (erased, soft-deleted, missing) is `skipped`/
   `customer_unavailable`, a database failure `failed`/`lookup_failed`, a blank address after
   trimming `skipped`/`no_recipient`. Then `Mailer.Send` is called exactly once with the trimmed
-  address, the fixed subject `Ticket T-000042 from GopherCRM` (`service.TicketCommentEmailSubject`,
-  `models.TicketNumber`) and a plaintext body holding the ticket number, the title and this
+  address, the subject `Ticket T-000042 from <name>` (`service.TicketCommentEmailSubject`,
+  `models.TicketNumber`; the name comes from `service.ResolveMailProductName`, read only here,
+  after the commit and once a send will happen, through `service.WithTicketProductName`, else
+  `GopherCRM`, #292) and a plaintext body holding the ticket number, the title and this
   comment's text only. A send error is `failed` with `timeout` (`os.ErrDeadlineExceeded`),
   `invalid_recipient` (`mailer.ErrInvalidAddress`, `mailer.ErrInvalidHeader`) or `mail_failed`; a
   mailer that implements `mailer.LogOnlyReporter` and reports `LogsOnly()` (the `LogMailer`, no
@@ -811,6 +815,52 @@ now holds the newest-migration assertion); `TestTicketCommentEmailAPISQLite` (`t
 use a disposable `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable; CI limit:
 `make verify-backend` has no DSN and skips them. Registering the migration roots in the Database
 migrations workflow is an operator follow-up.
+
+**Mail product name (#292).** The password reset mail (subject `Reset your <name> password` and the
+first body line `A password reset was requested for your <name> account.`), the quote mail subject
+and the ticket reply mail subject take the product name from one place:
+`service.ResolveMailProductName(source)` (`internal/service/product_name.go`).
+
+- **The rule.** It calls `source.GetString("general.company_name")` (`service.ConfigGeneralCompanyName`)
+  on every call, with no cache, so a value changed through the configuration endpoints reaches
+  the next mail without a restart. The value is used trimmed of surrounding whitespace when it is
+  non-blank, valid UTF-8, free of control characters (CR and LF included) and at most
+  `service.MailProductNameMaxRunes` (100) runes. Otherwise the name is `GopherCRM`
+  (`service.DefaultMailProductName`): a nil source, a missing row (`apperrors.ErrNotFound`), any
+  other read error, a blank value, invalid UTF-8, a control character or a longer value. A read
+  failure never blocks a send.
+- **Wiring.** `MailProductNameSource` is the one-method `GetString` interface;
+  `ConfigurationService` satisfies it. `cmd/main.go` builds `configService` before `authService`
+  and passes `service.WithAuthProductName(configService)` (a variadic option of
+  `NewAuthServiceWithSessions`) and `service.WithTicketProductName(configService)`; the quote
+  service reuses the configuration source it already takes for the default currency. A service
+  built without the option, or with a nil source, names `GopherCRM`.
+- **When it is read.** Only when a mail will go out, with no transaction held: the reset after the
+  token is stored (an unknown or inactive address makes no read), the quote before `Mailer.Send`,
+  the ticket reply after the commit and the customer read (a `no_mailer`, `customer_unavailable`
+  or `no_recipient` delivery makes no read).
+- **The mailer.** `Mailer.SendPasswordReset(to, resetURL, productName)` takes the name; the SMTP
+  transport trims it and replaces a blank one, or one holding a control character, with
+  `mailer.DefaultProductName` (`GopherCRM`), so CR/LF can never reach the Subject header. A
+  non-ASCII name is Q-encoded like any subject. The `LogMailer` does not log the name.
+- **Logs.** A fallback caused by a read error or an invalid value logs one Warn line with
+  `config_key=general.company_name` and `reason` (`lookup_failed`, with the error through
+  `utils.LogError`, or `invalid_value`); a nil source or a blank value logs nothing. No line of
+  the resolver or of the three send paths carries the stored name, accepted or rejected.
+- **No writes.** Nothing writes, seeds, re-seeds or migrates a configuration row; no key is added.
+  The configuration write endpoints still accept any string, so a value the mail refuses (over
+  100 runes, a control character) can still show in the web app while the mail says `GopherCRM`.
+- **Not covered.** Form mail subjects and automation `send_email` subjects are written by users and
+  unchanged; `SMTP_FROM` and the other mail bodies are unchanged.
+
+Regression roots: `TestMailProductNameResolver`, `TestMailProductNameQuoteSubject`,
+`TestMailProductNameTicketSubject`, `TestMailProductNamePasswordReset`,
+`TestMailProductNameLogsOmitValue` (`internal/service/product_name_test.go`);
+`TestPasswordResetProductName` (`internal/mailer`, an in-process relay on 127.0.0.1);
+`TestMailProductNameAPISQLite` (`tests`, the configurations rows compared before and after the
+sends, and after a further `InitializeDefaults`); `TestMailProductNameProductionWiring` (`cmd`,
+`setupRouter` against an in-process relay). Registering these roots in `scripts/ci/check-go.py`
+profiles is an operator follow-up.
 
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and

@@ -49,7 +49,7 @@ type recordingMailer struct {
 	err  error
 }
 
-func (m *recordingMailer) SendPasswordReset(to, resetURL string) error {
+func (m *recordingMailer) SendPasswordReset(to, resetURL, _ string) error {
 	return m.Send(to, "password reset", resetURL)
 }
 

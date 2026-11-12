@@ -77,6 +77,22 @@ type authService struct {
 	// one instance to prove the rollback, instead of mutating the global
 	// signing methods under concurrent callers.
 	signAccessToken func(user *models.User) (string, error)
+	// productName is the configuration read behind the product name of the
+	// password reset mail (#292), set by WithAuthProductName. Nil means
+	// "GopherCRM".
+	productName MailProductNameSource
+}
+
+// AuthServiceOption configures NewAuthServiceWithSessions.
+type AuthServiceOption func(*authService)
+
+// WithAuthProductName makes the password reset mail read its product name from
+// source (general.company_name, through ResolveMailProductName) on every
+// request that sends one. Without it the mail names "GopherCRM".
+func WithAuthProductName(source MailProductNameSource) AuthServiceOption {
+	return func(s *authService) {
+		s.productName = source
+	}
 }
 
 func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig, apiKeySecret ...string) AuthService {
@@ -111,8 +127,9 @@ func NewAuthServiceWithSessions(
 	jwtConfig config.JWTConfig,
 	appBaseURL string,
 	apiKeySecret string,
+	opts ...AuthServiceOption,
 ) AuthService {
-	return &authService{
+	s := &authService{
 		userRepo:         userRepo,
 		apiKeyRepo:       apiKeyRepo,
 		refreshTokenRepo: refreshTokenRepo,
@@ -123,6 +140,10 @@ func NewAuthServiceWithSessions(
 		apiKeySecret:     apiKeySecret,
 		appBaseURL:       strings.TrimRight(appBaseURL, "/"),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // MaxFailedLoginAttempts is the number of failed attempts before an account is locked.
@@ -974,7 +995,10 @@ func (s *authService) RequestPasswordReset(email string) error {
 	}
 
 	resetURL := s.appBaseURL + "/reset-password?token=" + url.QueryEscape(raw)
-	if err := s.mailer.SendPasswordReset(user.Email, resetURL); err != nil {
+	// The product name is read only now that a mail will go out; a failed read
+	// falls back to "GopherCRM" and never blocks the send (#292).
+	productName := ResolveMailProductName(s.productName)
+	if err := s.mailer.SendPasswordReset(user.Email, resetURL, productName); err != nil {
 		// Already logged (redacted) by the mailer; swallow to stay uniform.
 		logger.WithField("user_id", user.ID).Warn("Password reset mail delivery failed")
 	}

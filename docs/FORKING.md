@@ -227,7 +227,7 @@ conflict on each upstream sync.
 | Settings fallback name | `DEFAULT_COMPANY_NAME` in `gocrm-ui/src/contexts/ConfigurationContext.tsx:26` |
 | Favicon (the only logo asset) | `gocrm-ui/public/favicon.svg` |
 | Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` (`createAppTheme`); the light theme's primary colour follows the `ui.theme.primary_color` setting for signed-in users |
-| Mail subjects and body | `internal/mailer/smtp.go:84,91` (password reset), `internal/service/quote_email.go:15` (quote email) |
+| Mail subjects and body | the product name in the password reset subject and body, the quote subject and the ticket reply subject comes from `general.company_name` through `service.ResolveMailProductName` (`internal/service/product_name.go`), else `GopherCRM`, and is configurable in Settings; the templates stay in `internal/mailer/smtp.go` (`SendPasswordReset`, password reset), `internal/service/quote_email.go` (`QuoteEmailSubject`) and `internal/service/ticket_comment_email.go` (`TicketCommentEmailSubject`) |
 | API title | `// @title` in `cmd/main.go:24`, then `make swagger` |
 | README images | `docs/img/gophercrm-*.png` |
 
@@ -239,10 +239,12 @@ unchanged). Accepted colours are 3- or 6-digit hex, `rgb()`/`rgba()` and `hsl()`
 colour, `var(...)`, 4/8-digit hex, `color()`, `oklch()` or anything malformed keeps `#1976d2`
 (`gocrm-ui/src/theme/primaryColor.ts`). A fresh install stores `GopherCRM`, so the name changes from
 the build-time `GoCRM` on the sign-in page to `GopherCRM` after sign-in until you set your own.
+The same name also reaches the password reset mail (subject and first body line) and the quote and
+ticket reply subjects, read at send time (#292); a blank value, one holding a control character or
+one longer than 100 characters falls back to `GopherCRM` there.
 
 Things that look like rebrand controls and are not:
 
-- The **Settings** company name does not reach mail subjects, which are fixed in code (#221).
 - The **Docker UI image ignores `VITE_APP_NAME`.** `gocrm-ui/Dockerfile` accepts only
   `VITE_API_BASE_URL` as a build argument, and `gocrm-ui/.dockerignore` excludes `.env` files, so
   the image shows `GoCRM` before sign-in. Edit `FALLBACK_PRODUCT_NAME` or add a build argument

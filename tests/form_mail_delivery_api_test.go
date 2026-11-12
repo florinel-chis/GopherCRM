@@ -41,7 +41,7 @@ type formMailAPIMailer struct {
 	to   []string
 }
 
-func (m *formMailAPIMailer) SendPasswordReset(string, string) error { return nil }
+func (m *formMailAPIMailer) SendPasswordReset(string, string, string) error { return nil }
 
 func (m *formMailAPIMailer) Send(to, _, _ string) error {
 	m.mu.Lock()

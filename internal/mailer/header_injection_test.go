@@ -57,7 +57,7 @@ func TestSMTPMailerRejectsHeaderInjection(t *testing.T) {
 			if !strings.ContainsAny(tc.to, "\r\n") {
 				return
 			}
-			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc")
+			err = m.SendPasswordReset(tc.to, "http://localhost:5173/reset-password?token=abc", "GopherCRM")
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, ErrInvalidHeader), "SendPasswordReset: %v", err)
 			assert.NotContains(t, err.Error(), injected)

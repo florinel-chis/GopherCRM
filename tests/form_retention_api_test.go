@@ -40,7 +40,7 @@ type formRetentionAPIMailer struct {
 	bodies []string
 }
 
-func (m *formRetentionAPIMailer) SendPasswordReset(string, string) error { return nil }
+func (m *formRetentionAPIMailer) SendPasswordReset(string, string, string) error { return nil }
 
 func (m *formRetentionAPIMailer) Send(_, _, body string) error {
 	m.mu.Lock()

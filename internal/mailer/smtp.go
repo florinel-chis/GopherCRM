@@ -80,15 +80,22 @@ func NewSMTPMailer(cfg config.SMTPConfig) *SMTPMailer {
 	}
 }
 
-func (m *SMTPMailer) SendPasswordReset(to, resetURL string) error {
-	subject := "Reset your GopherCRM password"
+// SendPasswordReset delivers the reset link. The subject reads "Reset your
+// <productName> password" and the first body line "A password reset was
+// requested for your <productName> account."; a blank productName, or one
+// holding a control character (CR and LF included), is replaced with
+// DefaultProductName and the mail is still sent. A non-ASCII name is
+// Q-encoded in the Subject header like any other subject.
+func (m *SMTPMailer) SendPasswordReset(to, resetURL, productName string) error {
+	name := passwordResetProductName(productName)
+	subject := "Reset your " + name + " password"
 	if err := validateHeaders(to, subject); err != nil {
 		// The offending value is not logged: it is the injection attempt.
 		log().WithError(err).Warn("Refused to send password reset email with an invalid header or address")
 		return fmt.Errorf("send password reset mail: %w", err)
 	}
 	body := strings.Join([]string{
-		"A password reset was requested for your GopherCRM account.",
+		"A password reset was requested for your " + name + " account.",
 		"",
 		"Open the link below to choose a new password. The link is valid for one hour and can be used once:",
 		"",
