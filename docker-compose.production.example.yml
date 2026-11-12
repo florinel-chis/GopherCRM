@@ -18,7 +18,11 @@
 # and the backend keeps its default. Because this file sets all of its keys,
 # values for them in the SQLite stack's /data/.env are ignored.
 #
-# The ports tags need Compose 2.24.4 or later (!override). See docs/DOCKER.md,
+# The ports tags need Compose 2.24.4 or later (!override). An older Compose
+# (seen with 2.19.0) accepts this file but ignores !override and keeps the
+# shipped all-interfaces UI publication next to the loopback one. Check
+# `docker compose version`, then read the merged ports with `config` (without
+# -q): backend must have none, ui only 127.0.0.1. See docs/DOCKER.md,
 # "Production override example".
 
 services:

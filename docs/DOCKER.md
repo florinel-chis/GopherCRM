@@ -246,7 +246,15 @@ Ports: the example removes the backend's `8080` publication
 (`ports: !reset []`) and replaces the UI publication with
 `127.0.0.1:${UI_PORT:-3000}:80` (`ports: !override`), so only a TLS proxy on
 the same host reaches the stack. The `!override` tag needs Compose 2.24.4 or
-later; an older Compose rejects the file.
+later. An older Compose does **not** reject the file: Compose 2.19.0 accepts
+it, `config -q` succeeds, `!reset []` still removes the backend port, but
+`!override` is ignored and the loopback entry is appended to the shipped
+all-interfaces `"${UI_PORT:-3000}:80"`, so the UI stays reachable over plain
+HTTP. Check `docker compose version` (2.24.4 or later), and before exposing
+the host read the merged ports with `config` without `-q`, for example
+`docker compose -f docker-compose.yml -f docker-compose.production.example.yml config`:
+`backend` must show no `ports` and `ui` exactly one publication, with
+`host_ip: 127.0.0.1`.
 
 It leaves `TRUSTED_PROXIES`, the subnet, the project name, the volumes, the
 secrets (`JWT_SECRET`, `API_KEY_SECRET`, `DB_*`) and `LOG_*` as the stack

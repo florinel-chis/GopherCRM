@@ -407,7 +407,8 @@ local machine. Before you put either on the internet:
   plain HTTP in clear text, and both files publish the backend's `8080` and the UI's `UI_PORT` on
   every host interface (`docker-compose.yml:61-62,75-76`, `docker-compose.sqlite.yml:46-47,60-61`),
   so a proxy alone leaves both reachable without TLS. `docker-compose.production.example.yml`
-  drops the backend publication and binds the UI to `127.0.0.1` (Compose 2.24.4 or later);
+  drops the backend publication and binds the UI to `127.0.0.1` (Compose 2.24.4 or later; an
+  older Compose accepts the file but keeps the all-interfaces UI publication);
   [DOCKER.md](DOCKER.md) ("Several installations on one host") explains the syntax.
 - The SQLite stack is two containers with a fixed project name (`gophercrm-sqlite`), fixed host
   port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,46-47,66-73`). Several installs on

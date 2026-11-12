@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `${...}` interpolation only. `APP_BASE_URL`, `PUBLIC_BASE_URL` and `CORS_ALLOWED_ORIGINS`
   are required (Compose stops with a message when one is unset); a blank optional value keeps the
   backend default. It removes the backend's host port (`!reset []`) and binds the UI to
-  `127.0.0.1:${UI_PORT:-3000}` (`!override`, Compose 2.24.4 or later). Values come from the shell
+  `127.0.0.1:${UI_PORT:-3000}` (`!override`, Compose 2.24.4 or later; an older Compose such as
+  2.19.0 accepts the file but ignores `!override` and keeps the all-interfaces UI publication, so
+  check the merged ports with `config` without `-q`). Values come from the shell
   or the repo-root `.env`; for its 15 keys the example masks the SQLite stack's `/data/.env`. It
   leaves `TRUSTED_PROXIES`, the subnet, the project name, volumes and secrets alone, and the shipped
   Compose files are unchanged. Documented in `docs/DOCKER.md` ("Production override example");
