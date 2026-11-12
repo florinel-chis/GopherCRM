@@ -248,7 +248,7 @@ Things that look like rebrand controls and are not:
 - The **Docker UI image ignores `VITE_APP_NAME`.** `gocrm-ui/Dockerfile` accepts only
   `VITE_API_BASE_URL` as a build argument, and `gocrm-ui/.dockerignore` excludes `.env` files, so
   the image shows `GoCRM` before sign-in. Edit `FALLBACK_PRODUCT_NAME` or add a build argument
-  (#222).
+  (not shipped; see [DOCKER.md](DOCKER.md)).
 - **A changed seed default does not reach an existing database.** Seeding refreshes metadata but
   keeps the stored value (`internal/repository/configuration_repository.go:78-94`). Change existing
   installs through Settings or the configuration API.
@@ -398,16 +398,17 @@ local machine. Before you put either on the internet:
 
 - They do not forward SMTP, `PUBLIC_BASE_URL`, reCAPTCHA, `AUTOMATION_*` or `AEO_SCHEDULE_*`
   variables to the backend, and they set `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS` to
-  `localhost:${UI_PORT}` (`docker-compose.yml:39-62`, `docker-compose.sqlite.yml:25-47`). Write
-  a `docker-compose.override.yml` that sets your real values. A shipped production override is
-  #222.
+  `localhost:${UI_PORT}` (`docker-compose.yml:41-60`, `docker-compose.sqlite.yml:25-43`). Apply
+  the committed `docker-compose.production.example.yml` with a second `-f` and supply your real
+  values from the shell or the repo-root `.env`; [DOCKER.md](DOCKER.md) ("Production override
+  example") lists what it forwards and the values it requires.
 - The UI image bakes `VITE_API_BASE_URL=/api/v1` and nothing else (`gocrm-ui/Dockerfile:16-17`).
 - Put TLS in front, and close the plain-HTTP ports behind it. Passwords and bearer tokens cross
   plain HTTP in clear text, and both files publish the backend's `8080` and the UI's `UI_PORT` on
   every host interface (`docker-compose.yml:61-62,75-76`, `docker-compose.sqlite.yml:46-47,60-61`),
-  so a proxy alone leaves both reachable without TLS. Drop the backend publication and bind the UI
-  to loopback in the override; [DOCKER.md](DOCKER.md) ("Several installations on one host") shows
-  the syntax.
+  so a proxy alone leaves both reachable without TLS. `docker-compose.production.example.yml`
+  drops the backend publication and binds the UI to `127.0.0.1` (Compose 2.24.4 or later);
+  [DOCKER.md](DOCKER.md) ("Several installations on one host") explains the syntax.
 - The SQLite stack is two containers with a fixed project name (`gophercrm-sqlite`), fixed host
   port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,46-47,66-73`). Several installs on
   one host need separate project names, ports, subnets, volumes and secrets.
@@ -416,12 +417,12 @@ local machine. Before you put either on the internet:
   Back up before every upgrade: on
   SQLite the schema only moves forward through startup auto-migration.
 
-Validate the merged result with every file named, because an explicit `-f` turns off the
-automatic pick-up of `docker-compose.override.yml`:
+Validate the merged result with every file named (an explicit `-f` also turns off the automatic
+pick-up of a `docker-compose.override.yml`), then start with the same pair:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml config -q
-docker compose -f docker-compose.sqlite.yml -f docker-compose.override.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.production.example.yml config -q
+docker compose -f docker-compose.sqlite.yml -f docker-compose.production.example.yml config -q
 ```
 
 Run `config` without `-q` to read the merged `ports:` before you expose anything.

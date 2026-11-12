@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Production Compose override example (#222).** `docker-compose.production.example.yml` at the
+  repository root is applied with a second `-f` to either `docker-compose.yml` or
+  `docker-compose.sqlite.yml`. It forwards `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,
+  `SMTP_FROM`, `APP_BASE_URL`, `PUBLIC_BASE_URL`, `CORS_ALLOWED_ORIGINS`, `RECAPTCHA_SITE_KEY`,
+  `RECAPTCHA_SECRET_KEY`, `RECAPTCHA_MIN_SCORE`, `AUTOMATION_ENABLED`,
+  `AUTOMATION_POLL_INTERVAL_SECONDS`, `AEO_SCHEDULE_ENABLED` and `AEO_SCHEDULE_HOUR` to the backend
+  through `${...}` interpolation only. `APP_BASE_URL`, `PUBLIC_BASE_URL` and `CORS_ALLOWED_ORIGINS`
+  are required (Compose stops with a message when one is unset); a blank optional value keeps the
+  backend default. It removes the backend's host port (`!reset []`) and binds the UI to
+  `127.0.0.1:${UI_PORT:-3000}` (`!override`, Compose 2.24.4 or later). Values come from the shell
+  or the repo-root `.env`; for its 15 keys the example masks the SQLite stack's `/data/.env`. It
+  leaves `TRUSTED_PROXIES`, the subnet, the project name, volumes and secrets alone, and the shipped
+  Compose files are unchanged. Documented in `docs/DOCKER.md` ("Production override example");
+  `internal/config/compose_production_example_test.go` pins its shape, its mapping onto
+  `config.Load` and the documentation.
 - **Email a staff ticket reply to the customer (#219, backend).** `POST /tickets/{id}/comments`
   accepts an optional `email_customer` boolean. Admin, and the support user the ticket is assigned
   to, may set it on a comment that is not an internal note (with `is_internal` it is 400
@@ -37,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hex, `rgb()`/`rgba()` and `hsl()`/`hsla()` values are applied and MUI derives the light and dark
   variants; any other value, and every signed-out page, keeps `#1976d2`. The dark theme, secondary
   colour and snackbars are unchanged. Frontend only; no API change. Mail subjects (#221) and the
-  Docker build argument (#222) remain open.
+  Docker `VITE_APP_NAME` build argument remain open.
 - **External identity mappings for products (#239).** A new `product_external_ids` table maps an
   integrator's `(source, scope, external_id)` to a product, unique on the exact, case-sensitive
   triple with the customer mappings' rules (source 1-64, scope 0-128 and `''` by default,

@@ -1,0 +1,48 @@
+# Production override example for either Compose stack. Compose never loads
+# this file on its own; name it with a second -f:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.production.example.yml config -q
+#   docker compose -f docker-compose.sqlite.yml -f docker-compose.production.example.yml config -q
+#
+# Every value is a ${...} interpolation filled from the shell or the git-ignored
+# repo-root .env. Never write a real value (a password, a key) into this file;
+# when you extend it, keep every value as an interpolation, or keep the
+# extended copy outside the working tree.
+#
+# APP_BASE_URL, PUBLIC_BASE_URL and CORS_ALLOWED_ORIGINS are required.
+# PUBLIC_BASE_URL is the public origin of the UI proxy (normally the same as
+# APP_BASE_URL), because the backend port is no longer published. A .env copied
+# from .env.example sets PUBLIC_BASE_URL to http://localhost:8080: replace it.
+#
+# Every other key is optional: unset, it reaches the backend as an empty string
+# and the backend keeps its default. Because this file sets all of its keys,
+# values for them in the SQLite stack's /data/.env are ignored.
+#
+# The ports tags need Compose 2.24.4 or later (!override). See docs/DOCKER.md,
+# "Production override example".
+
+services:
+  backend:
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      APP_BASE_URL: "${APP_BASE_URL:?APP_BASE_URL must be set to the public origin of the UI, e.g. https://crm.example.com}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:?PUBLIC_BASE_URL must be set to the public origin of the UI proxy, normally the same as APP_BASE_URL}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS must list every browser origin of the UI, comma-separated}"
+      RECAPTCHA_SITE_KEY: ${RECAPTCHA_SITE_KEY:-}
+      RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
+      RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-}
+      AUTOMATION_ENABLED: ${AUTOMATION_ENABLED:-}
+      AUTOMATION_POLL_INTERVAL_SECONDS: ${AUTOMATION_POLL_INTERVAL_SECONDS:-}
+      AEO_SCHEDULE_ENABLED: ${AEO_SCHEDULE_ENABLED:-}
+      AEO_SCHEDULE_HOUR: ${AEO_SCHEDULE_HOUR:-}
+    # No host port for the API: the UI nginx proxies /api/v1/ to it.
+    ports: !reset []
+
+  ui:
+    # Loopback only, behind a TLS-terminating reverse proxy on this host.
+    ports: !override
+      - "127.0.0.1:${UI_PORT:-3000}:80"
