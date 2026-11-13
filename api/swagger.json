@@ -3973,7 +3973,8 @@
                     {
                         "enum": [
                             "lead",
-                            "deal"
+                            "deal",
+                            "ticket"
                         ],
                         "type": "string",
                         "description": "Only rules of this entity type",
@@ -4040,7 +4041,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), entity_type is not lead or deal, or enabled is not a boolean",
+                        "description": "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or enabled is not a boolean",
                         "schema": {
                             "allOf": [
                                 {
@@ -4140,7 +4141,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.",
+                "description": "Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead, deal or ticket; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed (deal rules only), ticket_created, ticket_updated, ticket_status_changed (ticket rules only) or schedule; trigger carries from/to for a status, stage or ticket status change (ticket statuses on ticket rules), filters.ticket_status on a ticket schedule, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4338,7 +4339,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR when entity_type is missing or not lead/deal or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message; a missing rule object is not a binding error, it fails the rule checks instead); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_INPUT without details when entity_type differs from rule.entity_type",
+                        "description": "VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message; a missing rule object is not a binding error, it fails the rule checks instead); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_INPUT without details when entity_type differs from rule.entity_type",
                         "schema": {
                             "allOf": [
                                 {
@@ -5152,7 +5153,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here) or the body is not valid JSON; VALIDATION_ERROR when entity_type is missing or not lead/deal or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message); INVALID_INPUT when entity_type differs from the rule's",
+                        "description": "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here) or the body is not valid JSON; VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message); INVALID_INPUT when entity_type differs from the rule's",
                         "schema": {
                             "allOf": [
                                 {
@@ -5429,7 +5430,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of runs, without their step logs. Roles: admin sees every run; sales only runs whose lead or deal it currently owns (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments); support and customers get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.",
+                "description": "One page of runs, without their step logs. Roles: admin sees every run, ticket runs included; sales only runs whose lead or deal it currently owns, never a ticket run (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments); support and customers get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.",
                 "produces": [
                     "application/json"
                 ],
@@ -5481,7 +5482,8 @@
                     {
                         "enum": [
                             "lead",
-                            "deal"
+                            "deal",
+                            "ticket"
                         ],
                         "type": "string",
                         "description": "Only runs on this entity type",
@@ -5545,7 +5547,7 @@
                         }
                     },
                     "400": {
-                        "description": "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), status or entity_type is unknown, or rule_id or entity_id is not a positive integer",
+                        "description": "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), status is unknown, entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or rule_id or entity_id is not a positive integer",
                         "schema": {
                             "allOf": [
                                 {
@@ -25619,7 +25621,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 },
@@ -25705,7 +25708,7 @@
             }
         },
         "github_com_florinel-chis_gophercrm_internal_models.AutomationRule": {
-            "description": "An admin-defined follow-up rule: a lead or deal trigger (or a daily UTC schedule) and up to 20 ordered steps.",
+            "description": "An admin-defined follow-up rule: a lead, deal or ticket trigger (or a daily UTC schedule) and up to 20 ordered steps.",
             "type": "object",
             "properties": {
                 "created_at": {
@@ -25742,7 +25745,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 },
@@ -25792,7 +25796,7 @@
                     ]
                 },
                 "trigger_type": {
-                    "description": "What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.",
+                    "description": "What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule; ticket rules take ticket_created, ticket_updated, ticket_status_changed or schedule. Writes made by an automation step never start a run.",
                     "type": "string",
                     "enum": [
                         "lead_created",
@@ -25802,6 +25806,9 @@
                         "deal_created",
                         "deal_updated",
                         "deal_stage_changed",
+                        "ticket_created",
+                        "ticket_updated",
+                        "ticket_status_changed",
                         "schedule"
                     ],
                     "example": "lead_created"
@@ -25821,7 +25828,7 @@
             }
         },
         "github_com_florinel-chis_gophercrm_internal_models.AutomationRun": {
-            "description": "One execution of an automation rule against one lead or deal. It never carries the rule's trigger or steps, only the rule's name.",
+            "description": "One execution of an automation rule against one lead, deal or ticket. It never carries the rule's trigger or steps, only the rule's name.",
             "type": "object",
             "properties": {
                 "attempts": {
@@ -25862,7 +25869,7 @@
                     "example": "evt:1042:rule:12"
                 },
                 "entity_id": {
-                    "description": "ID of the lead or deal the run acts on. Read-only.",
+                    "description": "ID of the lead, deal or ticket the run acts on. Read-only.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 12
@@ -25872,7 +25879,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "readOnly": true,
                     "example": "lead"
@@ -25888,7 +25896,7 @@
                     "example": "step_failed"
                 },
                 "event_id": {
-                    "description": "ID of the lead or deal event that started the run; omitted for a schedule run. Read-only.",
+                    "description": "ID of the lead, deal or ticket event that started the run; omitted for a schedule run. Read-only.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 1042
@@ -26050,7 +26058,7 @@
             "type": "object",
             "properties": {
                 "stage": {
-                    "description": "Deal rules only: visit only deals in this stage. Omitted or empty means any stage; set on a lead rule it is refused (invalid_value).",
+                    "description": "Deal rules only: visit only deals in this stage. Omitted or empty means any stage; set on a lead or ticket rule it is refused (invalid_value).",
                     "type": "string",
                     "enum": [
                         "qualification",
@@ -26062,7 +26070,7 @@
                     "example": "proposal"
                 },
                 "status": {
-                    "description": "Lead rules only: visit only leads in this status. Omitted or empty means any status; set on a deal rule it is refused (invalid_value).",
+                    "description": "Lead rules only: visit only leads in this status. Omitted or empty means any status; set on a deal or ticket rule it is refused (invalid_value).",
                     "type": "string",
                     "enum": [
                         "new",
@@ -26072,6 +26080,17 @@
                         "converted"
                     ],
                     "example": "contacted"
+                },
+                "ticket_status": {
+                    "description": "Ticket rules only (#242): visit only tickets in this status. Omitted or empty means any status; set on a lead or deal rule it is refused (invalid_value).",
+                    "type": "string",
+                    "enum": [
+                        "open",
+                        "in_progress",
+                        "resolved",
+                        "closed"
+                    ],
+                    "example": "resolved"
                 }
             }
         },
@@ -26176,7 +26195,7 @@
                     "example": 4
                 },
                 "field": {
-                    "description": "condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.",
+                    "description": "condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Ticket rules: status, priority (strings) and owner_id (the assignee), customer_id (numbers). Names, addresses, notes and ticket text are never comparable.",
                     "type": "string",
                     "enum": [
                         "status",
@@ -26193,7 +26212,9 @@
                         "utm_campaign",
                         "utm_term",
                         "utm_content",
-                        "referrer_host"
+                        "referrer_host",
+                        "priority",
+                        "customer_id"
                     ],
                     "example": "status"
                 },
@@ -26226,7 +26247,7 @@
                     "example": "high"
                 },
                 "recipient": {
-                    "description": "create_task, send_email, notify: who receives the task, the email or the notification. owner is the record's owner at execution time; user is the staff user named by user_id. Empty is stored as owner. assign_owner always stores user.",
+                    "description": "create_task, send_email, notify: who receives the task, the email or the notification. owner is the record's owner at execution time (a ticket's assignee); user is the staff user named by user_id. Empty is stored as owner. assign_owner always stores user.",
                     "type": "string",
                     "enum": [
                         "owner",
@@ -26241,13 +26262,13 @@
                     "example": "Lead {{ lead.first_name }} needs attention"
                 },
                 "title": {
-                    "description": "create_task and notify (required): the title template, at most 255 characters and no line break. Placeholders are written as {{ name }}. A notify title may use lead.id, lead.first_name, lead.last_name, lead.email, lead.phone, lead.company, lead.status, lead.source (lead rules) or deal.id, deal.title, deal.stage, deal.amount, deal.currency, deal.source (deal rules), plus owner.first_name, owner.last_name, owner.email; a task title only lead.id, lead.status, lead.source (lead rules) or the deal placeholders (deal rules).",
+                    "description": "create_task and notify (required): the title template, at most 255 characters and no line break. Placeholders are written as {{ name }}. A notify title may use lead.id, lead.first_name, lead.last_name, lead.email, lead.phone, lead.company, lead.status, lead.source (lead rules), deal.id, deal.title, deal.stage, deal.amount, deal.currency, deal.source (deal rules) or ticket.id, ticket.number, ticket.status, ticket.priority (ticket rules), plus owner.first_name, owner.last_name, owner.email; a task title only lead.id, lead.status, lead.source (lead rules), the deal placeholders (deal rules) or the four ticket placeholders (ticket rules). Ticket title, description and customer fields are never placeholders.",
                     "type": "string",
                     "maxLength": 255,
                     "example": "Follow up with lead {{ lead.id }}"
                 },
                 "user_id": {
-                    "description": "The staff user (active, not a customer) named by recipient user, and the new owner of an assign_owner step, where it is required. Refused (not_applicable) with recipient owner. An unknown, deactivated or customer user is refused with unknown_reference (400 INVALID_REFERENCE when it is the first refusal).",
+                    "description": "The staff user (active, not a customer) named by recipient user, and the new owner of an assign_owner step, where it is required; on a ticket rule the assign_owner user must be a support or admin user. Refused (not_applicable) with recipient owner. An unknown, deactivated or customer user (or a ticket assignee who is not support or admin) is refused with unknown_reference (400 INVALID_REFERENCE when it is the first refusal).",
                     "type": "integer",
                     "example": 7
                 },
@@ -26274,7 +26295,7 @@
                     "example": 4
                 },
                 "from": {
-                    "description": "Only for lead_status_changed and deal_stage_changed: start only when the previous value was this lead status (lead rules) or deal stage (deal rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).",
+                    "description": "Only for lead_status_changed, deal_stage_changed and ticket_status_changed: start only when the previous value was this lead status (lead rules), deal stage (deal rules) or ticket status (ticket rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).",
                     "type": "string",
                     "enum": [
                         "new",
@@ -26286,7 +26307,11 @@
                         "proposal",
                         "negotiation",
                         "won",
-                        "lost"
+                        "lost",
+                        "open",
+                        "in_progress",
+                        "resolved",
+                        "closed"
                     ],
                     "example": "new"
                 },
@@ -26304,7 +26329,7 @@
                     "example": 14
                 },
                 "to": {
-                    "description": "Only for lead_status_changed and deal_stage_changed: start only when the new value is this lead status (lead rules) or deal stage (deal rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).",
+                    "description": "Only for lead_status_changed, deal_stage_changed and ticket_status_changed: start only when the new value is this lead status (lead rules), deal stage (deal rules) or ticket status (ticket rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).",
                     "type": "string",
                     "enum": [
                         "new",
@@ -26316,7 +26341,11 @@
                         "proposal",
                         "negotiation",
                         "won",
-                        "lost"
+                        "lost",
+                        "open",
+                        "in_progress",
+                        "resolved",
+                        "closed"
                     ],
                     "example": "qualified"
                 }
@@ -27761,7 +27790,7 @@
                     "example": "2026-10-30T08:00:00Z"
                 },
                 "entity_id": {
-                    "description": "ID of the lead or deal the notification is about.",
+                    "description": "ID of the lead, deal or ticket the notification is about.",
                     "type": "integer",
                     "example": 12
                 },
@@ -27770,7 +27799,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 },
@@ -28949,7 +28979,7 @@
                     "example": "required"
                 },
                 "field": {
-                    "description": "Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.\u003cname\u003e, with i the zero-based index in the steps array.",
+                    "description": "Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, trigger.filters.ticket_status, steps, steps[i].step_type or steps[i].config.\u003cname\u003e, with i the zero-based index in the steps array.",
                     "type": "string",
                     "example": "steps[0].config.title"
                 },
@@ -29235,7 +29265,7 @@
             ],
             "properties": {
                 "entity_id": {
-                    "description": "ID of the live lead or deal to simulate against (404 when it does not exist).",
+                    "description": "ID of the live lead, deal or ticket to simulate against (404 when it does not exist).",
                     "type": "integer",
                     "minimum": 1,
                     "example": 12
@@ -29245,7 +29275,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 },
@@ -29268,7 +29299,7 @@
             ],
             "properties": {
                 "entity_id": {
-                    "description": "ID of the live lead or deal to simulate against (404 when it does not exist).",
+                    "description": "ID of the live lead, deal or ticket to simulate against (404 when it does not exist).",
                     "type": "integer",
                     "minimum": 1,
                     "example": 12
@@ -29278,7 +29309,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 }
@@ -29322,7 +29354,8 @@
                     "type": "string",
                     "enum": [
                         "lead",
-                        "deal"
+                        "deal",
+                        "ticket"
                     ],
                     "example": "lead"
                 },
@@ -29342,7 +29375,7 @@
                     }
                 },
                 "trigger": {
-                    "description": "Trigger configuration: from and to for a status or stage change, form_id for lead_form_submitted, hour_utc, filters and stale_days for a schedule.",
+                    "description": "Trigger configuration: from and to for a status, stage or ticket status change, form_id for lead_form_submitted, hour_utc, filters and stale_days for a schedule.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AutomationTrigger"
@@ -29350,7 +29383,7 @@
                     ]
                 },
                 "trigger_type": {
-                    "description": "What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule (anything else is invalid_value and skips the trigger checks).",
+                    "description": "What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule; ticket rules ticket_created, ticket_updated, ticket_status_changed or schedule (anything else is invalid_value and skips the trigger checks).",
                     "type": "string",
                     "enum": [
                         "lead_created",
@@ -29360,6 +29393,9 @@
                         "deal_created",
                         "deal_updated",
                         "deal_stage_changed",
+                        "ticket_created",
+                        "ticket_updated",
+                        "ticket_status_changed",
                         "schedule"
                     ],
                     "example": "lead_created"
