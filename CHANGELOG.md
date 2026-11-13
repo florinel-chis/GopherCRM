@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docker UI image `VITE_APP_NAME` build argument (#303).** `gocrm-ui/Dockerfile` declares
+  `ARG VITE_APP_NAME=` and `ENV VITE_APP_NAME=$VITE_APP_NAME` in its build stage, before
+  `npm run build`, so `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` makes the signed-out
+  sign-in and registration pages read "Welcome to Acme" and "Create your Acme account". The empty
+  default keeps `GoCRM`; signed-in users still see the stored `general.company_name`. The value is
+  not a secret: Vite inlines it into the public JavaScript bundle nginx serves.
+  `gocrm-ui/.dockerignore` still excludes `.env` files. The shipped Compose files do not forward
+  it yet; the Compose `build.args` pass-through is #308. Documented in `docs/DOCKER.md`;
+  `gocrm-ui/src/hooks/productNameBuildArg.test.ts` pins the Dockerfile and the documentation, and
+  `gocrm-ui/e2e/tests/product-name-signed-out.spec.ts` checks the signed-out pages in a browser.
 - **Server provisioning guide for the release-tarball path (#231).** `docs/SERVER_PROVISIONING.md`
   takes a fresh systemd/nginx Linux host to its first deploy through `scripts/deploy/bootstrap.sh`
   and the Deploy workflow: packages, the `gophercrm` system user, `/srv/gophercrm` and the root-only
@@ -65,8 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ui.theme.primary_color` (`BrandThemeProvider`, under the configuration provider): 3- or 6-digit
   hex, `rgb()`/`rgba()` and `hsl()`/`hsla()` values are applied and MUI derives the light and dark
   variants; any other value, and every signed-out page, keeps `#1976d2`. The dark theme, secondary
-  colour and snackbars are unchanged. Frontend only; no API change. Mail subjects (#221) and the
-  Docker `VITE_APP_NAME` build argument remain open.
+  colour and snackbars are unchanged. Frontend only; no API change. Mail subjects followed in
+  #292 and the Docker `VITE_APP_NAME` build argument in #303.
 - **External identity mappings for products (#239).** A new `product_external_ids` table maps an
   integrator's `(source, scope, external_id)` to a product, unique on the exact, case-sensitive
   triple with the customer mappings' rules (source 1-64, scope 0-128 and `''` by default,

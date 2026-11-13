@@ -245,10 +245,6 @@ one longer than 100 characters falls back to `GopherCRM` there.
 
 Things that look like rebrand controls and are not:
 
-- The **Docker UI image ignores `VITE_APP_NAME`.** `gocrm-ui/Dockerfile` accepts only
-  `VITE_API_BASE_URL` as a build argument, and `gocrm-ui/.dockerignore` excludes `.env` files, so
-  the image shows `GoCRM` before sign-in. Edit `FALLBACK_PRODUCT_NAME` or add a build argument
-  (not shipped; see [DOCKER.md](DOCKER.md)).
 - **A changed seed default does not reach an existing database.** Seeding refreshes metadata but
   keeps the stored value (`internal/repository/configuration_repository.go:78-94`). Change existing
   installs through Settings or the configuration API.
@@ -297,7 +293,12 @@ Keep `automation/langflow/THIRD_PARTY_NOTICES.md` while you ship that directory.
 Configuration comes from three places:
 
 1. **Build-time Vite variables** (`gocrm-ui/.env`), inlined into the static UI by `npm run build`:
-   `VITE_API_BASE_URL`, `VITE_APP_NAME`. Changing them needs a rebuild.
+   `VITE_API_BASE_URL`, `VITE_APP_NAME`. Changing them needs a rebuild. The Docker UI image does
+   not read `gocrm-ui/.env` (`gocrm-ui/.dockerignore` excludes it); pass both as build arguments
+   instead, for example `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` (#303; see
+   [DOCKER.md](DOCKER.md)). Without the argument the image shows `GoCRM` before sign-in. The
+   shipped Compose files do not forward `VITE_APP_NAME` yet; the Compose `build.args`
+   pass-through is #308.
 2. **Environment variables** for the backend, read once at startup by `internal/config/config.go`
    (and loaded from `.env` by godotenv). `.env.example` documents each one.
 3. **Persisted settings** in the `configurations` table, edited under Settings. The AEO provider
@@ -402,7 +403,10 @@ local machine. Before you put either on the internet:
   the committed `docker-compose.production.example.yml` with a second `-f` and supply your real
   values from the shell or the repo-root `.env`; [DOCKER.md](DOCKER.md) ("Production override
   example") lists what it forwards and the values it requires.
-- The UI image bakes `VITE_API_BASE_URL=/api/v1` and nothing else (`gocrm-ui/Dockerfile:16-17`).
+- The UI image bakes `VITE_API_BASE_URL=/api/v1` and `VITE_APP_NAME`, empty by default, which
+  shows `GoCRM` before sign-in (`gocrm-ui/Dockerfile:19-22`). Set the name with
+  `--build-arg VITE_APP_NAME=...` (see [DOCKER.md](DOCKER.md)); the Compose `build.args`
+  pass-through is #308.
 - Put TLS in front, and close the plain-HTTP ports behind it. Passwords and bearer tokens cross
   plain HTTP in clear text, and both files publish the backend's `8080` and the UI's `UI_PORT` on
   every host interface (`docker-compose.yml:61-62,75-76`, `docker-compose.sqlite.yml:46-47,60-61`),

@@ -97,17 +97,32 @@ Notes on the wiring:
   `/api/v1`, i.e. same-origin through the nginx proxy). To point the UI at a
   different API origin, rebuild:
   `docker compose build ui --build-arg VITE_API_BASE_URL=https://api.example.com/api/v1`.
-- `VITE_API_BASE_URL` is the only build argument `gocrm-ui/Dockerfile`
-  accepts, and `gocrm-ui/.dockerignore` keeps `.env` and `.env.*` out of the
-  build context. `VITE_APP_NAME` therefore never reaches the UI image. The
-  product name comes from one helper, `gocrm-ui/src/hooks/useProductName.ts`:
-  the stored `general.company_name` for a signed-in user, otherwise
-  `VITE_APP_NAME`, otherwise `GoCRM`. So the image shows `GoCRM` on the
-  sign-in and registration pages, and the stored company name (Settings) once
-  signed in. To brand the build-time name, add `ARG VITE_APP_NAME` and
-  `ENV VITE_APP_NAME=$VITE_APP_NAME` before `RUN npm run build` in
-  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. That build
-  argument is not shipped.
+- `gocrm-ui/Dockerfile` also accepts an optional `VITE_APP_NAME` build
+  argument (#303), the product name the sign-in and registration pages show.
+  The product name comes from one helper,
+  `gocrm-ui/src/hooks/useProductName.ts`: the stored `general.company_name`
+  for a signed-in user, otherwise `VITE_APP_NAME`, otherwise `GoCRM`. Its
+  default is empty, so an image built without it shows `GoCRM` before sign-in,
+  and signed-in users still see the stored company name (Settings) either way.
+  Set it when you build the image:
+
+  ```bash
+  docker build --build-arg VITE_APP_NAME=Acme gocrm-ui
+  docker compose build ui --build-arg VITE_APP_NAME=Acme
+  ```
+
+  The signed-out pages then read "Welcome to Acme" and "Create your Acme
+  account". Like `VITE_API_BASE_URL`, the value is fixed when the image is
+  built: changing the name needs a rebuild. Compose does not pass the variable
+  on its own: the shipped Compose files declare no `build.args` for it, so a
+  plain `docker compose up --build` builds with the empty default; the
+  Compose `build.args` pass-through is tracked in #308. The name is **not a
+  secret**: Vite inlines it into the public `JavaScript` bundle that nginx
+  serves to every visitor. The `ARG`/`ENV` pair lives only in the build
+  stage, not in the nginx stage. Never pass a secret as a `VITE_*` build
+  argument. `gocrm-ui/.dockerignore` still keeps `.env` and `.env.*` out of
+  the build context, so a local `gocrm-ui/.env` never sets the name in the
+  image; only the build argument does.
 - AEO: configure API keys, models, and base URLs as an admin under **AEO >
   Settings**. Changes take effect on the next run and on prompt generation
   without rebuilding. Keys are encrypted; model and endpoint overrides are
