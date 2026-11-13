@@ -226,6 +226,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Full-page documentation screenshots.** The fixed app bar and the permanent navigation drawer no longer appear part-way down full-page captures: the screenshot helper applies a screen-only stylesheet for the shot that pins both to the top of the document (`gocrm-ui/e2e/screenshots/helpers/capture.ts`, `gocrm-ui/src/test/screenshotCapture.ts`). The live application and print media are unchanged; the images themselves are regenerated with `npm run screenshots` in a follow-up. (#187)
 - **Browser tabs sharing a remembered session no longer sign each other out (#184).** The web
   client runs every refresh and password change under one origin-wide exclusive lock (the Web Lock
   `gophercrm-session`; an in-tab lock where `navigator.locks` is missing, as on plain HTTP) and
