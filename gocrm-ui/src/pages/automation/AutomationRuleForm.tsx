@@ -31,6 +31,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { automationApi, type AutomationRuleInput } from '@/api/endpoints';
 import {
+  AUTOMATION_ENTITY_TYPES,
   AUTOMATION_MAX_STEPS,
   AUTOMATION_STEP_TYPES,
   AUTOMATION_TRIGGERS,
@@ -41,7 +42,7 @@ import {
   type DealStage,
 } from '@/types';
 import { getAPIError, getHTTPStatus } from '@/utils/apiError';
-import { stepTypeLabel, triggerTypeLabel } from './automationFormat';
+import { entityTypeLabel, stepTypeLabel, ticketStatusLabel, triggerTypeLabel } from './automationFormat';
 import { afterRuleChanged, afterRuleCreated, automationKeys } from './automationQueries';
 import { DryRunDialog, type DryRunDraft } from './DryRunDialog';
 import { RuleStepFields } from './RuleStepFields';
@@ -49,6 +50,7 @@ import {
   emptyFormValues,
   emptyStep,
   entityValues,
+  entityValueWord,
   fromRule,
   mapServerFieldErrors,
   parseStepError,
@@ -92,8 +94,16 @@ const serverFieldId = (name: string, values: RuleFormValues): string | undefined
 
 const snapshot = (values: RuleFormValues): RuleFormValues => structuredClone(values);
 
-const valueLabel = (entity: AutomationEntityType, value: string): string =>
-  entity === 'deal' ? dealStageLabel(value as DealStage) : value.charAt(0).toUpperCase() + value.slice(1);
+const valueLabel = (entity: AutomationEntityType, value: string): string => {
+  switch (entity) {
+    case 'deal':
+      return dealStageLabel(value as DealStage);
+    case 'ticket':
+      return ticketStatusLabel(value);
+    default:
+      return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+};
 
 export const Component: React.FC = () => {
   const navigate = useNavigate();
@@ -305,7 +315,7 @@ export const Component: React.FC = () => {
     return loadErrorAlert;
   }
 
-  const statusWord = entity === 'lead' ? 'status' : 'stage';
+  const statusWord = entityValueWord(entity);
   const valueOptions = entityValues(entity);
   const stepsError = formState.errors.steps?.root?.message ?? formState.errors.steps?.message;
   const atMax = fields.length >= AUTOMATION_MAX_STEPS;
@@ -428,8 +438,11 @@ export const Component: React.FC = () => {
                   value={entity}
                   onChange={(event) => changeEntity(event.target.value as AutomationEntityType)}
                 >
-                  <MenuItem value="lead">Lead</MenuItem>
-                  <MenuItem value="deal">Deal</MenuItem>
+                  {AUTOMATION_ENTITY_TYPES.map((type) => (
+                    <MenuItem key={type} value={type}>
+                      {entityTypeLabel(type)}
+                    </MenuItem>
+                  ))}
                 </TextField>
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>

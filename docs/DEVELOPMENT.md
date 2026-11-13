@@ -1832,7 +1832,18 @@ The pieces, and why each is shaped the way it is:
     deals only, so a sales user's list holds no ticket run and its read is 404; support and
     customers keep 403 on the run routes. The list filters and both dry-run bodies accept
     `entity_type=ticket`; any other filter value is 400 `entity_type must be lead, deal or ticket`.
-    The rule-form, rule-list and run-list screens for ticket rules are a later frontend change.
+    The web UI builds ticket rules since #312: the frontend allowlists in
+    `gocrm-ui/src/types/automation.ts` (`AUTOMATION_TRIGGERS.ticket`, `AUTOMATION_CONDITION_FIELDS`,
+    `AUTOMATION_PLACEHOLDERS`, `AUTOMATION_TASK_PLACEHOLDERS`, `AUTOMATION_TICKET_STATUSES`,
+    `AUTOMATION_TICKET_PRIORITIES`) mirror the sets above, the form sends a schedule filter as
+    `filters.ticket_status`, and a server refusal of `trigger.filters.ticket_status` maps to the
+    Only status field. Roots: `ruleFormSchema.ticket.test.ts`, `AutomationRuleForm.ticket.test.tsx`,
+    `DryRunDialog.ticket.test.tsx`, `automationFormat.ticket.test.ts`,
+    `AutomationRuleList.ticket.test.tsx`, `AutomationRunList.ticket.test.tsx`
+    (`gocrm-ui/src/pages/automation/`) and `notificationTarget.ticket.test.ts`; the browser spec
+    `gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts` proves the create/edit round trip against
+    the real API. The `assign_owner` picker still lists every staff user; a sales user is refused
+    by the API (`unknown_reference`) and the refusal is shown on the picker.
   - *Logs.* The ticket write, delete, dispatch, step and dry-run lines carry ids, statuses, outcomes
     and error codes; never the ticket's text, the customer's name or email, or rendered text.
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and

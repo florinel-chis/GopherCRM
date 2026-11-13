@@ -6,18 +6,20 @@ the step executor, waits and schedules that survive a restart, the dry run, the 
 in-app notifications, the boot reconciliation, the erasure hooks and the migration, and the
 screens added 2026-10-29: rule list and form, dry-run dialog, run list and detail, the lead and
 deal "Automation" sections, the notification bell and page; and, also on 2026-10-29, rule names
-on runs, field-level rule errors and the dry run of unsaved rule edits (TC-AUT-034 to 036).
+on runs, field-level rule errors and the dry run of unsaved rule edits (TC-AUT-034 to 036); and
+the ticket rules in the web UI (#312, TC-AUT-037 to 041).
 
 Every **Expected** states what the build does **today**, traced to the handlers, services and
 repositories; every automated case names the exact test that pins it. Cases 001 to 027, 034 and
-035 are automated at the Go level; the frontend cases 028 to 033 and 036 by Vitest and by the
-Playwright spec
-`gocrm-ui/e2e/tests/automation-rules.spec.ts`, which covers the admin flow only (as in
+035 are automated at the Go level; the frontend cases 028 to 033, 036 and 037 to 041 by Vitest
+and by the Playwright specs
+`gocrm-ui/e2e/tests/automation-rules.spec.ts` and `gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts`,
+which cover the admin flow only (as in
 [15-products-quotes.md](15-products-quotes.md), the sales and support behaviour is pinned in
 Vitest because no role-login e2e helper exists).
 
-36 cases: 36 automated (29 Go, 7 Vitest/Playwright), 0 planned, 0 blocked.
-Priorities: 20 P0, 15 P1, 1 P2.
+41 cases: 41 automated (29 Go, 12 Vitest/Playwright), 0 planned, 0 blocked.
+Priorities: 22 P0, 17 P1, 2 P2.
 
 **Sources**
 
@@ -728,3 +730,102 @@ Priorities: 20 P0, 15 P1, 1 P2.
 - **Automation:** automated — `gocrm-ui/e2e/tests/automation-rules.spec.ts`: "admin dry-runs an
   unsaved new rule from the form and nothing is created", "saving a rule whose user was deactivated
   meanwhile shows the server error under the user picker".
+
+## 16.8 Ticket rules in the web UI (#312)
+
+The API has accepted ticket rules since #242; since #312 the rule form, rule list, run list, dry
+run and notification links handle them. The frontend allowlists in
+`gocrm-ui/src/types/automation.ts` mirror `internal/service/automation_validation.go`,
+`automation_condition.go` and `internal/models/ticket.go`. Sources:
+`gocrm-ui/src/pages/automation/AutomationRuleForm.tsx`, `RuleStepFields.tsx`, `ruleFormSchema.ts`,
+`automationFormat.ts`, `DryRunDialog.tsx`, `AutomationRuleList.tsx`, `AutomationRunList.tsx`,
+`gocrm-ui/src/pages/notifications/notificationTarget.ts`.
+
+### TC-AUT-037 — Create a ticket status-change rule in the form
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Signed in as admin.
+- **Steps:** On `/automation/rules/new` pick Entity type **Ticket**, Trigger **Ticket status
+  changed**, From status **Open**, To status **Resolved**; add a condition Priority equals
+  `urgent` and a notify step titled `Ticket {{ticket.number}} resolved`; leave Enabled off and
+  press **Create rule**.
+- **Expected:** The entity select offers Lead, Deal and Ticket; the trigger select exactly Ticket
+  created, Ticket updated, Ticket status changed and Schedule; the status inputs read Open, In
+  progress, Resolved, Closed; condition fields Status, Priority, Owner ID, Customer ID, with the
+  ticket statuses or the priorities low, medium, high, urgent suggested; the placeholder help lists
+  `ticket.id`, `ticket.number`, `ticket.status`, `ticket.priority` (plus `owner.*` outside tasks).
+  `POST /automation/rules` is sent once with `entity_type: ticket`, `trigger_type:
+  ticket_status_changed`, `trigger: {from: open, to: resolved}`, `enabled: false` and the two
+  steps, never a deal stage or `filters.stage`, and answers **201**. Switching the entity back to
+  Lead resets the trigger to Lead created and clears from/to, the filter and the condition fields.
+- **Automation:** automated — `AutomationRuleForm.ticket.test.tsx`: "an admin creates a ticket
+  status change rule and the API receives a ticket rule", "ticket rules use status wording and
+  ticket labels", "switching from ticket to lead resets the trigger and conditions";
+  `ruleFormSchema.ticket.test.ts`: "ticket allowlists equal the API sets", "a ticket rule refuses
+  deal stages, lead placeholders and ticket text placeholders".
+
+### TC-AUT-038 — A ticket schedule rule with a status filter
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Signed in as admin.
+- **Steps:** Entity Ticket, Trigger Schedule, Hour (UTC) 8, Only status **In progress**, one notify
+  step; Create rule. Open the rule list.
+- **Expected:** The body carries `trigger: {hour_utc: 8, filters: {ticket_status: in_progress}}`
+  with no `status` or `stage` key. The list labels the rule's entity Ticket and describes the
+  trigger as "Schedule, daily at 08:00 UTC, status in_progress". Lead schedules still send
+  `filters.status` and deal schedules `filters.stage`.
+- **Automation:** automated — `AutomationRuleForm.ticket.test.tsx`: "a ticket schedule rule is
+  created with a ticket status filter", "a lead schedule rule still sends filters.status";
+  `ruleFormSchema.ticket.test.ts`: "a ticket schedule filter is sent as filters.ticket_status";
+  `AutomationRuleList.ticket.test.tsx`; `automationFormat.ticket.test.ts`.
+
+### TC-AUT-039 — Edit round trip of a stored ticket rule
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A disabled ticket rule created as in TC-AUT-037, and a ticket schedule rule
+  with `filters.ticket_status: resolved`.
+- **Steps:** Open `/automation/rules/<id>/edit`; check the fields; press **Save changes** and
+  confirm.
+- **Expected:** The form shows entity Ticket, the trigger, From/To status (or Only status
+  Resolved) and every step. The `PUT /automation/rules/<id>` body's `entity_type`,
+  `trigger_type`, `trigger` and `steps` equal the stored rule's (the API's `hour_utc: 0` on an
+  event trigger is the default the body leaves out); `enabled` is not sent; the **200** keeps
+  them. The rule stays disabled.
+- **Automation:** automated — `AutomationRuleForm.ticket.test.tsx`: "editing a stored ticket rule
+  loads every field and saves it unchanged"; `ruleFormSchema.ticket.test.ts`: "fromRule reads
+  filters.ticket_status back into the filter"; `gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts`
+  ("Admin - Automation ticket rules": "admin creates a disabled ticket_status_changed rule in the
+  form and the saved rule round-trips through the API"; `make e2e E2E_DB_DRIVER=sqlite
+  SPECS=e2e/tests/automation-ticket-rules.spec.ts`).
+
+### TC-AUT-040 — API refusals of a ticket rule show on their fields
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** Signed in as admin; a sales user exists.
+- **Steps:** Build a ticket rule with an `assign_owner` step naming the sales user and save it.
+- **Expected:** The API answers **400** `INVALID_REFERENCE` with `steps[0].config.user_id`
+  `unknown_reference` "the user is not a support or admin user"; the message shows under step 1's
+  user picker. A refusal of `trigger.filters.ticket_status` shows under Only status; one of
+  `entity_type` goes to the form-level alert. Before any request the client refuses a deal stage
+  or lead status as from/to/filter ("Unknown value"), `{{lead.email}}` or `{{ticket.title}}` in a
+  notify title and `{{owner.email}}` in a task title ("Unknown placeholder"), and a condition on
+  `title` or `stage` ("Pick a field").
+- **Automation:** automated — `AutomationRuleForm.ticket.test.tsx`: "API field errors on a ticket
+  rule show on their fields"; `ruleFormSchema.ticket.test.ts`: "a server error on
+  trigger.filters.ticket_status maps to the filter field", "a ticket rule refuses deal stages, lead
+  placeholders and ticket text placeholders"; server side `TestAutomationTicketRuleValidation`.
+
+### TC-AUT-041 — Ticket dry run, run list and notification link
+- **Priority:** P2
+- **Type:** functional
+- **Preconditions:** Signed in as admin; a ticket exists.
+- **Steps:** Dry-run a saved and an unsaved ticket rule; filter the run list by entity Ticket; open
+  a ticket notification.
+- **Expected:** The dialog shows Record type Ticket and searches tickets (`GET /tickets`), each
+  option reading `T-000042 · <subject>`; the dry run sends `entity_type: ticket` and the picked
+  id. The run list offers Ticket, requests `entity_type=ticket` and links a run to
+  `/tickets/<id>`. A ticket notification links to `/tickets/<id>` for admin, sales and support;
+  lead and deal links are unchanged.
+- **Automation:** automated — `DryRunDialog.ticket.test.tsx`, `automationFormat.ticket.test.ts`
+  ("ticketNumber formats ids like models.TicketNumber"), `AutomationRunList.ticket.test.tsx`,
+  `notificationTarget.ticket.test.ts`.

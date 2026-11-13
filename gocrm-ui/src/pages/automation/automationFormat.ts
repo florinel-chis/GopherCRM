@@ -32,6 +32,9 @@ const TRIGGER_LABELS: Record<AutomationTriggerType, string> = {
   deal_created: 'Deal created',
   deal_updated: 'Deal updated',
   deal_stage_changed: 'Deal stage changed',
+  ticket_created: 'Ticket created',
+  ticket_updated: 'Ticket updated',
+  ticket_status_changed: 'Ticket status changed',
   schedule: 'Schedule',
 };
 
@@ -90,8 +93,32 @@ const ERROR_CODE_LABELS: Record<AutomationErrorCode, string> = {
   step_failed: 'Step failed',
 };
 
-const ENTITY_LABELS: Record<AutomationEntityType, string> = { lead: 'Lead', deal: 'Deal' };
-const ENTITY_PATHS: Record<AutomationEntityType, string> = { lead: '/leads', deal: '/deals' };
+const ENTITY_LABELS: Record<AutomationEntityType, string> = {
+  lead: 'Lead',
+  deal: 'Deal',
+  ticket: 'Ticket',
+};
+const ENTITY_PATHS: Record<AutomationEntityType, string> = {
+  lead: '/leads',
+  deal: '/deals',
+  ticket: '/tickets',
+};
+
+/** The ticket number the API renders for {{ticket.number}}: models.TicketNumber, "T-%06d". */
+export const ticketNumber = (id: number): string => `T-${String(id).padStart(6, '0')}`;
+
+const TICKET_STATUS_LABELS: Record<string, string> = {
+  open: 'Open',
+  in_progress: 'In progress',
+  resolved: 'Resolved',
+  closed: 'Closed',
+};
+
+/** "Open", "In progress", "Resolved", "Closed"; an unknown value as is. */
+export const ticketStatusLabel = (status: string): string => TICKET_STATUS_LABELS[status] ?? status;
+
+/** "Lead", "Deal" or "Ticket"; an unknown type falls back to the raw string. */
+export const entityTypeLabel = (type: AutomationEntityType): string => ENTITY_LABELS[type] ?? type;
 
 // Unknown values (a newer server) fall back to the raw string.
 export const triggerTypeLabel = (t: AutomationTriggerType): string => TRIGGER_LABELS[t] ?? t;
@@ -119,6 +146,7 @@ export const describeTrigger = (rule: Pick<AutomationRule, 'trigger_type' | 'tri
     const parts = [`${label}, daily at ${pad2(trigger.hour_utc ?? 0)}:00 UTC`];
     if (trigger.filters?.status) parts.push(`status ${trigger.filters.status}`);
     if (trigger.filters?.stage) parts.push(`stage ${trigger.filters.stage}`);
+    if (trigger.filters?.ticket_status) parts.push(`status ${trigger.filters.ticket_status}`);
     if (trigger.stale_days && trigger.stale_days > 0) {
       parts.push(
         `not updated for ${trigger.stale_days} ${trigger.stale_days === 1 ? 'day' : 'days'}`,

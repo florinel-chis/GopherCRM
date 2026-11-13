@@ -11,14 +11,12 @@ import { automationApi, type AutomationRuleFilters, type AutomationRuleSortColum
 import type { AutomationEntityType, AutomationRule } from '@/types';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
-import { AUTOMATION_DATETIME, describeTrigger } from './automationFormat';
+import { AUTOMATION_DATETIME, describeTrigger, entityTypeLabel } from './automationFormat';
 import { afterRuleChanged, afterRuleDeleted, afterRuleEnabled, automationKeys } from './automationQueries';
 import { DryRunDialog } from './DryRunDialog';
 
 // Columns in the API's sort allowlist; Tools never sorts.
 const SORTABLE_COLUMNS = new Set<string>(['name', 'entity_type', 'trigger_type', 'enabled', 'version', 'updated_at']);
-
-const ENTITY_LABELS: Record<AutomationEntityType, string> = { lead: 'Lead', deal: 'Deal' };
 
 interface ListState {
   page: number;
@@ -96,7 +94,7 @@ export const Component: React.FC = () => {
         id: 'entity_type',
         label: 'Entity',
         minWidth: 90,
-        format: (value: AutomationEntityType) => ENTITY_LABELS[value] ?? value,
+        format: (value: AutomationEntityType) => entityTypeLabel(value),
       },
       {
         id: 'trigger_type',

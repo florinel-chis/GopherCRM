@@ -1258,8 +1258,9 @@ form has no checkbox yet (a later frontend ticket). Sources: `internal/handler/t
 ## Ticket automation side effects (#242)
 
 Ticket writes record follow-up automation events in their own transaction, and a ticket delete
-ends the ticket's automation state. The rules themselves are covered in
-`docs/testing/16-follow-up-automation.md`; ticket rules are API-only until the frontend change.
+ends the ticket's automation state. The rules themselves, built in the rule form since #312, are
+covered by the ticket rule cases in `docs/testing/16-follow-up-automation.md` ("Ticket rules in
+the web UI (#312)").
 
 ### TC-TICK-072 — Create and update record ticket events in the write transaction
 - **Priority:** P1

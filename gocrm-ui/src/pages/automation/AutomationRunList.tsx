@@ -27,7 +27,14 @@ import {
 } from '@/types';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
-import { AUTOMATION_DATETIME, entityLabel, entityPath, runRuleLabel, runStatusLabel } from './automationFormat';
+import {
+  AUTOMATION_DATETIME,
+  entityLabel,
+  entityPath,
+  entityTypeLabel,
+  runRuleLabel,
+  runStatusLabel,
+} from './automationFormat';
 import { automationKeys } from './automationQueries';
 import { RunStatusChip } from './AutomationChips';
 import { RuleFilterAutocomplete } from './RuleFilterAutocomplete';
@@ -35,8 +42,6 @@ import { RuleFilterAutocomplete } from './RuleFilterAutocomplete';
 // Columns the API accepts in sort_by (its allowlist); the others render
 // without a sort header so a click can never produce a rejected request.
 const SORTABLE_COLUMNS = new Set<string>(['id', 'status', 'resume_at', 'created_at', 'updated_at']);
-
-const ENTITY_LABELS: Record<AutomationEntityType, string> = { lead: 'Lead', deal: 'Deal' };
 
 // The filters live in the URL, so a link (the nav entry, a record section's
 // "View all") always shows exactly what it names, even while mounted.
@@ -365,12 +370,12 @@ export const Component: React.FC = () => {
               label="Entity"
               displayEmpty
               notched
-              renderValue={(value: AutomationEntityType | '') => (value === '' ? 'All' : ENTITY_LABELS[value])}
+              renderValue={(value: AutomationEntityType | '') => (value === '' ? 'All' : entityTypeLabel(value))}
             >
               <MenuItem value="">All</MenuItem>
               {AUTOMATION_ENTITY_TYPES.map((type) => (
                 <MenuItem key={type} value={type}>
-                  {ENTITY_LABELS[type]}
+                  {entityTypeLabel(type)}
                 </MenuItem>
               ))}
             </Select>

@@ -211,10 +211,12 @@ each a candidate follow-up:
   `ticket_updated`, `ticket_status_changed` and the daily schedule. Still missing: comment,
   first-response, SLA and overdue triggers; a `tasks.ticket_id` link (a ticket run's task links
   the ticket's customer only); run visibility for support users; the actor on single ticket
-  create/update events (`actor_id` stays NULL there); and the rule-form, rule-list and run-list
-  screens for ticket rules, which are a later frontend change (ticket rules are API-only until
-  then). Every `ticket_updated` starts a new run of a matching rule, so a rule that should fire
-  once per resolution belongs on `ticket_status_changed` or behind a condition.
+  create/update events (`actor_id` stays NULL there); a ticket "Automation runs" section on the
+  ticket detail page; and narrowing the `assign_owner` user picker of a ticket rule to support and
+  admin users (the API's `unknown_reference` refusal is shown on the field instead). The rule form,
+  rule list, run list and dry run handle ticket rules since #312. Every `ticket_updated` starts a
+  new run of a matching rule, so a rule that should fire once per resolution belongs on
+  `ticket_status_changed` or behind a condition.
 
 ## Sensitive settings — follow-ups
 

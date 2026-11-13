@@ -13,7 +13,7 @@ import {
   WAIT_UNIT_LABELS,
   WAIT_UNITS,
   conditionFieldKind,
-  entityValues,
+  conditionSuggestions,
   isListOperator,
   isValuelessOperator,
   operatorsFor,
@@ -286,9 +286,10 @@ function ConditionFields({ index, entity }: { index: number; entity: AutomationE
     }
   };
 
-  // eq / neq on status or stage suggest the known values; contains is free text.
-  const suggested =
-    kind === 'string' && (step.field === 'status' || step.field === 'stage') && step.operator !== 'contains';
+  // eq / neq on status or stage (and a ticket's priority) suggest the known
+  // values; contains is free text.
+  const suggestions = kind === 'string' ? conditionSuggestions(entity, step.field) : null;
+  const suggested = suggestions !== null && step.operator !== 'contains';
   const listOperator = isListOperator(step.operator);
   const valueless = isValuelessOperator(step.operator) || !step.operator;
 
@@ -302,8 +303,8 @@ function ConditionFields({ index, entity }: { index: number; entity: AutomationE
       </Grid>
       {!valueless && !listOperator ? (
         <Grid size={{ xs: 12, sm: 4 }}>
-          {suggested ? (
-            <StepSuggestedTextField index={index} options={entityValues(entity)} />
+          {suggested && suggestions ? (
+            <StepSuggestedTextField index={index} options={suggestions} />
           ) : (
             <StepTextField
               index={index}
