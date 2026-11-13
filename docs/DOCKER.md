@@ -106,8 +106,8 @@ Notes on the wiring:
   sign-in and registration pages, and the stored company name (Settings) once
   signed in. To brand the build-time name, add `ARG VITE_APP_NAME` and
   `ENV VITE_APP_NAME=$VITE_APP_NAME` before `RUN npm run build` in
-  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. Shipping that
-  build argument is tracked in #222.
+  `gocrm-ui/Dockerfile` and pass `--build-arg VITE_APP_NAME=...`. That build
+  argument is not shipped.
 - AEO: configure API keys, models, and base URLs as an admin under **AEO >
   Settings**. Changes take effect on the next run and on prompt generation
   without rebuilding. Keys are encrypted; model and endpoint overrides are
@@ -188,13 +188,88 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 
-To change any of these, add them to the backend `environment` in a
-`docker-compose.override.yml` (Compose merges it automatically for
-`docker-compose.yml`; pass it with a second `-f` for the SQLite file) rather
-than editing the shipped files. A documented production override is tracked
-in #222. In the SQLite stack the backend also loads `/data/.env` from its
-volume (`Dockerfile:36-38`); variables set in `environment` take precedence
-over it.
+To change any of these, add them to the backend `environment` in an override
+file rather than editing the shipped files. The committed
+`docker-compose.production.example.yml` covers the common production set; see
+[Production override example](#production-override-example) below. In the
+SQLite stack the backend also loads `/data/.env` from its volume
+(`Dockerfile:36-38`); variables set in `environment` take precedence over it.
+
+### Production override example
+
+`docker-compose.production.example.yml` at the repository root is an override
+for either stack. Compose never loads it on its own (unlike a
+`docker-compose.override.yml`), so a plain `docker compose up` is unchanged;
+name it with a second `-f`. It forwards these variables to the backend, each
+as a `${...}` interpolation and nothing else:
+
+- `APP_BASE_URL`, `PUBLIC_BASE_URL` and `CORS_ALLOWED_ORIGINS`, **required**:
+  Compose refuses the file with a message when one is unset or empty;
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`;
+- `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `RECAPTCHA_MIN_SCORE`;
+- `AUTOMATION_ENABLED`, `AUTOMATION_POLL_INTERVAL_SECONDS`;
+- `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR`.
+
+An optional variable you leave unset reaches the backend as an empty string,
+which keeps the backend default (mail logged, reCAPTCHA off, the worker on
+every 30 seconds, the AEO run at hour 6).
+
+What the values mean here:
+
+- `APP_BASE_URL` is the browser origin of the UI, for example
+  `https://crm.example.com`, used in password-reset links.
+- `PUBLIC_BASE_URL` is the public origin of the UI proxy, normally the same
+  value as `APP_BASE_URL`. The example removes the backend's host port, so
+  form confirmation links, the hosted form page and the embed snippet reach
+  the API through the UI nginx `/api/v1/` proxy, not on port 8080.
+- `CORS_ALLOWED_ORIGINS` is a comma-separated list added to the built-in
+  localhost origins; list every origin your UI is served from.
+- `AUTOMATION_ENABLED` assumes one backend container; the stack runs exactly
+  one (#229).
+
+Warning: `.env.example` sets `PUBLIC_BASE_URL` to `http://localhost:8080`. A
+repo-root `.env` copied from it therefore satisfies the required check with a
+localhost value; replace that line with your UI proxy origin.
+
+Where the values come from: the shell or the repo-root `.env` (already
+git-ignored), which Compose reads to fill the placeholders. The example sets
+each of its 15 keys in the container environment, empty when unset, and an
+environment variable takes precedence over `/data/.env`. In the SQLite stack
+a value for one of these keys in `/data/.env` is therefore masked and
+ignored; move it to the shell or the repo-root `.env`. Never write a real
+value into the YAML. When you extend the file (with `FORM_RETENTION_DAYS`,
+`AEO_EGRESS_*`, `AEO_CUSTOM_*`, provider keys or `JWT_EXPIRY_HOURS`, for
+example), keep every value as a `${...}` interpolation, or keep the extended
+copy outside the working tree so it cannot be committed.
+
+Ports: the example removes the backend's `8080` publication
+(`ports: !reset []`) and replaces the UI publication with
+`127.0.0.1:${UI_PORT:-3000}:80` (`ports: !override`), so only a TLS proxy on
+the same host reaches the stack. The `!override` tag needs Compose 2.24.4 or
+later. An older Compose does **not** reject the file: Compose 2.19.0 accepts
+it, `config -q` succeeds, `!reset []` still removes the backend port, but
+`!override` is ignored and the loopback entry is appended to the shipped
+all-interfaces `"${UI_PORT:-3000}:80"`, so the UI stays reachable over plain
+HTTP. Check `docker compose version` (2.24.4 or later), and before exposing
+the host read the merged ports with `config` without `-q`, for example
+`docker compose -f docker-compose.yml -f docker-compose.production.example.yml config`:
+`backend` must show no `ports` and `ui` exactly one publication, with
+`host_ip: 127.0.0.1`.
+
+It leaves `TRUSTED_PROXIES`, the subnet, the project name, the volumes, the
+secrets (`JWT_SECRET`, `API_KEY_SECRET`, `DB_*`) and `LOG_*` as the stack
+sets them, which is why one file fits both stacks.
+
+Validate the merge with both files named, then start with the same pair:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.production.example.yml config -q
+docker compose -f docker-compose.sqlite.yml -f docker-compose.production.example.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.production.example.yml up -d --build
+```
+
+Use the SQLite file in the last command for that stack, and pass the same
+`-f` pair to every later `exec`, `logs` or `down`.
 
 ### Several installations on one host
 

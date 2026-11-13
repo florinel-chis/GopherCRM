@@ -141,7 +141,8 @@ and turns some into deals and quotes.
    `TRUSTED_PROXIES` and `CORS_ALLOWED_ORIGINS`. The shipped Compose files do not forward SMTP,
    `PUBLIC_BASE_URL`, automation or reCAPTCHA variables, and they hard-code localhost URLs
    (`docker-compose.yml:54-60`, `docker-compose.sqlite.yml:37-43`). If you deploy with Compose,
-   write an override until #222 ships one ([DOCKER.md](DOCKER.md)).
+   apply `docker-compose.production.example.yml` with a second `-f` (see "Production override
+   example" in [DOCKER.md](DOCKER.md)).
 3. Create the first admin with `create-admin` (`cmd/create-admin`), then create sales users from
    the admin UI.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
@@ -189,7 +190,7 @@ values. One shared installation does not work for several clients, for two reaso
   build-time `VITE_APP_NAME` (else `GoCRM`). The password reset mail and the quote and ticket
   reply subjects use the same setting, read at send time, else `GopherCRM`
   (`internal/service/product_name.go`, #292). The Docker UI image takes no `VITE_APP_NAME` build
-  argument (#222).
+  argument.
 - AEO export or client reporting: #244.
 
 ### Do not promise
@@ -446,8 +447,8 @@ planning around an issue number.
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
 | Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1153,1161,1164` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
-| Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292). Still open: the Docker `VITE_APP_NAME` build argument | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile` | #221, #222 |
-| Production Compose override (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS) | all | `docker-compose.yml:54-60`; `docker-compose.sqlite.yml:37-43` | #222 |
+| Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292). Still open: the Docker `VITE_APP_NAME` build argument (no issue yet) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile` | #221 |
+| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback). Still open: TLS proxy configuration and several backend replicas (#229) | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-60`; `docker-compose.sqlite.yml:25-43` | #222 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
