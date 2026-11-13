@@ -440,7 +440,9 @@ a systemd unit for the service (`gophercrm` by default) that runs `/srv/gophercr
 (a link into the current release, line 137) with the environment file
 `/srv/gophercrm/env/gophercrm.env` (`scripts/deploy/receive-release.sh:54-55`, restarted at
 line 161); and a TLS-terminating web server that serves the web root and proxies
-`/api/v1` to the backend. None of these ship in the repository (#231). On
+`/api/v1` to the backend. [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) walks a fresh
+systemd/nginx host through each of them, with a sample unit, environment file and nginx sites
+(#231); no sample file ships under `scripts/deploy`. On
 your machine: root SSH access to the server, a `gh` login with admin rights on the repository,
 and `main` protected (bootstrap refuses otherwise, lines 2-4 and 45-46).
 

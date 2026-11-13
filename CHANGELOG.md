@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Server provisioning guide for the release-tarball path (#231).** `docs/SERVER_PROVISIONING.md`
+  takes a fresh systemd/nginx Linux host to its first deploy through `scripts/deploy/bootstrap.sh`
+  and the Deploy workflow: packages, the `gophercrm` system user, `/srv/gophercrm` and the root-only
+  environment file, a hardened sample systemd unit, a least-privilege MySQL/MariaDB database and
+  user whose name and password match the environment file, nginx with a certbot webroot and TLS,
+  the first admin created interactively, and the `mysqldump` backups `receive-release` takes. The
+  backend runs `models.MigrateDatabase` at every start; the SQL half in the tarball's
+  `migrations/` is applied by hand as FORKING §7.4 describes, since `receive-release` does not
+  run it. SQLite is not supported on that path. Docs only: nothing under `scripts/deploy` changes.
+  Linked from FORKING §5.2, the README and `docs/SETUP.md`;
+  `internal/config/server_provisioning_guide_test.go` pins the guide to the deploy scripts,
+  `.env.example` and `config.Load`.
 - **Production Compose override example (#222).** `docker-compose.production.example.yml` at the
   repository root is applied with a second `-f` to either `docker-compose.yml` or
   `docker-compose.sqlite.yml`. It forwards `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,
