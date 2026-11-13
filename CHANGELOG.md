@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it yet; the Compose `build.args` pass-through is #308. Documented in `docs/DOCKER.md`;
   `gocrm-ui/src/hooks/productNameBuildArg.test.ts` pins the Dockerfile and the documentation, and
   `gocrm-ui/e2e/tests/product-name-signed-out.spec.ts` checks the signed-out pages in a browser.
+- **Release-tarball decisions in the server provisioning guide (#305).**
+  `docs/SERVER_PROVISIONING.md` records the founder decision of 13 Nov 2026 that SQLite is not
+  supported on the release-tarball path: `receive-release` keeps only its `mysqldump` backup, with
+  no SQLite backup branch. Its *Schema migrations* section now gives the exact manual step,
+  `systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gophercrm/env/gophercrm.env
+  /srv/gophercrm/current/bin/migrate -command up -dir /srv/gophercrm/current/migrations`, run as
+  root only after the deploy reports the revision live (never after a rollback), and the recovery
+  of a dirty schema (keep the backup; restore it, or revert by hand and `-command force` the last
+  version that applied cleanly; rerun `up`). The step stays manual; `receive-release` is
+  unchanged. The sample unit, environment and nginx files of #305 item 1 are not delivered yet.
+  `internal/config/server_provisioning_guide_test.go` pins the decision, the command against
+  `cmd/migrate` and this entry.
 - **Server provisioning guide for the release-tarball path (#231).** `docs/SERVER_PROVISIONING.md`
   takes a fresh systemd/nginx Linux host to its first deploy through `scripts/deploy/bootstrap.sh`
   and the Deploy workflow: packages, the `gophercrm` system user, `/srv/gophercrm` and the root-only
