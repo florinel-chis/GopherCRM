@@ -21,6 +21,10 @@ type automationRecord struct {
 	ownerID    uint
 	lead       *models.Lead
 	deal       *models.Deal
+	// ticket is the ticket of a ticket run (#242). Its owner is the assignee;
+	// its title, description, resolution and customer are never read by a
+	// condition or a placeholder.
+	ticket *models.Ticket
 	// attribution is the triggering submission's attribution (#220), set by
 	// the step before an attribution condition; nil reads every field empty,
 	// which is what a dry run sees.
@@ -33,6 +37,16 @@ func recordFromLead(lead *models.Lead) *automationRecord {
 
 func recordFromDeal(deal *models.Deal) *automationRecord {
 	return &automationRecord{entityType: models.AutomationEntityDeal, id: deal.ID, ownerID: deal.OwnerID, deal: deal}
+}
+
+// recordFromTicket makes the ticket's assignee the run's owner; an unassigned
+// ticket has owner 0, so an "owner" recipient is unavailable.
+func recordFromTicket(ticket *models.Ticket) *automationRecord {
+	var owner uint
+	if ticket.AssignedToID != nil {
+		owner = *ticket.AssignedToID
+	}
+	return &automationRecord{entityType: models.AutomationEntityTicket, id: ticket.ID, ownerID: owner, ticket: ticket}
 }
 
 // automationFieldKind is the type a condition field is compared as.
@@ -62,6 +76,14 @@ var automationConditionFields = map[string]map[string]automationFieldKind{
 		"amount_cents": automationFieldMoney,
 		"probability":  automationFieldNumber,
 		"owner_id":     automationFieldNumber,
+	},
+	// Ticket rules (#242): workflow fields and ids only; the ticket's text and
+	// its customer's fields are never comparable.
+	models.AutomationEntityTicket: {
+		"status":      automationFieldString,
+		"priority":    automationFieldString,
+		"owner_id":    automationFieldNumber,
+		"customer_id": automationFieldNumber,
 	},
 }
 
@@ -135,6 +157,16 @@ func (r *automationRecord) stringValue(field string) string {
 		case "currency":
 			return r.deal.Currency
 		}
+	case models.AutomationEntityTicket:
+		if r.ticket == nil {
+			return ""
+		}
+		switch field {
+		case "status":
+			return string(r.ticket.Status)
+		case "priority":
+			return string(r.ticket.Priority)
+		}
 	}
 	return ""
 }
@@ -152,6 +184,10 @@ func (r *automationRecord) numberValue(field string) float64 {
 	case "probability":
 		if r.deal != nil {
 			return float64(r.deal.Probability)
+		}
+	case "customer_id":
+		if r.ticket != nil {
+			return float64(r.ticket.CustomerID)
 		}
 	}
 	return 0
@@ -326,6 +362,14 @@ var automationPlaceholders = map[string]map[string]bool{
 		"deal.currency": true, "deal.source": true,
 		"owner.first_name": true, "owner.last_name": true, "owner.email": true,
 	},
+	// Ticket rules (#242): the ticket's id, number, status and priority and
+	// the assignee. The title, description and resolution are free text that
+	// may name the customer, and the customer's fields are personal data, so
+	// none of them is a placeholder.
+	models.AutomationEntityTicket: {
+		"ticket.id": true, "ticket.number": true, "ticket.status": true, "ticket.priority": true,
+		"owner.first_name": true, "owner.last_name": true, "owner.email": true,
+	},
 }
 
 // automationTaskPlaceholders is the narrower allowlist for the title and
@@ -349,6 +393,9 @@ var automationTaskPlaceholders = map[string]map[string]bool{
 	models.AutomationEntityDeal: {
 		"deal.id": true, "deal.title": true, "deal.stage": true, "deal.amount": true,
 		"deal.currency": true, "deal.source": true,
+	},
+	models.AutomationEntityTicket: {
+		"ticket.id": true, "ticket.number": true, "ticket.status": true, "ticket.priority": true,
 	},
 }
 
@@ -447,6 +494,18 @@ func placeholderValue(name string, rec *automationRecord, owner *models.User) st
 			return rec.deal.Currency
 		case "deal.source":
 			return rec.deal.Source
+		}
+	}
+	if rec.ticket != nil {
+		switch name {
+		case "ticket.id":
+			return strconv.FormatUint(uint64(rec.ticket.ID), 10)
+		case "ticket.number":
+			return models.TicketNumber(rec.ticket.ID)
+		case "ticket.status":
+			return string(rec.ticket.Status)
+		case "ticket.priority":
+			return string(rec.ticket.Priority)
 		}
 	}
 	return ""

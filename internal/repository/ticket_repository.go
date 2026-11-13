@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"errors"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ticketRepository struct {
@@ -70,13 +72,58 @@ func (r *ticketRepository) Update(ticket *models.Ticket) error {
 	return nil
 }
 
-// Delete soft-deletes the ticket and, in the same transaction (a savepoint of
-// the caller's transaction under WithTx), first hard-deletes the ticket's
-// comment mail delivery records (#219). A failure of either rolls both back.
-// The ticket's comments are left as before.
+// GetByIDForUpdate is the locking read of a ticket write (#242): the bare live
+// ticket row with `FOR UPDATE` on MySQL (a plain read on SQLite, where the
+// dialector drops the clause), then its assignee with a plain read so the
+// caller can answer with it. Only the ticket row is locked. A soft-deleted or
+// missing ticket is gorm.ErrRecordNotFound.
+func (r *ticketRepository) GetByIDForUpdate(id uint) (*models.Ticket, error) {
+	var ticket models.Ticket
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&ticket, id).Error; err != nil {
+		return nil, err
+	}
+	if ticket.AssignedToID != nil {
+		var assignee models.User
+		err := r.db.Where("id = ?", *ticket.AssignedToID).Take(&assignee).Error
+		switch {
+		case err == nil:
+			ticket.AssignedTo = &assignee
+		case errors.Is(err, gorm.ErrRecordNotFound):
+		default:
+			return nil, err
+		}
+	}
+	return &ticket, nil
+}
+
+// Delete runs one transaction (a savepoint of the caller's transaction under
+// WithTx) that, in order:
+//
+//  1. locks the live ticket row (`FOR UPDATE` on MySQL); a missing or
+//     already-deleted ticket is gorm.ErrRecordNotFound and nothing is written;
+//  2. hard-deletes the ticket's comment mail delivery records (#219);
+//  3. cancels the ticket's pending, waiting and running automation runs with
+//     cancel_reason record_deleted and finished_at (#242);
+//  4. hard-deletes the notifications whose entity is the ticket (#242);
+//  5. soft-deletes the ticket.
+//
+// A failure of any step rolls all of them back. Tables absent from the schema
+// (fixtures that migrate a subset) are skipped by HasTable probes, never by
+// swallowing an error. The ticket row is locked first, the order an automation
+// step on the ticket and every ticket writer use, so a step racing the delete
+// either commits before it (and its run is then cancelled here) or waits and
+// finds the ticket gone. Finished runs, other tickets' runs and notifications
+// about leads and deals are untouched; the comments stay as before.
 func (r *ticketRepository) Delete(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var locked models.Ticket
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&locked, id).Error; err != nil {
+			return err
+		}
 		if err := purgeTicketMailDeliveriesOfTicket(tx, id); err != nil {
+			return err
+		}
+		if err := cancelAutomationForEntity(tx, models.AutomationEntityTicket, id); err != nil {
 			return err
 		}
 		return tx.Delete(&models.Ticket{}, id).Error

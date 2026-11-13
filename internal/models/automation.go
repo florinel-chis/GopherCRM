@@ -8,9 +8,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// Follow-up automation (issue #164): admin-defined rules that start on a lead
-// or deal event, or on a daily UTC schedule, and run ordered steps. Every
-// write to a lead or a deal records an outbox event in its own transaction;
+// Follow-up automation (issue #164): admin-defined rules that start on a lead,
+// deal or ticket (#242) event, or on a daily UTC schedule, and run ordered
+// steps. Every write to a lead, a deal or a ticket records an outbox event in
+// its own transaction;
 // a worker turns events into persisted runs and executes each step behind a
 // locking read of the record and a conditional advance of the run row.
 //
@@ -23,6 +24,9 @@ import (
 const (
 	AutomationEntityLead = "lead"
 	AutomationEntityDeal = "deal"
+	// AutomationEntityTicket (#242): ticket rules; the run's owner is the
+	// ticket's assigned_to_id.
+	AutomationEntityTicket = "ticket"
 )
 
 // Event types. The trigger type of an event rule is one of these; the
@@ -40,6 +44,13 @@ const (
 	// lead_created or lead_updated event; it carries form_id and
 	// submission_id.
 	AutomationEventLeadFormSubmitted = "lead_form_submitted"
+	// Ticket events (#242), recorded in the ticket write transactions: a
+	// create records ticket_created (to_value the stored status); an update or
+	// a bulk status change ticket_updated plus ticket_status_changed (from/to)
+	// when the status differs.
+	AutomationEventTicketCreated       = "ticket_created"
+	AutomationEventTicketUpdated       = "ticket_updated"
+	AutomationEventTicketStatusChanged = "ticket_status_changed"
 )
 
 // Event origins. Automation-originated writes (an assign_owner step) record
@@ -127,10 +138,12 @@ const (
 //
 // @Description Narrows the records a schedule rule visits on each daily pass; an empty field is no filter.
 type AutomationScheduleFilter struct {
-	// Lead rules only: visit only leads in this status. Omitted or empty means any status; set on a deal rule it is refused (invalid_value).
+	// Lead rules only: visit only leads in this status. Omitted or empty means any status; set on a deal or ticket rule it is refused (invalid_value).
 	Status string `json:"status,omitempty" enums:"new,contacted,qualified,unqualified,converted" example:"contacted"`
-	// Deal rules only: visit only deals in this stage. Omitted or empty means any stage; set on a lead rule it is refused (invalid_value).
+	// Deal rules only: visit only deals in this stage. Omitted or empty means any stage; set on a lead or ticket rule it is refused (invalid_value).
 	Stage string `json:"stage,omitempty" enums:"qualification,proposal,negotiation,won,lost" example:"proposal"`
+	// Ticket rules only (#242): visit only tickets in this status. Omitted or empty means any status; set on a lead or deal rule it is refused (invalid_value).
+	TicketStatus string `json:"ticket_status,omitempty" enums:"open,in_progress,resolved,closed" example:"resolved"`
 }
 
 // AutomationTrigger is the decoded trigger configuration of a rule. From and
@@ -141,10 +154,10 @@ type AutomationScheduleFilter struct {
 //
 // @Description Trigger configuration of an automation rule. from and to apply to status or stage change triggers; hour_utc, filters and stale_days to the schedule trigger.
 type AutomationTrigger struct {
-	// Only for lead_status_changed and deal_stage_changed: start only when the previous value was this lead status (lead rules) or deal stage (deal rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).
-	From string `json:"from,omitempty" enums:"new,contacted,qualified,unqualified,converted,qualification,proposal,negotiation,won,lost" example:"new"`
-	// Only for lead_status_changed and deal_stage_changed: start only when the new value is this lead status (lead rules) or deal stage (deal rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).
-	To string `json:"to,omitempty" enums:"new,contacted,qualified,unqualified,converted,qualification,proposal,negotiation,won,lost" example:"qualified"`
+	// Only for lead_status_changed, deal_stage_changed and ticket_status_changed: start only when the previous value was this lead status (lead rules), deal stage (deal rules) or ticket status (ticket rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).
+	From string `json:"from,omitempty" enums:"new,contacted,qualified,unqualified,converted,qualification,proposal,negotiation,won,lost,open,in_progress,resolved,closed" example:"new"`
+	// Only for lead_status_changed, deal_stage_changed and ticket_status_changed: start only when the new value is this lead status (lead rules), deal stage (deal rules) or ticket status (ticket rules). Omitted or empty means any; on any other trigger type it is refused (not_applicable).
+	To string `json:"to,omitempty" enums:"new,contacted,qualified,unqualified,converted,qualification,proposal,negotiation,won,lost,open,in_progress,resolved,closed" example:"qualified"`
 	// Schedule trigger only: the UTC hour (0-23) from which the daily pass may start; it starts at the first worker tick at or after that hour. Always present in responses (0 for event triggers); a non-zero value on an event trigger is refused (not_applicable).
 	HourUTC int `json:"hour_utc" minimum:"0" maximum:"23" example:"8"`
 	// Schedule trigger only: narrows the records each pass visits. Refused (not_applicable) on an event trigger.
@@ -163,8 +176,8 @@ type AutomationStepConfig struct {
 	// wait: how long the run pauses, in minutes, 1 to 129600 (90 days). The waits of one rule may add up to at most 90 days.
 	DurationMinutes int64 `json:"duration_minutes,omitempty" minimum:"1" maximum:"129600" example:"1440"`
 
-	// condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Names, addresses and notes are never comparable.
-	Field string `json:"field,omitempty" enums:"status,source,classification,company,owner_id,stage,currency,amount_cents,probability,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer_host" example:"status"`
+	// condition: the record field compared. Lead rules: status, source, classification, company (compared as strings) and owner_id (a number); lead rules triggered by lead_form_submitted also take utm_source, utm_medium, utm_campaign, utm_term, utm_content and referrer_host (strings, read from the submission that started the run; empty in a dry run). Deal rules: stage, source, currency (strings), amount_cents (money, needs currency) and probability, owner_id (numbers). Ticket rules: status, priority (strings) and owner_id (the assignee), customer_id (numbers). Names, addresses, notes and ticket text are never comparable.
+	Field string `json:"field,omitempty" enums:"status,source,classification,company,owner_id,stage,currency,amount_cents,probability,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer_host,priority,customer_id" example:"status"`
 	// condition: the comparison. String fields take eq, neq, in, not_in, contains (case-insensitive substring), is_empty and is_not_empty; number and money fields take eq, neq, gt, gte, lt and lte.
 	Operator string `json:"operator,omitempty" enums:"eq,neq,in,not_in,contains,is_empty,is_not_empty,gt,gte,lt,lte" example:"eq"`
 	// condition: the value compared against, as raw JSON whose type depends on the operator: a string for eq/neq/contains on a string field, a non-empty array of strings for in/not_in, a number for every operator on a number or money field (amount_cents in minor units), and no value (omitted or null) for is_empty/is_not_empty. The schema therefore names no type; an object is always refused.
@@ -176,12 +189,12 @@ type AutomationStepConfig struct {
 	// condition with else jump only: the 1-based position to continue at, which must come after the condition step and be at most the step count. Refused (not_applicable) with else stop.
 	ElsePosition int `json:"else_position,omitempty" minimum:"2" maximum:"20" example:"4"`
 
-	// create_task, send_email, notify: who receives the task, the email or the notification. owner is the record's owner at execution time; user is the staff user named by user_id. Empty is stored as owner. assign_owner always stores user.
+	// create_task, send_email, notify: who receives the task, the email or the notification. owner is the record's owner at execution time (a ticket's assignee); user is the staff user named by user_id. Empty is stored as owner. assign_owner always stores user.
 	Recipient string `json:"recipient,omitempty" enums:"owner,user" example:"owner"`
-	// The staff user (active, not a customer) named by recipient user, and the new owner of an assign_owner step, where it is required. Refused (not_applicable) with recipient owner. An unknown, deactivated or customer user is refused with unknown_reference (400 INVALID_REFERENCE when it is the first refusal).
+	// The staff user (active, not a customer) named by recipient user, and the new owner of an assign_owner step, where it is required; on a ticket rule the assign_owner user must be a support or admin user. Refused (not_applicable) with recipient owner. An unknown, deactivated or customer user (or a ticket assignee who is not support or admin) is refused with unknown_reference (400 INVALID_REFERENCE when it is the first refusal).
 	UserID uint `json:"user_id,omitempty" example:"7"`
 
-	// create_task and notify (required): the title template, at most 255 characters and no line break. Placeholders are written as {{ name }}. A notify title may use lead.id, lead.first_name, lead.last_name, lead.email, lead.phone, lead.company, lead.status, lead.source (lead rules) or deal.id, deal.title, deal.stage, deal.amount, deal.currency, deal.source (deal rules), plus owner.first_name, owner.last_name, owner.email; a task title only lead.id, lead.status, lead.source (lead rules) or the deal placeholders (deal rules).
+	// create_task and notify (required): the title template, at most 255 characters and no line break. Placeholders are written as {{ name }}. A notify title may use lead.id, lead.first_name, lead.last_name, lead.email, lead.phone, lead.company, lead.status, lead.source (lead rules), deal.id, deal.title, deal.stage, deal.amount, deal.currency, deal.source (deal rules) or ticket.id, ticket.number, ticket.status, ticket.priority (ticket rules), plus owner.first_name, owner.last_name, owner.email; a task title only lead.id, lead.status, lead.source (lead rules), the deal placeholders (deal rules) or the four ticket placeholders (ticket rules). Ticket title, description and customer fields are never placeholders.
 	Title string `json:"title,omitempty" maxLength:"255" example:"Follow up with lead {{ lead.id }}"`
 	// create_task only: the task description template, at most 65535 bytes, with the task placeholders of title.
 	Description string `json:"description,omitempty" example:"Lead status is {{ lead.status }}."`
@@ -203,7 +216,7 @@ type AutomationStepConfig struct {
 // of the schedule trigger: the UTC day of the pass in progress, the last
 // record id handed out in that pass, and the day whose pass finished.
 //
-// @Description An admin-defined follow-up rule: a lead or deal trigger (or a daily UTC schedule) and up to 20 ordered steps.
+// @Description An admin-defined follow-up rule: a lead, deal or ticket trigger (or a daily UTC schedule) and up to 20 ordered steps.
 type AutomationRule struct {
 	BaseModel
 	// Rule name, trimmed, 1 to 200 characters.
@@ -211,9 +224,9 @@ type AutomationRule struct {
 	// Free-text description for admins, at most 65535 bytes; an empty string when none.
 	Description string `gorm:"type:text" json:"description" example:"Creates a call-back task for every lead from the website."`
 	// Kind of record the rule runs on.
-	EntityType string `gorm:"not null;type:varchar(20)" json:"entity_type" enums:"lead,deal" example:"lead"`
-	// What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule. Writes made by an automation step never start a run.
-	TriggerType   string `gorm:"not null;type:varchar(40)" json:"trigger_type" enums:"lead_created,lead_updated,lead_status_changed,lead_form_submitted,deal_created,deal_updated,deal_stage_changed,schedule" example:"lead_created"`
+	EntityType string `gorm:"not null;type:varchar(20)" json:"entity_type" enums:"lead,deal,ticket" example:"lead"`
+	// What starts a run. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted (a finalised submission of a create_lead form linked to the lead) or schedule; deal rules take deal_created, deal_updated, deal_stage_changed or schedule; ticket rules take ticket_created, ticket_updated, ticket_status_changed or schedule. Writes made by an automation step never start a run.
+	TriggerType   string `gorm:"not null;type:varchar(40)" json:"trigger_type" enums:"lead_created,lead_updated,lead_status_changed,lead_form_submitted,deal_created,deal_updated,deal_stage_changed,ticket_created,ticket_updated,ticket_status_changed,schedule" example:"lead_created"`
 	TriggerConfig string `gorm:"column:trigger_config;type:text" json:"-"`
 	// Whether the rule starts new runs. A new rule is disabled unless the create body sends true; a PUT without enabled keeps the stored value.
 	Enabled bool `gorm:"not null;default:false" json:"enabled" example:"true"`
@@ -327,7 +340,7 @@ func (AutomationEvent) TableName() string { return "automation_events" }
 // sch:<rule_id>:<YYYY-MM-DD>:<entity_id> for schedule runs, so a repeated
 // dispatch or a repeated schedule tick cannot start a second run.
 //
-// @Description One execution of an automation rule against one lead or deal. It never carries the rule's trigger or steps, only the rule's name.
+// @Description One execution of an automation rule against one lead, deal or ticket. It never carries the rule's trigger or steps, only the rule's name.
 type AutomationRun struct {
 	// Unique identifier of the run. Read-only.
 	ID uint `gorm:"primarykey" json:"id" example:"88" readonly:"true"`
@@ -349,10 +362,10 @@ type AutomationRun struct {
 	// The rule version the run was started from. Read-only.
 	RuleVersion int `gorm:"not null" json:"rule_version" example:"3" readonly:"true"`
 	// Kind of record the run acts on. Read-only.
-	EntityType string `gorm:"not null;type:varchar(20);index:idx_automation_runs_entity" json:"entity_type" enums:"lead,deal" example:"lead" readonly:"true"`
-	// ID of the lead or deal the run acts on. Read-only.
+	EntityType string `gorm:"not null;type:varchar(20);index:idx_automation_runs_entity" json:"entity_type" enums:"lead,deal,ticket" example:"lead" readonly:"true"`
+	// ID of the lead, deal or ticket the run acts on. Read-only.
 	EntityID uint `gorm:"not null;index:idx_automation_runs_entity" json:"entity_id" example:"12" readonly:"true"`
-	// ID of the lead or deal event that started the run; omitted for a schedule run. Read-only.
+	// ID of the lead, deal or ticket event that started the run; omitted for a schedule run. Read-only.
 	EventID *uint `json:"event_id,omitempty" example:"1042" readonly:"true"`
 	// Unique key that stops a run being started twice: evt:<event_id>:rule:<rule_id> for an event run, sch:<rule_id>:<YYYY-MM-DD>:<entity_id> for a schedule run. Read-only.
 	DedupeKey string `gorm:"not null;type:varchar(100);uniqueIndex" json:"dedupe_key" example:"evt:1042:rule:12" readonly:"true"`
@@ -472,7 +485,7 @@ type AutomationDryRunReport struct {
 	// True when an unsaved rule body was simulated (POST /automation/rules/dry-run).
 	Draft bool `json:"draft" example:"false"`
 	// Kind of the record simulated against.
-	EntityType string `json:"entity_type" enums:"lead,deal" example:"lead"`
+	EntityType string `json:"entity_type" enums:"lead,deal,ticket" example:"lead"`
 	// ID of the record simulated against.
 	EntityID uint `json:"entity_id" example:"12"`
 	// The simulated start (RFC 3339, UTC): the time of the request.

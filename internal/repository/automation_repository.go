@@ -619,9 +619,40 @@ func (r *automationRepository) SetDealOwner(id uint, ownerID uint, now time.Time
 	}).Error
 }
 
+// GetTicketForUpdate is the locking read of a ticket run's step (#242): the
+// bare live ticket row, `FOR UPDATE` on MySQL. Nothing is preloaded, so the
+// lock covers the ticket row alone. A soft-deleted ticket is a not-found.
+func (r *automationRepository) GetTicketForUpdate(id uint) (*models.Ticket, error) {
+	var ticket models.Ticket
+	if err := r.locking().First(&ticket, id).Error; err != nil {
+		return nil, err
+	}
+	return &ticket, nil
+}
+
+// GetTicket is the plain read of the dry run: the bare live ticket row.
+func (r *automationRepository) GetTicket(id uint) (*models.Ticket, error) {
+	var ticket models.Ticket
+	if err := r.db.First(&ticket, id).Error; err != nil {
+		return nil, err
+	}
+	return &ticket, nil
+}
+
+// SetTicketAssignee is the assign_owner effect on a ticket: it writes
+// assigned_to_id and updated_at by primary key and nothing else, so no other
+// column of the locked row (first_responded_at, the text) is written back.
+func (r *automationRepository) SetTicketAssignee(id uint, assigneeID uint, now time.Time) error {
+	return r.db.Model(&models.Ticket{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"assigned_to_id": assigneeID,
+		"updated_at":     now.UTC(),
+	}).Error
+}
+
 // ListScheduleCandidateIDs returns the ids of the live records a schedule
 // batch visits: id order, strictly above the cursor, at most Limit rows,
-// narrowed by the status or stage filter and by updated_at < StaleBefore.
+// narrowed by the status, stage or ticket status filter and by updated_at <
+// StaleBefore.
 func (r *automationRepository) ListScheduleCandidateIDs(query AutomationScheduleQuery) ([]uint, error) {
 	var db *gorm.DB
 	switch query.EntityType {
@@ -634,6 +665,11 @@ func (r *automationRepository) ListScheduleCandidateIDs(query AutomationSchedule
 		db = r.db.Model(&models.Deal{})
 		if query.Stage != "" {
 			db = db.Where("stage = ?", query.Stage)
+		}
+	case models.AutomationEntityTicket:
+		db = r.db.Model(&models.Ticket{})
+		if query.TicketStatus != "" {
+			db = db.Where("status = ?", query.TicketStatus)
 		}
 	default:
 		return nil, errors.New("unknown automation entity type " + query.EntityType)

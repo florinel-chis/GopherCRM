@@ -27,13 +27,13 @@ const (
 // path into the request body: name, description, entity_type, trigger_type,
 // trigger.from, trigger.to, trigger.form_id, trigger.hour_utc,
 // trigger.stale_days, trigger.filters, trigger.filters.status,
-// trigger.filters.stage, steps,
+// trigger.filters.stage, trigger.filters.ticket_status, steps,
 // steps[i].step_type or steps[i].config.<name>, where i is the zero-based
 // index of the step in the request's steps array.
 //
 // @Description One refused field of an automation rule body.
 type RuleFieldError struct {
-	// Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based index in the steps array.
+	// Path of the refused field in the request body: name, description, entity_type, trigger_type, trigger.from, trigger.to, trigger.form_id, trigger.hour_utc, trigger.stale_days, trigger.filters, trigger.filters.status, trigger.filters.stage, trigger.filters.ticket_status, steps, steps[i].step_type or steps[i].config.<name>, with i the zero-based index in the steps array.
 	Field string `json:"field" example:"steps[0].config.title"`
 	// Why it was refused: required (missing or blank), too_long, line_break (a title or subject with a line break), invalid_value (not an allowed value), out_of_range (a number outside its bounds, or waits adding up to more than 90 days), not_applicable (set where it does not apply), unknown_placeholder, too_many (more than 20 steps) or unknown_reference (an unknown, deactivated or customer user).
 	Code string `json:"code" enums:"required,too_long,line_break,invalid_value,out_of_range,not_applicable,unknown_placeholder,too_many,unknown_reference" example:"required"`
@@ -115,6 +115,21 @@ var automationTriggerTypes = map[string]map[string]bool{
 		models.AutomationEventDealCreated: true, models.AutomationEventDealUpdated: true,
 		models.AutomationEventDealStageChanged: true, models.AutomationTriggerSchedule: true,
 	},
+	// Ticket rules (#242). Comment, first-response, SLA and overdue triggers
+	// are not events yet.
+	models.AutomationEntityTicket: {
+		models.AutomationEventTicketCreated: true, models.AutomationEventTicketUpdated: true,
+		models.AutomationEventTicketStatusChanged: true, models.AutomationTriggerSchedule: true,
+	},
+}
+
+// isStatusChangeTrigger reports whether the trigger carries from/to values.
+func isStatusChangeTrigger(triggerType string) bool {
+	switch triggerType {
+	case models.AutomationEventLeadStatusChanged, models.AutomationEventDealStageChanged, models.AutomationEventTicketStatusChanged:
+		return true
+	}
+	return false
 }
 
 // validateRule normalises and checks a rule and its steps. It writes
@@ -142,7 +157,7 @@ func (s *automationService) validateRule(rule *models.AutomationRule) error {
 	}
 	triggers, ok := automationTriggerTypes[rule.EntityType]
 	if !ok {
-		c.invalid("entity_type", RuleErrorInvalidValue, 0, "entity_type must be lead or deal")
+		c.invalid("entity_type", RuleErrorInvalidValue, 0, "entity_type must be lead, deal or ticket")
 		return c.result()
 	}
 	if !triggers[rule.TriggerType] {
@@ -189,42 +204,58 @@ func (s *automationService) validateRule(rule *models.AutomationRule) error {
 		stepsOf[id] = append(stepsOf[id], i)
 	}
 	for _, id := range users {
-		legacy, message, err := s.staffUserProblem(id)
+		user, legacy, message, err := s.staffUserProblem(id)
 		if err != nil {
 			return err
 		}
-		if legacy == nil {
-			continue
-		}
 		for _, index := range stepsOf[id] {
-			c.add(fmt.Sprintf("steps[%d].config.user_id", index), RuleErrorUnknownReference, message, legacy)
+			field := fmt.Sprintf("steps[%d].config.user_id", index)
+			if legacy != nil {
+				c.add(field, RuleErrorUnknownReference, message, legacy)
+				continue
+			}
+			// A ticket can only be assigned to a support or admin user, as
+			// through the ticket API (#242); other staff may still receive a
+			// notification or a task of a ticket rule.
+			if rule.EntityType == models.AutomationEntityTicket && rule.Steps[index].StepType == models.AutomationStepAssignOwner &&
+				!isTicketAssigneeRole(user.Role) {
+				c.add(field, RuleErrorUnknownReference, "the user is not a support or admin user",
+					fmt.Errorf("user %d is not a support or admin user: %w", id, apperrors.ErrAssigneeNotFound))
+			}
 		}
 	}
 	return c.result()
 }
 
+// isTicketAssigneeRole reports whether a user of the role may be assigned a
+// ticket.
+func isTicketAssigneeRole(role models.UserRole) bool {
+	return role == models.RoleSupport || role == models.RoleAdmin
+}
+
 // staffUserProblem requires the id to name a live, active staff account. It
-// returns the refusal (unwrapping to apperrors.ErrAssigneeNotFound) and its
-// field message, or a lookup failure as err.
-func (s *automationService) staffUserProblem(userID uint) (legacy error, message string, err error) {
-	user, err := s.users.GetByID(userID)
+// returns the user, or the refusal (unwrapping to
+// apperrors.ErrAssigneeNotFound) and its field message, or a lookup failure
+// as err.
+func (s *automationService) staffUserProblem(userID uint) (user *models.User, legacy error, message string, err error) {
+	user, err = s.users.GetByID(userID)
 	if err != nil {
 		if isNotFound(err) {
-			return fmt.Errorf("unknown user_id %d: %w", userID, apperrors.ErrAssigneeNotFound), "the user does not exist", nil
+			return nil, fmt.Errorf("unknown user_id %d: %w", userID, apperrors.ErrAssigneeNotFound), "the user does not exist", nil
 		}
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	if !user.IsActive {
-		return fmt.Errorf("user %d is inactive: %w", userID, apperrors.ErrAssigneeNotFound), "the user is deactivated", nil
+		return user, fmt.Errorf("user %d is inactive: %w", userID, apperrors.ErrAssigneeNotFound), "the user is deactivated", nil
 	}
 	if user.Role == models.RoleCustomer {
-		return fmt.Errorf("user %d is not a staff user: %w", userID, apperrors.ErrAssigneeNotFound), "the user is not a staff user", nil
+		return user, fmt.Errorf("user %d is not a staff user: %w", userID, apperrors.ErrAssigneeNotFound), "the user is not a staff user", nil
 	}
-	return nil, "", nil
+	return user, nil, "", nil
 }
 
 func validateTrigger(c *ruleChecker, entityType, triggerType string, trigger *models.AutomationTrigger) {
-	changed := triggerType == models.AutomationEventLeadStatusChanged || triggerType == models.AutomationEventDealStageChanged
+	changed := isStatusChangeTrigger(triggerType)
 	values := []struct{ name, value string }{{"from", trigger.From}, {"to", trigger.To}}
 	for _, v := range values {
 		if v.value == "" {
@@ -269,14 +300,22 @@ func validateTrigger(c *ruleChecker, entityType, triggerType string, trigger *mo
 				c.invalid("trigger.filters.stage", RuleErrorInvalidValue, 0, "filters.stage %q is not a deal stage", stage)
 			}
 		}
+		if status := trigger.Filters.TicketStatus; status != "" {
+			if entityType != models.AutomationEntityTicket || !models.TicketStatus(status).IsValid() {
+				c.invalid("trigger.filters.ticket_status", RuleErrorInvalidValue, 0, "filters.ticket_status %q is not a ticket status", status)
+			}
+		}
 	}
 }
 
-// validAutomationValue reports whether value is a lead status (lead rules)
-// or a deal stage (deal rules).
+// validAutomationValue reports whether value is a lead status (lead rules),
+// a deal stage (deal rules) or a ticket status (ticket rules).
 func validAutomationValue(entityType, value string) bool {
-	if entityType == models.AutomationEntityLead {
+	switch entityType {
+	case models.AutomationEntityLead:
 		return isValidLeadStatus(models.LeadStatus(value))
+	case models.AutomationEntityTicket:
+		return models.TicketStatus(value).IsValid()
 	}
 	return models.DealStage(value).IsValid()
 }

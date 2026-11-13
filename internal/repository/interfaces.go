@@ -212,6 +212,16 @@ type TicketRepository interface {
 	WithTx(tx *gorm.DB) TicketRepository
 }
 
+// TicketLockingReader is the locking read of a ticket write (#242):
+// ticketService.Update, when automation events are wired, reads the ticket
+// through it inside its transaction before any check or write. The production
+// ticketRepository implements it (FOR UPDATE on MySQL, a plain read on
+// SQLite); it is kept apart from TicketRepository so the hand-written mocks
+// need no change. A soft-deleted or missing ticket is gorm.ErrRecordNotFound.
+type TicketLockingReader interface {
+	GetByIDForUpdate(id uint) (*models.Ticket, error)
+}
+
 // TicketMailDeliveryOutcome is what FinishPending writes on a pending ticket
 // comment mail delivery (#219).
 type TicketMailDeliveryOutcome struct {
@@ -589,6 +599,10 @@ type BulkOperationRepository interface {
 // is all-or-nothing.
 type BulkStatusRepository interface {
 	GetLeadsByIDs(ids []uint) ([]models.Lead, error)
+	// GetTicketsByIDs is a locking read in id order (FOR UPDATE on MySQL, a
+	// plain read on SQLite, #242): the batch locks the ticket rows in the
+	// order every ticket writer and automation step uses, and records the
+	// events from the status it read under the lock.
 	GetTicketsByIDs(ids []uint) ([]models.Ticket, error)
 	GetTasksByIDs(ids []uint) ([]models.Task, error)
 	SetLeadStatus(ids []uint, status models.LeadStatus) error
@@ -708,7 +722,8 @@ type AutomationRunListFilter struct {
 // AutomationRunScope is the role scope of a run listing. A nil OwnerID is the
 // admin scope (every run); a non-nil one is the sales scope: only runs whose
 // lead or deal the user currently owns, applied inside the SQL before offset
-// and limit, so the total counts the same filtered set.
+// and limit, so the total counts the same filtered set. A ticket run (#242) is
+// never inside the sales scope.
 type AutomationRunScope struct {
 	OwnerID *uint
 }
@@ -726,16 +741,18 @@ type AutomationRunAdvance struct {
 }
 
 // AutomationScheduleQuery selects one batch of a schedule pass: the live
-// records of the entity type matching the status (leads) or stage (deals)
-// filter, with updated_at before StaleBefore when set, with ids strictly
-// above AfterID, in id order, at most Limit of them.
+// records of the entity type matching the status (leads), stage (deals) or
+// ticket status (tickets, #242) filter, with updated_at before StaleBefore
+// when set, with ids strictly above AfterID, in id order, at most Limit of
+// them.
 type AutomationScheduleQuery struct {
-	EntityType  string
-	Status      string
-	Stage       string
-	StaleBefore *time.Time
-	AfterID     uint
-	Limit       int
+	EntityType   string
+	Status       string
+	Stage        string
+	TicketStatus string
+	StaleBefore  *time.Time
+	AfterID      uint
+	Limit        int
 }
 
 // AutomationRepository backs the follow-up automation module: the rules and
@@ -825,6 +842,15 @@ type AutomationRepository interface {
 	GetDeal(id uint) (*models.Deal, error)
 	SetLeadOwner(id uint, ownerID uint, now time.Time) error
 	SetDealOwner(id uint, ownerID uint, now time.Time) error
+	// GetTicketForUpdate is the locking read of a ticket run's step (#242):
+	// the live ticket row, FOR UPDATE on MySQL, a plain read on SQLite; a
+	// soft-deleted ticket is gorm.ErrRecordNotFound. GetTicket is the plain
+	// read of the dry run.
+	GetTicketForUpdate(id uint) (*models.Ticket, error)
+	GetTicket(id uint) (*models.Ticket, error)
+	// SetTicketAssignee writes only assigned_to_id and updated_at by id: the
+	// assign_owner effect on a ticket run.
+	SetTicketAssignee(id uint, assigneeID uint, now time.Time) error
 	ListScheduleCandidateIDs(query AutomationScheduleQuery) ([]uint, error)
 	// GetEventFormSubmission returns the live form submission named by the
 	// event's submission_id (#220), or (nil, nil) when the event names none.

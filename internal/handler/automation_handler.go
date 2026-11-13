@@ -50,15 +50,29 @@ type AutomationRuleRequest struct {
 	// Optional description, at most 65535 bytes.
 	Description string `json:"description" example:"Creates a call-back task for every lead from the website."`
 	// Kind of record the rule runs on. Required; any other value is refused (invalid_value) and stops the remaining checks.
-	EntityType string `json:"entity_type" validate:"required" enums:"lead,deal" example:"lead"`
-	// What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule (anything else is invalid_value and skips the trigger checks).
-	TriggerType string `json:"trigger_type" validate:"required" enums:"lead_created,lead_updated,lead_status_changed,lead_form_submitted,deal_created,deal_updated,deal_stage_changed,schedule" example:"lead_created"`
-	// Trigger configuration: from and to for a status or stage change, form_id for lead_form_submitted, hour_utc, filters and stale_days for a schedule.
+	EntityType string `json:"entity_type" validate:"required" enums:"lead,deal,ticket" example:"lead"`
+	// What starts a run. Required. Lead rules take lead_created, lead_updated, lead_status_changed, lead_form_submitted or schedule; deal rules deal_created, deal_updated, deal_stage_changed or schedule; ticket rules ticket_created, ticket_updated, ticket_status_changed or schedule (anything else is invalid_value and skips the trigger checks).
+	TriggerType string `json:"trigger_type" validate:"required" enums:"lead_created,lead_updated,lead_status_changed,lead_form_submitted,deal_created,deal_updated,deal_stage_changed,ticket_created,ticket_updated,ticket_status_changed,schedule" example:"lead_created"`
+	// Trigger configuration: from and to for a status, stage or ticket status change, form_id for lead_form_submitted, hour_utc, filters and stale_days for a schedule.
 	Trigger models.AutomationTrigger `json:"trigger"`
 	// Whether the rule starts runs. On create, absent or null means false; on update, absent or null keeps the stored value. Ignored by the draft dry run.
 	Enabled *bool `json:"enabled" example:"true"`
 	// The ordered steps, 1 to 20; they are numbered 1..n in this order. Missing or more than 20 skips the per-step checks.
 	Steps []AutomationStepRequest `json:"steps" validate:"required,min=1,max=20"`
+}
+
+// automationEntityTypeMessage is the 400 answer to an unknown entity_type
+// filter of the rule and run lists.
+const automationEntityTypeMessage = "entity_type must be lead, deal or ticket"
+
+// validAutomationEntityFilter accepts an absent filter or one of the three
+// entity types automation knows (ticket since #242).
+func validAutomationEntityFilter(entityType string) bool {
+	switch entityType {
+	case "", models.AutomationEntityLead, models.AutomationEntityDeal, models.AutomationEntityTicket:
+		return true
+	}
+	return false
 }
 
 // toModel turns the request into the rule the service validates.
@@ -99,8 +113,8 @@ type AutomationDraftDryRunRequest struct {
 	// The unsaved rule body, as for POST /automation/rules (enabled is ignored).
 	Rule AutomationRuleRequest `json:"rule" binding:"required"`
 	// Kind of the record to simulate against; must match rule.entity_type (400 INVALID_INPUT otherwise).
-	EntityType string `json:"entity_type" binding:"required,oneof=lead deal" example:"lead"`
-	// ID of the live lead or deal to simulate against (404 when it does not exist).
+	EntityType string `json:"entity_type" binding:"required,oneof=lead deal ticket" example:"lead"`
+	// ID of the live lead, deal or ticket to simulate against (404 when it does not exist).
 	EntityID uint `json:"entity_id" binding:"required,min=1" example:"12"`
 }
 
@@ -109,14 +123,14 @@ type AutomationDraftDryRunRequest struct {
 // @Description Body of POST /automation/rules/{id}/dry-run: the record to simulate the saved rule against.
 type AutomationDryRunRequest struct {
 	// Kind of the record to simulate against; must match the rule's entity_type (400 INVALID_INPUT otherwise).
-	EntityType string `json:"entity_type" binding:"required,oneof=lead deal" example:"lead"`
-	// ID of the live lead or deal to simulate against (404 when it does not exist).
+	EntityType string `json:"entity_type" binding:"required,oneof=lead deal ticket" example:"lead"`
+	// ID of the live lead, deal or ticket to simulate against (404 when it does not exist).
 	EntityID uint `json:"entity_id" binding:"required,min=1" example:"12"`
 }
 
 // CreateRule godoc
 // @Summary Create an automation rule
-// @Description Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead or deal; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed or schedule; trigger carries from/to for a status or stage change, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.
+// @Description Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead, deal or ticket; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed (deal rules only), ticket_created, ticket_updated, ticket_status_changed (ticket rules only) or schedule; trigger carries from/to for a status, stage or ticket status change (ticket statuses on ticket rules), filters.ticket_status on a ticket schedule, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -160,12 +174,12 @@ func (h *AutomationHandler) CreateRule(c *gin.Context) {
 // @Param page query int false "Page number (1-based); overrides offset when greater than 0"
 // @Param offset query int false "Number of items to skip" default(0)
 // @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
-// @Param entity_type query string false "Only rules of this entity type" Enums(lead, deal)
+// @Param entity_type query string false "Only rules of this entity type" Enums(lead, deal, ticket)
 // @Param enabled query bool false "Only enabled (true) or disabled (false) rules; any value strconv.ParseBool accepts (1, t, TRUE, 0, f, ...)"
 // @Param sort_by query string false "Sort column; created_at when absent, anything outside the list is 400" Enums(id, name, entity_type, trigger_type, enabled, version, created_at, updated_at)
 // @Param sort_order query string false "Sort direction, honoured only with sort_by; anything else means desc" Enums(asc, desc) default(desc)
 // @Success 200 {object} utils.APIResponse{data=[]models.AutomationRule,meta=utils.APIMeta} "One page of rules; meta carries page, per_page, total and total_pages"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), entity_type is not lead or deal, or enabled is not a boolean"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or enabled is not a boolean"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
@@ -179,8 +193,8 @@ func (h *AutomationHandler) ListRules(c *gin.Context) {
 		return
 	}
 	filter := repository.AutomationRuleListFilter{EntityType: c.Query("entity_type"), SortBy: sortBy, SortOrder: sortOrder}
-	if filter.EntityType != "" && filter.EntityType != models.AutomationEntityLead && filter.EntityType != models.AutomationEntityDeal {
-		utils.RespondBadRequest(c, "entity_type must be lead or deal")
+	if !validAutomationEntityFilter(filter.EntityType) {
+		utils.RespondBadRequest(c, automationEntityTypeMessage)
 		return
 	}
 	if raw := c.Query("enabled"); raw != "" {
@@ -367,7 +381,7 @@ func (h *AutomationHandler) DeleteRule(c *gin.Context) {
 // @Param id path int true "Rule ID"
 // @Param request body AutomationDryRunRequest true "The record to simulate against"
 // @Success 200 {object} utils.APIResponse{data=models.AutomationDryRunReport} "Per-step report"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here) or the body is not valid JSON; VALIDATION_ERROR when entity_type is missing or not lead/deal or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message); INVALID_INPUT when entity_type differs from the rule's"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here) or the body is not valid JSON; VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message); INVALID_INPUT when entity_type differs from the rule's"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id, or no live record with this entity_id"
@@ -404,7 +418,7 @@ func (h *AutomationHandler) DryRun(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param request body AutomationDraftDryRunRequest true "The unsaved rule and the record to simulate against"
 // @Success 200 {object} utils.APIResponse{data=models.AutomationDryRunReport} "Per-step report of the draft"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "VALIDATION_ERROR when entity_type is missing or not lead/deal or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message; a missing rule object is not a binding error, it fails the rule checks instead); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_INPUT without details when entity_type differs from rule.entity_type"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message; a missing rule object is not a binding error, it fails the rule checks instead); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_INPUT without details when entity_type differs from rule.entity_type"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live record with this entity_id"
@@ -429,7 +443,7 @@ func (h *AutomationHandler) DryRunDraft(c *gin.Context) {
 
 // ListRuns godoc
 // @Summary List automation runs
-// @Description One page of runs, without their step logs. Roles: admin sees every run; sales only runs whose lead or deal it currently owns (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments); support and customers get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.
+// @Description One page of runs, without their step logs. Roles: admin sees every run, ticket runs included; sales only runs whose lead or deal it currently owns, never a ticket run (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments); support and customers get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -439,12 +453,12 @@ func (h *AutomationHandler) DryRunDraft(c *gin.Context) {
 // @Param limit query int false "Page size; non-positive values fall back to 20, larger values are clamped to 100" default(20)
 // @Param status query string false "Only runs in this status" Enums(pending, running, waiting, completed, failed, cancelled)
 // @Param rule_id query int false "Only runs of this rule (a positive integer)"
-// @Param entity_type query string false "Only runs on this entity type" Enums(lead, deal)
+// @Param entity_type query string false "Only runs on this entity type" Enums(lead, deal, ticket)
 // @Param entity_id query int false "Only runs on records with this id (a positive integer; combine with entity_type to name one record)"
 // @Param sort_by query string false "Sort column; created_at when absent, anything outside the list is 400" Enums(id, created_at, updated_at, status, resume_at)
 // @Param sort_order query string false "Sort direction, honoured only with sort_by; anything else means desc" Enums(asc, desc) default(desc)
 // @Success 200 {object} utils.APIResponse{data=[]models.AutomationRun,meta=utils.APIMeta} "One page of runs; meta carries page, per_page, total and total_pages"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), status or entity_type is unknown, or rule_id or entity_id is not a positive integer"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), status is unknown, entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or rule_id or entity_id is not a positive integer"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin or sales role required"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
@@ -465,8 +479,8 @@ func (h *AutomationHandler) ListRuns(c *gin.Context) {
 		utils.RespondBadRequest(c, "unknown run status")
 		return
 	}
-	if filter.EntityType != "" && filter.EntityType != models.AutomationEntityLead && filter.EntityType != models.AutomationEntityDeal {
-		utils.RespondBadRequest(c, "entity_type must be lead or deal")
+	if !validAutomationEntityFilter(filter.EntityType) {
+		utils.RespondBadRequest(c, automationEntityTypeMessage)
 		return
 	}
 	if filter.RuleID, ok = queryID(c, "rule_id"); !ok {

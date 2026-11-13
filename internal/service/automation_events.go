@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Outbox helpers shared by the lead, deal, form and bulk services. Each one
+// Outbox helpers shared by the lead, deal, ticket, form and bulk services. Each one
 // records the events of one committed write through a transaction-bound
 // repository, so the event lives or dies with the write that produced it. A
 // nil repository means the service runs without automation (tests, tools)
@@ -87,6 +87,25 @@ func automationDealUpdated(r repository.AutomationRepository, dealID uint, from,
 // the stage endpoint.
 func automationDealStageChanged(r repository.AutomationRepository, dealID uint, from, to models.DealStage, origin string, actorID *uint) error {
 	return recordAutomationEvent(r, models.AutomationEntityDeal, dealID, models.AutomationEventDealStageChanged, string(from), string(to), origin, actorID)
+}
+
+// automationTicketCreated records ticket_created (#242) with to_value set to
+// the stored status.
+func automationTicketCreated(r repository.AutomationRepository, ticketID uint, status models.TicketStatus, origin string, actorID *uint) error {
+	return recordAutomationEvent(r, models.AutomationEntityTicket, ticketID, models.AutomationEventTicketCreated, "", string(status), origin, actorID)
+}
+
+// automationTicketUpdated records ticket_updated and, when the status
+// differs, ticket_status_changed with the previous and the new status (#242).
+// A priority, assignee or due_at change alone records ticket_updated only.
+func automationTicketUpdated(r repository.AutomationRepository, ticketID uint, from, to models.TicketStatus, origin string, actorID *uint) error {
+	if err := recordAutomationEvent(r, models.AutomationEntityTicket, ticketID, models.AutomationEventTicketUpdated, "", "", origin, actorID); err != nil {
+		return err
+	}
+	if from == to {
+		return nil
+	}
+	return recordAutomationEvent(r, models.AutomationEntityTicket, ticketID, models.AutomationEventTicketStatusChanged, string(from), string(to), origin, actorID)
 }
 
 // automationTx binds the repository to the transaction, or stays nil when

@@ -85,7 +85,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
 - 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email; the UI has the products list and admin form, the quotes list and detail with draft-only line editing and status actions, an email confirmation, a print page and a Quotes section on each deal
-- ⏱️ **Follow-up Automation**: Admin-defined rules that start on lead or deal events, or on a daily UTC schedule, and run ordered steps — wait, condition, create task, assign owner, staff email, in-app notification — as persisted runs that survive a restart, with a dry run that writes, sends and notifies nothing; the UI has the admin rule list and form with a dry-run dialog, the run list and detail (admin and sales, with an admin cancel), Automation sections on lead and deal pages, and a notification bell and page for staff ([screenshots](docs/SCREENSHOTS.md#follow-up-automation))
+- ⏱️ **Follow-up Automation**: Admin-defined rules that start on lead, deal or ticket events (ticket rules are API-only until a later frontend change), or on a daily UTC schedule, and run ordered steps — wait, condition, create task, assign owner, staff email, in-app notification — as persisted runs that survive a restart, with a dry run that writes, sends and notifies nothing; the UI has the admin rule list and form with a dry-run dialog, the run list and detail (admin and sales, with an admin cancel), Automation sections on lead and deal pages, and a notification bell and page for staff ([screenshots](docs/SCREENSHOTS.md#follow-up-automation))
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
 - ⚙️ **Configuration Management**: System-wide settings with admin interface
@@ -758,9 +758,11 @@ authentication and live on the moderate tier:
 - `GET /api/v1/tickets/my` - Get current user's tickets
 - `GET /api/v1/tickets/:id` - Get specific ticket
 - `PUT /api/v1/tickets/:id` - Update ticket *(admin any; support only their own assignments; sales
-  is read-only)*
-- `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; ordinary soft delete; its comment mail
-  delivery records are hard-deleted with it)*
+  is read-only; records `ticket_updated`, plus `ticket_status_changed` when the status changes, in
+  the update's transaction, #242)*
+- `DELETE /api/v1/tickets/:id` - Delete ticket *(admin; soft delete; in the same transaction its
+  comment mail delivery records and the notifications about it are hard-deleted and its pending,
+  waiting and running automation runs are cancelled with `record_deleted`)*
 - `GET /api/v1/tickets/:id/comments` - List a ticket's comments *(customers never see internal notes)*
 - `POST /api/v1/tickets/:id/comments` - Add a comment or internal note *(admin; support on their own
   assignments)*. With `email_customer: true` (not on an internal note, which is 400) the comment is
@@ -768,7 +770,8 @@ authentication and live on the moderate tier:
   carries the outcome as `delivery` (`sent`, `failed`, `log_only` or `skipped`); there is no retry
   and no read returns it
 - `POST /api/v1/tickets/bulk/status` - Set the status of up to 100 tickets, all-or-nothing *(admin
-  any; support only their assignments; a closed ticket cannot be reopened)*
+  any; support only their assignments; a closed ticket cannot be reopened; records the tickets'
+  automation events, origin `bulk`, in the batch transaction)*
 
 ### Tasks
 - `GET /api/v1/tasks` - List tasks *(non-admins see their own)*
@@ -827,10 +830,15 @@ expired, or if its owner has been deactivated or erased.
   `{name, description?, entity_type, trigger_type, trigger, enabled?, steps[]}` *(returns 201 with the
   steps numbered 1..n; `trigger_type` is `lead_created`, `lead_updated`, `lead_status_changed`,
   `lead_form_submitted` (lead rules only: a finalised submission of a `create_lead` form linked to
-  the lead, new or repeat), `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`;
-  `trigger` carries `from`/`to` for a status or stage change, `form_id` (optional,
+  the lead, new or repeat), `deal_created`, `deal_updated`, `deal_stage_changed`, `ticket_created`,
+  `ticket_updated`, `ticket_status_changed` (ticket rules, `entity_type: ticket`, #242) or `schedule`;
+  `trigger` carries `from`/`to` for a status, stage or ticket status change, `form_id` (optional,
   `lead_form_submitted` only; 0 or omitted means every form, `not_applicable` on any other trigger)
-  and `hour_utc`, `filters {status|stage}` and `stale_days` for a schedule; a step is
+  and `hour_utc`, `filters {status|stage|ticket_status}` and `stale_days` for a schedule; a ticket
+  rule's owner is the ticket's assignee, its conditions test `status`, `priority`, `owner_id` and
+  `customer_id`, its placeholders are `ticket.id`, `ticket.number`, `ticket.status`,
+  `ticket.priority` (plus `owner.*` outside tasks), its task is linked to the ticket's customer, and
+  its `assign_owner` user must be support or admin; a step is
   `{step_type, config}` with `wait` (`duration_minutes`), `condition` (`field`, `operator`, `value`,
   `currency` for `amount_cents`, `else` stop|jump, `else_position`; a `lead_form_submitted` rule
   may also test the string fields `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`,
@@ -866,7 +874,7 @@ expired, or if its owner has been deactivated or erased.
   new rule or unsaved edits; the same validation and 400 answers as the create, then the same
   report with `draft: true` and `rule_id`/`rule_version` 0; nothing is saved, no transaction is
   started and nothing is written, sent or notified)*
-- `GET /api/v1/automation/runs` - List runs (`status`, `rule_id`, `entity_type`, `entity_id`,
+- `GET /api/v1/automation/runs` - List runs (`status`, `rule_id`, `entity_type` `lead|deal|ticket`, `entity_id`,
   `sort_by` in `id, created_at, updated_at, status, resume_at`; the role scope is applied inside
   the query, so `meta.total` counts only what the caller may see; every run carries `rule_name`,
   the rule's current name — also for a deleted rule, then with `rule_deleted: true` — and never the

@@ -38,9 +38,11 @@ gating); where the two disagree, that disagreement gets its own case.
   `POST /auth/register` cannot be used: it always mints a `customer`.
 - Ticket creation needs a customer to exist. Create one per spec run via the customers UI or
   `POST /customers` using `generateCustomerData()`; never rely on pre-existing rows.
-- Ticket deletion is an ordinary soft delete — tickets carry no personal data of their own, so
+- Ticket deletion is a soft delete, not an erasure — tickets carry no personal data of their own, so
   GDPR erasure does not apply to them (`internal/repository/erasure.go` covers users, customers and
-  leads only). Cases may still only delete tickets they created.
+  leads only). In the same transaction it purges the ticket's mail deliveries (#219) and
+  notifications and cancels its open automation runs (#242; TC-TICK-074). Cases may still only
+  delete tickets they created.
 - `GET /users` is admin-only, so any case that drives the "Assign to Support Agent" picker as a
   non-admin will see it empty. That is behaviour, not flake — see TC-TICK-014.
 
@@ -1252,3 +1254,73 @@ form has no checkbox yet (a later frontend ticket). Sources: `internal/handler/t
   the comments and other tickets' rows stay.
 - **Automation:** automated — `TestTicketCommentEmailAPISQLite`,
   `TestTicketDeletePurgesMailDeliveries{SQLite,MySQL}` (`internal/repository`)
+
+## Ticket automation side effects (#242)
+
+Ticket writes record follow-up automation events in their own transaction, and a ticket delete
+ends the ticket's automation state. The rules themselves are covered in
+`docs/testing/16-follow-up-automation.md`; ticket rules are API-only until the frontend change.
+
+### TC-TICK-072 — Create and update record ticket events in the write transaction
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** SQLite and a disposable MySQL schema; the ticket service wired with
+  `WithTicketAutomationEvents`, as `cmd/main.go` wires it.
+- **Steps:**
+  1. `POST /tickets` without a status.
+  2. `PUT /tickets/<id>` with `status: in_progress`; then with only a new priority and assignee.
+  3. Resolve the ticket from a second writer after the caller's read, then update from the stale
+     read; close a ticket the same way and try to reopen it from the stale read.
+  4. Try to reopen a closed ticket, assign a sales user, and update with the event insert failing.
+- **Expected:** Step 1 stores the ticket and one `ticket_created` event (`entity_type` `ticket`,
+  `to_value` `open`, origin `user`, `actor_id` null). Step 2 records `ticket_updated` plus
+  `ticket_status_changed` (`open` → `in_progress`), then `ticket_updated` alone. Step 3: the update
+  locks the ticket row first (`FOR UPDATE` on MySQL) and `from_value` is the locked status
+  (`resolved`); the reopen of the closed ticket is refused. Step 4: each refusal or failure
+  leaves the ticket as it was and records no event.
+- **Automation:** automated — `TestAutomationTicketEvents{SQLite,MySQL}`,
+  `TestTicketServiceWithoutAutomationUnchanged` (`internal/service`),
+  `TestTicketAutomationProductionWiring` (`cmd`)
+
+### TC-TICK-073 — A bulk status batch records events per ticket; a refused batch records none
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** Tickets assigned to the support user in `open`, `in_progress` and `resolved`.
+- **Steps:**
+  1. `POST /tickets/bulk/status` with the three ids and `status: resolved` as the support user.
+  2. Repeat with a missing id, an unassigned ticket, another user's ticket, and a closed ticket to
+     reopen.
+- **Expected:** The batch reads the tickets with a locking read in id order and records, in its
+  transaction, `ticket_updated` for each ticket and `ticket_status_changed` (from the locked status)
+  for the two that changed, origin `bulk`, `actor_id` the caller. Every refused batch records no
+  event for any ticket.
+- **Automation:** automated — `TestAutomationTicketBulkEvents{SQLite,MySQL}` (`internal/service`)
+
+### TC-TICK-074 — Deleting a ticket cancels its open runs and purges its notifications
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A ticket with pending, waiting, running and finished runs, notifications
+  about it, and mail delivery rows; another ticket and a lead with their own runs and notifications.
+- **Steps:**
+  1. As admin, `DELETE /tickets/<id>`.
+  2. Repeat with a failure injected into each of the delete's statements.
+- **Expected:** One transaction locks the ticket row, hard-deletes its mail deliveries, cancels its
+  pending, waiting and running runs (`cancelled`, `record_deleted`, `finished_at` set), hard-deletes
+  the notifications about it and soft-deletes it. Finished runs, the other ticket's and the lead's
+  runs and notifications stay. An injected failure keeps everything. A run the worker starts later
+  from an event recorded before the delete is cancelled at its first step with no effect.
+- **Automation:** automated — `TestTicketDeleteCancelsAutomation{SQLite,MySQL}` (`internal/repository`),
+  `TestAutomationTicketStepExecution{SQLite,MySQL}` (`internal/service`),
+  `TestAutomationTicketAPISQLite` (`tests`)
+
+### TC-TICK-075 — Ticket writers and automation steps queue on the ticket row
+- **Priority:** P2
+- **Type:** regression
+- **Preconditions:** MySQL (`TEST_MYSQL_DSN`).
+- **Steps:**
+  1. Race a ticket update, a bulk status batch and a ticket delete against an automation step on
+     the same ticket, each in both orderings.
+- **Expected:** The second party waits on the ticket row (seen in `information_schema.PROCESSLIST`
+  on two consecutive polls); both complete with no error 1213; the update's and the batch's events
+  are committed once; a delete that wins leaves the run `cancelled` with `record_deleted`.
+- **Automation:** automated — `TestAutomationTicketLockOrderMySQL` (`internal/service`)

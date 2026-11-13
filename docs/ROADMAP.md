@@ -197,10 +197,18 @@ each a candidate follow-up:
   by a lease timeout on `claimed_at`, so two workers would double-execute.
 - **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
   sweep is a retention decision, not an erasure one (the rows hold ids only).
-- **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer,
-  ticket and company triggers** — none of them exist. A deal run records the deal on its task
+- **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer and
+  company triggers** — none of them exist. A deal run records the deal on its task
   (`deal_id`, #240) and links the deal's customer, else its lead; tasks created by earlier runs are
   not backfilled. The task form, task detail and deal detail show and edit the link.
+- **Ticket automation beyond status changes** — ticket rules (#242) start on `ticket_created`,
+  `ticket_updated`, `ticket_status_changed` and the daily schedule. Still missing: comment,
+  first-response, SLA and overdue triggers; a `tasks.ticket_id` link (a ticket run's task links
+  the ticket's customer only); run visibility for support users; the actor on single ticket
+  create/update events (`actor_id` stays NULL there); and the rule-form, rule-list and run-list
+  screens for ticket rules, which are a later frontend change (ticket rules are API-only until
+  then). Every `ticket_updated` starts a new run of a matching rule, so a rule that should fire
+  once per resolution belongs on `ticket_status_changed` or behind a condition.
 
 ## Sensitive settings — follow-ups
 

@@ -96,9 +96,7 @@ func (e *AutomationEngine) DryRun(rule *models.AutomationRule, entityType string
 				entry.Details["deal_id"] = *task.DealID
 			}
 		case models.AutomationStepAssignOwner:
-			assignCfg := cfg
-			assignCfg.Recipient = models.AutomationRecipientUser
-			target, available, err := resolveRecipient(e.users, assignCfg, rec)
+			target, available, err := resolveAssignTarget(e.users, cfg, rec)
 			if err != nil {
 				return nil, err
 			}

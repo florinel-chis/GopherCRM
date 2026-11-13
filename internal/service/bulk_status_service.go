@@ -281,7 +281,9 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 		return nil, bulkStatusForbidden("Your role cannot update tickets", nil)
 	}
 
-	return s.runBulkStatusUpdate(ctx, actorID, "tickets", unique, func(txRepo repository.BulkStatusRepository, _ repository.AutomationRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tickets", unique, func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error {
+		// A locking read in id order (#242): the rows are locked before the
+		// checks, and the events below carry the status this read returned.
 		tickets, err := txRepo.GetTicketsByIDs(unique)
 		if err != nil {
 			return err
@@ -312,7 +314,20 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 				"Cannot reopen closed tickets").WithDetail("closed_ids", closed)
 		}
 
-		return txRepo.SetTicketStatus(unique, status)
+		if err := txRepo.SetTicketStatus(unique, status); err != nil {
+			return err
+		}
+		// The events ride in the batch transaction (#242): every ticket gets
+		// ticket_updated, and the ones whose locked status differs
+		// ticket_status_changed, origin bulk, the caller as actor. A refused
+		// batch returned above, before any write, and records nothing.
+		actor := actorID
+		for _, ticket := range tickets {
+			if err := automationTicketUpdated(events, ticket.ID, ticket.Status, status, models.AutomationOriginBulk, &actor); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -369,9 +384,9 @@ type bulkStatusService struct {
 	statusRepo        repository.BulkStatusRepository
 	transactionMgr    repository.TransactionManager
 	logger            *logrus.Logger
-	// automation records the outbox events of every lead a bulk status update
-	// changes (issue #164), inside the bulk transaction, origin bulk. Nil
-	// means no automation.
+	// automation records the outbox events of every lead (issue #164) and
+	// every ticket (#242) a bulk status update changes, inside the bulk
+	// transaction, origin bulk. Nil means no automation.
 	automation repository.AutomationRepository
 }
 
@@ -381,7 +396,8 @@ type BulkStatusServiceOption func(*bulkStatusService)
 
 // WithBulkAutomationEvents makes the bulk lead status update record
 // lead_updated and, when the status changed, lead_status_changed for every
-// lead it wrote.
+// lead it wrote, and the bulk ticket status update ticket_updated and
+// ticket_status_changed for every ticket (#242).
 func WithBulkAutomationEvents(repo repository.AutomationRepository) BulkStatusServiceOption {
 	return func(s *bulkStatusService) { s.automation = repo }
 }

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ticket triggers for follow-up automation (#242).** Automation rules take `entity_type: ticket`
+  with the triggers `ticket_created`, `ticket_updated`, `ticket_status_changed` (from/to ticket
+  statuses) and `schedule` (`filters.ticket_status`, `stale_days`). `TicketService.Create` and
+  `Update`, wired with `service.WithTicketAutomationEvents(automationRepo, txManager)` in
+  `cmd/main.go`, record the events in the ticket write's transaction; the update now locks the
+  ticket row first and runs the closed-reopen and assignee checks against it. The bulk ticket
+  status batch reads its tickets with a locking read in id order and records the events (origin
+  `bulk`, actor the caller). A ticket rule's owner is the assignee; conditions test `status`,
+  `priority`, `owner_id` and `customer_id`; placeholders are `ticket.id`, `ticket.number`,
+  `ticket.status`, `ticket.priority` (plus `owner.*` outside tasks), never ticket text or customer
+  data; `create_task` links the ticket's customer; `assign_owner` needs a support or admin user and
+  writes only `assigned_to_id`. `DELETE /tickets/{id}` cancels the ticket's pending, waiting and
+  running runs with `record_deleted` and purges its notifications in its transaction. The rule and
+  run list filters and both dry-run bodies accept `ticket`; an unknown `entity_type` filter now
+  answers `entity_type must be lead, deal or ticket`. Backend and API only: the rule screens for
+  ticket rules are a later frontend change. No schema change.
 - **Server provisioning guide for the release-tarball path (#231).** `docs/SERVER_PROVISIONING.md`
   takes a fresh systemd/nginx Linux host to its first deploy through `scripts/deploy/bootstrap.sh`
   and the Deploy workflow: packages, the `gophercrm` system user, `/srv/gophercrm` and the root-only
