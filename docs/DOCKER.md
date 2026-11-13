@@ -241,7 +241,7 @@ value into the YAML. When you extend the file (with `FORM_RETENTION_DAYS`,
 `AEO_EGRESS_*`, `AEO_CUSTOM_*`, provider keys or `JWT_EXPIRY_HOURS`, for
 example), keep every value as a `${...}` interpolation, or keep the extended
 copy outside the working tree so it cannot be committed. Inside the working
-tree, name a local copy `docker-compose.production.yml` (passed with a second
+tree, name a local copy `docker-compose.prod.yml` (passed with a second
 `-f`) or `docker-compose.override.yml` (which Compose loads on its own): both
 names are git-ignored.
 

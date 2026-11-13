@@ -64,7 +64,7 @@ config/local.yaml
 *.crt
 # Local Compose overrides with real values (#302); docker-compose.production.example.yml stays tracked
 docker-compose.override.yml
-docker-compose.production.yml
+docker-compose.prod.yml
 
 # ---------------------------------------------------------------------------
 # Logs, databases and dumps
