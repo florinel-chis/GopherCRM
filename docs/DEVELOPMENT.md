@@ -675,8 +675,11 @@ belongs-to id back over the foreign key. It compares the attached user with the 
 with the validated change alone, since the handler's read and the service's read are separate.
 After the write it attaches the user the foreign key names, for the response: the validated
 assignee when it looked one up, otherwise the user of its own read, and none for a nil key. The
-repository keeps `Save` and there is no transaction, so a stale `PUT` stays last-write-wins. Ticket
-assignees have no is-active check; an existing user with the support or admin role qualifies.
+repository keeps `Save`, so a stale `PUT` stays last-write-wins. With automation events wired
+(`WithTicketAutomationEvents`, #242, as `cmd/main.go` wires it) the update is one transaction that
+locks the ticket row first and runs these checks against the locked row (see *Automation
+runtime*); without the option there is no transaction, as before. Ticket assignees have no
+is-active check; an existing user with the support or admin role qualifies.
 Regression roots: `TestTicketServiceUpdateDetachesStaleAssignee` (`internal/service`);
 `TestTicketReassignmentPersists{SQLite,MySQL}`, `TestTicketReassignmentResponse{SQLite,MySQL}`,
 `TestTicketReassignmentBySupportAssignee{SQLite,MySQL}`, `TestTicketUpdateKeepsAssignee{SQLite,MySQL}`
@@ -782,7 +785,9 @@ the comment with its `delivery`. A not-found error is 404; anything else, includ
   `GET /tickets/{id}/comments` and every other read carry no `delivery` key, for staff and
   customers alike.
 - **Purge.** `ticketRepository.Delete` runs one transaction (a savepoint under `WithTx`) that
-  hard-deletes the ticket's delivery rows (`HasTable` probe) and then soft-deletes the ticket; the
+  locks the ticket row, hard-deletes the ticket's delivery rows (`HasTable` probe), cancels the
+  ticket's automation runs and purges its notifications (#242, see *Automation runtime*) and then
+  soft-deletes the ticket; the
   comments stay as before. The customer plan's `AfterScrub` also runs
   `purgeCustomerTicketMailDeliveries`, which hard-deletes every row whose `customer_id` is the
   erased customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included, for
@@ -932,7 +937,8 @@ Each one normalises the ids (1–100, duplicates count once), checks the role, w
 `bulk_operations` history row, then inside ONE transaction reads every listed record through
 `BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
 or in a forbidden transition (the offending ids go into `error.details`), and only then writes
-the status — plus, for leads, the automation events on the same transaction — and, as the last
+the status — plus, for leads and tickets (#242), the automation events on the same transaction;
+the ticket read is a locking read in id order — and, as the last
 write of that transaction, sets the history row `completed` (see below). There is no generic bulk
 create/update/delete/action machinery any more (#112); a new
 bulk operation gets its own narrow service method and repository halves the same way, and a bulk
@@ -1685,8 +1691,9 @@ test asserts the order.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
-  Assign/ConvertToCustomer`, the form submission path, the bulk lead status path and
-  `DealService.Create/Update/ChangeStage` take the `AutomationRepository` through a functional
+  Assign/ConvertToCustomer`, the form submission path, the bulk lead and ticket status paths,
+  `DealService.Create/Update/ChangeStage` and `TicketService.Create/Update` (#242, see *Tickets*
+  below) take the `AutomationRepository` through a functional
   option (`WithLeadAutomationEvents` and friends) and record `automation_events` rows on the
   transaction-bound repository, so a write that rolls back records nothing and a refused bulk
   status batch records nothing for any of its leads. A create records `*_created`; an update `*_updated` plus
@@ -1707,8 +1714,9 @@ The pieces, and why each is shaped the way it is:
   exactly one. Every one of these changes a column value when it matches, so MySQL's changed-rows
   count is the matched count.
 - **Each step: a locking read of the record, then a conditional advance.** A step other than
-  `send_email` is one `WithTransactionAndRetry` transaction that, in order, re-reads the lead or
-  deal with the transaction-bound locking read (`GetLeadForUpdate` / `GetDealForUpdate`, `SELECT …
+  `send_email` is one `WithTransactionAndRetry` transaction that, in order, re-reads the lead, deal
+  or ticket with the transaction-bound locking read (`GetLeadForUpdate` / `GetDealForUpdate` /
+  `GetTicketForUpdate`, `SELECT …
   FOR UPDATE` on MySQL, a plain read on SQLite), advances the run with `UPDATE … WHERE id = ? AND
   status = 'running' AND next_position = <expected>` — exactly one row, else the transaction rolls
   back and the executor stops — applies the effect (task, owner change plus an `origin =
@@ -1774,6 +1782,59 @@ The pieces, and why each is shaped the way it is:
   purges its notifications before the scrub; user erasure purges the user's notifications; the
   erasure of a deal's customer or lead purges the notifications about that deal (#245) and leaves
   its runs running, so later steps render the redacted title.
+- **Tickets (#242).** `ticket` is the third entity type, with `ticket_created` (`to_value` the
+  stored status), `ticket_updated` and `ticket_status_changed` (`from_value`/`to_value`), and the
+  `schedule` trigger over `filters.ticket_status` (a `TicketStatus`, refused on lead and deal
+  rules, while `filters.status`/`filters.stage` are refused on ticket rules).
+  - *Writers.* `TicketService.Create` and `Update` take `WithTicketAutomationEvents(repo,
+    txManager)` (wired in `cmd/main.go`). Create inserts the ticket and `ticket_created` in one
+    `WithTransaction`. Update, in one transaction, locks the ticket row first
+    (`ticketRepository.GetByIDForUpdate`, through the optional `repository.TicketLockingReader`
+    interface so the hand-written mocks keep compiling), runs the closed-reopen and assignee checks
+    against the row that locking read returned (the assignee lookup is transaction-bound), saves,
+    and records `ticket_updated` plus `ticket_status_changed` when the status differs from the
+    locked row's; a priority, assignee or `due_at` change alone records `ticket_updated` only. Both
+    carry origin `user` and `actor_id` NULL (the `TicketService` interface has no actor). Without
+    the option both methods behave as before: no transaction, no event, the same errors. The bulk
+    ticket status batch reads its tickets with `BulkStatusRepository.GetTicketsByIDs`, now a locking
+    read ordered by id (`FOR UPDATE` on MySQL), and records the events from the locked statuses
+    with origin `bulk` and the caller as `actor_id`. A refused or failed write records nothing.
+  - *Rules.* The owner of a ticket run is `assigned_to_id` (an unassigned ticket makes an
+    `owner` recipient `recipient_unavailable`). Condition fields are `status`, `priority` (strings)
+    and `owner_id`, `customer_id` (numbers). Notify and email placeholders are `ticket.id`,
+    `ticket.number` (`models.TicketNumber`), `ticket.status`, `ticket.priority` and `owner.*`; task
+    placeholders the four `ticket.*` ones. The title, description, resolution and every customer
+    field are refused: ticket text is free text that may name the customer, and customer erasure
+    keeps tickets and their runs, which is safe only because nothing customer-related is rendered
+    or compared. An `assign_owner` user on a ticket rule must be support or admin
+    (`unknown_reference` at `steps[i].config.user_id`, answered `INVALID_REFERENCE`); other staff
+    may still be notify or task recipients by `user_id`.
+  - *Execution.* `lockRecord` reads the ticket with `AutomationRepository.GetTicketForUpdate` (bare
+    row, `FOR UPDATE` on MySQL, soft-deleted is not found); the dry run with `GetTicket`.
+    `create_task` links the ticket's `customer_id` only (tasks have no ticket column). `assign_owner`
+    re-checks the target at run time (`resolveAssignTarget`: live, active, support or admin, else
+    `skipped`/`recipient_unavailable`), writes only `assigned_to_id` and `updated_at`
+    (`SetTicketAssignee`) and records `ticket_updated` with origin `automation`, which starts no run.
+    A ticket schedule batch is `ListScheduleCandidateIDs` over live tickets with the optional status
+    and `updated_at < StaleBefore`.
+  - *Delete, not erasure.* Tickets have no erasure of their own. `ticketRepository.Delete` is one
+    transaction (a savepoint under `WithTx`) that locks the live ticket row (a missing or deleted
+    ticket is `gorm.ErrRecordNotFound`, which the service answers as 404), hard-deletes its
+    `ticket_mail_deliveries`, cancels its pending, waiting and running runs with `record_deleted`
+    and `finished_at` and hard-deletes the notifications about it (`cancelAutomationForEntity`), then
+    soft-deletes the ticket; each table is probed with `HasTable`, and any failure rolls all of it
+    back. A run the dispatcher starts later from an event recorded before the delete is cancelled
+    at its first step. Customer erasure does not touch tickets or their runs.
+  - *Lock order.* The ticket row is locked first by every ticket writer (update, bulk batch, delete)
+    and by every step, before the run row, so writers and steps queue on that row and neither
+    ordering ends in error 1213 on MySQL.
+  - *Visibility.* Unchanged: admins see ticket runs; the sales run scope matches owned leads and
+    deals only, so a sales user's list holds no ticket run and its read is 404; support and
+    customers keep 403 on the run routes. The list filters and both dry-run bodies accept
+    `entity_type=ticket`; any other filter value is 400 `entity_type must be lead, deal or ticket`.
+    The rule-form, rule-list and run-list screens for ticket rules are a later frontend change.
+  - *Logs.* The ticket write, delete, dispatch, step and dry-run lines carry ids, statuses, outcomes
+    and error codes; never the ticket's text, the customer's name or email, or rendered text.
 - **Dry run.** `AutomationEngine.DryRun` reads the record and the users with plain reads and
   simulates every step in memory — waits advance a simulated clock, a simulated assign feeds the
   conditions and recipients after it — and reports ids, outcomes and branches. It changes no row,
@@ -1829,6 +1890,23 @@ repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 reconciles and runs, a replica with the worker off leaves a stranded run untouched);
 `TestMigrationAutomationSchema` and `TestMigrationAutomationTablesListed` (`cmd/migrate`). The MySQL
 roots skip without the variable and fail when it points at an unreachable server.
+
+Ticket roots (#242), on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
+`TestAutomationTicketEvents{SQLite,MySQL}`, `TestTicketServiceWithoutAutomationUnchanged` (SQLite),
+`TestAutomationTicketBulkEvents{SQLite,MySQL}`, `TestAutomationTicketRuleValidation`,
+`TestAutomationTicketStepExecution{SQLite,MySQL}` (the MySQL root parks a step after its locking
+read and sees a delete from a second connection wait in `information_schema.PROCESSLIST`),
+`TestAutomationTicketLockOrderMySQL` (an update, a bulk batch and a delete against a step in both
+orderings, each wait seen on two consecutive polls, no error 1213),
+`TestAutomationTicketSchedule{SQLite,MySQL}`, `TestAutomationTicketDryRunNoSideEffectsSQLite`,
+`TestAutomationTicketLogsOmitPersonalData` (`internal/service`);
+`TestTicketDeleteCancelsAutomation{SQLite,MySQL}` (an injected failure in each statement, a schema
+without the automation tables), `TestAutomationTicketRepository{SQLite,MySQL}` (captured
+statements) (`internal/repository`); `TestAutomationHandlerTicketEntity` (`internal/handler`);
+`TestAutomationTicketAPISQLite` (`tests`); `TestTicketAutomationProductionWiring` (`cmd`).
+Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up, as is the
+`AutomationScheduleFilter` `ticket_status` row of the closed-set table in
+`scripts/ci/check-api-docs.py`.
 
 ### Form retention purge
 

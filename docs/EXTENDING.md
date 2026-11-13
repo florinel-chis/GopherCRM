@@ -333,8 +333,21 @@ origins (lines 49-55) and six step types (lines 58-65).
    from that map before `validateTrigger` runs (`automation_validation.go:143-152`), so without
    this step a rule on the new event cannot be saved.
 5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
-   (`automation_engine.go:628,603`), the erasure cancel for that entity, and validation of values in
-   `validateTrigger`/`validAutomationValue` (`automation_validation.go:226,277`).
+   (`automation_engine.go`), the erasure cancel for that entity, and validation of values in
+   `validateTrigger`/`validAutomationValue` (`automation_validation.go`). Tickets (#242) are the
+   third worked entity and show the variants: a run's owner taken from another column
+   (`recordFromTicket`, `assigned_to_id`), condition fields and placeholder allowlists of their own
+   (`automation_condition.go`; no free text and no customer field), a role rule on
+   `assign_owner` (support or admin, checked in `validateRule` and again at run time by
+   `resolveAssignTarget`), a `create_task` link to another record (the ticket's customer), a schedule
+   filter field of their own (`AutomationScheduleFilter.TicketStatus`, `filters.ticket_status`) and a
+   **delete-time** cancellation instead of an erasure one: `ticketRepository.Delete` locks the row,
+   then calls `cancelAutomationForEntity` in the delete's transaction, because tickets have no
+   erasure of their own. Every writer of the entity locks its row first, as the step's locking read
+   does, so writers and steps queue on that row instead of deadlocking (see
+   `TestAutomationTicketLockOrderMySQL`). A new closed set that reaches the API (such as the
+   `ticket_status` filter) also needs its row in the closed-set table of
+   `scripts/ci/check-api-docs.py`; for `filters.ticket_status` that row is an operator follow-up.
 6. Frontend: the trigger unions and `AUTOMATION_TRIGGERS` in `gocrm-ui/src/types/automation.ts:8-26`,
    `TRIGGER_TYPES` in `gocrm-ui/src/pages/automation/ruleFormSchema.ts:84`, and the label in
    `TRIGGER_LABELS` (`automationFormat.ts:28`).
@@ -343,7 +356,8 @@ origins (lines 49-55) and six step types (lines 58-65).
    rule-acceptance case to `automation_validation_test.go` (a rule on the new trigger saves, one on
    the wrong entity is refused) and to `ruleFormSchema.test.ts`.
 
-Wanted but missing: ticket events (#242).
+Ticket events (#242) are delivered in the backend; their rule-form screens are a later frontend
+change, and comment, first-response, SLA and overdue triggers are still missing (see the roadmap).
 
 ## 7. Add a form field type
 
@@ -475,7 +489,7 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go:302-349`). Erasure skips the automation tables if they are absent (`erasure.go:450-494`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker; events are still recorded in the outbox | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:450-494`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
 | Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
 | Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:251`) |
 

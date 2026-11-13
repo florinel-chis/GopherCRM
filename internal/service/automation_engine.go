@@ -325,7 +325,7 @@ func (e *AutomationEngine) DispatchEvent(event models.AutomationEvent) (int, err
 // the other event triggers match every event of their type.
 func triggerMatches(trigger models.AutomationTrigger, event models.AutomationEvent) bool {
 	switch event.EventType {
-	case models.AutomationEventLeadStatusChanged, models.AutomationEventDealStageChanged:
+	case models.AutomationEventLeadStatusChanged, models.AutomationEventDealStageChanged, models.AutomationEventTicketStatusChanged:
 		if trigger.From != "" && trigger.From != event.FromValue {
 			return false
 		}
@@ -394,6 +394,7 @@ func (e *AutomationEngine) runScheduleBatch(rule models.AutomationRule, now time
 	if rule.Trigger.Filters != nil {
 		query.Status = rule.Trigger.Filters.Status
 		query.Stage = rule.Trigger.Filters.Stage
+		query.TicketStatus = rule.Trigger.Filters.TicketStatus
 	}
 	if rule.Trigger.StaleDays > 0 {
 		before := now.Add(-time.Duration(rule.Trigger.StaleDays) * 24 * time.Hour)
@@ -620,6 +621,18 @@ func (e *AutomationEngine) lockRecord(r repository.AutomationRepository, run *mo
 			return nil, err
 		}
 		return recordFromDeal(deal), nil
+	case models.AutomationEntityTicket:
+		// The ticket row is locked before the run advance: the order every
+		// ticket writer (update, bulk status, delete) uses, so they serialise
+		// on the ticket row instead of deadlocking (#242).
+		ticket, err := r.GetTicketForUpdate(run.EntityID)
+		if err != nil {
+			if isNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return recordFromTicket(ticket), nil
 	}
 	return nil, fmt.Errorf("unknown automation entity type %q", run.EntityType)
 }
@@ -639,8 +652,30 @@ func (e *AutomationEngine) loadRecord(entityType string, entityID uint) (*automa
 			return nil, err
 		}
 		return recordFromDeal(deal), nil
+	case models.AutomationEntityTicket:
+		ticket, err := e.repo.GetTicket(entityID)
+		if err != nil {
+			return nil, err
+		}
+		return recordFromTicket(ticket), nil
 	}
 	return nil, fmt.Errorf("unknown automation entity type %q: %w", entityType, apperrors.ErrValidation)
+}
+
+// resolveAssignTarget is resolveRecipient for an assign_owner step: the
+// configured user, live, active and staff, and on a ticket run (#242) also a
+// support or admin user, as the ticket API requires of an assignee.
+func resolveAssignTarget(users repository.UserRepository, cfg models.AutomationStepConfig, rec *automationRecord) (*models.User, bool, error) {
+	assignCfg := cfg
+	assignCfg.Recipient = models.AutomationRecipientUser
+	target, available, err := resolveRecipient(users, assignCfg, rec)
+	if err != nil || !available {
+		return nil, false, err
+	}
+	if rec.entityType == models.AutomationEntityTicket && !isTicketAssigneeRole(target.Role) {
+		return nil, false, nil
+	}
+	return target, true, nil
 }
 
 // resolveRecipient returns the staff user a step addresses: the record's
@@ -763,9 +798,7 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 		}
 	case models.AutomationStepAssignOwner:
 		plan.advance = nextAdvance(stepCount, pos+1, now)
-		assignCfg := cfg
-		assignCfg.Recipient = models.AutomationRecipientUser
-		target, available, err := resolveRecipient(users, assignCfg, rec)
+		target, available, err := resolveAssignTarget(users, cfg, rec)
 		if err != nil {
 			return nil, err
 		}
@@ -788,6 +821,14 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 					return err
 				}
 				err = automationDealUpdated(r, rec.id, rec.deal.Stage, rec.deal.Stage, models.AutomationOriginAutomation, nil)
+			case models.AutomationEntityTicket:
+				// Only assigned_to_id and updated_at are written; the
+				// ticket_updated event carries origin automation, which the
+				// dispatcher claims without starting a run (#242).
+				if err = r.SetTicketAssignee(rec.id, target.ID, now); err != nil {
+					return err
+				}
+				err = automationTicketUpdated(r, rec.id, rec.ticket.Status, rec.ticket.Status, models.AutomationOriginAutomation, nil)
 			}
 			return err
 		}
@@ -848,8 +889,9 @@ func (e *AutomationEngine) triggeringAttribution(r repository.AutomationReposito
 
 // buildAutomationTask renders the task of a create_task step: assigned to
 // the resolved user, due due_in_days after execution (UTC), linked to the
-// lead of a lead run, and to the deal of a deal run plus the deal's customer,
-// else its lead, never both of those two. The deal link is a business link the
+// lead of a lead run, to the deal of a deal run plus the deal's customer,
+// else its lead, never both of those two, and to the customer of a ticket
+// run's ticket (#242). The deal link is a business link the
 // rule wrote, not the rule's actor reading the deal, so it is set whoever the
 // assignee is and whatever the stage. The text is rendered through the task allowlist only: a task survives the
 // erasure of its lead, so no name, address, phone or company is ever copied
@@ -881,6 +923,13 @@ func buildAutomationTask(cfg models.AutomationStepConfig, rec *automationRecord,
 		} else if rec.deal.LeadID != nil {
 			leadID := *rec.deal.LeadID
 			task.LeadID = &leadID
+		}
+	case models.AutomationEntityTicket:
+		// Tasks have no ticket link (#242): the task is linked to the
+		// ticket's customer only.
+		if rec.ticket.CustomerID != 0 {
+			customerID := rec.ticket.CustomerID
+			task.CustomerID = &customerID
 		}
 	}
 	return task

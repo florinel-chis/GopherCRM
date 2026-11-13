@@ -249,7 +249,11 @@ func runBulkStatusService(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		require.NoError(t, err)
 		_, err = svc.BulkSetTaskStatus(context.Background(), f.env.admin.ID, models.RoleAdmin, []uint{f.task.ID}, models.TaskStatusCompleted)
 		require.NoError(t, err)
-		assert.Empty(t, f.env.events())
+		assert.Empty(t, f.env.eventsOf(models.AutomationEntityLead, f.lead.ID))
+		// Since #242 the ticket batch records the ticket's own events; the task
+		// batch records none.
+		assert.Equal(t, []string{models.AutomationEventTicketUpdated, models.AutomationEventTicketStatusChanged},
+			eventTypes(f.env.events()))
 	})
 
 	t.Run("a failed outcome write does not change the answer", func(t *testing.T) {

@@ -356,7 +356,7 @@ row of the quote with `to_status = 'draft'` and an id above the one read before 
 ## Follow-up Automation
 
 Six tables added by issue #164: the rules an admin defines, their ordered steps, the outbox
-events a lead or deal write records in its own transaction, the persisted runs the worker
+events a lead, deal or ticket (#242) write records in its own transaction, the persisted runs the worker
 executes with their per-step log, and the in-app notifications a `notify` step creates. None of
 them stores personal data: events and run logs carry ids, types, statuses, outcomes and error
 codes; the only free text is what an admin typed into a rule and the rendered title and body of
@@ -376,7 +376,13 @@ erDiagram
     deals o|--o{ automation_events : "entity_type = deal, entity_id (no FK)"
     leads o|--o{ automation_runs : "entity_type = lead, entity_id (no FK)"
     deals o|--o{ automation_runs : "entity_type = deal, entity_id (no FK)"
+    tickets o|--o{ automation_events : "entity_type = ticket, entity_id (no FK)"
+    tickets o|--o{ automation_runs : "entity_type = ticket, entity_id (no FK)"
 ```
+
+The ticket entity (#242) needs no schema change: `entity_type` is a plain `varchar(20)` in every
+table (no ENUM or CHECK, `migrations/20261028120000_add_follow_up_automation.up.sql`), and
+`filters.ticket_status` lives inside the rule's `trigger_config` JSON.
 
 ### Automation Rule
 
@@ -386,9 +392,9 @@ erDiagram
 |-------|------|----------|---------|-------------|-------------|
 | name | string | Yes | - | max 200, trimmed | Display name |
 | description | text | No | - | max 65535 bytes | Free text |
-| entity_type | string | Yes | - | `lead` or `deal`, max 20 | What the rule runs on |
-| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `lead_form_submitted` (lead rules only), `deal_created`, `deal_updated`, `deal_stage_changed` or `schedule`, max 40 | When a run starts |
-| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status or stage change (empty = any); `form_id` for `lead_form_submitted` (0 or absent = every form); `hour_utc` 0–23, `filters {status|stage}` and `stale_days` for a schedule |
+| entity_type | string | Yes | - | `lead`, `deal` or `ticket`, max 20 | What the rule runs on |
+| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `lead_form_submitted` (lead rules only), `deal_created`, `deal_updated`, `deal_stage_changed` (deal rules only), `ticket_created`, `ticket_updated`, `ticket_status_changed` (ticket rules only) or `schedule`, max 40 | When a run starts |
+| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status, stage or ticket status change (empty = any); `form_id` for `lead_form_submitted` (0 or absent = every form); `hour_utc` 0–23, `filters {status|stage|ticket_status}` (lead status, deal stage, ticket status; each only on its own entity) and `stale_days` for a schedule |
 | enabled | boolean | Yes | false | - | Disabled rules start no run |
 | version | int | Yes | 1 | incremented by every update | Every run records the version it started from |
 | schedule_pass_on | string | No | - | `YYYY-MM-DD` | UTC day of the schedule pass in progress |
@@ -418,21 +424,28 @@ of the matching JSON type, known `{{placeholders}}` only, and every named user a
 staff account. A lead rule on `lead_form_submitted` may also compare the string fields
 `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host`, read
 from the submission the triggering event names (empty when it names none, belongs to another lead,
-or in a dry run); on any other rule they are refused (`not_applicable`).
+or in a dry run); on any other rule they are refused (`not_applicable`). A ticket rule (#242)
+compares `status` and `priority` (strings) and `owner_id` (the assignee) and `customer_id`
+(numbers); the title, description, resolution and the customer's fields are never comparable. Its
+`assign_owner` user must also be a support or admin user, as a ticket assignee must.
 
 The placeholders an email subject or body and a notification title or body may use are scoped
 to the rule's entity type. A lead rule knows `lead.id`, `lead.first_name`, `lead.last_name`,
 `lead.email`, `lead.phone`, `lead.company`, `lead.status` and `lead.source`; a deal rule knows
 `deal.id`, `deal.title`, `deal.stage`, `deal.amount` (formatted with its currency),
-`deal.currency` and `deal.source`; both know `owner.first_name`, `owner.last_name` and
-`owner.email` of the record's owner at execution time. Anything else, including a `lead.*`
+`deal.currency` and `deal.source`; a ticket rule knows `ticket.id`, `ticket.number`
+(`T-000042`), `ticket.status` and `ticket.priority`, never the title, description, resolution or a
+customer field; all three know `owner.first_name`, `owner.last_name` and `owner.email` of the
+record's owner at execution time (a ticket's owner is its assignee). Anything else, including a `lead.*`
 placeholder in a deal rule, is an unknown placeholder and the rule is refused. A mail is not
 stored, and a notification is hard-deleted with the lead it refers to, with its recipient, and,
 for a deal rule, when the deal's customer or lead is erased (#245), so neither rendering outlives
 the person.
 
 A task title or description is narrower: `lead.id`, `lead.status` and `lead.source` for a lead
-rule, the six `deal.*` placeholders for a deal rule, and nothing of the owner. A task is a
+rule, the six `deal.*` placeholders for a deal rule, the four `ticket.*` placeholders for a ticket
+rule, and nothing of the owner. A ticket run's task is linked to the ticket's customer (tasks have
+no ticket link). A task is a
 business record that is kept when its lead is erased (the link resolves, the person does not), so
 the name, email, phone and company placeholders are refused in it when the rule is validated, and
 the task renderer blanks them even in a rule stored before the allowlist was narrowed.
@@ -442,18 +455,18 @@ that copy, an accepted and documented limitation. The rendered text goes into th
 
 ### Automation Event
 
-`automation_events` — the outbox row of one committed lead or deal write. No foreign keys: the
-row outlives nothing and refers to the record by type and id.
+`automation_events` — the outbox row of one committed lead, deal or ticket write. No foreign
+keys: the row outlives nothing and refers to the record by type and id.
 
 | Field | Type | Required | Constraints | Description |
 |-------|------|----------|-------------|-------------|
-| entity_type | string | Yes | `lead` or `deal`; composite index with entity_id | |
+| entity_type | string | Yes | `lead`, `deal` or `ticket`; composite index with entity_id | |
 | entity_id | uint | Yes | - | The record |
 | event_type | string | Yes | one of the event trigger types, max 40 | |
-| from_value | string | No | max 50 | Previous status or stage of a `*_status_changed` / `*_stage_changed` event |
-| to_value | string | No | max 50 | New status or stage (`deal_created` carries the stage) |
+| from_value | string | No | max 50 | Previous status or stage of a `*_status_changed` / `*_stage_changed` event (a ticket's, read under the ticket's row lock) |
+| to_value | string | No | max 50 | New status or stage (`deal_created` carries the stage, `ticket_created` the stored status) |
 | origin | string | Yes | `user`, `form`, `bulk`, `conversion` or `automation`, max 20 | `automation` events are claimed and start no run (loop guard) |
-| actor_id | uint | No | - | The acting user, when known |
+| actor_id | uint | No | - | The acting user, when known (the caller of a bulk status batch; null on single lead and ticket create/update) |
 | form_id | uint | No | no index, no FK | `lead_form_submitted` only (#220): the form of the finalised submission; null on every other event |
 | submission_id | uint | No | no index, no FK | `lead_form_submitted` only: the submission, whose attribution a condition reads; null otherwise |
 | created_at | datetime | Yes | UTC | |
@@ -467,7 +480,7 @@ row outlives nothing and refers to the record by type and id.
 |-------|------|----------|---------|-------------|-------------|
 | rule_id | uint | Yes | - | FK to automation_rules, indexed | |
 | rule_version | int | Yes | - | - | The rule version the run started from; a changed rule cancels its runs |
-| entity_type | string | Yes | - | composite index with entity_id | |
+| entity_type | string | Yes | - | `lead`, `deal` or `ticket`; composite index with entity_id | |
 | entity_id | uint | Yes | - | - | The record |
 | event_id | uint | No | - | no FK | The event that started it (empty for schedule runs) |
 | dedupe_key | string | Yes | - | unique, max 100 | `evt:<event_id>:rule:<rule_id>` or `sch:<rule_id>:<YYYY-MM-DD>:<entity_id>`; inserted with `ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE id=id` |
@@ -477,7 +490,7 @@ row outlives nothing and refers to the record by type and id.
 | resume_at | datetime | No | - | indexed, UTC | When a waiting run becomes claimable |
 | claimed_at | datetime | No | - | - | When the executor claimed it |
 | finished_at | datetime | No | - | - | Set on completed, failed and cancelled |
-| cancel_reason | string | No | - | `rule_changed`, `rule_disabled`, `rule_deleted`, `manual`, `record_deleted`, max 30 | |
+| cancel_reason | string | No | - | `rule_changed`, `rule_disabled`, `rule_deleted`, `manual`, `record_deleted`, max 30 | `record_deleted`: the lead was erased or the ticket deleted (in that transaction), or the record was gone at the run's next step |
 | error_code | string | No | - | `email_unconfirmed`, `step_failed`, max 40 | |
 
 ### Automation Run Step
@@ -498,14 +511,15 @@ is what keeps a second executor from recording a second `sending` row for an ema
 ### Notification
 
 `notifications` — an in-app message addressed to one staff user, created by a `notify` step.
-Hard-deleted with the lead it refers to and with its recipient.
+Hard-deleted with the lead it refers to, with the ticket it refers to (in the ticket delete's
+transaction, #242) and with its recipient.
 
 | Field | Type | Required | Constraints | Description |
 |-------|------|----------|-------------|-------------|
 | user_id | uint | Yes | FK to users, indexed | The recipient |
 | title | string | Yes | max 255 | Rendered from the step's title |
 | body | text | No | - | Rendered from the step's body |
-| entity_type | string | Yes | composite index with entity_id | The record the run acted on |
+| entity_type | string | Yes | `lead`, `deal` or `ticket`; composite index with entity_id | The record the run acted on |
 | entity_id | uint | Yes | - | |
 | run_id | uint | No | no FK | The run that created it |
 | read_at | datetime | No | - | Set by `POST /notifications/{id}/read` and `read-all` |

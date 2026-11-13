@@ -310,10 +310,12 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail
 	// goes out after the commit through the shared mailer, its subject naming
-	// the configured product (#292).
+	// the configured product (#292). Ticket create and update record their
+	// automation events in the write's transaction (#242).
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer),
-		service.WithTicketProductName(configService))
+		service.WithTicketProductName(configService),
+		service.WithTicketAutomationEvents(automationRepo, txManager))
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)

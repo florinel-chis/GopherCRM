@@ -6,6 +6,8 @@ import "time"
 // the notify step of an automation rule. It is hard-deleted when the lead it
 // refers to is erased and when its recipient is erased: the title and body
 // may render a placeholder (a lead's name), so neither may outlive the person.
+// A notification about a ticket (#242) is hard-deleted with the ticket's
+// delete.
 //
 // @Description An in-app message for one staff user, created by the notify step of an automation rule.
 type Notification struct {
@@ -24,8 +26,8 @@ type Notification struct {
 	// Body rendered from the notify step's body template; an empty string when the step has no body.
 	Body string `gorm:"type:text" json:"body" example:"Please contact the lead within one business day."`
 	// Type of the record the notification is about.
-	EntityType string `gorm:"not null;type:varchar(20);index:idx_notifications_entity" json:"entity_type" enums:"lead,deal" example:"lead"`
-	// ID of the lead or deal the notification is about.
+	EntityType string `gorm:"not null;type:varchar(20);index:idx_notifications_entity" json:"entity_type" enums:"lead,deal,ticket" example:"lead"`
+	// ID of the lead, deal or ticket the notification is about.
 	EntityID uint `gorm:"not null;index:idx_notifications_entity" json:"entity_id" example:"12"`
 	// ID of the automation run that created the notification; omitted when there is none.
 	RunID *uint `json:"run_id,omitempty" example:"88"`

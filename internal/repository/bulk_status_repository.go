@@ -3,6 +3,7 @@ package repository
 import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type bulkStatusRepository struct {
@@ -61,8 +62,24 @@ func (r *bulkStatusRepository) GetLeadsByIDs(ids []uint) ([]models.Lead, error) 
 	return getByIDs[models.Lead](r.db, ids)
 }
 
+// GetTicketsByIDs is a locking read of the batch's live tickets in id order
+// (#242): `SELECT … FOR UPDATE … ORDER BY id` on MySQL, a plain read on SQLite
+// where the dialector drops the clause. Inside the batch transaction it locks
+// the rows before the status write, in the order an automation step and the
+// other ticket writers lock one ticket row each, and the events are recorded
+// from the status this read returns, so a status committed by another
+// connection after the batch began is the from_value, not a stale snapshot.
 func (r *bulkStatusRepository) GetTicketsByIDs(ids []uint) ([]models.Ticket, error) {
-	return getByIDs[models.Ticket](r.db, ids)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tickets []models.Ticket
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id ASC").Find(&tickets).Error
+	if err != nil {
+		return nil, err
+	}
+	return tickets, nil
 }
 
 func (r *bulkStatusRepository) GetTasksByIDs(ids []uint) ([]models.Task, error) {

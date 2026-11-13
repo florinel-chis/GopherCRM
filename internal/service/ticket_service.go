@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -8,6 +10,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
 )
 
 type ticketService struct {
@@ -27,6 +30,34 @@ type ticketService struct {
 	// ticket reply subject (#292), set by WithTicketProductName. Nil means
 	// "GopherCRM".
 	productName MailProductNameSource
+
+	// automation records the ticket events of Create and Update (#242) in the
+	// write's transaction, set by WithTicketAutomationEvents together with
+	// the transaction manager. Nil keeps the unwired behaviour: no transaction
+	// and no event.
+	automation repository.AutomationRepository
+}
+
+// WithTicketAutomationEvents makes Create and Update record their automation
+// events (#242) in one transaction with the ticket write: Create inserts the
+// ticket and ticket_created (to_value the stored status); Update locks the
+// ticket row first (TicketLockingReader), runs the closed-reopen and assignee
+// checks against the locked row, saves, and records ticket_updated plus
+// ticket_status_changed when the status differs. Both events carry origin user
+// and no actor (the TicketService interface carries none). A refused or failed
+// write records nothing.
+func WithTicketAutomationEvents(repo repository.AutomationRepository, txManager *utils.TransactionManager) TicketServiceOption {
+	return func(s *ticketService) {
+		s.automation = repo
+		if txManager != nil {
+			s.txManager = txManager
+		}
+	}
+}
+
+// ticketEventsWired reports whether ticket writes record automation events.
+func (s *ticketService) ticketEventsWired() bool {
+	return s.automation != nil && s.txManager != nil
 }
 
 // WithTicketProductName makes the ticket reply mail subject read its product
@@ -97,12 +128,33 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		}
 	}
 
-	if err := s.ticketRepo.Create(ticket); err != nil {
+	if !s.ticketEventsWired() {
+		if err := s.ticketRepo.Create(ticket); err != nil {
+			logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
+			return err
+		}
+		logger.WithField("ticket_id", ticket.ID).Info("Ticket created successfully")
+		return nil
+	}
+
+	// The ticket and its ticket_created event commit together or not at all.
+	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		if err := s.ticketRepo.WithTx(tx).Create(ticket); err != nil {
+			return err
+		}
+		return automationTicketCreated(s.automation.WithTx(tx), ticket.ID, ticket.Status, models.AutomationOriginUser, nil)
+	})
+	if err != nil {
+		ticket.ID = 0
 		logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
 		return err
 	}
 
-	logger.WithField("ticket_id", ticket.ID).Info("Ticket created successfully")
+	logger.WithFields(map[string]interface{}{"ticket_id": ticket.ID, "status": ticket.Status}).Info("Ticket created successfully")
 	return nil
 }
 
@@ -172,6 +224,10 @@ func (s *ticketService) GetByAssignee(assigneeID uint, offset, limit int) ([]mod
 func (s *ticketService) Update(ticket *models.Ticket) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", ticket.ID), "TicketService", "Update")
 
+	if s.ticketEventsWired() {
+		return s.updateWithEvents(ticket, logger)
+	}
+
 	// Get existing ticket to validate state transitions
 	existing, err := s.ticketRepo.GetByID(ticket.ID)
 	if err != nil {
@@ -179,52 +235,123 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 		return err
 	}
 
-	// Validate status transitions
-	if existing.Status == models.TicketStatusClosed && ticket.Status != models.TicketStatusClosed {
-		logger.Warn("Cannot reopen closed ticket")
-		return fmt.Errorf("cannot reopen closed ticket: %w", apperrors.ErrClosedTicketReopen)
+	validatedAssignee, err := checkTicketUpdate(logger, existing, ticket, s.userRepo)
+	if err != nil {
+		return err
 	}
-
-	// Verify assignee if changed
-	var validatedAssignee *models.User
-	if ticket.AssignedToID != nil && (existing.AssignedToID == nil || *ticket.AssignedToID != *existing.AssignedToID) {
-		assignee, err := s.userRepo.GetByID(*ticket.AssignedToID)
-		if err != nil {
-			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
-			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
-		}
-		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
-			logger.Warn("Invalid assignee role")
-			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
-		}
-		validatedAssignee = assignee
-	}
-
-	// The repository saves with GORM's Save, which writes a preloaded belongs-to
-	// id back over the foreign key. Compare the attached user with the foreign
-	// key, not with the change validated above: the caller's read and the read in
-	// this method are separate, so the latter may already show the requested user.
-	if ticket.AssignedTo != nil && (ticket.AssignedToID == nil || ticket.AssignedTo.ID != *ticket.AssignedToID) {
-		ticket.AssignedTo = nil
-	}
+	detachStaleTicketAssignee(ticket)
 
 	if err := s.ticketRepo.Update(ticket); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
 		return err
 	}
 
-	// Answer with the user the stored foreign key names. Without a lookup the key
-	// equals the one read above, so that read's user is the right one.
+	attachTicketAssignee(ticket, validatedAssignee, existing)
+	logger.Info("Ticket updated successfully")
+	return nil
+}
+
+// updateWithEvents is Update with automation events wired (#242): one
+// transaction that locks the ticket row first (GetByIDForUpdate), runs the
+// closed-reopen and assignee checks against the row that locking read
+// returns, saves the ticket, and records ticket_updated plus, when the status
+// differs from the locked row's, ticket_status_changed. The locking read
+// matters on MySQL: a plain read could answer from a snapshot older than a
+// status committed by another connection, which would let a closed ticket be
+// reopened or record a wrong from_value. A refused update and a failed write
+// or event insert roll everything back and record no event.
+func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.Entry) error {
+	var existing *models.Ticket
+	var validatedAssignee *models.User
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		tickets := s.ticketRepo.WithTx(tx)
+		locker, ok := tickets.(repository.TicketLockingReader)
+		if !ok {
+			return errTicketLockingReadUnavailable
+		}
+		locked, err := locker.GetByIDForUpdate(ticket.ID)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Warn("Ticket not found")
+			return err
+		}
+		existing = locked
+		validatedAssignee, err = checkTicketUpdate(logger, locked, ticket, s.userRepo.WithTx(tx))
+		if err != nil {
+			return err
+		}
+		detachStaleTicketAssignee(ticket)
+		if err := tickets.Update(ticket); err != nil {
+			logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
+			return err
+		}
+		return automationTicketUpdated(s.automation.WithTx(tx), ticket.ID, locked.Status, ticket.Status, models.AutomationOriginUser, nil)
+	})
+	if err != nil {
+		return err
+	}
+
+	attachTicketAssignee(ticket, validatedAssignee, existing)
+	logger.WithField("status_changed", existing.Status != ticket.Status).Info("Ticket updated successfully")
+	return nil
+}
+
+// errTicketLockingReadUnavailable is returned by a wired Update whose ticket
+// repository offers no locking read; nothing is written.
+var errTicketLockingReadUnavailable = errors.New("ticket repository has no locking read")
+
+// checkTicketUpdate refuses reopening a closed ticket and an assignee change
+// to a user that does not exist or is not support or admin, against the
+// stored ticket existing. It returns the assignee it looked up, if any.
+func checkTicketUpdate(logger *logrus.Entry, existing, ticket *models.Ticket, users repository.UserRepository) (*models.User, error) {
+	// Validate status transitions
+	if existing.Status == models.TicketStatusClosed && ticket.Status != models.TicketStatusClosed {
+		logger.Warn("Cannot reopen closed ticket")
+		return nil, fmt.Errorf("cannot reopen closed ticket: %w", apperrors.ErrClosedTicketReopen)
+	}
+
+	// Verify assignee if changed
+	if ticket.AssignedToID != nil && (existing.AssignedToID == nil || *ticket.AssignedToID != *existing.AssignedToID) {
+		assignee, err := users.GetByID(*ticket.AssignedToID)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
+			return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
+		}
+		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
+			logger.Warn("Invalid assignee role")
+			return nil, fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
+		}
+		return assignee, nil
+	}
+	return nil, nil
+}
+
+// detachStaleTicketAssignee drops a preloaded assignee that is not the one
+// the foreign key names. The repository saves with GORM's Save, which writes a
+// preloaded belongs-to id back over the foreign key. Compare the attached user
+// with the foreign key, not with the validated change: the caller's read and
+// the service's read are separate, so the latter may already show the
+// requested user.
+func detachStaleTicketAssignee(ticket *models.Ticket) {
+	if ticket.AssignedTo != nil && (ticket.AssignedToID == nil || ticket.AssignedTo.ID != *ticket.AssignedToID) {
+		ticket.AssignedTo = nil
+	}
+}
+
+// attachTicketAssignee answers with the user the stored foreign key names.
+// Without a lookup the key equals the one read before the write, so that
+// read's user is the right one.
+func attachTicketAssignee(ticket *models.Ticket, validatedAssignee *models.User, existing *models.Ticket) {
 	if ticket.AssignedToID != nil {
 		if validatedAssignee != nil {
 			ticket.AssignedTo = validatedAssignee
-		} else if ticket.AssignedTo == nil {
+		} else if ticket.AssignedTo == nil && existing != nil {
 			ticket.AssignedTo = existing.AssignedTo
 		}
 	}
-
-	logger.Info("Ticket updated successfully")
-	return nil
 }
 
 func (s *ticketService) Delete(id uint) error {
@@ -241,7 +368,14 @@ func (s *ticketService) Delete(id uint) error {
 		return err
 	}
 
+	// The repository locks the ticket, purges its mail deliveries, cancels its
+	// open automation runs (record_deleted) and purges its notifications in the
+	// transaction that soft-deletes it (#242).
 	if err := s.ticketRepo.Delete(id); err != nil {
+		if isNotFound(err) {
+			logger.Warn("Ticket deleted meanwhile")
+			return fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to delete ticket")
 		return err
 	}
