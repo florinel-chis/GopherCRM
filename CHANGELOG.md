@@ -25,6 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run list filters and both dry-run bodies accept `ticket`; an unknown `entity_type` filter now
   answers `entity_type must be lead, deal or ticket`. Backend and API only: the rule screens for
   ticket rules are a later frontend change. No schema change.
+- **Docker UI image `VITE_APP_NAME` build argument (#303).** `gocrm-ui/Dockerfile` declares
+  `ARG VITE_APP_NAME=` and `ENV VITE_APP_NAME=$VITE_APP_NAME` in its build stage, before
+  `npm run build`, so `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` makes the signed-out
+  sign-in and registration pages read "Welcome to Acme" and "Create your Acme account". The empty
+  default keeps `GoCRM`; signed-in users still see the stored `general.company_name`. The value is
+  not a secret: Vite inlines it into the public JavaScript bundle nginx serves.
+  `gocrm-ui/.dockerignore` still excludes `.env` files. The shipped Compose files do not forward
+  it yet; the Compose `build.args` pass-through is #308. Documented in `docs/DOCKER.md`;
+  `gocrm-ui/src/hooks/productNameBuildArg.test.ts` pins the Dockerfile and the documentation, and
+  `gocrm-ui/e2e/tests/product-name-signed-out.spec.ts` checks the signed-out pages in a browser.
+- **Release-tarball decisions in the server provisioning guide (#305).**
+  `docs/SERVER_PROVISIONING.md` records the founder decision of 13 Nov 2026 that SQLite is not
+  supported on the release-tarball path: `receive-release` keeps only its `mysqldump` backup, with
+  no SQLite backup branch. Its *Schema migrations* section now gives the exact manual step,
+  `systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gophercrm/env/gophercrm.env
+  /srv/gophercrm/current/bin/migrate -command up -dir /srv/gophercrm/current/migrations`, run as
+  root only after the deploy reports the revision live (never after a rollback), and the recovery
+  of a dirty schema (keep the backup; restore it, or revert by hand and `-command force` the last
+  version that applied cleanly; rerun `up`). The step stays manual; `receive-release` is
+  unchanged. The sample unit, environment and nginx files of #305 item 1 are not delivered yet.
+  `internal/config/server_provisioning_guide_test.go` pins the decision, the command against
+  `cmd/migrate` and this entry.
 - **Server provisioning guide for the release-tarball path (#231).** `docs/SERVER_PROVISIONING.md`
   takes a fresh systemd/nginx Linux host to its first deploy through `scripts/deploy/bootstrap.sh`
   and the Deploy workflow: packages, the `gophercrm` system user, `/srv/gophercrm` and the root-only
@@ -81,8 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ui.theme.primary_color` (`BrandThemeProvider`, under the configuration provider): 3- or 6-digit
   hex, `rgb()`/`rgba()` and `hsl()`/`hsla()` values are applied and MUI derives the light and dark
   variants; any other value, and every signed-out page, keeps `#1976d2`. The dark theme, secondary
-  colour and snackbars are unchanged. Frontend only; no API change. Mail subjects (#221) and the
-  Docker `VITE_APP_NAME` build argument remain open.
+  colour and snackbars are unchanged. Frontend only; no API change. Mail subjects followed in
+  #292 and the Docker `VITE_APP_NAME` build argument in #303.
 - **External identity mappings for products (#239).** A new `product_external_ids` table maps an
   integrator's `(source, scope, external_id)` to a product, unique on the exact, case-sensitive
   triple with the customer mappings' rules (source 1-64, scope 0-128 and `''` by default,
@@ -242,6 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Full-page documentation screenshots.** The fixed app bar and the permanent navigation drawer no longer appear part-way down full-page captures: the screenshot helper applies a screen-only stylesheet for the shot that pins both to the top of the document (`gocrm-ui/e2e/screenshots/helpers/capture.ts`, `gocrm-ui/src/test/screenshotCapture.ts`). The live application and print media are unchanged; the images themselves are regenerated with `npm run screenshots` in a follow-up. (#187)
+- **Local Compose overrides are git-ignored.** `docker-compose.override.yml` and `docker-compose.prod.yml` are in `.gitignore`, so a fork's local copy of the production override with real values cannot be committed by accident; `docs/DOCKER.md` names both. (#302)
 - **Browser tabs sharing a remembered session no longer sign each other out (#184).** The web
   client runs every refresh and password change under one origin-wide exclusive lock (the Web Lock
   `gophercrm-session`; an in-tab lock where `navigator.locks` is missing, as on plain HTTP) and

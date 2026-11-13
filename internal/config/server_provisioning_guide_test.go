@@ -654,6 +654,13 @@ func TestServerProvisioningGuideSteps(t *testing.T) {
 
 // TestServerProvisioningGuideSchema pins AC-6.
 func TestServerProvisioningGuideSchema(t *testing.T) {
+	assertGuideSchemaSection(t)
+}
+
+// assertGuideSchemaSection holds the #231 assertions on the Schema migrations
+// section, shared with the #305 migration-command pin.
+func assertGuideSchemaSection(t *testing.T) {
+	t.Helper()
 	d := parseDeployDefaults(t)
 
 	build := readRepositoryFile(t, "scripts/release/build.sh")
@@ -736,4 +743,127 @@ func TestServerProvisioningGuideLinked(t *testing.T) {
 	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", "## [")
 	assert.Contains(t, unreleased, "#231")
 	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
+}
+
+// The tests below pin the #305 decisions (founder decisions of 13 Nov 2026):
+// SQLite stays unsupported on the tarball path, and the SQL migration is a
+// documented manual step after the deploy.
+
+// TestServerProvisioningGuideSQLiteFounderDecision pins #305 AC-1.
+func TestServerProvisioningGuideSQLiteFounderDecision(t *testing.T) {
+	scope := normalizeDocText(guideSection(t, readProvisioningGuide(t), "## Scope"))
+	for _, phrase := range []string{
+		"SQLite is not supported on this path",
+		"founder decision",
+		"no SQLite backup",
+	} {
+		assert.Contains(t, scope, phrase, "Scope records the SQLite decision")
+	}
+
+	receive := readRepositoryFile(t, "scripts/deploy/receive-release.sh")
+	assert.Contains(t, receive, "mysqldump", "receive-release keeps its mysqldump backup")
+	assert.NotContains(t, strings.ToLower(receive), "sqlite", "receive-release has no SQLite branch")
+}
+
+// fieldAfter returns the field that follows flag on line, or "".
+func fieldAfter(line, flag string) string {
+	fields := strings.Fields(line)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == flag {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+// TestServerProvisioningGuideMigrationCommand pins #305 AC-2.
+func TestServerProvisioningGuideMigrationCommand(t *testing.T) {
+	d := parseDeployDefaults(t)
+
+	migrateSource := readRepositoryFile(t, "cmd/migrate/main.go")
+	for _, decl := range []string{`flag.String("command"`, `flag.String("dir"`, `flag.Uint("version"`} {
+		require.Contains(t, migrateSource, decl, "cmd/migrate declares %s", decl)
+	}
+
+	raw := guideSection(t, readProvisioningGuide(t), "## Schema migrations")
+	blocks := fencesContaining(parseGuideFences(t, raw), "bin/migrate")
+	require.Len(t, blocks, 1, "Schema migrations holds exactly one block running bin/migrate")
+
+	needles := []string{
+		"systemd-run",
+		"--pty",
+		"--uid=gophercrm",
+		"--gid=gophercrm",
+		"-p EnvironmentFile=" + d.EnvFile,
+		d.Root + "/current/bin/migrate",
+		"-command up",
+		"-dir " + d.Root + "/current/migrations",
+	}
+	var matches []string
+	for _, line := range strings.Split(blocks[0].body, "\n") {
+		if lineWithAll(line, needles...) {
+			matches = append(matches, line)
+		}
+	}
+	require.Len(t, matches, 1, "exactly one line holds the whole migrate command")
+	line := matches[0]
+	dir := fieldAfter(line, "-dir")
+	assert.True(t, strings.HasPrefix(dir, "/"), "-dir %q is absolute", dir)
+	assert.Equal(t, d.Root+"/current/migrations", dir, "-dir names the shipped migrations")
+	assert.NotContains(t, line, d.Root+"/bin/migrate", "bin/migrate is not linked into ROOT/bin")
+
+	schema := normalizeDocText(raw)
+	for _, phrase := range []string{
+		"founder decision",
+		"is live",
+		"rolled back",
+		"dirty",
+		"-command force",
+		"last version that applied cleanly",
+		"backup",
+	} {
+		assert.Contains(t, schema, phrase, "Schema migrations")
+	}
+
+	assertGuideSchemaSection(t)
+}
+
+// changelogEntry returns the bullet of section whose first line holds marker,
+// up to the next bullet or heading.
+func changelogEntry(t *testing.T, section, marker string) string {
+	t.Helper()
+	lines := strings.Split(section, "\n")
+	from := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "- ") && strings.Contains(line, marker) {
+			require.Equal(t, -1, from, "two entries mention %s on their first line", marker)
+			from = i
+		}
+	}
+	require.NotEqual(t, -1, from, "no entry mentions %s on its first line", marker)
+	to := len(lines)
+	for i := from + 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "- ") || strings.HasPrefix(lines[i], "#") {
+			to = i
+			break
+		}
+	}
+	return strings.Join(lines[from:to], "\n")
+}
+
+// TestServerProvisioningGuideTarballDecisionsChangelog pins #305 AC-3.
+func TestServerProvisioningGuideTarballDecisionsChangelog(t *testing.T) {
+	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", "## [")
+	assert.Contains(t, unreleased, "#305")
+	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
+	assert.NotContains(t, unreleased, "scripts/deploy/samples", "item 1 of #305 is not delivered")
+	assert.Contains(t, unreleased, "nothing under `scripts/deploy` changes", "the #231 entry stays")
+
+	entry := changelogEntry(t, unreleased, "#305")
+	assert.Contains(t, entry, "SQLite")
+	assert.Contains(t, entry, "bin/migrate")
+
+	assert.Contains(t, normalizeDocText(readProvisioningGuide(t)), "Nothing in this guide ships as a file")
+	forking := subsectionBetween(t, readRepositoryFile(t, "docs/FORKING.md"), "### 5.2", "### ")
+	assert.Contains(t, normalizeDocText(forking), "no sample file ships under")
 }

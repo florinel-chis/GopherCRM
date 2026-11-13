@@ -2,6 +2,7 @@ import { Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { buildScreenshotOptions } from '../../../src/test/screenshotCapture';
 
 /** Repo-level documentation folder the captures are published to. */
 const screenshotRoot = path.resolve(
@@ -40,11 +41,8 @@ export async function capture(
   await page.waitForTimeout(300);
 
   const file = path.join(dir, `${name}.png`);
-  await page.screenshot({
-    path: file,
-    fullPage: options.fullPage ?? false,
-    animations: 'disabled',
-    caret: 'hide',
-  });
+  // Full-page captures pin the fixed chrome to the top of the document for the
+  // shot (issue #187); viewport captures are unchanged.
+  await page.screenshot(buildScreenshotOptions(file, options));
   return file;
 }

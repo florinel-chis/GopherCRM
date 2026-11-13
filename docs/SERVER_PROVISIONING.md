@@ -20,8 +20,10 @@ disagree, the script wins: re-check the line references below against your check
   and the account the backend uses.
 - **SQLite is not supported on this path.** Before every deploy `receive-release` backs the
   database up with `mysqldump` (`scripts/deploy/receive-release.sh:206`) and aborts the deploy when
-  that backup fails, and `bootstrap.sh` refuses a server without `mysqldump` (line 63). For a
-  SQLite deployment use the SQLite Compose stack described in [DOCKER.md](DOCKER.md).
+  that backup fails, and `bootstrap.sh` refuses a server without `mysqldump` (line 63). This is a
+  founder decision (13 Nov 2026, #305): receive-release keeps only its `mysqldump` backup, and
+  there is no SQLite backup branch. For a SQLite deployment use the SQLite Compose stack described
+  in [DOCKER.md](DOCKER.md).
 - **Names and paths.** The guide uses the defaults of `receive-release.sh` (lines 52-56). Change
   them only together with the matching `GOPHERCRM_*` overrides on the server.
 
@@ -352,6 +354,37 @@ order and the populated-database rehearsal. `bin/migrate` reads the same setting
 through `config.Load`, so it needs this environment file. This path does not automate the step:
 run it yourself after a deploy that brings new files under `migrations/`, and keep the pre-deploy
 backup until it has succeeded.
+
+The step stays manual by founder decision (13 Nov 2026, #305). Run it as root on the server, and
+only once `receive-release deploy` has reported `revision <sha> is live` (in the Deploy workflow
+log or in `/srv/gophercrm/deploy/deploy.log`):
+
+```bash
+systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gophercrm/env/gophercrm.env /srv/gophercrm/current/bin/migrate -command up -dir /srv/gophercrm/current/migrations
+```
+
+- **Order.** The command runs after the deploy, never before it: the new SQL files reach the
+  server only when `receive-release` unpacks the revision into `releases/<sha>` and points
+  `current` at it. By then the restart has already run `MigrateDatabase`, and the SQL files are
+  written for that order (`CREATE TABLE IF NOT EXISTS`, see FORKING §7.4).
+- **Not after a rollback.** When the deploy reports `deploy of <sha> rolled back to <previous>`,
+  skip the step: `current` points at the previous release again, not at the revision you meant to
+  migrate.
+- **Absolute paths.** A `systemd-run` service starts in `/`, so the default `-dir migrations`
+  would resolve to `/migrations`; pass the absolute `-dir`. The tool is reached through
+  `current/bin/migrate`, because `receive-release` links only `gophercrm` and `create-admin` into
+  `/srv/gophercrm/bin`.
+- **The whole environment file.** `bin/migrate` loads its settings through `config.Load`, which
+  refuses to start without a valid `JWT_SECRET`, so it needs the same `EnvironmentFile=` as the
+  service, not only the `DB_*` keys.
+- **A failed migration leaves the schema dirty.** golang-migrate then records the failed version
+  as dirty and refuses every further `up` until it is resolved. Keep the pre-deploy backup under
+  `/srv/gophercrm/backups` and inspect the schema. Either restore the backup (see *Backups*), or
+  revert the partial changes of the failed migration by hand and run the same `systemd-run` line
+  with `-command force -version <V>` in place of `-command up`, where `<V>` is the last version
+  that applied cleanly (the one before the dirty version). Force the failed version itself only if
+  you completed its statements by hand; forcing it otherwise skips it for good. Then rerun the
+  command with `-command up`.
 
 ## First admin
 
