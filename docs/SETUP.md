@@ -184,7 +184,9 @@ The two schemes are parsed in `internal/middleware/auth.go`.
 
 Production configuration (`SERVER_MODE=production`, TLS in front, `TRUSTED_PROXIES`,
 `CORS_ALLOWED_ORIGINS`, SMTP, `PUBLIC_BASE_URL`, `APP_BASE_URL` and `FORM_RETENTION_DAYS`) and the deploy options are covered in
-[FORKING.md](FORKING.md) (sections 4 and 5) and [DOCKER.md](DOCKER.md). To serve the frontend yourself,
+[FORKING.md](FORKING.md) (sections 4 and 5) and [DOCKER.md](DOCKER.md). For the release tarball
+with systemd and nginx on a fresh server (MySQL or MariaDB only), follow
+[SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) before the first deploy. To serve the frontend yourself,
 run `npm run build` and serve `gocrm-ui/dist` with a web server that falls back to `index.html` for
 client-side routes.
 
