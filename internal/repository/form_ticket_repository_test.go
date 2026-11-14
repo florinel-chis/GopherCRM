@@ -216,7 +216,9 @@ func captureFormTicketQueries(t *testing.T, db *gorm.DB) func() []string {
 	require.NoError(t, db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
 		mu.Lock()
 		defer mu.Unlock()
-		statements = append(statements, tx.Statement.SQL.String())
+		// The MySQL dialector binds LIMIT as a placeholder; render the vars so
+		// the assertions see the statement the server ran.
+		statements = append(statements, tx.Dialector.Explain(tx.Statement.SQL.String(), tx.Statement.Vars...))
 	}))
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(name) })
 	return func() []string {

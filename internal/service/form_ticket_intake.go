@@ -47,8 +47,9 @@ import (
 var formIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // FormIdempotencyKeyRule is the message a refused key gets; it never quotes
-// the value.
-const FormIdempotencyKeyRule = "must be 1 to 128 characters of A-Z, a-z, 0-9, '.', '_', ':' or '-' and must not start with \"submission-\""
+// the value, nor the reserved server prefix (a refused key may be exactly that
+// prefix, and the answer must not echo it).
+const FormIdempotencyKeyRule = "must be 1 to 128 characters of A-Z, a-z, 0-9, '.', '_', ':' or '-' and must not use the prefix reserved for server keys"
 
 // formTicketTitleMaxLength mirrors the varchar(255) tickets.title column.
 const formTicketTitleMaxLength = 255
