@@ -606,7 +606,9 @@ two connection pools on one SQLite file to prove the outcomes in sequence.
 
 `GET /aeo/export?format=csv|json` with `run_id=<id>` or `days=7|30|90` (default 30 days, CSV).
 The success body is the raw file, not the envelope; errors keep the envelope and carry no
-`Content-Disposition`. API only: there is no download control in the web UI yet.
+`Content-Disposition`. The web UI calls it from the dashboard header and the prompts answer
+drawer (#318, TC-AEO-059 and TC-AEO-060); it names the file itself, because CORS does not expose
+`Content-Disposition` to the browser.
 
 ### TC-AEO-054 — Export one run as CSV and as JSON
 - **Priority:** P0
@@ -657,6 +659,30 @@ The success body is the raw file, not the envelope; errors keep the envelope and
 - **Expected:** Step 1: every such cell starts with an apostrophe and is shown as text (a `+` or `-` followed by a plain number, such as `+44 20`, is left alone). The customer and lead exports keep their own rules. Step 2: the values are unmodified; `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` appear nowhere. Step 3: the export lines carry operation, format, run_id, days, counts and error codes only; no prompt or answer text, URL, domain, competitor, brand, model or raw query value.
 - **Automation:** automated (backend) — `internal/handler/aeo_export_test.go` "TestAEOExportCSVFormulaGuard", "TestAEOExportJSON", "TestAEOExportHandlerLogsOmitPersonalData", `internal/service/aeo_export_test.go` "TestAEOExportLogsOmitPersonalData".
 
+### TC-AEO-059 — Download the dashboard window from the web UI
+- **Priority:** P0
+- **Type:** functional / security
+- **Preconditions:** Answers in the last 7 days; one admin, one sales, one support and one customer account.
+- **Steps:**
+  1. As admin, open `/aeo`, choose **7d**, click **Export CSV**, then **Export JSON**.
+  2. Repeat step 1 as sales and as support.
+  3. As customer, open `/aeo` directly.
+  4. As admin, choose a window holding more than 10,000 answers and click **Export CSV**.
+- **Expected:** Step 1: each click sends `GET /aeo/export?format=csv&days=7` (then `format=json`), with no `run_id`; the browser saves `aeo-export-7d-<YYYY-MM-DD>.csv` and `.json`, the date being the browser's UTC date; both buttons are disabled while a download is in flight. Step 2: the same buttons are shown and work. Step 3: the route is blocked and no export button is rendered (the components render none for the customer role either). Step 4: the snackbar shows "This export holds more than 10,000 answers. Choose a shorter window or a single run." and no file is saved. A 400 shows "The export request was not accepted.", a 403 "You do not have permission to export AEO results.", any other failure "Export failed. Please try again."
+- **Automation:** automated (frontend) — `gocrm-ui/src/pages/aeo/AEODashboard.export.test.tsx` "AEODashboard export shows CSV and JSON export controls to admin, sales and support", "… hides the export controls from a customer", "… exports the selected days window and saves the file", "… shows the too-large error and saves no file"; `gocrm-ui/src/api/endpoints/aeo.export.test.ts`; `gocrm-ui/src/pages/aeo/aeoExport.test.ts`.
+
+### TC-AEO-060 — Download one run from the answer drawer
+- **Priority:** P1
+- **Type:** functional / negative
+- **Preconditions:** A finished run; a staff account (support included) and a customer account.
+- **Steps:**
+  1. Open `/aeo/prompts`, open a prompt's drawer and leave the run filter on **All runs**.
+  2. Pick run `#<id>` and click **Export run as CSV**, then **Export run as JSON**.
+  3. Delete the run's data (or pick a run id that no longer exists) and export again.
+  4. Render the drawer as a customer.
+- **Expected:** Step 1: **Export run as CSV** and **Export run as JSON** are disabled (tooltip "Select a run to export") and send nothing; the caption reads "Includes every prompt of the selected run." Step 2: `GET /aeo/export?format=csv&run_id=<id>` (then `json`), with no `days`; the files are `aeo-export-run-<id>.csv` and `.json` and hold every prompt of the run. Step 3: "This AEO run no longer exists." and no file. Step 4: no run export button.
+- **Automation:** automated (frontend) — `gocrm-ui/src/pages/aeo/AEOPrompts.export.test.tsx` "AEOPrompts drawer export disables run export while all runs are selected", "… exports the selected run as CSV and JSON", "… shows a vanished run and saves no file", "… hides the run export controls from a customer".
+
 ---
 
 ## Coverage summary
@@ -671,9 +697,9 @@ The success body is the raw file, not the envelope; errors keep the envelope and
 | 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
 | 11.7 Provider configuration, egress and runtime | 7 | 4 | 3 | 0 |
 | 11.8 Several API replicas | 4 | 3 | 1 | 0 |
-| 11.9 Export | 5 | 3 | 2 | 0 |
-| **Total** | **58** | **15** | **30** | **13** |
+| 11.9 Export | 7 | 4 | 3 | 0 |
+| **Total** | **60** | **16** | **31** | **13** |
 
-Automation status: 19 automated below the browser (the route smoke test, the two column-length
-cases and TC-AEO-043 to 058, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
+Automation status: 21 automated below the browser (the route smoke test, the two column-length
+cases and TC-AEO-043 to 060, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
 the missing sales/support login helper, one on a live Anthropic call).

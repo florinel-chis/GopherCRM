@@ -15,10 +15,12 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Button,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
+import { Download as DownloadIcon } from '@mui/icons-material';
 import {
   CartesianGrid,
   Legend,
@@ -33,9 +35,21 @@ import {
   YAxis,
 } from 'recharts';
 import { aeoApi } from '@/api/endpoints/aeo';
-import type { AEODashboard as AEODashboardData } from '@/api/endpoints/aeo';
+import type {
+  AEODashboard as AEODashboardData,
+  AEOExportDays,
+  AEOExportFormat,
+} from '@/api/endpoints/aeo';
+import { useAuth } from '@/hooks/useAuth';
+import { useSnackbar } from '@/hooks/useSnackbar';
+import {
+  aeoExportErrorMessage,
+  aeoExportFilename,
+  canExportAEO,
+  saveAEOExport,
+} from './aeoExport';
 
-const RANGE_OPTIONS = [7, 30, 90] as const;
+const RANGE_OPTIONS: readonly AEOExportDays[] = [7, 30, 90];
 
 // Distinct hues for the per-provider and per-competitor series. Long enough
 // for the six engines plus the twenty competitors the profile allows; the
@@ -118,7 +132,24 @@ const buildRows = (
   });
 
 export const Component: React.FC = () => {
-  const [days, setDays] = useState<number>(30);
+  const [days, setDays] = useState<AEOExportDays>(30);
+  const [exporting, setExporting] = useState(false);
+  const { user } = useAuth();
+  const { showError } = useSnackbar();
+  const canExport = canExportAEO(user?.role);
+
+  // Exports the answers and citations of the window the dashboard shows.
+  const handleExport = async (format: AEOExportFormat) => {
+    setExporting(true);
+    try {
+      const blob = await aeoApi.exportResults({ format, days });
+      saveAEOExport(blob, aeoExportFilename({ days }, format));
+    } catch (error) {
+      showError(await aeoExportErrorMessage(error));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['aeo', 'dashboard', days],
@@ -179,7 +210,7 @@ export const Component: React.FC = () => {
       exclusive
       value={days}
       aria-label="Date range"
-      onChange={(_event, value: number | null) => {
+      onChange={(_event, value: AEOExportDays | null) => {
         if (value !== null) {
           setDays(value);
         }
@@ -196,7 +227,31 @@ export const Component: React.FC = () => {
   const header = (
     <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} gap={2}>
       <Typography variant="h4">AEO Dashboard</Typography>
-      {rangeSelector}
+      <Stack direction="row" spacing={1} alignItems="center">
+        {rangeSelector}
+        {canExport && (
+          <>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<DownloadIcon />}
+              disabled={exporting}
+              onClick={() => void handleExport('csv')}
+            >
+              Export CSV
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<DownloadIcon />}
+              disabled={exporting}
+              onClick={() => void handleExport('json')}
+            >
+              Export JSON
+            </Button>
+          </>
+        )}
+      </Stack>
     </Box>
   );
 
