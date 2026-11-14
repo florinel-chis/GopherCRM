@@ -603,7 +603,7 @@ test --list` reports 100.
 | `test/integration/product_integration_test.go` | 3 | Products over HTTP (roles, list, delete) |
 | `cmd/migrate/products_quotes_migration_test.go` | 1 (MySQL/MariaDB, + subtests) | Products and quotes migration |
 | `cmd/migrate/automation_migration_test.go` | 2 (one MySQL/MariaDB, + subtests) | Follow-up automation migration |
-| `cmd/automation_runtime_test.go` | 1 (+ subtests) | Automation worker through the real wiring (reconcile, start, drain) |
+| `cmd/automation_runtime_test.go` | 1 (+ subtests) | Automation worker through the real wiring (boot stale sweep, start, drain) |
 | `tests/automation_api_test.go` | 2 (+ subtests) | Automation rules, runs and dry run over HTTP |
 | `tests/notification_api_test.go` | 1 (+ subtests) | Notifications over HTTP |
 | `internal/repository/automation_repository_test.go` | 3 (SQLite + MySQL) | Run list scope, conditional updates |

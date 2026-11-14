@@ -1926,8 +1926,14 @@ The pieces, and why each is shaped the way it is:
     running`, `owner_instance`, `heartbeat_at` and `claimed_at` in one conditional update.
     `ExecuteDue` reads the clock afresh for every claim of its batch: the runs execute one after
     another, and a time read before the loop would stamp a late claim with a lease that is
-    already stale. Both lease columns are `json:"-"`; `claimed_at` is still serialised and is not
-    a lease.
+    already stale. The batch is a plain read taken before the claims, so between that read and a
+    claim another engine may have claimed the run, executed a step and released it back to
+    `pending` at a later position: the claim still matches. After every successful claim the
+    executor therefore re-reads the run by primary key and runs from the stored `next_position`
+    and `attempts`, skipping it if it is no longer `running` under this engine; it never executes
+    from the batch snapshot. A fenced write that ends the hold and matches nothing is logged at Info
+    with `run_id` and `operation`. Both lease columns are `json:"-"`; `claimed_at` is still
+    serialised and is not a lease.
   - *Heartbeat.* After a successful claim the executor starts one goroutine that calls
     `RenewRunLease(id, owner, at)` every `automationRunHeartbeatInterval` (30 s): `UPDATE … SET
     heartbeat_at WHERE id = ? AND status = 'running' AND owner_instance = ?`, re-checked with a read
@@ -2142,7 +2148,10 @@ Run lease roots (#237), two engines with separate pools on one SQLite file or on
 `TestAutomationRunLeaseTakeover{SQLite,MySQL}`, `TestAutomationRunLeaseEmailAtMostOnce{SQLite,MySQL}`
 (a stale first transaction, a send parked before and after the pre-send check, exact `Send`
 counts), `TestAutomationRunLeaseLiveRunSpared{SQLite,MySQL}`, `TestAutomationRunLeaseHeartbeatLifecycle`
-(SQLite), `TestAutomationRunLeaseConcurrentWorkers{SQLite,MySQL}`,
+(SQLite), `TestAutomationRunLeaseConcurrentWorkers{SQLite,MySQL}` (with a subtest that parks an
+engine through the `beforeClaim` seam between its batch read and its claim while the other engine
+steps and releases the run, and asserts the late claimer finishes from the stored position
+without a sweep),
 `TestAutomationRunLeaseLockOrderMySQL` (a heartbeat and a sweep against a step in both orderings,
 each wait seen in `information_schema.PROCESSLIST` on two consecutive polls, no error 1213) and
 `TestAutomationRunLeaseLogsOmitPersonalData` (`internal/service`, through the engine's

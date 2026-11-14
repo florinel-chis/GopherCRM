@@ -216,6 +216,11 @@ type AutomationEngine struct {
 	// will see the loss.
 	afterLeaseLost func(runID uint)
 
+	// beforeClaim fires in ExecuteDue after the batch's plain read and before
+	// each run's conditional claim, so a root can let another engine claim,
+	// step and release the run in between (the stale-snapshot interleaving).
+	beforeClaim func(runID uint)
+
 	// instanceID (#237) names this engine in automation_runs.owner_instance:
 	// 32 lowercase hex characters from crypto/rand. Never logged.
 	instanceID string
@@ -565,30 +570,62 @@ func (e *AutomationEngine) ExecuteDue(ctx context.Context) error {
 		if ctx.Err() != nil {
 			break
 		}
-		run := runs[i]
+		listed := runs[i]
+		if e.beforeClaim != nil {
+			e.beforeClaim(listed.ID)
+		}
 		// Each claim reads the clock afresh: the runs of a batch execute one
 		// after another, and a claim stamped with the time read before the
 		// loop would store a heartbeat_at that is already stale once the
 		// batch has run past automationRunLeaseStaleAfter, letting another
 		// engine's sweep recover a run this engine is executing.
 		claimNow := e.now()
-		claimed, err := e.repo.ClaimRun(run.ID, run.Status, e.instanceID, claimNow)
+		claimed, err := e.repo.ClaimRun(listed.ID, listed.Status, e.instanceID, claimNow)
 		if err != nil {
-			e.logger().WithFields(logrus.Fields{"run_id": run.ID, "operation": "claim"}).
+			e.logger().WithFields(logrus.Fields{"run_id": listed.ID, "operation": "claim"}).
 				WithError(utils.LogError(err)).Error("Automation run claim failed")
 			continue
 		}
 		if claimed != 1 {
 			continue
 		}
-		owner := e.instanceID
-		stamp := claimNow.UTC()
-		run.Status = models.AutomationRunRunning
-		run.OwnerInstance = &owner
-		run.HeartbeatAt = &stamp
+		// The batch is a plain read taken before the claims. Between that read
+		// and this claim another engine may have claimed the run, executed a
+		// step and released it back to the same status at a later position
+		// with more attempts; the claim still matches. The executor therefore
+		// runs from the row as stored after the claim, never from the batch
+		// snapshot, so its fenced writes name the current position.
+		run, ok := e.loadClaimedRun(listed.ID)
+		if !ok {
+			continue
+		}
 		e.executeRun(ctx, run)
 	}
 	return nil
+}
+
+// loadClaimedRun re-reads a run this engine has just claimed, with a plain
+// read by primary key, and returns it only while it is still running under
+// this engine. A run that moved in between (cancelled, recovered) is skipped.
+// A read that fails leaves the run running under this lease, unrenewed: the
+// stale sweep of any engine recovers it once the lease expires.
+func (e *AutomationEngine) loadClaimedRun(id uint) (models.AutomationRun, bool) {
+	current, err := e.repo.GetRunByID(id)
+	if err != nil {
+		if !isNotFound(err) {
+			e.logger().WithFields(logrus.Fields{"run_id": id, "operation": "claim_read"}).
+				WithError(utils.LogError(err)).Warn("Claimed automation run could not be read; the stale sweep will recover it")
+		}
+		return models.AutomationRun{}, false
+	}
+	if current.Status != models.AutomationRunRunning || current.OwnerInstance == nil || *current.OwnerInstance != e.instanceID {
+		e.logger().WithFields(logrus.Fields{"run_id": id, "operation": "claim_read"}).
+			Info("Claimed automation run moved before execution; skipped")
+		return models.AutomationRun{}, false
+	}
+	run := *current
+	run.Steps = nil
+	return run, true
 }
 
 // stepResult is what one executed step reports back to the run loop.
@@ -784,17 +821,24 @@ func (e *AutomationEngine) runWrite(runID uint, operation string, write func(r r
 		}
 		return
 	}
+	var rows int64
 	err := e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
 		}
-		_, err := write(e.repo.WithTx(tx))
+		var err error
+		rows, err = write(e.repo.WithTx(tx))
 		return err
 	}, automationTxRetries)
 	if err != nil {
 		e.logger().WithFields(logrus.Fields{"run_id": runID, "operation": operation}).
 			WithError(utils.LogError(err)).Warn("Automation run write failed; the stale sweep will recover the run")
+		return
+	}
+	if rows == 0 {
+		e.logger().WithFields(logrus.Fields{"run_id": runID, "operation": operation}).
+			Info("Automation run write matched nothing; the run moved under the executor")
 	}
 }
 

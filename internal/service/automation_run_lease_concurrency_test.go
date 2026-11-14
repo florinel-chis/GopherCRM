@@ -20,13 +20,80 @@ import (
 // --- AC-8: concurrent workers -----------------------------------------------
 
 func TestAutomationRunLeaseConcurrentWorkersSQLite(t *testing.T) {
+	t.Run("a claim on a stale batch snapshot executes from the stored row", func(t *testing.T) {
+		dbA, dbB := openLeasePairSQLite(t)
+		runAutomationRunLeaseStaleClaimSnapshot(t, dbA, dbB)
+	})
 	dbA, dbB := openLeasePairSQLite(t)
 	runAutomationRunLeaseConcurrentWorkers(t, dbA, dbB, 12)
 }
 
 func TestAutomationRunLeaseConcurrentWorkersMySQL(t *testing.T) {
+	t.Run("a claim on a stale batch snapshot executes from the stored row", func(t *testing.T) {
+		dbA, dbB := openLeasePairMySQL(t, 4)
+		runAutomationRunLeaseStaleClaimSnapshot(t, dbA, dbB)
+	})
 	dbA, dbB := openLeasePairMySQL(t, 4)
 	runAutomationRunLeaseConcurrentWorkers(t, dbA, dbB, 16)
+}
+
+// runAutomationRunLeaseStaleClaimSnapshot forces the interleaving two ticking
+// workers meet by chance: engine A lists the run (pending at position 1) and
+// is parked before its claim; engine B claims it, executes step 1 and releases
+// it back to pending at position 2 with one attempt. A's claim still matches
+// the pending row. A must then execute from the stored row, position 2, and
+// finish the run, without any sweep (the clock never moves): no step runs
+// twice and the run ends completed with its lease cleared.
+func runAutomationRunLeaseStaleClaimSnapshot(t *testing.T, dbA, dbB *gorm.DB) {
+	p := newLeasePair(t, dbA, dbB)
+	lead := p.createLead(p.sales, models.LeadStatusNew)
+	rule := p.leadRule(models.AutomationEventLeadCreated,
+		notifyStep(models.AutomationRecipientOwner, 0), notifyStep(models.AutomationRecipientOwner, 0), notifyStep(models.AutomationRecipientOwner, 0))
+	run := p.startRun(rule, lead)
+
+	gate := newLeaseGate(t)
+	p.a.beforeClaim = func(id uint) {
+		if id == run.ID {
+			gate.park()
+		}
+	}
+	doneA := goAsync(func() error { return p.a.ExecuteDue(context.Background()) })
+	gate.await(t)
+
+	// B executes step 1, then its context ends before step 2, so it releases
+	// the run to pending at position 2 (attempts + 1).
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+	p.b.beforeStep = func(id uint, position int) {
+		if id == run.ID && position == 2 {
+			cancelB()
+		}
+	}
+	require.NoError(t, p.b.ExecuteDue(ctxB))
+	p.b.beforeStep = nil
+	released := p.runRow(run.ID)
+	require.Equal(t, models.AutomationRunPending, released.Status)
+	require.Equal(t, 2, released.NextPosition)
+	require.Equal(t, 1, released.Attempts)
+	require.Nil(t, released.OwnerInstance)
+	require.EqualValues(t, 1, p.stepRowsAt(run.ID, 1))
+
+	gate.open()
+	require.NoError(t, waitDone(t, doneA))
+	p.a.beforeClaim = nil
+
+	finished := p.runRow(run.ID)
+	assert.Equal(t, models.AutomationRunCompleted, finished.Status, "A finished the run from the stored position")
+	assert.Nil(t, finished.OwnerInstance)
+	assert.Nil(t, finished.HeartbeatAt)
+	assert.Equal(t, 1, finished.Attempts, "the attempts are the stored ones")
+	for position := 1; position <= 3; position++ {
+		assert.EqualValues(t, 1, p.stepRowsAt(run.ID, position), "position %d ran once", position)
+	}
+	assert.EqualValues(t, 3, p.notificationsOfRun(run.ID))
+	assert.Contains(t, p.recA.allWrites(), "ClaimRun", "A's claim matched the released row")
+	assert.NotContains(t, p.recA.allWrites(), "RecoverStaleRun")
+	assert.NotContains(t, p.recB.allWrites(), "RecoverStaleRun")
 }
 
 // runAutomationRunLeaseConcurrentWorkers seeds pending runs of multi-step
@@ -421,6 +488,9 @@ var leaseLogMessages = stringSet(
 	"Automation stale run recovery failed",
 	"Automation runs recovered from stale leases",
 	"Automation run write failed; the stale sweep will recover the run",
+	"Automation run write matched nothing; the run moved under the executor",
+	"Claimed automation run could not be read; the stale sweep will recover it",
+	"Claimed automation run moved before execution; skipped",
 	"Automation email step already recorded; run advanced past it",
 	"Automation email step already recorded; run failed",
 )
