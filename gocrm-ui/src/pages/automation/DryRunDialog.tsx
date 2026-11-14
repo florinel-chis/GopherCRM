@@ -17,12 +17,19 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { automationApi, dealsApi, leadsApi, type AutomationRuleInput } from '@/api/endpoints';
+import { automationApi, dealsApi, leadsApi, ticketsApi, type AutomationRuleInput } from '@/api/endpoints';
 import { RecordAutocomplete } from '@/components/RecordAutocomplete';
-import { dealStageLabel, type AutomationEntityType, type AutomationRule, type Deal, type Lead } from '@/types';
+import {
+  dealStageLabel,
+  type AutomationEntityType,
+  type AutomationRule,
+  type Deal,
+  type Lead,
+  type Ticket,
+} from '@/types';
 import { formatDate } from '@/utils/date';
 import { getAPIError, getErrorMessage, getHTTPStatus } from '@/utils/apiError';
-import { AUTOMATION_DATETIME, errorCodeLabel, stepTypeLabel } from './automationFormat';
+import { AUTOMATION_DATETIME, entityTypeLabel, errorCodeLabel, stepTypeLabel, ticketNumber } from './automationFormat';
 import { OutcomeChip } from './AutomationChips';
 import { AutomationStepDetails } from './AutomationStepDetails';
 
@@ -71,6 +78,16 @@ const searchDeals = async (term: string): Promise<Deal[]> => {
 };
 
 const dealOptionLabel = (deal: Deal): string => `${deal.title} (${dealStageLabel(deal.stage)})`;
+
+// Tickets of every status, as the API lets the caller see them.
+const searchTickets = async (term: string): Promise<Ticket[]> => {
+  const result = await ticketsApi.getTickets({ search: term || undefined, limit: SEARCH_LIMIT });
+  return result.data;
+};
+
+// "T-000042 · Printer jams": the number {{ticket.number}} renders, then the
+// subject (the API's title).
+const ticketOptionLabel = (ticket: Ticket): string => `${ticketNumber(ticket.id)} · ${ticket.subject}`;
 
 function DryRunContent({
   source,
@@ -144,11 +161,25 @@ function DryRunContent({
           </Alert>
           <TextField
             label="Record type"
-            value={entityType === 'lead' ? 'Lead' : 'Deal'}
+            value={entityTypeLabel(entityType)}
             InputProps={{ readOnly: true }}
             size="small"
           />
-          {entityType === 'lead' ? (
+          {entityType === 'ticket' ? (
+            <RecordAutocomplete<Ticket>
+              value={entityId}
+              onChange={(id) => pick(id)}
+              label="Ticket"
+              queryKeys={['ticket', 'tickets-dry-run']}
+              search={reportingSearch(searchTickets)}
+              lookup={ticketsApi.getTicket}
+              getOptionLabel={ticketOptionLabel}
+              noOptionsText="No matching tickets"
+              emptySearchText="Type to search tickets"
+              error={!!searchMessage}
+              helperText={searchMessage}
+            />
+          ) : entityType === 'lead' ? (
             <RecordAutocomplete<Lead>
               value={entityId}
               onChange={(id) => pick(id)}

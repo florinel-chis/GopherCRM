@@ -371,13 +371,13 @@ history. This is a staff-maintained register, not a shared helpdesk.
   (`docs/DEVELOPMENT.md:1161`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
-- Ticket automation triggers are delivered in the API (#242): an admin rule can start on
-  `ticket_created`, `ticket_updated`, `ticket_status_changed` (from/to ticket statuses) or a daily
-  schedule over `filters.ticket_status`, and notify the assignee, create a task linked to the
-  ticket's customer or reassign the ticket to another support or admin user. Deleting a ticket
-  cancels its open runs. Still open: the rule screens for ticket rules (a later frontend change),
-  comment, first-response, SLA and overdue triggers, and run visibility for support users
-  (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts").
+- Ticket automation triggers are delivered (#242, rule screens #312): an admin rule, built in the
+  rule form with the entity Ticket, can start on `ticket_created`, `ticket_updated`,
+  `ticket_status_changed` (from/to ticket statuses) or a daily schedule over
+  `filters.ticket_status`, and notify the assignee, create a task linked to the ticket's customer
+  or reassign the ticket to another support or admin user. Deleting a ticket cancels its open
+  runs. Still open: comment, first-response, SLA and overdue triggers, and run visibility for
+  support users (`docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts").
 - Tickets now carry `due_at`, `first_responded_at` and a computed `overdue` flag (#278); there are
   still no attachments on tickets: #243.
 
@@ -467,6 +467,6 @@ planning around an issue number.
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
-| Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule; API only), cancelled on ticket delete. Still open: the ticket rule screens, comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242 |
+| Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
 | AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

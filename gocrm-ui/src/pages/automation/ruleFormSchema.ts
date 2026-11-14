@@ -4,6 +4,7 @@ import {
   AUTOMATION_BODY_MAX_BYTES,
   AUTOMATION_CONDITION_FIELDS,
   AUTOMATION_DUE_IN_DAYS_MAX,
+  AUTOMATION_ENTITY_TYPES,
   AUTOMATION_LEAD_STATUSES,
   AUTOMATION_MAX_STEPS,
   AUTOMATION_MAX_WAIT_MINUTES,
@@ -15,6 +16,8 @@ import {
   AUTOMATION_STRING_OPERATORS,
   AUTOMATION_TASK_PLACEHOLDERS,
   AUTOMATION_TEXT_MAX,
+  AUTOMATION_TICKET_PRIORITIES,
+  AUTOMATION_TICKET_STATUSES,
   AUTOMATION_TRIGGERS,
   DEAL_STAGE_VALUES,
   isChangeTrigger,
@@ -53,6 +56,8 @@ export const CONDITION_FIELD_LABELS: Record<string, string> = {
   amount_cents: 'Amount',
   probability: 'Probability',
   owner_id: 'Owner ID',
+  priority: 'Priority',
+  customer_id: 'Customer ID',
 };
 
 const LIST_OPERATORS = new Set<string>(['in', 'not_in']);
@@ -74,9 +79,49 @@ export const operatorsFor = (kind: AutomationFieldKind | undefined): readonly Au
   return kind === 'string' ? AUTOMATION_STRING_OPERATORS : AUTOMATION_NUMBER_OPERATORS;
 };
 
-/** Lead statuses (lead rules) or deal stages (deal rules) the API accepts. */
-export const entityValues = (entity: AutomationEntityType): readonly string[] =>
-  entity === 'lead' ? AUTOMATION_LEAD_STATUSES : DEAL_STAGE_VALUES;
+/**
+ * Lead statuses (lead rules), deal stages (deal rules) or ticket statuses
+ * (ticket rules) the API accepts in from/to and the schedule filter.
+ */
+export const entityValues = (entity: AutomationEntityType): readonly string[] => {
+  switch (entity) {
+    case 'lead':
+      return AUTOMATION_LEAD_STATUSES;
+    case 'ticket':
+      return AUTOMATION_TICKET_STATUSES;
+    default:
+      return DEAL_STAGE_VALUES;
+  }
+};
+
+/** "status" for lead and ticket rules, "stage" for deal rules (form labels). */
+export const entityValueWord = (entity: AutomationEntityType): 'status' | 'stage' =>
+  entity === 'deal' ? 'stage' : 'status';
+
+/**
+ * The known values a string condition suggests (eq / neq), or null when the
+ * field takes free text only: the status or stage of the record, and a
+ * ticket's priority.
+ */
+export const conditionSuggestions = (entity: AutomationEntityType, field: string): readonly string[] | null => {
+  if (field === 'status' || field === 'stage') {
+    return conditionFieldKind(entity, field) === 'string' ? entityValues(entity) : null;
+  }
+  if (entity === 'ticket' && field === 'priority') return AUTOMATION_TICKET_PRIORITIES;
+  return null;
+};
+
+/** The schedule filter of a ticket, lead or deal rule, as the API names it. */
+const scheduleFilter = (entity: AutomationEntityType, value: string): NonNullable<AutomationTrigger['filters']> => {
+  switch (entity) {
+    case 'lead':
+      return { status: value };
+    case 'ticket':
+      return { ticket_status: value };
+    default:
+      return { stage: value };
+  }
+};
 
 export const placeholderHelp = (names: readonly string[]): string =>
   `Placeholders: ${names.map((name) => `{{${name}}}`).join(', ')}`;
@@ -88,6 +133,9 @@ const TRIGGER_TYPES = [
   'deal_created',
   'deal_updated',
   'deal_stage_changed',
+  'ticket_created',
+  'ticket_updated',
+  'ticket_status_changed',
   'schedule',
 ] as const;
 
@@ -153,7 +201,7 @@ export const ruleFormSchema = z
   .object({
     name: z.string(),
     description: z.string(),
-    entity_type: z.enum(['lead', 'deal']),
+    entity_type: z.enum(AUTOMATION_ENTITY_TYPES),
     trigger_type: z.enum(TRIGGER_TYPES),
     from: z.string(),
     to: z.string(),
@@ -433,8 +481,7 @@ const triggerToInput = (values: RuleFormValues): Partial<AutomationTrigger> => {
     const trigger: Partial<AutomationTrigger> = { hour_utc: values.hour_utc };
     if (values.stale_days > 0) trigger.stale_days = values.stale_days;
     if (values.filter_value) {
-      trigger.filters =
-        values.entity_type === 'lead' ? { status: values.filter_value } : { stage: values.filter_value };
+      trigger.filters = scheduleFilter(values.entity_type, values.filter_value);
     }
     return trigger;
   }
@@ -535,7 +582,7 @@ export const fromRule = (rule: AutomationRule): RuleFormValues => {
     to: trigger.to ?? '',
     hour_utc: schedule ? trigger.hour_utc ?? 0 : 9,
     stale_days: trigger.stale_days ?? 0,
-    filter_value: trigger.filters?.status ?? trigger.filters?.stage ?? '',
+    filter_value: trigger.filters?.status ?? trigger.filters?.stage ?? trigger.filters?.ticket_status ?? '',
     enabled: rule.enabled,
     steps,
   };
@@ -589,6 +636,7 @@ const TOP_LEVEL_PATHS: Record<string, TopLevelField> = {
   'trigger.filters': 'filter_value',
   'trigger.filters.status': 'filter_value',
   'trigger.filters.stage': 'filter_value',
+  'trigger.filters.ticket_status': 'filter_value',
 };
 
 // Step config names whose form field has the same name.

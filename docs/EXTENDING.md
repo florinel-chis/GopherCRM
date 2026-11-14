@@ -348,16 +348,21 @@ origins (lines 49-55) and six step types (lines 58-65).
    `TestAutomationTicketLockOrderMySQL`). A new closed set that reaches the API (such as the
    `ticket_status` filter) also needs its row in the closed-set table of
    `scripts/ci/check-api-docs.py`; for `filters.ticket_status` that row is an operator follow-up.
-6. Frontend: the trigger unions and `AUTOMATION_TRIGGERS` in `gocrm-ui/src/types/automation.ts:8-26`,
-   `TRIGGER_TYPES` in `gocrm-ui/src/pages/automation/ruleFormSchema.ts:84`, and the label in
-   `TRIGGER_LABELS` (`automationFormat.ts:28`).
+6. Frontend: the trigger unions and `AUTOMATION_TRIGGERS` in `gocrm-ui/src/types/automation.ts`,
+   `TRIGGER_TYPES` in `gocrm-ui/src/pages/automation/ruleFormSchema.ts`, and the label in
+   `TRIGGER_LABELS` (`automationFormat.ts`). A new entity type also needs its condition fields,
+   placeholders and task placeholders in `types/automation.ts`, its branch in `entityValues`,
+   `entityValueWord` and the schedule filter of `ruleFormSchema.ts` (plus the server path in
+   `TOP_LEVEL_PATHS`), its label and path in `automationFormat.ts`, a dry-run picker in
+   `DryRunDialog.tsx` and its link in `notificationTarget.ts`, as the ticket entity has (#312).
 7. Tests: copy `TestAutomationLeadEvents{SQLite,MySQL}` (`automation_lead_events_test.go`: one event
    per write path, the right origin, ids and values only) and `automation_dispatch_test.go`; add a
    rule-acceptance case to `automation_validation_test.go` (a rule on the new trigger saves, one on
    the wrong entity is refused) and to `ruleFormSchema.test.ts`.
 
-Ticket events (#242) are delivered in the backend; their rule-form screens are a later frontend
-change, and comment, first-response, SLA and overdue triggers are still missing (see the roadmap).
+Ticket events (#242) are delivered in the backend and their rule screens (rule form, rule list, run
+list, dry run) in the frontend (#312); comment, first-response, SLA and overdue triggers are still
+missing (see the roadmap).
 
 ## 7. Add a form field type
 

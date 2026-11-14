@@ -2,7 +2,8 @@
 // and internal/models/notification.go; every field the screens read exists
 // in the Go JSON.
 
-export const AUTOMATION_ENTITY_TYPES = ['lead', 'deal'] as const;
+// 'ticket' since #242 (API) / #312 (screens).
+export const AUTOMATION_ENTITY_TYPES = ['lead', 'deal', 'ticket'] as const;
 export type AutomationEntityType = (typeof AUTOMATION_ENTITY_TYPES)[number];
 
 export type AutomationLeadTrigger =
@@ -15,17 +16,32 @@ export type AutomationDealTrigger =
   | 'deal_updated'
   | 'deal_stage_changed'
   | 'schedule';
-export type AutomationTriggerType = AutomationLeadTrigger | AutomationDealTrigger;
+export type AutomationTicketTrigger =
+  | 'ticket_created'
+  | 'ticket_updated'
+  | 'ticket_status_changed'
+  | 'schedule';
+export type AutomationTriggerType =
+  | AutomationLeadTrigger
+  | AutomationDealTrigger
+  | AutomationTicketTrigger;
 
-// automation_service.go:35-44
+// internal/service/automation_validation.go (ruleTriggers)
 export const AUTOMATION_TRIGGERS: Readonly<
   Record<AutomationEntityType, readonly AutomationTriggerType[]>
 > = {
   lead: ['lead_created', 'lead_updated', 'lead_status_changed', 'schedule'],
   deal: ['deal_created', 'deal_updated', 'deal_stage_changed', 'schedule'],
+  ticket: ['ticket_created', 'ticket_updated', 'ticket_status_changed', 'schedule'],
 };
 export const isChangeTrigger = (t: AutomationTriggerType): boolean =>
-  t === 'lead_status_changed' || t === 'deal_stage_changed';
+  t === 'lead_status_changed' || t === 'deal_stage_changed' || t === 'ticket_status_changed';
+
+// Ticket statuses and priorities the API accepts in ticket triggers, schedule
+// filters (filters.ticket_status) and suggested condition values
+// (internal/models/ticket.go, TicketStatus / TicketPriority IsValid).
+export const AUTOMATION_TICKET_STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
+export const AUTOMATION_TICKET_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
 
 // Lead statuses the API accepts in triggers, filters and conditions
 // (bulk_status_service.go:89-97). NOT the frontend Lead['status'] union,
@@ -105,6 +121,13 @@ export const AUTOMATION_CONDITION_FIELDS: Readonly<
     probability: 'number',
     owner_id: 'number',
   },
+  // Workflow fields and ids only; ticket text and customer fields are refused.
+  ticket: {
+    status: 'string',
+    priority: 'string',
+    owner_id: 'number',
+    customer_id: 'number',
+  },
 };
 export const AUTOMATION_STRING_OPERATORS = [
   'eq',
@@ -148,6 +171,16 @@ export const AUTOMATION_PLACEHOLDERS: Readonly<Record<AutomationEntityType, read
     'owner.last_name',
     'owner.email',
   ],
+  // No ticket title, description, resolution or customer field (#242).
+  ticket: [
+    'ticket.id',
+    'ticket.number',
+    'ticket.status',
+    'ticket.priority',
+    'owner.first_name',
+    'owner.last_name',
+    'owner.email',
+  ],
 };
 // create_task title/description only (narrower, erasure-safe)
 export const AUTOMATION_TASK_PLACEHOLDERS: Readonly<
@@ -155,12 +188,14 @@ export const AUTOMATION_TASK_PLACEHOLDERS: Readonly<
 > = {
   lead: ['lead.id', 'lead.status', 'lead.source'],
   deal: ['deal.id', 'deal.title', 'deal.stage', 'deal.amount', 'deal.currency', 'deal.source'],
+  ticket: ['ticket.id', 'ticket.number', 'ticket.status', 'ticket.priority'],
 };
 
-// models.AutomationScheduleFilter (automation.go:122-125)
+// models.AutomationScheduleFilter
 export interface AutomationScheduleFilter {
   status?: string; // lead rules only
   stage?: string; // deal rules only
+  ticket_status?: string; // ticket rules only
 }
 
 // models.AutomationTrigger (automation.go:132-138). hour_utc has NO omitempty:
@@ -291,7 +326,7 @@ export interface Notification {
   user_id: number;
   title: string;
   body: string;
-  entity_type: AutomationEntityType; // set by the notify step; typed as the two entity types
+  entity_type: AutomationEntityType; // set by the notify step: lead, deal or ticket
   entity_id: number;
   run_id?: number;
   read_at?: string;

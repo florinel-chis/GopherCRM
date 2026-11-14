@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ticket rules in the automation rule form, rule list, run list and dry run (#312).** The rule
+  form offers the entity Ticket with the triggers Ticket created, Ticket updated, Ticket status
+  changed (From status / To status: Open, In progress, Resolved, Closed) and Schedule (Only
+  status, sent as `trigger.filters.ticket_status`); conditions on Status, Priority, Owner ID and
+  Customer ID (status and priority values suggested); and the ticket placeholder lists. Client
+  validation mirrors the API's ticket allowlists (`gocrm-ui/src/types/automation.ts`), and a
+  refusal of `trigger.filters.ticket_status` or of a non-support `assign_owner` user is shown on
+  its field. The rule list labels ticket rules Ticket, the run list filters by Ticket and links a
+  ticket run to `/tickets/<id>`, the dry run picks a ticket (`T-000042 · <subject>`), and a ticket
+  notification links to its ticket (admin, sales and support). Lead and deal rules are unchanged.
+  Frontend only; browser spec `gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts`.
 - **Ticket triggers for follow-up automation (#242).** Automation rules take `entity_type: ticket`
   with the triggers `ticket_created`, `ticket_updated`, `ticket_status_changed` (from/to ticket
   statuses) and `schedule` (`filters.ticket_status`, `stale_days`). `TicketService.Create` and
@@ -23,8 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes only `assigned_to_id`. `DELETE /tickets/{id}` cancels the ticket's pending, waiting and
   running runs with `record_deleted` and purges its notifications in its transaction. The rule and
   run list filters and both dry-run bodies accept `ticket`; an unknown `entity_type` filter now
-  answers `entity_type must be lead, deal or ticket`. Backend and API only: the rule screens for
-  ticket rules are a later frontend change. No schema change.
+  answers `entity_type must be lead, deal or ticket`. No schema change.
 - **Docker UI image `VITE_APP_NAME` build argument (#303).** `gocrm-ui/Dockerfile` declares
   `ARG VITE_APP_NAME=` and `ENV VITE_APP_NAME=$VITE_APP_NAME` in its build stage, before
   `npm run build`, so `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` makes the signed-out
