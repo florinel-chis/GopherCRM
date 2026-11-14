@@ -101,7 +101,8 @@ func (r *ticketRepository) GetByIDForUpdate(id uint) (*models.Ticket, error) {
 //
 //  1. locks the live ticket row (`FOR UPDATE` on MySQL); a missing or
 //     already-deleted ticket is gorm.ErrRecordNotFound and nothing is written;
-//  2. hard-deletes the ticket's comment mail delivery records (#219);
+//  2. hard-deletes the ticket's comment mail delivery records (#219) and its
+//     form ticket keys (#213), so the key can open a new ticket afterwards;
 //  3. cancels the ticket's pending, waiting and running automation runs with
 //     cancel_reason record_deleted and finished_at (#242);
 //  4. hard-deletes the notifications whose entity is the ticket (#242);
@@ -121,6 +122,9 @@ func (r *ticketRepository) Delete(id uint) error {
 			return err
 		}
 		if err := purgeTicketMailDeliveriesOfTicket(tx, id); err != nil {
+			return err
+		}
+		if err := purgeFormTicketKeysOfTicket(tx, id); err != nil {
 			return err
 		}
 		if err := cancelAutomationForEntity(tx, models.AutomationEntityTicket, id); err != nil {

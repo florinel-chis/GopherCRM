@@ -205,6 +205,28 @@ candidate follow-up, not an accident:
 - **Field-definition migrations** — editing a form's fields does not rewrite historical
   submission data; renamed fields simply start a new key in `data`.
 
+## Form ticket intake — follow-ups (#213)
+
+Form ticket intake ships backend only, with these open:
+
+- **Per-render idempotency key in the embed script and hosted view** — both send no
+  `idempotency_key` today, so a browser retry falls back to `submission-<id>` and is not
+  deduplicated. Each render should generate one random key (at least 128 bits, within
+  `^[A-Za-z0-9._:-]{1,128}$`, never derived from field values) and resend it on every retry. Needs
+  an operator decision on the task profile that may change `internal/handler/assets/`.
+- **Form builder and submission views** — a "Create a ticket" switch (forcing double opt-in,
+  excluding "Create a lead", hiding the default owner) and the ticket outcome, ticket link and key
+  on the submission list and detail.
+- **Authenticated ticket import endpoint** — for integrators that do not need double opt-in (Q2).
+- **Unmatched submitter policy** — today a confirmed address that matches no live customer gets no
+  ticket (`no_customer`); creating a customer or using a fallback customer is undecided (Q1).
+- **Key expiry** — keys live until their ticket is deleted or the customer or submitter is erased
+  (Q5).
+- **Per-form default assignee or priority** — tickets start unassigned at medium priority (Q4).
+- **Operator follow-ups** — register the new regression roots in `scripts/ci/check-go.py` and the
+  migration roots in the Database migrations workflow, and add the `ticket_outcome` closed set to
+  `scripts/ci/check-api-docs.py`.
+
 ## Follow-up automation — deliberate v1 cuts
 
 The automation subsystem (#164) shipped its backend, API and screens with these decided out,

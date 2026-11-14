@@ -263,6 +263,9 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		// #219: delivery records of ticket comment mail hold ids only, and the
 		// erasure of the customer removes them; the sweep still reads the table.
 		"ticket_mail_deliveries",
+		// #213: the idempotency keys of form ticket intake; every erasure that
+		// reaches the customer or the submission removes them.
+		"form_ticket_keys",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)
@@ -275,6 +278,10 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 	}
 	for _, column := range []string{"form_id", "submission_id"} {
 		assert.True(t, db.Migrator().HasColumn("automation_events", column), "automation_events.%s", column)
+	}
+	// The ticket intake columns of a submission (#213).
+	for _, column := range []string{"idempotency_key", "ticket_id", "ticket_outcome"} {
+		assert.True(t, db.Migrator().HasColumn("form_submissions", column), "form_submissions.%s", column)
 	}
 }
 

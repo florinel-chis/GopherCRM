@@ -264,3 +264,45 @@ rows yet (a later frontend task).
   `tests/form_mail_delivery_api_test.go` `TestFormMailDeliveryAPISQLite`;
   `internal/handler/form_delivery_handler_test.go`; `TestFormMailDeliveryRepository{SQLite,MySQL}`;
   `TestFormMailDeliveryJSON`.
+
+## Ticket intake
+
+A double opt-in form with `create_ticket` opens a ticket for the matching live customer when a
+submission is confirmed (#213; see [DEVELOPMENT.md](../DEVELOPMENT.md#form-ticket-intake-213)).
+Backend only: the builder and the submission views show nothing of it yet. **Known issue:** the
+hosted view and the embed script send no `idempotency_key`, so a browser retry is not deduplicated
+(each submission falls back to `submission-<id>`); only API clients that send a key are protected.
+
+- **TC-FORM-120 — definition rules** (`create_ticket` with `create_lead` true or with
+  `double_opt_in` false is the 400 invalid-definition answer with nothing written; with double
+  opt-in and no default owner it is accepted; absent `create_ticket` is false on create and on
+  update; an absent `create_lead` is stored false when `create_ticket` is true; admin and sales
+  may set it, support gets 403) · automated · `internal/models` `TestFormTicketTargetDefinition`;
+  `internal/handler` `TestFormTicketFlagHandler`.
+- **TC-FORM-121 — submit, confirm, submit, confirm with one `idempotency_key` yields one ticket**
+  (identical submit bodies and confirmation pages; `GET /tickets/{id}` shows the ticket; the
+  submissions read `created`, then `duplicate` with the same `ticket_id`) · automated ·
+  `tests/form_ticket_intake_test.go` `TestFormTicketIntakeAPISQLite`;
+  `TestFormTicketIntakeDuplicateKey{SQLite,MySQL}`.
+- **TC-FORM-122 — a re-submission before confirmation invalidates the first link** (the first link
+  answers the invalid-link page; the second link opens one ticket) · automated ·
+  `TestFormTicketIntakeAPISQLite`.
+- **TC-FORM-123 — a keyless confirmation uses `submission-<id>`; pending, spam and non-ticket forms
+  create nothing** (spam and other forms store `''`; a second keyless submission after the first
+  was confirmed opens its own ticket) · automated · `TestFormTicketIntakePendingSpamAndKeyless`.
+- **TC-FORM-124 — an unknown address records `no_customer`** with unchanged answers · automated ·
+  `TestFormTicketIntakeNoCustomer`; `TestFormTicketIntakeAPISQLite`.
+- **TC-FORM-125 — the same key from another customer records `key_conflict`** (one ticket, one key
+  row, `ticket_id` null; on MySQL the second key insert waits and then loses without 1213) ·
+  automated · `TestFormTicketIntakeKeyConflict{SQLite,MySQL}`.
+- **TC-FORM-126 — an invalid `idempotency_key` answers 400** (`VALIDATION_ERROR`,
+  `error.details.idempotency_key`, the value not echoed, no service call; an explicit `""` and a
+  `submission-` prefix included) · automated · `TestFormPublicSubmitIdempotencyKeyValidation`;
+  `TestFormTicketIntakeAPISQLite`.
+- **TC-FORM-127 — a fault after the ticket insert rolls everything back and the link still works;
+  a server without ticket intake records `unavailable`** · automated ·
+  `TestFormTicketIntakeAtomicity{SQLite,MySQL}`, `TestFormTicketIntakeUnwired`.
+- **TC-FORM-128 — erasure leaves no key linkable to the person** (customer, customer-role login
+  and lead roots; a confirmation racing a customer erasure) · automated ·
+  `TestFormTicketKeyErasure{SQLite,MySQL}`, `TestFormTicketIntakeVsCustomerErasure{SQLite,MySQL}`,
+  `test/integration` `TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable`.

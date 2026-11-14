@@ -154,6 +154,11 @@ func scrubLeadFormSubmissions(tx *gorm.DB, leadID uint) error {
 			return fmt.Errorf("purging form mail deliveries of lead %d: %w", leadID, err)
 		}
 	}
+	// The idempotency keys (#213) are client-supplied text that can carry
+	// the person: emptied on the submissions, and their key rows removed.
+	if err := scrubSubmissionTicketKeys(tx, submissionIDs); err != nil {
+		return fmt.Errorf("scrubbing form ticket keys of lead %d: %w", leadID, err)
+	}
 	return nil
 }
 
@@ -181,12 +186,17 @@ func purgeCustomerExternalIDs(tx *gorm.DB, customerID uint) error {
 }
 
 // customerAfterScrub is the customer plan's AfterScrub: the external identity
-// mappings (#212), then the ticket comment mail delivery records (#219).
+// mappings (#212), the ticket comment mail delivery records (#219), then the
+// form ticket keys (#213).
 func customerAfterScrub(tx *gorm.DB, customerID uint) error {
 	if err := purgeCustomerExternalIDs(tx, customerID); err != nil {
 		return err
 	}
-	return purgeCustomerTicketMailDeliveries(tx, customerID)
+	if err := purgeCustomerTicketMailDeliveries(tx, customerID); err != nil {
+		return err
+	}
+	// The form ticket keys (#213) of the customer and of its tickets.
+	return purgeCustomerFormTicketKeys(tx, customerID)
 }
 
 // purgeCustomerTicketMailDeliveries hard-deletes the ticket comment mail

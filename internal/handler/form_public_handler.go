@@ -129,6 +129,7 @@ func (h *FormPublicHandler) Definition(c *gin.Context) {
 // @Description Checks run in a fixed order and the first that trips decides: (1) values are validated against the definition; (2) the challenge must be present and correctly signed; then the spam layers: (3) time trap - submitted less than 3 seconds or more than 24 hours after the definition was served; (4) origin - the Origin header (or Referer) host must be on the form's allowlist when it has one; (5) honeypot - the decoy input must be empty; (6) reCAPTCHA v3, only when the form enables it and the server has both keys - a missing token, a score below RECAPTCHA_MIN_SCORE or an unreachable verification service fails it.
 // @Description A submission caught by a spam layer is stored with status spam and its reason and answered with exactly the same 200 outcome a genuine one gets, so the response reveals nothing about the layers; no mail is sent and no lead is touched. This is deliberate.
 // @Description Side effects of a genuine submission: without double opt-in it is stored as received; when the form creates leads, the newest live lead with the same email gains a note (automation event lead_updated, origin form) or a new lead is created (status new, owner default_owner_id, source the form name; automation event lead_created, origin form), in the same transaction; after the commit one notification mail goes to each notify_emails address and, when follow_up_subject is set, the follow-up mail goes to the submitter. With double opt-in it is stored as pending, earlier outstanding confirmation links for the same form and address are invalidated, and a confirmation mail with a single-use link valid for 48 hours goes to the submitted address; lead, notification and follow-up wait for POST /forms/public/confirm. Mail failures are logged and never change the response.
+// @Description Idempotency key (#213): an optional idempotency_key (^[A-Za-z0-9._:-]{1,128}$, not starting with "submission-", never personal data) is checked before anything else is done; an invalid value, an explicit empty string included, is 400 VALIDATION_ERROR with error.details.idempotency_key and the value is not echoed. On a form with create_ticket it is stored on the pending submission, and confirmations carrying the same key open at most one ticket; on other forms it is ignored. The answer is identical whether the key is new, already used, absent, the submission is spam or the form is not a ticket form. The hosted view and the embed script do not send a key, so their retries are not deduplicated.
 // @Description Errors: 400 VALIDATION_ERROR (message "The submission could not be accepted") with error.details mapping field names to messages - an undeclared field ("unknown field"), a missing required value, a value longer than its max_length, an invalid email, a value that is not one of a select's options, "consent" when the form has consent text and consent is not true, or "challenge" when the challenge is missing or invalid (reported only once the values are valid); 400 BAD_REQUEST ("Invalid request body") for a body that is not valid JSON; 404 NOT_FOUND for an unknown, unpublished or deleted form (an origin outside the allowlist is NOT a 404 here: it is stored as spam); 413 with code VALIDATION_ERROR ("Submission is too large") for a body over 64 KiB.
 // @Description Unauthenticated: no credentials are needed or accepted. Cross-origin calls get a permissive, credential-less CORS policy (the request Origin is echoed, methods GET, POST, OPTIONS, header Content-Type; preflights answer 204).
 // @Tags public-forms
@@ -137,7 +138,7 @@ func (h *FormPublicHandler) Definition(c *gin.Context) {
 // @Param key path string true "Public form identifier (the form's public_id)"
 // @Param submission body service.PublicSubmissionRequest true "Submitted values"
 // @Success 200 {object} utils.APIResponse{data=service.SubmitOutcome} "Submission accepted (or silently filed as spam); the outcome says whether to show a message or redirect"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - error.details maps field names to messages; BAD_REQUEST - malformed JSON"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - error.details maps field names (or idempotency_key) to messages; BAD_REQUEST - malformed JSON"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no published form with this identifier"
 // @Failure 413 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - submission body exceeds 64 KiB"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS (JSON envelope) - strict tier: 10 requests/min, burst 5, per client IP, one bucket shared by public submissions and both confirmation routes (lifted by DISABLE_RATE_LIMIT=true); error.details.retry_after is '60s'; no Retry-After header"
@@ -159,6 +160,15 @@ func (h *FormPublicHandler) Submit(c *gin.Context) {
 		}
 		logger.WithError(utils.LogError(err)).Warn("Malformed form submission body")
 		utils.RespondBadRequest(c, "Invalid request body")
+		return
+	}
+
+	// An idempotency key (#213) is checked before the service is called; the
+	// value is neither echoed nor logged.
+	if req.IdempotencyKey != nil && !service.ValidFormIdempotencyKey(*req.IdempotencyKey) {
+		logger.Warn("Form submission carried an invalid idempotency key")
+		utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation,
+			"The submission could not be accepted", map[string]string{"idempotency_key": service.FormIdempotencyKeyRule})
 		return
 	}
 
@@ -237,6 +247,7 @@ type confirmRequest struct {
 // Confirm godoc
 // @Summary Confirm a double opt-in submission
 // @Description Spend a confirmation token. The token is read from the form-encoded field token (what the confirmation page posts) or, when that is empty, from a JSON body {"token": "..."}. On success the pending submission becomes confirmed (confirmed_at set) and, in the same transaction, the token is claimed and the lead is created or noted exactly as for a submission without double opt-in (automation event lead_created or lead_updated, origin form); after the commit the notification mails and the follow-up mail go out, and the response is the "Email confirmed" page. Tokens are single-use and expire 48 hours after the submission; a re-submission of the same form and address invalidates earlier tokens.
+// @Description On a form with create_ticket (#213) the same transaction, after the claim, locks the live customer whose email matches the confirmed address and opens one open, medium-priority, unassigned ticket (title "Form: <form name>", description "Submitted through form <id>, submission <id>.", no submitted value) with a form_ticket_keys row for the stored idempotency key or submission-<submission id>, and records ticket_created (origin form). The submission records ticket_outcome created, duplicate (the key already opened a ticket for the same customer; ticket_id names it), key_conflict, no_customer or unavailable. The page is identical for every outcome.
 // @Description Every failure - missing, unknown, expired or already used token, a submission that is no longer pending, a deleted form or submission, a stored value too long for its lead column, or an internal error - renders the same "This link is no longer valid" page with the same 200 status, so token validity cannot be probed. A failure after the claim and before the commit rolls back, so the link stays usable for a retry; when the COMMIT itself fails the outcome is ambiguous (the lead may have been created and the link spent) although the page still says the link is no longer valid. The handler always answers 200 text/html, never the JSON envelope; only the rate limiter in front of it answers in JSON (429 TOO_MANY_REQUESTS).
 // @Description Unauthenticated.
 // @Tags public-forms

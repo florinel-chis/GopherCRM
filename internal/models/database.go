@@ -58,6 +58,9 @@ func MigrateDatabase() error {
 		if err := ensureProductExternalIDCollation(tx); err != nil {
 			return err
 		}
+		if err := ensureFormTicketKeyCollation(tx); err != nil {
+			return err
+		}
 		return normalizeCompanyDomains(tx)
 	})
 }
@@ -152,6 +155,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&FormSubmission{},
 		&FormConfirmationToken{},
 		&FormMailDelivery{},
+		// Form ticket intake keys (#213): ids only, no foreign key.
+		&FormTicketKey{},
 		// Follow-up automation: rules before steps and runs (both reference
 		// the rule), runs before run steps, notifications last.
 		&AutomationRule{},

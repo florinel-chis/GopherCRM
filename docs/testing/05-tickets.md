@@ -1325,3 +1325,39 @@ the web UI (#312)").
   on two consecutive polls); both complete with no error 1213; the update's and the batch's events
   are committed once; a delete that wins leaves the run `cancelled` with `record_deleted`.
 - **Automation:** automated — `TestAutomationTicketLockOrderMySQL` (`internal/service`)
+
+## Tickets opened by forms (#213)
+
+A double opt-in form with `create_ticket` opens a ticket when a submission is confirmed (cases in
+`docs/testing/12-forms.md`, "Ticket intake"). These cases cover the ticket side.
+
+### TC-TICK-076 — A form-created ticket carries fixed text and starts unassigned
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A published `create_ticket` form named "Complaints desk"; a customer whose
+  email is the address that submits.
+- **Steps:**
+  1. Submit the form with a distinctive textarea value and confirm the mailed link.
+  2. `GET /tickets/<id>` as admin for the ticket named by the submission's `ticket_id`.
+- **Expected:** Exactly one ticket: title exactly `Form: Complaints desk` (a longer form name is
+  cut to 255 runes), description exactly `Submitted through form <form id>, submission <submission
+  id>.`, status `open`, priority `medium`, no assignee, `due_at` and `first_responded_at` null,
+  `customer_id` the matched customer. No submitted value (address, answers, key) appears in the
+  title or description. One `ticket_created` event, origin `form`, `actor_id` null.
+- **Automation:** automated — `TestFormTicketIntakeConfirmed{SQLite,MySQL}` (`internal/service`),
+  `TestFormTicketIntakeAPISQLite` (`tests`), `TestFormTicketIntakeProductionWiring` (`cmd`)
+
+### TC-TICK-077 — Deleting a form-created ticket purges its key rows
+- **Priority:** P1
+- **Type:** regression
+- **Preconditions:** A form-created ticket and its `form_ticket_keys` row; another form-created
+  ticket.
+- **Steps:**
+  1. As admin, `DELETE /tickets/<id>`.
+  2. Confirm a new submission of the same form with the same `idempotency_key`.
+  3. Repeat step 1 with a failure injected after the key purge.
+- **Expected:** The delete hard-deletes the ticket's key rows in the transaction that soft-deletes
+  it; the other ticket's row stays; the same key opens a new ticket afterwards. A failure keeps the
+  ticket and its key row.
+- **Automation:** automated — `TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}`
+  (`internal/repository`)
