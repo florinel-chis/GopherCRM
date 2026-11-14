@@ -113,11 +113,18 @@ func TestAutomationRunLeaseSQLiteUpgrade(t *testing.T) {
 		require.False(t, DB.Migrator().HasColumn("automation_runs", name), "the fixture predates %s", name)
 	}
 
+	// The runs reference a real rule: MigrateDatabase checks the foreign keys
+	// of the tables it rebuilds and refuses dangling references.
+	require.NoError(t, DB.AutoMigrate(&AutomationRule{}))
+	rule := AutomationRule{Name: "Legacy rule", EntityType: AutomationEntityLead, TriggerType: "lead_created", Enabled: true, Version: 2}
+	require.NoError(t, DB.Create(&rule).Error)
+	require.NotZero(t, rule.ID)
+
 	claimed := time.Date(2026, 11, 1, 6, 0, 0, 0, time.UTC)
 	finished := claimed.Add(time.Minute)
 	rows := []legacyAutomationRun{
-		{RuleID: 1, RuleVersion: 2, EntityType: AutomationEntityLead, EntityID: 5, DedupeKey: "legacy-running", Status: AutomationRunRunning, NextPosition: 3, Attempts: 1, ClaimedAt: &claimed},
-		{RuleID: 1, RuleVersion: 2, EntityType: AutomationEntityDeal, EntityID: 6, DedupeKey: "legacy-done", Status: AutomationRunCompleted, NextPosition: 4, ClaimedAt: &claimed, FinishedAt: &finished},
+		{RuleID: rule.ID, RuleVersion: 2, EntityType: AutomationEntityLead, EntityID: 5, DedupeKey: "legacy-running", Status: AutomationRunRunning, NextPosition: 3, Attempts: 1, ClaimedAt: &claimed},
+		{RuleID: rule.ID, RuleVersion: 2, EntityType: AutomationEntityDeal, EntityID: 6, DedupeKey: "legacy-done", Status: AutomationRunCompleted, NextPosition: 4, ClaimedAt: &claimed, FinishedAt: &finished},
 	}
 	for i := range rows {
 		require.NoError(t, DB.Create(&rows[i]).Error)
