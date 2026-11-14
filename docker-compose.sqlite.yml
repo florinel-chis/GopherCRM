@@ -53,7 +53,10 @@ services:
       start_period: 10s
 
   ui:
-    build: ./gocrm-ui
+    build:
+      context: ./gocrm-ui
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-}
     depends_on:
       backend:
         condition: service_healthy

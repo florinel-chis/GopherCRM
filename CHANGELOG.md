@@ -41,10 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sign-in and registration pages read "Welcome to Acme" and "Create your Acme account". The empty
   default keeps `GoCRM`; signed-in users still see the stored `general.company_name`. The value is
   not a secret: Vite inlines it into the public JavaScript bundle nginx serves.
-  `gocrm-ui/.dockerignore` still excludes `.env` files. The shipped Compose files do not forward
-  it yet; the Compose `build.args` pass-through is #308. Documented in `docs/DOCKER.md`;
+  `gocrm-ui/.dockerignore` still excludes `.env` files. The shipped Compose files forward it
+  through `build.args` (#308, below). Documented in `docs/DOCKER.md`;
   `gocrm-ui/src/hooks/productNameBuildArg.test.ts` pins the Dockerfile and the documentation, and
   `gocrm-ui/e2e/tests/product-name-signed-out.spec.ts` checks the signed-out pages in a browser.
+- **Compose `build.args` pass-through of `VITE_APP_NAME` (#308).** The `ui` service in
+  `docker-compose.yml` and `docker-compose.sqlite.yml` now builds with `context: ./gocrm-ui` and
+  `args: VITE_APP_NAME: ${VITE_APP_NAME:-}`, so a `VITE_APP_NAME` set in the shell or the repo-root
+  `.env` reaches the UI image on `docker compose build ui` or `docker compose up --build`; unset or
+  empty keeps `GoCRM`. The value stays public build-time text in the build stage, never in the
+  nginx stage. The Compose line citations in `docs/DOCKER.md` and `docs/FORKING.md` moved with the
+  three added lines; `internal/config/compose_ui_build_args_test.go` pins the Compose shape, the
+  Dockerfile build stage, the documentation and the citations.
 - **Release-tarball decisions in the server provisioning guide (#305).**
   `docs/SERVER_PROVISIONING.md` records the founder decision of 13 Nov 2026 that SQLite is not
   supported on the release-tarball path: `receive-release` keeps only its `mysqldump` backup, with
