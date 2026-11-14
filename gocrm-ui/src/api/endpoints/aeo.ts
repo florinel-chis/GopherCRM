@@ -161,6 +161,17 @@ export interface ListAEOPromptsParams {
   sort_order?: 'asc' | 'desc';
 }
 
+export type AEOExportFormat = 'csv' | 'json';
+export type AEOExportDays = 7 | 30 | 90;
+
+// What one export covers: a single run, or a 7/30/90-day window. Never both;
+// the API refuses run_id together with days.
+export type AEOExportSelection =
+  | { run_id: number; days?: never }
+  | { days: AEOExportDays; run_id?: never };
+
+export type AEOExportParams = { format: AEOExportFormat } & AEOExportSelection;
+
 export const aeoApi = {
   // The profile endpoint answers 404 until a brand profile has been saved. That
   // is the expected first-run state, not an error, so it collapses to null and
@@ -257,5 +268,20 @@ export const aeoApi = {
   getProviders: async (): Promise<AEOProviderStatus[]> => {
     const response = await api.get<AEOProviderStatus[]>('/aeo/providers');
     return Array.isArray(response.data) ? response.data : [];
+  },
+
+  // GET /aeo/export (#244) as a raw file Blob. Exactly one of run_id or days
+  // is sent, never both. An error body also arrives as a Blob; see
+  // aeoExportErrorMessage in pages/aeo/aeoExport.ts.
+  exportResults: async (params: AEOExportParams): Promise<Blob> => {
+    const query =
+      params.run_id !== undefined
+        ? { format: params.format, run_id: params.run_id }
+        : { format: params.format, days: params.days };
+    const response = await api.get<Blob>('/aeo/export', {
+      params: query,
+      responseType: 'blob',
+    });
+    return response.data;
   },
 };
