@@ -2,10 +2,12 @@ package aeo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
@@ -345,9 +347,15 @@ func (e *Engine) runTask(ctx context.Context, writes repository.AEORepository, r
 // the run context: by the time an interrupted run finalizes, that context is
 // already cancelled and would abort the one write that records the
 // interruption. A database that stays blocked past the bound leaves the row in
-// "running"; the next StartRun sweep or the startup reconciliation recovers it.
+// "running"; once its heartbeat goes stale the next start sweep or boot
+// reconciliation on any replica recovers it.
+//
+// The write is FinishRun, conditional on the row still running under this
+// run's owner (#229). When another replica has already failed the run as
+// abandoned, the write matches nothing and the row stays failed; that refusal
+// is logged as a Warn line carrying run_id only.
 func (e *Engine) finalize(run *models.AEORun, total, failed int, status string) {
-	completedAt := time.Now()
+	completedAt := time.Now().UTC()
 	run.TotalQueries = total
 	run.FailedQueries = failed
 	run.CompletedAt = &completedAt
@@ -358,12 +366,18 @@ func (e *Engine) finalize(run *models.AEORun, total, failed int, status string) 
 
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), e.opts.CleanupTimeout)
 	defer cancel()
-	if err := e.repo.WithContext(cleanupCtx).UpdateRun(run); err != nil {
+	err := e.repo.WithContext(cleanupCtx).FinishRun(run)
+	switch {
+	case err == nil:
+	case errors.Is(err, apperrors.ErrAEORunNotOwned):
+		logProvider().WithField("run_id", run.ID).
+			Warn("AEO run finalization refused: the run is no longer owned by this instance")
+	default:
 		logProvider().WithFields(map[string]any{
 			"run_id": run.ID,
 			"status": run.Status,
 			"error":  err.Error(),
-		}).Error("could not finalize AEO run; left for stale-run recovery")
+		}).Error("could not finalize AEO run; left for abandoned-run recovery")
 	}
 }
 

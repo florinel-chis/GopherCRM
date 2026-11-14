@@ -508,17 +508,25 @@ type AEOService interface {
 	// returns ErrAEOGenerationUnavailable until the AI-assist phase lands.
 	GeneratePrompts(ctx context.Context, count int) ([]string, error)
 
-	// StartRun records a run and hands it to the engine on a background
-	// goroutine, returning as soon as the row exists. It refuses to start
-	// while another run is still going.
+	// StartRun claims a run (one atomic insert guarded by the unique
+	// running_lock, so a run on any replica sharing the database blocks it
+	// with apperrors.ErrRunInProgress) and hands it to the engine on a
+	// background goroutine, returning as soon as the row exists.
 	StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error)
 	// StartPromptRun runs one prompt (active or not) against every configured
-	// engine, under the same overlap guard as a full run.
+	// engine, under the same claim as a full run.
 	StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error)
-	// ReconcileRunningRuns fails runs left in "running" by a process that
-	// died mid-run and returns how many it recovered. Call it once at
-	// startup, before arming the scheduler: without it a single stranded row
-	// makes the overlap guard reject every future run.
+	// StartScheduledRun starts the daily run of slot, the instant the
+	// scheduler computed with aeo.NextRunAt. The slot is stored as
+	// slot.UTC() in models.AEOScheduleSlotFormat under a unique index, so
+	// each slot starts at most once across replicas; a slot already claimed
+	// returns apperrors.ErrAEOScheduleSlotTaken.
+	StartScheduledRun(ctx context.Context, slot time.Time) (*models.AEORun, error)
+	// ReconcileRunningRuns fails the runs whose owner stopped renewing its
+	// heartbeat (or that started more than 6 hours ago) and returns how many
+	// it recovered. A running row with a fresh heartbeat is another replica's
+	// live run and is left alone. Call it at startup, before arming the
+	// scheduler.
 	ReconcileRunningRuns() (int64, error)
 	ListRuns(offset, limit int, sortBy, sortOrder string) ([]models.AEORun, int64, error)
 	GetRun(id uint) (*models.AEORun, error)

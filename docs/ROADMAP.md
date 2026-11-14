@@ -46,10 +46,14 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 - **Serve the OpenAPI spec** — the spec and a static HTML reference are generated into `api/`
   (`make swagger`) and gated in CI (`make verify-api-docs`); serving them from the backend (e.g. a
   Swagger UI route) is deliberately not done
-- **Cross-process AEO coordination** — the AEO runtime now owns, cancels and joins its runs at
-  shutdown within one process (#111), but the overlap guard and the daily scheduler are still
-  process-local: two API replicas would each arm a scheduler and each admit a run. Horizontal
-  scaling needs a database-level claim on `aeo_runs` and a single scheduling owner.
+- **Cross-process AEO coordination: follow-ups** — run ownership is delivered (#229): every
+  run has a database owner and heartbeat, admission is one insert guarded by the unique
+  `aeo_runs.running_lock`, the daily run is claimed once per slot through `schedule_slot`, and a
+  replica fails only runs whose heartbeat is older than 3 minutes (or that started over 6 hours
+  ago). Still open: fencing of `aeo_answers` rows a superseded owner writes between losing its
+  run and its next heartbeat (at most one 30 s interval); an optional periodic sweep, so a crashed
+  run stops reading `running` before the next boot or start attempt; and several processes on one
+  SQLite file, which stays unsupported.
 - **Extend the SQLite upgrade fixtures per release** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
   the SQL files in `migrations/` target MySQL. The v1.2.0 → next upgrade is

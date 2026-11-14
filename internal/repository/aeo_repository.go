@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -247,10 +248,6 @@ func (r *aeoRepository) GetRunByID(id uint) (*models.AEORun, error) {
 	return &run, nil
 }
 
-func (r *aeoRepository) UpdateRun(run *models.AEORun) error {
-	return r.db.Save(run).Error
-}
-
 func (r *aeoRepository) ListRuns(offset, limit int, sortBy, sortOrder string) ([]models.AEORun, error) {
 	column, order, err := validateAEOSort(aeoRunSortColumns, sortBy, sortOrder)
 	if err != nil {
@@ -285,36 +282,160 @@ func (r *aeoRepository) GetLatestRun() (*models.AEORun, error) {
 	return &run, nil
 }
 
-// CountRunsByStatus backs the overlap guard: the service refuses to start a run
-// while another one is still "running".
+// CountRunsByStatus counts the runs in one status. Admission no longer depends
+// on it (ClaimRun is atomic); it remains a plain read for reports and tests.
 func (r *aeoRepository) CountRunsByStatus(status string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.AEORun{}).Where("status = ?", status).Count(&count).Error
 	return count, err
 }
 
-// MarkStaleRunsFailed transitions every run still flagged "running" that started
-// before cutoff to "failed" and stamps completed_at, returning how many rows it
-// touched.
+// aeoRunningLock is the value of aeo_runs.running_lock while a run is running.
+// The unique index idx_aeo_runs_running_lock admits one such row; NULL (every
+// terminal row) never collides.
+const aeoRunningLock uint8 = 1
+
+// ClaimRun admits a run across every process sharing the database (#229). It
+// inserts the row as running, owned by run.OwnerInstance, with heartbeat_at =
+// started_at and running_lock = 1, in one INSERT: the unique running_lock
+// index makes the admission atomic, so there is no count-then-insert window.
 //
-// The executor lives in this process, so a run only ever leaves "running" when
-// the engine writes its terminal status. A crash, a deploy or an OOM kill in the
-// middle of a run therefore strands the row — and because the overlap guard
-// counts running rows, a single stranded row would reject every later run with
-// 409 forever. This is the recovery path: the service calls it at startup with
-// "now" as the cutoff and again before each guard with a staleness horizon.
+// A duplicate key inserts nothing and is classified: when run.ScheduleSlot is
+// set and a row with that slot exists (soft-deleted rows included, since they
+// still hold the index) it is apperrors.ErrAEOScheduleSlotTaken, otherwise
+// apperrors.ErrRunInProgress. Any other failure is returned as is.
+func (r *aeoRepository) ClaimRun(run *models.AEORun) error {
+	if run == nil || run.OwnerInstance == nil || strings.TrimSpace(*run.OwnerInstance) == "" {
+		return errors.New("aeo: a run claim needs an owner instance")
+	}
+	startedAt := run.StartedAt.UTC()
+	heartbeatAt := startedAt
+	lock := aeoRunningLock
+
+	run.StartedAt = startedAt
+	run.Status = models.AEORunStatusRunning
+	run.CompletedAt = nil
+	run.HeartbeatAt = &heartbeatAt
+	run.RunningLock = &lock
+
+	err := r.db.Create(run).Error
+	if err == nil {
+		return nil
+	}
+	run.ID = 0
+	run.HeartbeatAt = nil
+	run.RunningLock = nil
+	if !isDuplicateKeyError(err) {
+		return err
+	}
+	if run.ScheduleSlot != nil {
+		var taken int64
+		if countErr := r.db.Model(&models.AEORun{}).Unscoped().
+			Where("schedule_slot = ?", *run.ScheduleSlot).
+			Count(&taken).Error; countErr != nil {
+			return countErr
+		}
+		if taken > 0 {
+			return apperrors.ErrAEOScheduleSlotTaken
+		}
+	}
+	return apperrors.ErrRunInProgress
+}
+
+// FinishRun writes the terminal state of a run its owner finalizes: status,
+// completed_at, total_queries, failed_queries, updated_at and running_lock =
+// NULL, in one UPDATE … WHERE id = ? AND status = 'running' AND
+// owner_instance = ?. It never inserts and never touches a row another
+// instance owns or has already failed: such a write matches nothing and
+// returns apperrors.ErrAEORunNotOwned with the row unchanged. The status
+// always changes on a match, so MySQL's changed-rows count is the matched
+// count.
+func (r *aeoRepository) FinishRun(run *models.AEORun) error {
+	if run == nil || run.ID == 0 || run.OwnerInstance == nil {
+		return apperrors.ErrAEORunNotOwned
+	}
+	if run.Status == "" || run.Status == models.AEORunStatusRunning {
+		return fmt.Errorf("aeo: run %d cannot be finished with status %q", run.ID, run.Status)
+	}
+	now := time.Now().UTC()
+	completedAt := now
+	if run.CompletedAt != nil {
+		completedAt = run.CompletedAt.UTC()
+	}
+
+	result := r.db.Model(&models.AEORun{}).
+		Where("id = ? AND status = ? AND owner_instance = ?", run.ID, models.AEORunStatusRunning, *run.OwnerInstance).
+		Updates(map[string]interface{}{
+			"status":         run.Status,
+			"completed_at":   completedAt,
+			"total_queries":  run.TotalQueries,
+			"failed_queries": run.FailedQueries,
+			"updated_at":     now,
+			"running_lock":   nil,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return apperrors.ErrAEORunNotOwned
+	}
+	run.CompletedAt = &completedAt
+	run.UpdatedAt = now
+	run.RunningLock = nil
+	return nil
+}
+
+// RenewRunHeartbeat stamps heartbeat_at and updated_at with at on a run that is
+// still running under owner, and touches nothing else. A row that is no longer
+// running or belongs to another instance returns apperrors.ErrAEORunNotOwned.
 //
-// One conditional UPDATE, so it is atomic on both MySQL and SQLite and needs no
-// read-modify-write round trip. Updates via a map skip the model hooks, which is
-// what we want: nothing here should re-serialize a payload.
-func (r *aeoRepository) MarkStaleRunsFailed(cutoff time.Time) (int64, error) {
+// MySQL reports changed rows, so an UPDATE that writes the timestamp the row
+// already holds affects zero rows; a zero count is therefore re-checked with a
+// read of the same predicate before ownership is reported lost.
+func (r *aeoRepository) RenewRunHeartbeat(id uint, owner string, at time.Time) error {
+	at = at.UTC()
+	result := r.db.Model(&models.AEORun{}).
+		Where("id = ? AND status = ? AND owner_instance = ?", id, models.AEORunStatusRunning, owner).
+		Updates(map[string]interface{}{
+			"heartbeat_at": at,
+			"updated_at":   at,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	var owned int64
+	if err := r.db.Model(&models.AEORun{}).
+		Where("id = ? AND status = ? AND owner_instance = ?", id, models.AEORunStatusRunning, owner).
+		Count(&owned).Error; err != nil {
+		return err
+	}
+	if owned > 0 {
+		return nil
+	}
+	return apperrors.ErrAEORunNotOwned
+}
+
+// FailAbandonedRuns fails, in one conditional UPDATE, every running row that
+// started before startedBefore, or whose heartbeat_at is NULL (a row written
+// before ownership existed) or older than heartbeatBefore. It sets status
+// failed, completed_at, updated_at and running_lock = NULL and returns the row
+// count. A running row with a fresh heartbeat and every terminal row are left
+// alone, so any replica may call it at boot and before every start without
+// failing another replica's live run. Concurrent sweeps change each row once:
+// the status predicate stops matching after the first.
+func (r *aeoRepository) FailAbandonedRuns(startedBefore, heartbeatBefore time.Time) (int64, error) {
 	now := time.Now().UTC()
 	result := r.db.Model(&models.AEORun{}).
-		Where("status = ? AND started_at < ?", models.AEORunStatusRunning, cutoff).
+		Where("status = ?", models.AEORunStatusRunning).
+		Where("(started_at < ? OR heartbeat_at IS NULL OR heartbeat_at < ?)", startedBefore.UTC(), heartbeatBefore.UTC()).
 		Updates(map[string]interface{}{
 			"status":       models.AEORunStatusFailed,
 			"completed_at": now,
 			"updated_at":   now,
+			"running_lock": nil,
 		})
 	return result.RowsAffected, result.Error
 }

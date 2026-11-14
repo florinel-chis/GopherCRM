@@ -425,13 +425,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		}
 	}
 
-	// Recover runs stranded by the previous process before anything can start a
-	// new one. The engine runs in-process and writes the terminal status itself,
-	// so a row still marked "running" at boot belongs to a process that died
-	// mid-run (deploy, OOM, docker restart — even a graceful SIGTERM, which
-	// drains HTTP without waiting for a run that may have hours of provider
-	// calls left). Left alone, one such row makes the overlap guard answer 409
-	// to every manual run and skip every scheduled one, permanently.
+	// Recover abandoned AEO runs before anything can start a new one (#229).
+	// Every replica does this, whatever AUTOMATION_ENABLED and
+	// AEO_SCHEDULE_ENABLED say, and it is safe beside other replicas: a run's
+	// owner renews aeo_runs.heartbeat_at every 30 s, so only a row whose
+	// heartbeat is older than 3 minutes (its process died: deploy, OOM, kill),
+	// a legacy row with no heartbeat, or a row started more than 6 hours ago is
+	// failed. A live run on another replica is left running. Left alone, an
+	// abandoned row would hold the running lock and refuse every start; the
+	// same sweep also runs before every start.
 	if recovered, err := aeoService.ReconcileRunningRuns(); err != nil {
 		utils.Logger.WithError(err).Error("Failed to reconcile stranded AEO runs")
 	} else if recovered > 0 {
@@ -445,6 +447,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// the settings UI is picked up by the next scheduled run without a restart.
 	// A tick that finds the module unconfigured is logged once at info level
 	// and the loop sleeps until the next day. Disabled scheduling arms nothing.
+	// Several replicas may arm it: each tick claims its daily slot through the
+	// unique aeo_runs.schedule_slot, so only one replica starts the run and the
+	// others log a skip (#229). Replicas must share TZ and AEO_SCHEDULE_HOUR.
 	if cfg.AEO.ScheduleEnabled {
 		aeoRuntime.startScheduler(backgroundCtx, cfg.AEO.ScheduleHour)
 	} else {

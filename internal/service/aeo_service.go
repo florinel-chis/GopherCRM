@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +20,8 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -74,6 +78,17 @@ const (
 	// that and is still far inside the 24h scheduling period, so a run stranded
 	// by a crash cannot block the next day's scheduled run.
 	aeoRunStaleAfter = 6 * time.Hour
+
+	// aeoRunHeartbeatInterval is how often the owner of a running run renews
+	// aeo_runs.heartbeat_at (#229).
+	aeoRunHeartbeatInterval = 30 * time.Second
+
+	// aeoRunHeartbeatStaleAfter is the horizon after which a running row whose
+	// heartbeat was not renewed is abandoned: its owner is gone (crash, kill,
+	// lost database) and any replica may fail it, at boot or before a start.
+	// Six missed heartbeats leave room for a slow database and for clock skew
+	// between replicas well under 90 seconds.
+	aeoRunHeartbeatStaleAfter = 3 * time.Minute
 )
 
 // Run triggers and statuses. Kept unexported here because they are wire values
@@ -111,17 +126,25 @@ type aeoService struct {
 	providers []aeo.Provider
 	txManager repository.TransactionManager
 
-	// startMu serializes the overlap guard with the run insert. Counting
-	// running rows and then inserting one are two statements: without this,
-	// two concurrent StartRun calls — a manual POST landing on the scheduled
-	// hour is the realistic case — can both read zero and both start a run,
-	// doubling provider spend. A mutex is the right scope here because the
-	// executor and the scheduler are both in-process: the module already
-	// assumes a single API process (two replicas would each run their own
-	// scheduler and fire their own daily run), so a cross-process lock would
-	// be solving a problem this deployment does not have. Horizontal scaling
-	// would need a database-level claim, and that is called out in the spec.
+	// startMu serializes this process's starts and its reconciliation. It is
+	// not what keeps runs from overlapping: admission is the atomic ClaimRun
+	// insert guarded by the unique running_lock index, which holds across every
+	// replica sharing the database (#229). The mutex only keeps two local
+	// starts from sweeping and claiming at the same time.
 	startMu sync.Mutex
+
+	// instanceID names this service in aeo_runs.owner_instance: 32 lowercase
+	// hex characters from crypto/rand, generated once at construction. It is
+	// never logged.
+	instanceID string
+
+	// now is the service clock (UTC on use). Tests inject one to move past the
+	// heartbeat horizon without waiting.
+	now func() time.Time
+
+	// heartbeatInterval is how often the owner renews heartbeat_at while a
+	// run executes; aeoRunHeartbeatInterval unless a test overrides it.
+	heartbeatInterval time.Duration
 
 	// lifecycle owns every run this service starts: admission, the shared run
 	// context and the join at shutdown. See aeo_runtime.go.
@@ -212,16 +235,66 @@ func NewAEOService(repo repository.AEORepository, executor aeo.Executor, provide
 
 func newAEOService(repo repository.AEORepository, executor aeo.Executor, providers []aeo.Provider, txManager repository.TransactionManager, opts ...AEOServiceOption) *aeoService {
 	s := &aeoService{
-		repo:      repo,
-		executor:  executor,
-		providers: providers,
-		txManager: txManager,
-		lifecycle: newAEORunOwner(),
+		repo:              repo,
+		executor:          executor,
+		providers:         providers,
+		txManager:         txManager,
+		lifecycle:         newAEORunOwner(),
+		instanceID:        newAEOInstanceID(),
+		now:               time.Now,
+		heartbeatInterval: aeoRunHeartbeatInterval,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// WithAEOInstanceID replaces the generated instance id. Tests use it to give
+// two services on one database recognisable owners; an empty id keeps the
+// generated one.
+func WithAEOInstanceID(id string) AEOServiceOption {
+	return func(s *aeoService) {
+		if strings.TrimSpace(id) != "" {
+			s.instanceID = id
+		}
+	}
+}
+
+// WithAEOClock replaces the service clock used for started_at, heartbeats and
+// the abandoned-run horizons. A nil clock keeps time.Now.
+func WithAEOClock(now func() time.Time) AEOServiceOption {
+	return func(s *aeoService) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
+// WithAEOHeartbeatInterval replaces aeoRunHeartbeatInterval. A non-positive
+// interval keeps the default.
+func WithAEOHeartbeatInterval(interval time.Duration) AEOServiceOption {
+	return func(s *aeoService) {
+		if interval > 0 {
+			s.heartbeatInterval = interval
+		}
+	}
+}
+
+// newAEOInstanceID returns 32 lowercase hex characters from crypto/rand. A
+// failing random source is not survivable for ownership, so it panics at
+// construction rather than handing two processes the same id.
+func newAEOInstanceID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(fmt.Sprintf("aeo: cannot generate an instance id: %v", err))
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// clock returns the service clock in UTC.
+func (s *aeoService) clock() time.Time {
+	return s.now().UTC()
 }
 
 // ---------------------------------------------------------------- profile ---
@@ -650,26 +723,42 @@ func cleanGeneratedPromptText(raw string) string {
 
 // ------------------------------------------------------------------- runs ---
 
+// StartRun starts a full run of every active prompt. A body trigger of
+// "scheduled" is accepted for compatibility and stores no schedule slot; the
+// scheduler itself goes through StartScheduledRun.
 func (s *aeoService) StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error) {
-	return s.startRun(ctx, trigger, triggeredByID, func(repo repository.AEORepository) ([]models.AEOPrompt, error) {
-		prompts, err := repo.ListActivePrompts()
-		if err != nil {
-			return nil, err
-		}
-		if len(prompts) == 0 {
-			return nil, fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound)
-		}
-		return prompts, nil
-	})
+	return s.startRun(ctx, trigger, triggeredByID, nil, selectActiveAEOPrompts)
+}
+
+// StartScheduledRun starts the daily run of slot, the instant the scheduler
+// computed with aeo.NextRunAt (not the instant it woke up). The slot key is
+// slot.UTC() in models.AEOScheduleSlotFormat; its unique index lets exactly one
+// replica start it, including after that run has finished. The others get
+// apperrors.ErrAEOScheduleSlotTaken and insert nothing.
+func (s *aeoService) StartScheduledRun(ctx context.Context, slot time.Time) (*models.AEORun, error) {
+	key := slot.UTC().Format(models.AEOScheduleSlotFormat)
+	return s.startRun(ctx, aeoTriggerScheduled, nil, &key, selectActiveAEOPrompts)
+}
+
+// selectActiveAEOPrompts is the prompt selection of a full run.
+func selectActiveAEOPrompts(repo repository.AEORepository) ([]models.AEOPrompt, error) {
+	prompts, err := repo.ListActivePrompts()
+	if err != nil {
+		return nil, err
+	}
+	if len(prompts) == 0 {
+		return nil, fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound)
+	}
+	return prompts, nil
 }
 
 // StartPromptRun runs a single prompt against every configured engine — the
 // "try just this one" button on the prompt detail. The prompt does not have to
 // be active: running an inactive prompt on demand is how a draft gets tested
-// before it joins the daily run. Everything else — the overlap guard, the
-// stale-run sweep, background execution — matches a full manual run.
+// before it joins the daily run. Everything else — the claim, the abandoned-run
+// sweep, background execution — matches a full manual run.
 func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggeredByID *uint) (*models.AEORun, error) {
-	return s.startRun(ctx, aeoTriggerManual, triggeredByID, func(repo repository.AEORepository) ([]models.AEOPrompt, error) {
+	return s.startRun(ctx, aeoTriggerManual, triggeredByID, nil, func(repo repository.AEORepository) ([]models.AEOPrompt, error) {
 		prompt, err := repo.GetPromptByID(promptID)
 		if err != nil {
 			if isNotFound(err) {
@@ -689,7 +778,11 @@ func (s *aeoService) StartPromptRun(ctx context.Context, promptID uint, triggere
 // answers, and the scheduler's context is the process lifetime anyway. Every
 // read and write below, and the executor itself, run on the lifecycle context
 // the service owns, so shutdown is the one thing that cancels them.
-func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *uint, selectPrompts func(repo repository.AEORepository) ([]models.AEOPrompt, error)) (*models.AEORun, error) {
+//
+// scheduleSlot is set only by StartScheduledRun. Log lines here carry the
+// trigger, run_id, counts and error codes; never the slot, the instance id,
+// the brand or a prompt.
+func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *uint, scheduleSlot *string, selectPrompts func(repo repository.AEORepository) ([]models.AEOPrompt, error)) (*models.AEORun, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "aeo_run"), "AEOService", "StartRun")
 
 	trigger = strings.ToLower(strings.TrimSpace(trigger))
@@ -748,10 +841,8 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 	}
 	executor := s.currentExecutor(providers)
 
-	// The guard, the prompt read and the insert are one critical section: see
-	// startMu. Sweeping stale rows first means a run stranded by a crash
-	// unblocks itself once it is older than aeoRunStaleAfter, rather than
-	// requiring a hand-written UPDATE against the database.
+	// startMu keeps this process's sweep and claim together; across replicas
+	// the claim itself is the guard.
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 
@@ -762,25 +853,14 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 		return nil, ErrAEOShuttingDown
 	}
 
-	if swept, err := repo.MarkStaleRunsFailed(time.Now().UTC().Add(-aeoRunStaleAfter)); err != nil {
-		// A failed sweep is not a reason to refuse the run: fall through to the
-		// guard, which is still correct, just less forgiving.
-		logger.WithError(utils.LogError(err)).Warn("Could not sweep stale AEO runs")
-	} else if swept > 0 {
-		logger.WithField("stale_runs", swept).Warn("Failed AEO runs left running by an earlier process")
-	}
-
-	running, err := repo.CountRunsByStatus(aeoRunStatusRunning)
-	if err != nil {
-		if runCtx.Err() != nil {
-			return nil, ErrAEOShuttingDown
-		}
-		utils.LogServiceResponse(logger, err)
-		return nil, err
-	}
-	if running > 0 {
-		logger.Warn("Refusing to start an overlapping AEO run")
-		return nil, apperrors.ErrRunInProgress
+	// Fail the runs whose owner is gone before claiming: a run stranded by a
+	// crash unblocks the next start once its heartbeat is older than
+	// aeoRunHeartbeatStaleAfter (or it is older than aeoRunStaleAfter). A live
+	// run on another replica keeps renewing its heartbeat and is left alone.
+	if _, err := s.failAbandonedRuns(repo, logger); err != nil {
+		// A failed sweep is not a reason to refuse the run: the claim below is
+		// still correct, just less forgiving.
+		logger.WithError(utils.LogError(err)).Warn("Could not sweep abandoned AEO runs")
 	}
 
 	prompts, err := selectPrompts(repo)
@@ -792,19 +872,30 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 		return nil, err
 	}
 
+	owner := s.instanceID
 	run := &models.AEORun{
 		Trigger:       trigger,
 		Status:        aeoRunStatusRunning,
-		StartedAt:     time.Now().UTC(),
+		StartedAt:     s.clock(),
 		TotalQueries:  len(prompts) * len(providers),
 		TriggeredByID: triggeredByID,
+		OwnerInstance: &owner,
+		ScheduleSlot:  scheduleSlot,
 	}
-	if err := repo.CreateRun(run); err != nil {
-		if runCtx.Err() != nil {
-			// The insert may or may not have landed before the cancellation
-			// reached it; if it did, fail the row now rather than leave it to
-			// the stale sweep.
-			s.failInterruptedRun(run, logger)
+	if err := repo.ClaimRun(run); err != nil {
+		switch {
+		case errors.Is(err, apperrors.ErrRunInProgress):
+			logger.WithField("error_code", "run_in_progress").
+				Info("Refusing to start an AEO run: another run holds the running lock")
+			return nil, apperrors.ErrRunInProgress
+		case errors.Is(err, apperrors.ErrAEOScheduleSlotTaken):
+			logger.WithField("error_code", "schedule_slot_taken").
+				Info("Skipping the AEO scheduled run: its slot was already claimed")
+			return nil, apperrors.ErrAEOScheduleSlotTaken
+		case runCtx.Err() != nil:
+			// A claim cut short by the cancellation may still have landed.
+			// Nothing renews its heartbeat, so the next sweep on any replica
+			// fails it once the heartbeat passes aeoRunHeartbeatStaleAfter.
 			return nil, ErrAEOShuttingDown
 		}
 		utils.LogServiceResponse(logger, err)
@@ -817,6 +908,10 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 		return nil, ErrAEOShuttingDown
 	}
 
+	// The caller gets a copy taken before the executor starts mutating the
+	// run it owns.
+	accepted := *run
+
 	// The run outlives the HTTP request that asked for it: it executes on the
 	// lifecycle context, which only shutdown cancels, and the executor
 	// goroutine now owns the admission taken above.
@@ -824,40 +919,49 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 	go s.runInBackground(runCtx, executor, run, prompts, profile, release, logger)
 
 	logger.WithFields(map[string]interface{}{
-		"run_id":        run.ID,
-		"total_queries": run.TotalQueries,
+		"run_id":        accepted.ID,
+		"total_queries": accepted.TotalQueries,
 	}).Info("AEO run started")
-	return run, nil
+	return &accepted, nil
 }
 
-// ReconcileRunningRuns fails every run still marked "running" and returns how
-// many it recovered. It is meant to be called once at startup, before the
-// scheduler is armed.
+// failAbandonedRuns fails the running rows whose heartbeat is older than
+// aeoRunHeartbeatStaleAfter (or NULL, a row written before ownership existed)
+// or that started more than aeoRunStaleAfter ago, and logs the count.
+func (s *aeoService) failAbandonedRuns(repo repository.AEORepository, logger *logrus.Entry) (int64, error) {
+	now := s.clock()
+	recovered, err := repo.FailAbandonedRuns(now.Add(-aeoRunStaleAfter), now.Add(-aeoRunHeartbeatStaleAfter))
+	if err != nil {
+		return 0, err
+	}
+	if recovered > 0 {
+		logger.WithField("recovered_runs", recovered).
+			Warn("Failed AEO runs whose owner stopped renewing its heartbeat")
+	}
+	return recovered, nil
+}
+
+// ReconcileRunningRuns fails the abandoned runs and returns how many it
+// recovered. It is called at startup, before the scheduler is armed, by every
+// replica.
 //
-// The engine runs inside this process and writes the terminal status itself, so
-// a "running" row observed at boot cannot belong to a live run: its executor
-// died with the previous process (deploy, OOM, docker restart, or a SIGTERM —
-// graceful shutdown drains HTTP, it does not wait for a run that may still have
-// hours of provider calls left). Left alone, that row makes the overlap guard
-// reject every manual run with 409 and skip every scheduled run, forever.
-//
-// This assumes one API process, which is the same assumption the daily
-// scheduler already makes; a second replica would need a database-level claim
-// instead.
+// A running row is not proof of a dead process any more: another replica
+// sharing the database may be executing it, renewing its heartbeat every
+// aeoRunHeartbeatInterval. Only a row whose heartbeat is older than
+// aeoRunHeartbeatStaleAfter, a legacy row with no heartbeat, or a row started
+// more than aeoRunStaleAfter ago is failed. A restarted process therefore
+// recovers its own crashed run up to aeoRunHeartbeatStaleAfter after the
+// crash, at boot or at the next start attempt (there is no periodic sweep).
 func (s *aeoService) ReconcileRunningRuns() (int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "aeo_run"), "AEOService", "ReconcileRunningRuns")
 
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 
-	recovered, err := s.repo.MarkStaleRunsFailed(time.Now().UTC())
+	recovered, err := s.failAbandonedRuns(s.repo, logger)
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return 0, err
-	}
-	if recovered > 0 {
-		logger.WithField("recovered_runs", recovered).
-			Warn("Marked AEO runs stranded by a previous process as failed")
 	}
 	return recovered, nil
 }

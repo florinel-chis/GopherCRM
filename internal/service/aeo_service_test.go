@@ -670,10 +670,10 @@ func TestParseAEOGeneratedPrompts(t *testing.T) {
 
 // ------------------------------------------------------------------- runs ---
 
-// expectStaleSweep arms the housekeeping call StartRun makes before the overlap
-// guard. Every StartRun path that gets as far as the guard performs it.
+// expectStaleSweep arms the housekeeping call StartRun makes before the claim.
+// Every StartRun path that gets as far as the claim performs it.
 func (suite *AEOServiceTestSuite) expectStaleSweep() {
-	suite.mockRepo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).Return(int64(0), nil)
+	suite.mockRepo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return(int64(0), nil)
 }
 
 func (suite *AEOServiceTestSuite) TestStartRun_Success() {
@@ -683,11 +683,14 @@ func (suite *AEOServiceTestSuite) TestStartRun_Success() {
 
 	suite.mockRepo.On("GetProfile").Return(profile, nil)
 	suite.expectStaleSweep()
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
 	suite.mockRepo.On("ListActivePrompts").Return([]models.AEOPrompt{prompt}, nil)
-	suite.mockRepo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
+	suite.mockRepo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
 		Run(func(args mock.Arguments) {
-			args.Get(0).(*models.AEORun).ID = 11
+			claimed := args.Get(0).(*models.AEORun)
+			claimed.ID = 11
+			suite.Require().NotNil(claimed.OwnerInstance, "every claim names its owner")
+			suite.Len(*claimed.OwnerInstance, 32)
+			suite.Nil(claimed.ScheduleSlot, "a manual run holds no schedule slot")
 		})
 
 	run, err := suite.service.StartRun(context.Background(), "manual", nil)
@@ -720,9 +723,8 @@ func (suite *AEOServiceTestSuite) TestStartPromptRun_RunsOneInactivePrompt() {
 
 	suite.mockRepo.On("GetProfile").Return(profile, nil)
 	suite.expectStaleSweep()
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
 	suite.mockRepo.On("GetPromptByID", uint(7)).Return(&prompt, nil)
-	suite.mockRepo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
+	suite.mockRepo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
 		Run(func(args mock.Arguments) {
 			args.Get(0).(*models.AEORun).ID = 12
 		})
@@ -746,14 +748,13 @@ func (suite *AEOServiceTestSuite) TestStartPromptRun_RunsOneInactivePrompt() {
 func (suite *AEOServiceTestSuite) TestStartPromptRun_UnknownPromptIsNotFound() {
 	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
 	suite.expectStaleSweep()
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
 	suite.mockRepo.On("GetPromptByID", uint(99)).Return(nil, gorm.ErrRecordNotFound)
 
 	run, err := suite.service.StartPromptRun(context.Background(), 99, nil)
 
 	assert.Nil(suite.T(), run)
 	assert.True(suite.T(), apperrors.IsNotFound(err))
-	suite.mockRepo.AssertNotCalled(suite.T(), "CreateRun")
+	suite.mockRepo.AssertNotCalled(suite.T(), "ClaimRun", mock.Anything)
 }
 
 func (suite *AEOServiceTestSuite) TestStartRun_NoProfile() {
@@ -763,7 +764,7 @@ func (suite *AEOServiceTestSuite) TestStartRun_NoProfile() {
 
 	assert.Nil(suite.T(), run)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrProfileNotConfigured))
-	suite.mockRepo.AssertNotCalled(suite.T(), "CreateRun", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "ClaimRun", mock.Anything)
 }
 
 func (suite *AEOServiceTestSuite) TestStartRun_NoProvidersConfigured() {
@@ -773,50 +774,66 @@ func (suite *AEOServiceTestSuite) TestStartRun_NoProvidersConfigured() {
 
 	assert.Nil(suite.T(), run)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrNoProvidersConfigured))
-	suite.mockRepo.AssertNotCalled(suite.T(), "CountRunsByStatus", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "FailAbandonedRuns", mock.Anything, mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "ClaimRun", mock.Anything)
 }
 
+// The claim is the overlap guard: a running_lock held by any replica refuses
+// the insert and the start returns ErrRunInProgress. A body trigger of
+// "scheduled" claims no schedule slot.
 func (suite *AEOServiceTestSuite) TestStartRun_RefusesOverlap() {
+	prompt := models.AEOPrompt{Text: "Which CRM?", IsActive: true}
+	prompt.ID = 1
+
 	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
 	suite.expectStaleSweep()
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(1), nil)
+	suite.mockRepo.On("ListActivePrompts").Return([]models.AEOPrompt{prompt}, nil)
+	suite.mockRepo.On("ClaimRun", mock.MatchedBy(func(run *models.AEORun) bool {
+		return run.ScheduleSlot == nil && run.Trigger == "scheduled"
+	})).Return(apperrors.ErrRunInProgress)
 
 	run, err := suite.service.StartRun(context.Background(), "scheduled", nil)
 
 	assert.Nil(suite.T(), run)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrRunInProgress))
-	suite.mockRepo.AssertNotCalled(suite.T(), "CreateRun", mock.Anything)
+	select {
+	case <-suite.executor.calls:
+		suite.Fail("a refused claim must not execute anything")
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func (suite *AEOServiceTestSuite) TestStartRun_NoActivePrompts() {
 	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
 	suite.expectStaleSweep()
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
 	suite.mockRepo.On("ListActivePrompts").Return([]models.AEOPrompt{}, nil)
 
 	run, err := suite.service.StartRun(context.Background(), "manual", nil)
 
 	assert.Nil(suite.T(), run)
 	assert.True(suite.T(), apperrors.IsNotFound(err))
-	suite.mockRepo.AssertNotCalled(suite.T(), "CreateRun", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "ClaimRun", mock.Anything)
 }
 
 // A run stranded in "running" by a crashed process must not block the module
-// forever: the guard sweeps anything older than the staleness horizon first, so
-// the next run starts normally instead of answering 409 until an operator edits
-// the database by hand.
+// forever: the start sweeps abandoned runs first — a heartbeat older than
+// aeoRunHeartbeatStaleAfter, or a run older than aeoRunStaleAfter — so the next
+// run starts normally instead of answering 409 until an operator edits the
+// database by hand.
 func (suite *AEOServiceTestSuite) TestStartRun_SweepsRunsStrandedByACrash() {
 	prompt := models.AEOPrompt{Text: "Which CRM?", IsActive: true}
 	prompt.ID = 1
 
-	var cutoff time.Time
+	var startedBefore, heartbeatBefore time.Time
 	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
-	suite.mockRepo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).
+	suite.mockRepo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).
 		Return(int64(1), nil).
-		Run(func(args mock.Arguments) { cutoff = args.Get(0).(time.Time) })
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
+		Run(func(args mock.Arguments) {
+			startedBefore = args.Get(0).(time.Time)
+			heartbeatBefore = args.Get(1).(time.Time)
+		})
 	suite.mockRepo.On("ListActivePrompts").Return([]models.AEOPrompt{prompt}, nil)
-	suite.mockRepo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
+	suite.mockRepo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
 		Run(func(args mock.Arguments) { args.Get(0).(*models.AEORun).ID = 3 })
 
 	run, err := suite.service.StartRun(context.Background(), "scheduled", nil)
@@ -825,9 +842,11 @@ func (suite *AEOServiceTestSuite) TestStartRun_SweepsRunsStrandedByACrash() {
 	assert.Equal(suite.T(), uint(3), run.ID)
 
 	// The sweep must never touch a run that could still be alive.
-	age := time.Now().UTC().Sub(cutoff)
-	assert.InDelta(suite.T(), aeoRunStaleAfter.Seconds(), age.Seconds(), 5,
-		"the staleness cutoff must be aeoRunStaleAfter in the past")
+	now := time.Now().UTC()
+	assert.InDelta(suite.T(), aeoRunStaleAfter.Seconds(), now.Sub(startedBefore).Seconds(), 5,
+		"the age cutoff must be aeoRunStaleAfter in the past")
+	assert.InDelta(suite.T(), aeoRunHeartbeatStaleAfter.Seconds(), now.Sub(heartbeatBefore).Seconds(), 5,
+		"the heartbeat cutoff must be aeoRunHeartbeatStaleAfter in the past")
 
 	select {
 	case <-suite.executor.calls:
@@ -843,11 +862,10 @@ func (suite *AEOServiceTestSuite) TestStartRun_SweepFailureDoesNotBlockTheRun() 
 	prompt.ID = 1
 
 	suite.mockRepo.On("GetProfile").Return(testAEOProfile(), nil)
-	suite.mockRepo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).
+	suite.mockRepo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).
 		Return(int64(0), errors.New("connection refused"))
-	suite.mockRepo.On("CountRunsByStatus", "running").Return(int64(0), nil)
 	suite.mockRepo.On("ListActivePrompts").Return([]models.AEOPrompt{prompt}, nil)
-	suite.mockRepo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil)
+	suite.mockRepo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(nil)
 
 	run, err := suite.service.StartRun(context.Background(), "manual", nil)
 
@@ -862,23 +880,27 @@ func (suite *AEOServiceTestSuite) TestStartRun_SweepFailureDoesNotBlockTheRun() 
 }
 
 func (suite *AEOServiceTestSuite) TestReconcileRunningRuns() {
-	var cutoff time.Time
-	suite.mockRepo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).
+	var startedBefore, heartbeatBefore time.Time
+	suite.mockRepo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).
 		Return(int64(2), nil).
-		Run(func(args mock.Arguments) { cutoff = args.Get(0).(time.Time) })
+		Run(func(args mock.Arguments) {
+			startedBefore = args.Get(0).(time.Time)
+			heartbeatBefore = args.Get(1).(time.Time)
+		})
 
 	recovered, err := suite.service.ReconcileRunningRuns()
 
 	suite.Require().NoError(err)
 	assert.Equal(suite.T(), int64(2), recovered)
-	// At startup nothing can legitimately be running, so the cutoff is "now"
-	// rather than a staleness horizon — otherwise a crash would still block
-	// runs for hours after the restart that was supposed to clear it.
-	assert.WithinDuration(suite.T(), time.Now().UTC(), cutoff, 5*time.Second)
+	// A running row at boot may be another replica's live run, so the boot
+	// reconciliation uses the same horizons as the start sweep, never "now".
+	now := time.Now().UTC()
+	assert.WithinDuration(suite.T(), now.Add(-aeoRunStaleAfter), startedBefore, 5*time.Second)
+	assert.WithinDuration(suite.T(), now.Add(-aeoRunHeartbeatStaleAfter), heartbeatBefore, 5*time.Second)
 }
 
 func (suite *AEOServiceTestSuite) TestReconcileRunningRuns_PropagatesRepositoryFailure() {
-	suite.mockRepo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).
+	suite.mockRepo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).
 		Return(int64(0), errors.New("connection refused"))
 
 	recovered, err := suite.service.ReconcileRunningRuns()
@@ -887,10 +909,9 @@ func (suite *AEOServiceTestSuite) TestReconcileRunningRuns_PropagatesRepositoryF
 	assert.Equal(suite.T(), int64(0), recovered)
 }
 
-// statefulAEORepo answers the overlap guard from real state instead of a canned
-// value: CountRunsByStatus reports what CreateRun has actually inserted. Each
-// call is individually locked, so the check-then-insert window between them is
-// wide open — which is exactly the race the test is trying to provoke.
+// statefulAEORepo answers the claim from real state instead of a canned value:
+// like the unique running_lock index, ClaimRun inserts only while no run holds
+// the lock, atomically.
 type statefulAEORepo struct {
 	*mocks.AEORepository
 
@@ -899,22 +920,19 @@ type statefulAEORepo struct {
 	created int
 }
 
-func (r *statefulAEORepo) CountRunsByStatus(string) (int64, error) {
+func (r *statefulAEORepo) ClaimRun(run *models.AEORun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.running, nil
-}
-
-func (r *statefulAEORepo) CreateRun(run *models.AEORun) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if r.running > 0 {
+		return apperrors.ErrRunInProgress
+	}
 	r.created++
 	r.running++
 	run.ID = uint(r.created)
 	return nil
 }
 
-func (r *statefulAEORepo) MarkStaleRunsFailed(time.Time) (int64, error) { return 0, nil }
+func (r *statefulAEORepo) FailAbandonedRuns(time.Time, time.Time) (int64, error) { return 0, nil }
 
 // WithContext must keep answering from this state: the embedded mock's version
 // would hand back the bare mock and bypass the overrides above.
@@ -926,11 +944,9 @@ func (r *statefulAEORepo) createdRuns() int {
 	return r.created
 }
 
-// TestStartRun_ConcurrentCallsStartExactlyOneRun covers the non-atomic guard:
-// counting running rows and inserting one are two statements, so without a
-// critical section two callers — the realistic case being a manual POST landing
-// on the scheduled hour — can both read zero and both fan out prompts x
-// providers external calls, doubling provider spend.
+// TestStartRun_ConcurrentCallsStartExactlyOneRun: two callers — the realistic
+// case being a manual POST landing on the scheduled hour — must not both fan
+// out prompts x providers external calls. The claim admits exactly one.
 func (suite *AEOServiceTestSuite) TestStartRun_ConcurrentCallsStartExactlyOneRun() {
 	prompt := models.AEOPrompt{Text: "Which CRM?", IsActive: true}
 	prompt.ID = 1

@@ -19,6 +19,7 @@ import (
 type fakeRunStarter struct {
 	mu       sync.Mutex
 	triggers []string
+	slots    []time.Time
 	err      error
 	panics   bool
 	called   chan struct{}
@@ -28,9 +29,12 @@ func newFakeRunStarter() *fakeRunStarter {
 	return &fakeRunStarter{called: make(chan struct{}, 8)}
 }
 
-func (s *fakeRunStarter) StartRun(_ context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error) {
+// StartScheduledRun records one scheduled start (as the trigger it stands
+// for) and the slot it was asked for.
+func (s *fakeRunStarter) StartScheduledRun(_ context.Context, slot time.Time) (*models.AEORun, error) {
 	s.mu.Lock()
-	s.triggers = append(s.triggers, trigger)
+	s.triggers = append(s.triggers, TriggerScheduled)
+	s.slots = append(s.slots, slot)
 	err := s.err
 	shouldPanic := s.panics
 	s.mu.Unlock()
@@ -46,11 +50,8 @@ func (s *fakeRunStarter) StartRun(_ context.Context, trigger string, triggeredBy
 	if err != nil {
 		return nil, err
 	}
-	if triggeredByID != nil {
-		return nil, errors.New("scheduled runs must not carry a user id")
-	}
 
-	run := &models.AEORun{Trigger: trigger, Status: RunStatusRunning}
+	run := &models.AEORun{Trigger: TriggerScheduled, Status: RunStatusRunning}
 	run.ID = 7
 	return run, nil
 }
@@ -60,6 +61,14 @@ func (s *fakeRunStarter) recorded() []string {
 	defer s.mu.Unlock()
 	out := make([]string, len(s.triggers))
 	copy(out, s.triggers)
+	return out
+}
+
+func (s *fakeRunStarter) recordedSlots() []time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]time.Time, len(s.slots))
+	copy(out, s.slots)
 	return out
 }
 
@@ -216,7 +225,7 @@ func TestTriggerScheduledRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			starter := tc.starter()
 			assert.NotPanics(t, func() {
-				triggerScheduledRun(context.Background(), starter)
+				triggerScheduledRun(context.Background(), starter, time.Now())
 			})
 			assert.Equal(t, []string{TriggerScheduled}, starter.recorded())
 		})

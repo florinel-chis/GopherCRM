@@ -83,10 +83,10 @@ type blockingStarter struct {
 	release chan struct{}
 }
 
-func (s *blockingStarter) StartRun(ctx context.Context, trigger string, _ *uint) (*models.AEORun, error) {
+func (s *blockingStarter) StartScheduledRun(ctx context.Context, _ time.Time) (*models.AEORun, error) {
 	s.entered <- struct{}{}
 	<-s.release
-	run := &models.AEORun{Trigger: trigger, Status: RunStatusRunning}
+	run := &models.AEORun{Trigger: TriggerScheduled, Status: RunStatusRunning}
 	run.ID = 9
 	return run, nil
 }
@@ -251,6 +251,7 @@ func TestTriggerScheduledRunIsQuietOnIncompleteConfiguration(t *testing.T) {
 		{"no profile", apperrors.ErrProfileNotConfigured},
 		{"no active prompts", fmt.Errorf("no active AEO prompts: %w", apperrors.ErrNotFound)},
 		{"run in progress", apperrors.ErrRunInProgress},
+		{"slot taken", apperrors.ErrAEOScheduleSlotTaken},
 		{"shutting down", ErrShuttingDown},
 	}
 	for _, tc := range quiet {
@@ -259,7 +260,7 @@ func TestTriggerScheduledRunIsQuietOnIncompleteConfiguration(t *testing.T) {
 			starter := newFakeRunStarter()
 			starter.err = tc.err
 
-			triggerScheduledRun(context.Background(), starter)
+			triggerScheduledRun(context.Background(), starter, time.Now())
 
 			entries := read()
 			require.Len(t, entries, 1, "one line per tick, no retry loop")
@@ -274,7 +275,7 @@ func TestTriggerScheduledRunIsQuietOnIncompleteConfiguration(t *testing.T) {
 		starter := newFakeRunStarter()
 		starter.err = errors.New("database unreachable")
 
-		triggerScheduledRun(context.Background(), starter)
+		triggerScheduledRun(context.Background(), starter, time.Now())
 
 		entries := read()
 		require.Len(t, entries, 1)
@@ -284,7 +285,7 @@ func TestTriggerScheduledRunIsQuietOnIncompleteConfiguration(t *testing.T) {
 	t.Run("a started run is reported with its id", func(t *testing.T) {
 		read := captureSchedulerLogs(t)
 
-		triggerScheduledRun(context.Background(), newFakeRunStarter())
+		triggerScheduledRun(context.Background(), newFakeRunStarter(), time.Now())
 
 		entries := read()
 		require.Len(t, entries, 1)

@@ -428,10 +428,11 @@ tick that finds no profile, key or active prompt is logged once and skipped unti
 answers 503 `SHUTTING_DOWN`), cancels the scheduler and every run in flight, waits for them to
 finalize, and only then closes the database. An interrupted run ends `failed`, or `partial` when
 some answers were already recorded; queries cut short count as failed and are not stored as
-answers. A failed finalizing write leaves its row for startup reconciliation even if the
+answers. A failed finalizing write leaves its row for recovery even if the
 work drains successfully. The AEO drain waits at most 15 seconds. If a provider call or database write still has not
 released by then, the process exits without closing the database and the run row left in
-`running` is failed by the next start's reconciliation, exactly as after a crash.
+`running` is failed once its heartbeat is older than 3 minutes, by the next boot or start on any
+replica, exactly as after a crash (see *Known Limitations*).
 
 Prompt generation (`POST /aeo/prompts/generate`) deliberately runs on one named engine rather than
 whatever happens to be configured, so its output keeps a consistent shape. Anthropic is the default;
@@ -1021,6 +1022,13 @@ gophercrm/
   `AUTOMATION_ENABLED=false` serves the API and records events but neither executes runs nor
   reconciles them at boot, so it leaves the worker replica's runs alone. Processed events and
   finished runs are kept; there is no retention pruning yet.
+- **AEO is replica-safe on MySQL/MariaDB, with conditions.** One AEO run is admitted across every
+  replica sharing the database and the daily scheduled run starts once per slot (#229). A run of a
+  crashed or killed process is recovered up to 3 minutes after the crash, at the next boot or start
+  attempt; until then a manual run answers 409. Every replica must use the same `TZ` and
+  `AEO_SCHEDULE_HOUR`, replica clocks must be synchronised to well under 90 seconds, and an
+  upgrade stops every replica before starting the new version (mixed versions are not supported).
+  Several processes on one SQLite file are not supported.
 - **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
   a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
   requires a CSRF token.

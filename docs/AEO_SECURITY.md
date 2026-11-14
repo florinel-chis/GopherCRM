@@ -205,15 +205,31 @@ Runs are owned by the process that started them (`service.AEORuntime`). On SIGIN
 5. Only once background work and HTTP requests have drained does the process close the database handle.
 
 If the finalizing write fails, the failure is logged and the row may remain `running` even
-after all owned work has joined. Startup reconciliation recovers that row on the next boot.
+after all owned work has joined. Once its heartbeat is older than 3 minutes, the next boot
+reconciliation or start on any replica fails it.
+
+**Run ownership across replicas (#229).** Every run row names its owner instance and carries a
+heartbeat the owner renews every 30 s (the heartbeat goroutine is joined with the run, so a drain
+that returned nil leaves no writer). Admission is one insert guarded by the unique
+`aeo_runs.running_lock`, so a run on any replica blocks a start on another (409); the daily run
+is claimed once per slot through the unique `schedule_slot`. The boot reconciliation and the
+sweep before every start fail only running rows whose heartbeat is older than 3 minutes (or
+NULL, a row written before ownership existed) or that started more than 6 hours ago; a replica
+never fails another replica's live run. Nothing writes `aeo_runs` with a full-struct `Save`: the
+terminal write is a conditional `UPDATE … WHERE id = ? AND status = 'running' AND
+owner_instance = ?`, so a run another replica has failed stays failed, and the owner's next
+heartbeat sees the refusal and cancels the run's provider calls. Answers the former owner writes
+between losing the run and that heartbeat (at most one interval) are kept. The log lines of a
+claim refusal, a slot skip, a heartbeat loss, a refused finalisation and an abandoned-run recovery
+carry `run_id`, counts, the trigger, the status and error codes only; never the brand, a prompt,
+the instance id or the slot.
 
 **Limit.** The drain waits at most 15 s. A provider or database write that ignores cancellation
 past that point is not abandoned by closing the pool under it: the process exits without closing
 the database (logged as `AEO background work did not drain before the shutdown deadline`), the
-SQLite WAL is recovered on the next open, and the run row left in `running` is failed by the next
-boot's reconciliation, the same path a crash takes. Its remaining results are lost. Two API
-processes sharing one database still each arm a scheduler and each admit a run; the ownership is
-per process.
+SQLite WAL is recovered on the next open, and the run row left in `running` is failed once its
+heartbeat is older than 3 minutes, at the next boot or start, the same path a crash takes. Its
+remaining results are lost. Several processes on one SQLite file are not supported.
 
 ## Regression coverage
 
@@ -234,3 +250,6 @@ policy. Production defaults are not weakened, and no `localhost` or `.test` spec
 | `TestAEOGenerationFailureSanitization` | `internal/service` | Prompt generation with hostile errors and panics, captured logs, success path |
 | `TestAEORuntimeStartup`, `TestAEORuntimeShutdown` | `cmd` | Real startup wiring on SQLite with a loopback stub authorized through the ordinary local-origin exception: scheduler armed with no boot key, key stored after boot used at the due tick (the request carries the stored key), quiet skip when unconfigured, disabled scheduling arms no timer; stop cancels the in-flight provider request, joins the scheduler, persists terminal state before the database closes, and the drain deadline holds against a blocked SQLite write; a scheduled admission waiting for a pooled connection is cancelled before joining the scheduler |
 | `TestAEORunLifecycle{SQLite,MySQL}`, `TestAEOConcurrentShutdown{SQLite,MySQL}` | `internal/service` | Real repository and engine on SQLite and disposable MySQL: interrupted manual/scheduled/single-prompt runs persist `failed`/`partial`, cancellation reaches provider gates and blocked writes, finalization uses a live bounded context, a failed finalization is recovered by `ReconcileRunningRuns`, no late writes after a successful join; concurrent manual/scheduled starts admit one run, shutdown does not deadlock on a start blocked in the database, nothing starts after shutdown, repeated/concurrent shutdown is safe, uncooperative providers hold only the deadline |
+| `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`, `TestAEORunHeartbeatLifecycle`, `TestAEOReplicaLogsOmitPersonalData` | `internal/service` | Two service instances on one database (#229): boot reconciliation spares a live run and fails stale, legacy and over-6h rows; a run on one replica refuses starts on the other (MySQL: concurrent starts admit one); one scheduled run per slot, also after it finished; a dead owner's run blocks starts until its heartbeat passes 3 minutes; a taken-over run stays failed and the owner's next heartbeat cancels its executor; heartbeats stop with the run; the new log lines carry no brand, prompt, instance id or slot |
+| `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}` | `internal/repository` | Atomic claim and its classification, owner-conditional finish and heartbeat, no full-struct run write, one-statement abandoned sweep |
+| `TestAEOReplicaAPISQLite`, `TestAEOReplicaProductionWiring` | `tests`, `cmd` | 409 from the second router while the first one's run is running; a second boot over the same SQLite file spares a live run and fails a stale one before the scheduler is armed |

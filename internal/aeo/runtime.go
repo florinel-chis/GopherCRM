@@ -150,6 +150,8 @@ func (s *Scheduler) run(ctx context.Context) {
 		case <-wait:
 		}
 
-		triggerScheduledRun(ctx, s.starter)
+		// The slot is the instant computed above, not the wake-up time: a
+		// replica whose timer fires late still names the same slot.
+		triggerScheduledRun(ctx, s.starter, next)
 	}
 }

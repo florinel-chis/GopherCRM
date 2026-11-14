@@ -99,10 +99,9 @@ func newAEOConfigSourceFixture(t *testing.T) *aeoConfigSourceFixture {
 // expectRunCreation arms every repository call a successful StartRun makes.
 func (f *aeoConfigSourceFixture) expectRunCreation(runID uint, prompts ...models.AEOPrompt) {
 	f.repo.On("GetProfile").Return(testAEOProfile(), nil)
-	f.repo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).Return(int64(0), nil)
-	f.repo.On("CountRunsByStatus", "running").Return(int64(0), nil)
+	f.repo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return(int64(0), nil)
 	f.repo.On("ListActivePrompts").Return(prompts, nil)
-	f.repo.On("CreateRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
+	f.repo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(nil).
 		Run(func(args mock.Arguments) {
 			args.Get(0).(*models.AEORun).ID = runID
 		})
@@ -159,7 +158,7 @@ func TestAEOService_RunCreationResolvesProvidersFreshly(t *testing.T) {
 	run, err := service.StartRun(context.Background(), "manual", nil)
 	assert.Nil(t, run)
 	assert.True(t, errors.Is(err, apperrors.ErrNoProvidersConfigured), "expected ErrNoProvidersConfigured, got %v", err)
-	fixture.repo.AssertNotCalled(t, "CreateRun", mock.Anything)
+	fixture.repo.AssertNotCalled(t, "ClaimRun", mock.Anything)
 	callsBefore := fixture.source.callCount()
 	assert.Positive(t, callsBefore)
 
@@ -222,14 +221,14 @@ func TestAEOService_ConfigSourceKeepsTheOverlapGuard(t *testing.T) {
 		WithAEOConfigSource(fixture.source.source))
 
 	fixture.repo.On("GetProfile").Return(testAEOProfile(), nil)
-	fixture.repo.On("MarkStaleRunsFailed", mock.AnythingOfType("time.Time")).Return(int64(0), nil)
-	fixture.repo.On("CountRunsByStatus", "running").Return(int64(1), nil)
+	fixture.repo.On("FailAbandonedRuns", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return(int64(0), nil)
+	fixture.repo.On("ListActivePrompts").Return([]models.AEOPrompt{aeoPromptFixture(1)}, nil)
+	fixture.repo.On("ClaimRun", mock.AnythingOfType("*models.AEORun")).Return(apperrors.ErrRunInProgress)
 
 	run, err := service.StartRun(context.Background(), "manual", nil)
 
 	assert.Nil(t, run)
 	assert.True(t, errors.Is(err, apperrors.ErrRunInProgress), "expected ErrRunInProgress, got %v", err)
-	fixture.repo.AssertNotCalled(t, "CreateRun", mock.Anything)
 }
 
 // Clearing every stored key puts the module back into the 503 state on the next

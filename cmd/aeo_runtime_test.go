@@ -186,6 +186,15 @@ type aeoBoot struct {
 // scheduler on a manual clock, then returns the handles a root drives.
 func bootAEO(t *testing.T, scheduleEnabled bool) *aeoBoot {
 	t.Helper()
+	return bootAEOAt(t, scheduleEnabled, filepath.Join(t.TempDir(), "aeo-runtime.db"), nil)
+}
+
+// bootAEOAt is bootAEO over the SQLite file at path, which may already hold an
+// earlier boot's data. seed, when set, runs after the schema migration and
+// before setupRouter, the way rows another process wrote are already there
+// when this one starts.
+func bootAEOAt(t *testing.T, scheduleEnabled bool, path string, seed func(t *testing.T)) *aeoBoot {
+	t.Helper()
 
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
 	logs := &lockedLogBuffer{}
@@ -196,7 +205,7 @@ func bootAEO(t *testing.T, scheduleEnabled bool) *aeoBoot {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{
 			Driver:   config.DriverSQLite,
-			Path:     filepath.Join(t.TempDir(), "aeo-runtime.db"),
+			Path:     path,
 			LogLevel: "warn",
 		},
 		Server: config.ServerConfig{Mode: "development"},
@@ -226,6 +235,9 @@ func bootAEO(t *testing.T, scheduleEnabled bool) *aeoBoot {
 	t.Cleanup(func() { _ = models.CloseDatabase() })
 	require.NoError(t, models.MigrateDatabase())
 	require.NoError(t, repository.NewConfigurationRepository(models.DB).InitializeDefaults())
+	if seed != nil {
+		seed(t)
+	}
 
 	clock := newManualClock()
 	previous := aeoSchedulerClock

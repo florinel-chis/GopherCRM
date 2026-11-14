@@ -126,12 +126,6 @@ func (_m *AEORepository) GetRunByID(id uint) (*models.AEORun, error) {
 	return r0, ret.Error(1)
 }
 
-// UpdateRun provides a mock function with given fields: run
-func (_m *AEORepository) UpdateRun(run *models.AEORun) error {
-	ret := _m.Called(run)
-	return ret.Error(0)
-}
-
 // ListRuns provides a mock function with given fields: offset, limit, sortBy, sortOrder
 func (_m *AEORepository) ListRuns(offset int, limit int, sortBy string, sortOrder string) ([]models.AEORun, error) {
 	ret := _m.Called(offset, limit, sortBy, sortOrder)
@@ -176,9 +170,27 @@ func (_m *AEORepository) CountRunsByStatus(status string) (int64, error) {
 	return r0, ret.Error(1)
 }
 
-// MarkStaleRunsFailed provides a mock function with given fields: cutoff
-func (_m *AEORepository) MarkStaleRunsFailed(cutoff time.Time) (int64, error) {
-	ret := _m.Called(cutoff)
+// ClaimRun provides a mock function with given fields: run
+func (_m *AEORepository) ClaimRun(run *models.AEORun) error {
+	ret := _m.Called(run)
+	return ret.Error(0)
+}
+
+// FinishRun provides a mock function with given fields: run
+func (_m *AEORepository) FinishRun(run *models.AEORun) error {
+	ret := _m.Called(run)
+	return ret.Error(0)
+}
+
+// RenewRunHeartbeat provides a mock function with given fields: id, owner, at
+func (_m *AEORepository) RenewRunHeartbeat(id uint, owner string, at time.Time) error {
+	ret := _m.Called(id, owner, at)
+	return ret.Error(0)
+}
+
+// FailAbandonedRuns provides a mock function with given fields: startedBefore, heartbeatBefore
+func (_m *AEORepository) FailAbandonedRuns(startedBefore time.Time, heartbeatBefore time.Time) (int64, error) {
+	ret := _m.Called(startedBefore, heartbeatBefore)
 
 	var r0 int64
 	if ret.Get(0) != nil {

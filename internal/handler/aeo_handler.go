@@ -534,7 +534,7 @@ func (h *AEOHandler) ListPromptAnswers(c *gin.Context) {
 // @Description Queue every active prompt against every configured engine (trigger "manual") and return at once with the run row in status "running"; total_queries is prompts x engines. The work continues in the background and outlives the request, so poll GET /aeo/runs/{id} for progress. Only one run may be in flight at a time, manual and scheduled runs alike.
 // @Description Side effects: one billed request per prompt and engine to the external engines; one answer row (with its citations) is stored per call, failed calls included.
 // @Description Roles: admin, sales.
-// @Description Errors: Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 409 CONFLICT when a run is already in progress (runs left "running" for more than 6 hours are first marked failed, so they do not block); 404 NOT_FOUND when there is no active prompt ("No active AEO prompts to run").
+// @Description Errors: Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 404 NOT_FOUND when there is no active prompt ("No active AEO prompts to run"); 409 CONFLICT when a run on any replica is already in progress (a run whose heartbeat is older than 3 minutes or that started more than 6 hours ago is first marked failed, so it does not block).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -571,7 +571,7 @@ func (h *AEOHandler) CreateRun(c *gin.Context) {
 // @Description Queue ONE prompt against every configured engine and return at once with the run row (trigger "manual", status "running"). The prompt may be inactive, which is how a draft is tested before it joins full runs; a soft-deleted prompt is 404. The same single-run-in-flight guard applies as for a full run.
 // @Description Side effects: one billed request per configured engine; one answer row per call is stored.
 // @Description Roles: admin, sales.
-// @Description Errors: 400 VALIDATION_ERROR for an id that is not a positive integer (message "Validation failed", error.details is the string "Invalid prompt id"); Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 409 CONFLICT when a run is already in progress (runs left "running" for more than 6 hours are first marked failed, so they do not block); 404 NOT_FOUND for an unknown prompt ("Prompt not found").
+// @Description Errors: 400 VALIDATION_ERROR for an id that is not a positive integer (message "Validation failed", error.details is the string "Invalid prompt id"); Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 404 NOT_FOUND for an unknown prompt ("Prompt not found"); 409 CONFLICT when a run on any replica is already in progress (a run whose heartbeat is older than 3 minutes or that started more than 6 hours ago is first marked failed, so it does not block).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
