@@ -297,8 +297,8 @@ Configuration comes from three places:
    not read `gocrm-ui/.env` (`gocrm-ui/.dockerignore` excludes it); pass both as build arguments
    instead, for example `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` (#303; see
    [DOCKER.md](DOCKER.md)). Without the argument the image shows `GoCRM` before sign-in. The
-   shipped Compose files do not forward `VITE_APP_NAME` yet; the Compose `build.args`
-   pass-through is #308.
+   shipped Compose files forward `VITE_APP_NAME` from the shell or the repo-root `.env` through
+   `build.args` (#308).
 2. **Environment variables** for the backend, read once at startup by `internal/config/config.go`
    (and loaded from `.env` by godotenv). `.env.example` documents each one.
 3. **Persisted settings** in the `configurations` table, edited under Settings. The AEO provider
@@ -405,17 +405,17 @@ local machine. Before you put either on the internet:
   example") lists what it forwards and the values it requires.
 - The UI image bakes `VITE_API_BASE_URL=/api/v1` and `VITE_APP_NAME`, empty by default, which
   shows `GoCRM` before sign-in (`gocrm-ui/Dockerfile:19-22`). Set the name with
-  `--build-arg VITE_APP_NAME=...` (see [DOCKER.md](DOCKER.md)); the Compose `build.args`
-  pass-through is #308.
+  `--build-arg VITE_APP_NAME=...` (see [DOCKER.md](DOCKER.md)); the shipped Compose files forward
+  `VITE_APP_NAME` from the shell or the repo-root `.env` through `build.args` (#308).
 - Put TLS in front, and close the plain-HTTP ports behind it. Passwords and bearer tokens cross
   plain HTTP in clear text, and both files publish the backend's `8080` and the UI's `UI_PORT` on
-  every host interface (`docker-compose.yml:61-62,75-76`, `docker-compose.sqlite.yml:46-47,60-61`),
+  every host interface (`docker-compose.yml:61-62,78-79`, `docker-compose.sqlite.yml:46-47,63-64`),
   so a proxy alone leaves both reachable without TLS. `docker-compose.production.example.yml`
   drops the backend publication and binds the UI to `127.0.0.1` (Compose 2.24.4 or later; an
   older Compose accepts the file but keeps the all-interfaces UI publication);
   [DOCKER.md](DOCKER.md) ("Several installations on one host") explains the syntax.
 - The SQLite stack is two containers with a fixed project name (`gophercrm-sqlite`), fixed host
-  port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,46-47,66-73`). Several installs on
+  port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,46-47,69-76`). Several installs on
   one host need separate project names, ports, subnets, volumes and secrets.
 - Back up SQLite by stopping the backend and copying the file with its `-wal` and `-shm`
   siblings (restore all three together), or with `VACUUM INTO` (see [DOCKER.md](DOCKER.md)).

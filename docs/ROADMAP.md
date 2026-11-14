@@ -82,12 +82,11 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   updates them by primary key in chunks of 500; the optimiser may still plan a large `IN` list as
   a full scan and lock unrelated rows while it runs. It only runs when mixed-case domains exist.
   Tracked in #181.
-- **Compose `build.args` pass-through of `VITE_APP_NAME`** — `gocrm-ui/Dockerfile` accepts an
-  optional `VITE_APP_NAME` build argument (#303), but the `ui` service in `docker-compose.yml`
-  and `docker-compose.sqlite.yml` declares no `build.args` for it, so `docker compose up --build`
-  builds with the empty default (`GoCRM`) unless the argument is given on the
-  `docker compose build ui --build-arg ...` command line. Forwarding it from the shell or the
-  repo-root `.env` is #308.
+- **Compose `build.args` pass-through of `VITE_APP_NAME`** — delivered (#308).
+  `gocrm-ui/Dockerfile` accepts an optional `VITE_APP_NAME` build argument (#303), and the `ui`
+  service in `docker-compose.yml` and `docker-compose.sqlite.yml` now forwards it through
+  `build.args` (`${VITE_APP_NAME:-}`) from the shell or the repo-root `.env`; unset, the image
+  keeps the empty default (`GoCRM`).
 
 ## Companies — follow-ups
 

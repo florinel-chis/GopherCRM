@@ -71,6 +71,7 @@ Compose interpolates these from the shell or the repo-root `.env`:
 | `DB_ROOT_PASSWORD` | `gocrm-dev-root-password`| MySQL root password                          |
 | `UI_PORT`          | `3000`                   | host port for the UI (set it if 3000 is busy)|
 | `LOG_LEVEL`        | `info`                   |                                              |
+| `VITE_APP_NAME`    | empty (shows `GoCRM`)    | UI build argument, public; rebuild to change |
 
 The defaults are for local development only — override both DB passwords for
 anything shared.
@@ -84,8 +85,8 @@ Notes on the wiring:
   the network in clear text. The stack as shipped is for `localhost`; put a
   TLS-terminating reverse proxy in front of the UI port before anyone reaches
   it over a network. Both files publish the backend's `8080` and the UI port on
-  every host interface (`docker-compose.yml:61-62,75-76`,
-  `docker-compose.sqlite.yml:46-47,60-61`), so the proxy alone leaves both
+  every host interface (`docker-compose.yml:61-62,78-79`,
+  `docker-compose.sqlite.yml:46-47,63-64`), so the proxy alone leaves both
   reachable over plain HTTP: remove the backend publication and bind the UI to
   loopback (or a private network) in an override, as shown under
   [Several installations on one host](#several-installations-on-one-host).
@@ -104,25 +105,31 @@ Notes on the wiring:
   for a signed-in user, otherwise `VITE_APP_NAME`, otherwise `GoCRM`. Its
   default is empty, so an image built without it shows `GoCRM` before sign-in,
   and signed-in users still see the stored company name (Settings) either way.
-  Set it when you build the image:
+  Both dev Compose files forward it (#308): the `ui` service builds with
+  `build.args` `VITE_APP_NAME: ${VITE_APP_NAME:-}`, so Compose takes the value
+  from your shell or the repo-root `.env`, and `docker compose build ui` or
+  `docker compose up --build` brands the pages. Unset or empty, the image keeps
+  the empty default and shows `GoCRM`. Compose interpolates the whole file even
+  for `docker compose build ui`, so `JWT_SECRET` must be set for that command
+  too. Set the name when you build the image:
 
   ```bash
   docker build --build-arg VITE_APP_NAME=Acme gocrm-ui
-  docker compose build ui --build-arg VITE_APP_NAME=Acme
+  VITE_APP_NAME=Acme docker compose build ui
+  # or put VITE_APP_NAME=Acme in the repo-root .env, then:
+  docker compose up -d --build
   ```
 
   The signed-out pages then read "Welcome to Acme" and "Create your Acme
   account". Like `VITE_API_BASE_URL`, the value is fixed when the image is
-  built: changing the name needs a rebuild. Compose does not pass the variable
-  on its own: the shipped Compose files declare no `build.args` for it, so a
-  plain `docker compose up --build` builds with the empty default; the
-  Compose `build.args` pass-through is tracked in #308. The name is **not a
+  built: changing the name needs a rebuild. The name is **not a
   secret**: Vite inlines it into the public `JavaScript` bundle that nginx
   serves to every visitor. The `ARG`/`ENV` pair lives only in the build
   stage, not in the nginx stage. Never pass a secret as a `VITE_*` build
   argument. `gocrm-ui/.dockerignore` still keeps `.env` and `.env.*` out of
   the build context, so a local `gocrm-ui/.env` never sets the name in the
-  image; only the build argument does.
+  image; only the build argument (or the repo-root `.env` value Compose
+  forwards as one) does.
 - AEO: configure API keys, models, and base URLs as an admin under **AEO >
   Settings**. Changes take effect on the next run and on prompt generation
   without rebuilding. Keys are encrypted; model and endpoint overrides are
@@ -296,7 +303,7 @@ ports (`8080` for the backend, `UI_PORT` for the UI), the project name
 (`gophercrm-sqlite` in the SQLite file, the directory name for the MySQL
 file) and the subnet (`172.28.0.0/16` or `172.29.0.0/16`, which
 `TRUSTED_PROXIES` must match) are fixed in the files
-(`docker-compose.sqlite.yml:20,47,73`, `docker-compose.yml:62,85`). A second
+(`docker-compose.sqlite.yml:20,47,76`, `docker-compose.yml:62,88`). A second
 installation from the same file needs, in its override:
 
 - its own project name (`docker compose -p client-b ...`), which also gives it
