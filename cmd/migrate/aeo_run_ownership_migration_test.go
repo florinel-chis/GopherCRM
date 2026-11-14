@@ -73,16 +73,17 @@ func TestAEORunOwnershipMigrationFiles(t *testing.T) {
 	assert.Less(t, strings.Index(downSQL, "drop index idx_aeo_runs_running_lock"), strings.Index(downSQL, "drop column running_lock"))
 	assert.Less(t, strings.Index(downSQL, "drop index idx_aeo_runs_schedule_slot"), strings.Index(downSQL, "drop column schedule_slot"))
 
-	// The model declares the same names and sizes.
+	// The model declares the same names and column types as the migration
+	// (an explicit varchar, so SQLite does not fall back to text).
 	field, ok := reflectField(models.AEORun{}, "OwnerInstance")
 	require.True(t, ok)
-	assert.Contains(t, field, "size:64")
+	assert.Contains(t, field, "type:varchar(64)")
 	field, ok = reflectField(models.AEORun{}, "RunningLock")
 	require.True(t, ok)
 	assert.Contains(t, field, "uniqueIndex:idx_aeo_runs_running_lock")
 	field, ok = reflectField(models.AEORun{}, "ScheduleSlot")
 	require.True(t, ok)
-	assert.Contains(t, field, "size:20")
+	assert.Contains(t, field, "type:varchar(20)")
 	assert.Contains(t, field, "uniqueIndex:idx_aeo_runs_schedule_slot")
 
 	// The newest migration of the directory, and the version the fresh and
