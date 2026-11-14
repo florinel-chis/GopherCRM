@@ -1923,8 +1923,11 @@ The pieces, and why each is shaped the way it is:
 - **Run leases (#237).** Several replicas may run the worker against one MySQL/MariaDB database.
   - *Ownership.* Each `AutomationEngine` generates an instance id at construction (32 lowercase
     hex characters from `crypto/rand`). `ClaimRun(id, fromStatus, owner, now)` writes `status =
-    running`, `owner_instance`, `heartbeat_at` and `claimed_at` in one conditional update. Both
-    lease columns are `json:"-"`; `claimed_at` is still serialised and is not a lease.
+    running`, `owner_instance`, `heartbeat_at` and `claimed_at` in one conditional update.
+    `ExecuteDue` reads the clock afresh for every claim of its batch: the runs execute one after
+    another, and a time read before the loop would stamp a late claim with a lease that is
+    already stale. Both lease columns are `json:"-"`; `claimed_at` is still serialised and is not
+    a lease.
   - *Heartbeat.* After a successful claim the executor starts one goroutine that calls
     `RenewRunLease(id, owner, at)` every `automationRunHeartbeatInterval` (30 s): `UPDATE … SET
     heartbeat_at WHERE id = ? AND status = 'running' AND owner_instance = ?`, re-checked with a read

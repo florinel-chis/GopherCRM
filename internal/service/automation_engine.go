@@ -556,7 +556,13 @@ func (e *AutomationEngine) ExecuteDue(ctx context.Context) error {
 			break
 		}
 		run := runs[i]
-		claimed, err := e.repo.ClaimRun(run.ID, run.Status, e.instanceID, now)
+		// Each claim reads the clock afresh: the runs of a batch execute one
+		// after another, and a claim stamped with the time read before the
+		// loop would store a heartbeat_at that is already stale once the
+		// batch has run past automationRunLeaseStaleAfter, letting another
+		// engine's sweep recover a run this engine is executing.
+		claimNow := e.now()
+		claimed, err := e.repo.ClaimRun(run.ID, run.Status, e.instanceID, claimNow)
 		if err != nil {
 			e.logger().WithFields(logrus.Fields{"run_id": run.ID, "operation": "claim"}).
 				WithError(utils.LogError(err)).Error("Automation run claim failed")
@@ -566,7 +572,7 @@ func (e *AutomationEngine) ExecuteDue(ctx context.Context) error {
 			continue
 		}
 		owner := e.instanceID
-		stamp := now.UTC()
+		stamp := claimNow.UTC()
 		run.Status = models.AutomationRunRunning
 		run.OwnerInstance = &owner
 		run.HeartbeatAt = &stamp

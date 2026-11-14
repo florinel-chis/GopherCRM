@@ -340,4 +340,47 @@ func runAutomationRunLeaseLiveRunSpared(t *testing.T, dbA, dbB *gorm.DB) {
 		require.Len(t, steps, 2)
 		assert.Equal(t, models.AutomationOutcomeSucceeded, steps[0].Outcome)
 	})
+
+	t.Run("a run claimed late in a long batch carries a fresh lease", func(t *testing.T) {
+		// Two runs in one ExecuteDue batch. The first run's execution takes
+		// longer than the stale horizon (the injected clock is advanced
+		// inside it); the second run, claimed afterwards, must be stamped
+		// with the time of its own claim, not the time the batch started,
+		// so another engine's sweep spares it.
+		ruleFirst := p.leadRule(models.AutomationEventLeadCreated, notifyStep(models.AutomationRecipientOwner, 0))
+		first := p.startRun(ruleFirst, lead)
+		ruleSecond := p.leadRule(models.AutomationEventLeadCreated, notifyStep(models.AutomationRecipientOwner, 0), notifyStep(models.AutomationRecipientOwner, 0))
+		second := p.startRun(ruleSecond, lead)
+		require.Less(t, first.ID, second.ID)
+		batchStart := p.clock.Now()
+
+		gate := newLeaseGate(t)
+		p.a.beforeStep = func(runID uint, position int) {
+			switch {
+			case runID == first.ID && position == 1:
+				p.clock.Advance(automationRunLeaseStaleAfter + time.Minute)
+			case runID == second.ID && position == 2:
+				gate.park()
+			}
+		}
+		aDone := goAsync(func() error { return p.a.ExecuteDue(context.Background()) })
+		gate.await(t)
+		assert.Equal(t, models.AutomationRunCompleted, p.runRow(first.ID).Status, "the first run of the batch finished")
+
+		claimed := p.runRow(second.ID)
+		require.Equal(t, models.AutomationRunRunning, claimed.Status)
+		require.NotNil(t, claimed.ClaimedAt)
+		require.NotNil(t, claimed.HeartbeatAt)
+		claimTime := batchStart.Add(automationRunLeaseStaleAfter + time.Minute)
+		assert.True(t, claimed.HeartbeatAt.Equal(*claimed.ClaimedAt), "heartbeat_at equals the claim time")
+		assert.WithinDuration(t, claimTime, *claimed.HeartbeatAt, time.Millisecond,
+			"the second claim is stamped with the clock at its own claim, not at the batch start")
+
+		spared(t, second.ID)
+		gate.open()
+		require.NoError(t, waitDone(t, aDone))
+		p.a.beforeStep = nil
+		assert.Equal(t, models.AutomationRunCompleted, p.runRow(second.ID).Status, "A completes the second run normally")
+		assert.EqualValues(t, 2, p.notificationsOfRun(second.ID))
+	})
 }
