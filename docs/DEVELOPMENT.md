@@ -1795,6 +1795,63 @@ schema); `TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`,
 when it is unreachable; registering them in `scripts/ci/check-go.py` and the migration roots in
 the Database migrations workflow is an operator follow-up.
 
+**AEO export (#244).** `GET /aeo/export` (`AEOHandler.Export`, `internal/handler/aeo_export.go`)
+sits in the `/aeo` read group, so admin, sales and support reach it and the customer role gets 403
+from `RequireRole` before the handler runs.
+
+- **Parameters.** `format` is `csv` (default) or `json`; `run_id` is a positive integer; `days` is
+  checked against `aeoAllowedRangeDays` (7, 30, 90) and, unlike the dashboard's
+  `aeoReportingRange`, never replaced by a fallback; `run_id` with `days` is refused; neither means
+  `days=30`. An empty value counts as absent. A refusal is 400 `VALIDATION_ERROR` with
+  `error.details` keyed by the parameter name, the value not echoed, and no service call.
+- **Service.** `AEOService.Export(ctx, models.AEOExportSelection)` (`internal/service/aeo_export.go`)
+  reads the run first for a run selection (missing → `apperrors.ErrNotFound`, 404, before any answer
+  read). A window is computed on the instance clock (`WithAEOClock`): `to` is the start of tomorrow
+  UTC, `from` is `to` minus `days`, and `generated_at` is the same clock reading; both bounds are
+  returned in the selection. It then calls `ListAnswersForExport(ctx, filter,
+  AEOExportMaxAnswers+1)`; more than `service.AEOExportMaxAnswers` (10,000) answers is
+  `service.ErrAEOExportTooLarge` (422 `EXPORT_TOO_LARGE`, `error.details.max_answers`) with no
+  citation, run or prompt read. Otherwise it reads the citations, the runs referenced by the answers
+  (plus the selected run) and the prompt texts, and assembles `models.AEOExport`; an empty window
+  is empty slices with no further read. Any other error is 500.
+- **Repository.** The four reads form `repository.AEOExportReader`, which `aeoRepository`
+  implements and the service reaches by a type assertion on its `AEORepository` (the
+  `TicketLockingReader` pattern), so hand-written `AEORepository` doubles in other packages keep
+  compiling; a repository without it answers `service.ErrAEOExportUnavailable` (500).
+  `ListAnswersForExport` reads live answers only, without citations, by `run_id` equality or
+  `created_at >= from AND created_at < to`, ordered by `created_at` then `id`, at most `limit` rows.
+  `ListCitationsByAnswerIDs` de-duplicates and sorts the ids and reads them in chunks of
+  `repository.AEOExportChunkSize` (500) per statement ordered by `answer_id` then `id`, so the
+  concatenation keeps that order; an empty list issues no statement. `ListRunsByIDs` (live runs,
+  id order) and `ListPromptTextsByIDs` (Unscoped: a soft-deleted prompt keeps its text) chunk the
+  same way. No date or JSON function, no schema change, no new index.
+- **Output.** Every row is read and the whole file rendered in memory before the status line, so a
+  failure is a JSON error without `Content-Disposition`. CSV: `text/csv; charset=utf-8`, the pinned
+  `aeoExportCSVColumns`, one row per citation and one row with empty citation cells per answer
+  without citations, no `answer_text` column, RFC 3339 UTC timestamps, `true`/`false`,
+  `competitor_mentions` as `name=count` pairs sorted by name joined by `;`; every free-text cell
+  goes through `aeoCSVSafeField` (`csvSafeField` plus a leading LF and the full-width ＝ ＋ － ＠;
+  `csvSafeField` and the customer and lead exports are unchanged). JSON: `application/json;
+  charset=utf-8`, the raw `models.AEOExport` (`format_version` 1). Attachments are
+  `aeo-export-run-<id>.<ext>` or `aeo-export-<days>d-<YYYY-MM-DD>.<ext>`, the date being the
+  returned `selection.to` minus 24 h in UTC (the handler reads no clock). The export types carry no
+  ownership field, so `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` never
+  appear.
+- **Logs.** Handler lines carry `operation` (`aeo_export`), `format`, `run_id` or `days` and
+  `error_code`; service lines add the answer, citation and run counts. Neither logs a raw query
+  value, prompt or answer text, URL, domain, competitor, brand or model.
+
+Regression roots: `TestAEOExport{HandlerValidation,Roles,ErrorMapping,HandlerLogsOmitPersonalData,CSVShape,CSVFormulaGuard,JSON}`
+(`internal/handler/aeo_export_test.go`); `TestAEOExport{Service,LogsOmitPersonalData}`
+(`internal/service/aeo_export_test.go`); `TestAEOExportRepository{SQLite,MySQL}` and
+`TestAEOExportIDChunks` (`internal/repository/aeo_export_repository_test.go`, statement counts
+through a GORM query callback); `TestAEOExportAPISQLite` (`tests/aeo_export_test.go`, real
+middleware, repositories and SQLite). The MySQL root uses a disposable `TEST_MYSQL_DSN` schema,
+skips without the variable (as in `make verify-backend`) and fails when it is unreachable; the
+acceptance run sets it. Operator follow-ups: registering the MySQL root in
+`scripts/ci/check-go.py`, and adding the `trigger`/`status` enums of `models.AEOExportRun` to the
+closed-set table in `scripts/ci/check-api-docs.py`.
+
 ### Automation runtime
 
 Follow-up automation (#164) is the second owner of background work. `internal/service/

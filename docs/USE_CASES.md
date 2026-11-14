@@ -193,7 +193,11 @@ values. One shared installation does not work for several clients, for two reaso
   `VITE_APP_NAME` build argument (`docker build --build-arg VITE_APP_NAME=Acme gocrm-ui`, #303;
   empty by default, which shows `GoCRM`); both dev Compose files forward it from the shell or the
   repo-root `.env` through `build.args` (delivered, #308).
-- AEO export or client reporting: #244.
+- AEO export: `GET /aeo/export` (admin, sales, support) downloads one run (`run_id`) or a 7, 30 or
+  90-day window (`days`) as CSV (one row per citation) or JSON (runs, answers with their text and
+  citations), at most 10,000 answers per file (`internal/handler/aeo_export.go`, delivered, #244;
+  API only, no download button yet). Threshold alerts and scheduled or emailed client reports
+  remain a gap: #244.
 
 ### Do not promise
 
@@ -304,7 +308,8 @@ engines describe its product against competitors.
 
 - Lead `external_id` is stored (`internal/models/lead.go:67`), and `LeadService.GetByExternalID`
   exists (`internal/service/lead_service.go:218`), but no route calls it: #215.
-- No AEO export or alerting: #244.
+- AEO results can be exported as CSV or JSON through `GET /aeo/export` (API only, #244); there is
+  no threshold alerting and no scheduled client report: #244.
 - No nurture email (recipe 1).
 
 ### Do not promise
@@ -470,4 +475,4 @@ planning around an issue number.
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
-| AEO export, alerting and client reporting | 1, 3 | `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |
+| Delivered: AEO export of one run or a 7/30/90-day window as CSV or JSON (`GET /aeo/export`, admin, sales, support; at most 10,000 answers). Still open: the download control in the web UI, threshold alerting and scheduled or emailed client reports; the screenshot suite stays fixtures only | 1, 3 | `internal/handler/aeo_export.go`; `docs/DEVELOPMENT.md`, "AEO export (#244)"; `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244 |

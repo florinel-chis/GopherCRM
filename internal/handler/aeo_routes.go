@@ -32,5 +32,6 @@ func SetupAEORoutes(router *gin.RouterGroup, h *AEOHandler) {
 		group.GET("/dashboard", h.GetDashboard)
 		group.GET("/citations", h.GetCitations)
 		group.GET("/providers", h.GetProviders)
+		group.GET("/export", h.Export)
 	}
 }

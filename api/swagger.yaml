@@ -416,6 +416,204 @@ definitions:
         minimum: 0
         type: number
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOExport:
+    description: 'AEO export: the selected runs and their answers with citations.'
+    properties:
+      answers:
+        description: Answers ordered by created_at, then id, ascending. Always an
+          array.
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportAnswer'
+        type: array
+      format_version:
+        description: Version of this format; always 1.
+        example: 1
+        type: integer
+      generated_at:
+        description: When the export was assembled (service clock, UTC, RFC 3339).
+        example: "2026-11-14T10:15:00Z"
+        type: string
+      runs:
+        description: |-
+          Runs referenced by the answers (and the selected run), id ascending.
+          Always an array.
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportRun'
+        type: array
+      selection:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportSelection'
+        description: What the export covers.
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOExportAnswer:
+    description: One stored answer with its prompt text and citations.
+    properties:
+      answer_text:
+        description: Full answer text; empty when the call failed. JSON export only.
+        example: For a small team, Acme CRM and Globex CRM are popular self-hosted
+          options...
+        type: string
+      brand_mentioned:
+        description: Whether the brand is mentioned.
+        example: true
+        type: boolean
+      citations:
+        description: Live citations in id order; always an array.
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportCitation'
+        type: array
+      competitor_mentions:
+        additionalProperties:
+          type: integer
+        description: Occurrences per competitor name; always an object.
+        type: object
+      created_at:
+        description: |-
+          When the answer was stored (UTC, RFC 3339); the window predicate and the
+          first order key.
+        example: "2026-11-14T06:00:12Z"
+        type: string
+      error:
+        description: Sanitised failure description; empty when the call succeeded.
+        example: 'openai: request timed out'
+        type: string
+      first_mention_pos:
+        description: Code point offset of the first brand mention; -1 when absent.
+        example: 23
+        minimum: -1
+        type: integer
+      id:
+        description: Answer ID.
+        example: 88
+        type: integer
+      latency_ms:
+        description: Duration of the provider call in milliseconds.
+        example: 2350
+        type: integer
+      model:
+        description: Model id the engine was called with.
+        example: claude-opus-5
+        type: string
+      prompt_id:
+        description: Prompt that was asked.
+        example: 3
+        type: integer
+      prompt_text:
+        description: Text of the prompt, also when the prompt has since been deleted.
+        example: What is the best self-hosted CRM for a small sales team?
+        type: string
+      provider:
+        description: Engine that answered (not a closed set).
+        example: anthropic
+        type: string
+      run_id:
+        description: Run the answer belongs to.
+        example: 12
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOExportCitation:
+    description: A URL cited by an exported answer.
+    properties:
+      competitor_name:
+        description: Competitor whose domain was cited; empty when none matched.
+        example: Globex CRM
+        type: string
+      domain:
+        description: Host of the URL, lower-cased, without a leading "www.".
+        example: docs.acme.example
+        type: string
+      id:
+        description: Citation ID.
+        example: 301
+        type: integer
+      is_owned:
+        description: |-
+          Whether the host is an owned domain (as configured when the answer was
+          analysed).
+        example: true
+        type: boolean
+      url:
+        description: Cited URL.
+        example: https://docs.acme.example/self-hosting
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOExportRun:
+    description: A run referenced by the exported answers, or the selected run.
+    properties:
+      completed_at:
+        description: |-
+          When the run reached a terminal status (UTC, RFC 3339); null while it is
+          running.
+        example: "2026-11-14T06:03:41Z"
+        type: string
+        x-nullable: true
+      failed_queries:
+        description: Provider calls that failed or could not be stored.
+        example: 0
+        type: integer
+      id:
+        description: Run ID.
+        example: 12
+        type: integer
+      started_at:
+        description: When the run started (UTC, RFC 3339).
+        example: "2026-11-14T06:00:00Z"
+        type: string
+      status:
+        description: Run state when the export was read; a running run may be exported.
+        enum:
+        - running
+        - completed
+        - failed
+        - partial
+        example: completed
+        type: string
+      total_queries:
+        description: Provider calls in the run.
+        example: 24
+        type: integer
+      trigger:
+        description: What started the run.
+        enum:
+        - manual
+        - scheduled
+        example: scheduled
+        type: string
+      triggered_by_id:
+        description: ID of the user who started a manual run; null for scheduled runs.
+        example: 1
+        type: integer
+        x-nullable: true
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.AEOExportSelection:
+    description: 'What the export covers: run_id for one run, or days with from and
+      to for a window.'
+    properties:
+      days:
+        description: Window length in days (7, 30 or 90); omitted for a run export.
+        enum:
+        - 7
+        - 30
+        - 90
+        example: 30
+        type: integer
+      from:
+        description: |-
+          Inclusive start of the window (UTC, RFC 3339): the start of tomorrow
+          minus days. Omitted for a run export.
+        example: "2026-10-16T00:00:00Z"
+        type: string
+      run_id:
+        description: The run exported; omitted for a window export.
+        example: 12
+        type: integer
+      to:
+        description: |-
+          Exclusive end of the window (UTC, RFC 3339): the start of tomorrow, so
+          today's answers are included. Omitted for a run export.
+        example: "2026-11-15T00:00:00Z"
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.AEOProfile:
     properties:
       brand_aliases:
@@ -7089,7 +7287,7 @@ info:
 
     ## Response envelope
     Every JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.
-    Exceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
+    Exceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), GET /aeo/export (a text/csv or application/json attachment), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
 
     ## Errors
     error.code is the stable value to branch on; error.message is for people and may change. Shared codes:
@@ -7101,6 +7299,7 @@ info:
     - 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.
     - 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.
     - INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.
+    - 422 EXPORT_TOO_LARGE: an AEO export (GET /aeo/export) that selects more than 10,000 answers; error.details.max_answers carries the cap.
     - 429 TOO_MANY_REQUESTS: see Rate limits.
     - 500 INTERNAL_ERROR: an unexpected failure ("An unexpected error occurred"); details are logged server-side, never returned.
     - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).
@@ -7262,6 +7461,125 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: AEO visibility dashboard
+      tags:
+      - aeo
+  /aeo/export:
+    get:
+      description: |-
+        Download the stored answers and their citations for one run (run_id) or for a window of 7, 30 or 90 days (days), as a CSV or JSON attachment. Without run_id and days the window is 30 days; without format the format is csv. The window is [start of tomorrow UTC minus days, start of tomorrow UTC) on the answer's created_at, computed by the server clock, so today's answers are included. run_id and days together, a format other than csv or json, a run_id that is not a positive integer or a days value other than 7, 30 or 90 are refused (no fallback). Answers are ordered by created_at, then id; soft-deleted answers and citations are excluded, the text of a deleted prompt is kept. No pagination and no sort parameter.
+        The success body is NOT the JSON envelope: it is the raw file. CSV: Content-Type text/csv; charset=utf-8, Content-Disposition attachment; filename=aeo-export-run-<id>.csv or aeo-export-<days>d-<YYYY-MM-DD>.csv, where the date is the last day of the window (UTC). Columns, in this order: run_id, run_trigger, run_status, run_started_at, answer_id, answer_created_at, prompt_id, prompt_text, provider, model, brand_mentioned, first_mention_pos, latency_ms, error, competitor_mentions, citation_id, citation_url, citation_domain, citation_is_owned, citation_competitor_name. One row per citation, and one row with empty citation cells per answer without citations; the answer text is not in the CSV. Timestamps are RFC 3339 UTC, booleans true/false, competitor_mentions is name=count pairs sorted by name and joined by ';'. A text cell starting with =, @, a tab, a carriage return, a line feed, a full-width ＝ ＋ － ＠, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula.
+        JSON: Content-Type application/json; charset=utf-8, the same file names with .json; the body is models.AEOExport (format_version 1, generated_at, selection, runs, answers with answer_text, competitor_mentions as an object and citations as an array). The run-ownership columns are never exported. An empty selection is a 200 with the header row only, or empty arrays.
+        At most 10,000 answers are exported; a larger selection is refused with 422 before any citation is read. Every row is read before the first byte is written, so a failure is a JSON error, never a truncated file. Errors use the JSON envelope and carry no Content-Disposition header.
+        Roles: admin, sales, support.
+      parameters:
+      - default: csv
+        description: File format
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Export this run (a positive integer); cannot be combined with
+          days
+        in: query
+        minimum: 1
+        name: run_id
+        type: integer
+      - description: Export this window in days; cannot be combined with run_id; 30
+          when neither is given
+        enum:
+        - 7
+        - 30
+        - 90
+        in: query
+        name: days
+        type: integer
+      produces:
+      - text/csv
+      - application/json
+      responses:
+        "200":
+          description: 'The export file (raw body, not the envelope): CSV text, or
+            this JSON document'
+          schema:
+            $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExport'
+        "400":
+          description: VALIDATION_ERROR - invalid format, run_id or days, or run_id
+            together with days; error.details is keyed by the parameter name (format,
+            run_id, days) and never echoes the value
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin, sales or support (the customer
+            role is always refused)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - run_id names no run (message 'AEO run not found')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "422":
+          description: EXPORT_TOO_LARGE - the selection holds more than 10,000 answers;
+            error.details.max_answers is 10000; choose a shorter window or a single
+            run
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - the export could not be read; the cause is
+            never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Export AEO results as CSV or JSON
       tags:
       - aeo
   /aeo/profile:

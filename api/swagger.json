@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED \"Invalid credentials\", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
+        "description": "GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.\n\n## Authentication\nProtected operations accept one credential in the Authorization header, either `Authorization: Bearer \u003cjwt\u003e` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey \u003ckey\u003e` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED \"Missing or invalid authorization header\"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED \"Invalid credentials\".\nLogin returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED \"Invalid credentials\", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.\nRoles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN \"Insufficient permissions\". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.\n\n## Response envelope\nEvery JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.\nExceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), GET /aeo/export (a text/csv or application/json attachment), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 \"404 page not found\").\n\n## Errors\nerror.code is the stable value to branch on; error.message is for people and may change. Shared codes:\n- 400 VALIDATION_ERROR: a binding or field rule failed. error.details is usually an object mapping each failed field to a message; binding failures key it by the server-side Go field name (for example FirstName), while service-level field checks use the JSON name. Operations that send another shape document it (a lead conversion rule sends {field}, plus status and allowed_statuses for a refused status; POST /aeo/prompts/{id}/run with an invalid id sends a plain string), and some omit details. A body over the public form submission limit is 413 with this code.\n- 400 BAD_REQUEST: malformed JSON (\"Invalid request format\"), typically an unparsable path id, or another request the handler refuses as a whole.\n- 400 INVALID_INPUT and INVALID_REFERENCE: a rule the service checks beyond the binding (automation rules, bulk status requests), or an id that names no live record (for example company_id, label_ids, a quote line's product).\n- 401 UNAUTHORIZED: missing, malformed, invalid or expired credentials.\n- 403 FORBIDDEN: the role is not admitted, or the record belongs to someone else where the operation says so.\n- 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.\n- 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.\n- INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.\n- 422 EXPORT_TOO_LARGE: an AEO export (GET /aeo/export) that selects more than 10,000 answers; error.details.max_answers carries the cap.\n- 429 TOO_MANY_REQUESTS: see Rate limits.\n- 500 INTERNAL_ERROR: an unexpected failure (\"An unexpected error occurred\"); details are logged server-side, never returned.\n- 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).\nEach operation lists the codes it can return and the condition behind each.\n\n## Pagination, sorting and filtering\nList operations take offset (default 0; negative or non-numeric values become 0) and limit (default 20; 0, negative or non-numeric values become 20; values above 100 are clamped to 100). Some lists also take a 1-based page that, when present, overrides offset. Out-of-range values are clamped or replaced, never rejected. Sortable lists accept sort_by from a fixed per-entity column list and sort_order asc or desc; what an unknown value does (ignored, defaulted or refused) is documented per operation.\n\n## Rate limits\nRequests are counted per client IP (the direct peer address unless TRUSTED_PROXIES names the proxy in front) in three tiers, each with its own buckets: strict, 10 requests per minute with a burst of 5, on every unauthenticated /auth route and on public form submission and confirmation; authenticated, 120 per minute with a burst of 30, shared by every authenticated operation and counted after authentication; generous, 240 per minute with a burst of 40, on public form reads. An exceeded limit is 429 TOO_MANY_REQUESTS with error.details {\"retry_after\": \"60s\"}, a fixed hint rather than the real wait. No Retry-After or X-RateLimit-* header is sent. Preflight OPTIONS requests are not counted.\n\n## CORS and headers\nBrowser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).\nEvery response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.",
         "title": "GopherCRM API",
         "contact": {},
         "version": "1.2.0"
@@ -241,6 +241,192 @@
                     },
                     "500": {
                         "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/aeo/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Download the stored answers and their citations for one run (run_id) or for a window of 7, 30 or 90 days (days), as a CSV or JSON attachment. Without run_id and days the window is 30 days; without format the format is csv. The window is [start of tomorrow UTC minus days, start of tomorrow UTC) on the answer's created_at, computed by the server clock, so today's answers are included. run_id and days together, a format other than csv or json, a run_id that is not a positive integer or a days value other than 7, 30 or 90 are refused (no fallback). Answers are ordered by created_at, then id; soft-deleted answers and citations are excluded, the text of a deleted prompt is kept. No pagination and no sort parameter.\nThe success body is NOT the JSON envelope: it is the raw file. CSV: Content-Type text/csv; charset=utf-8, Content-Disposition attachment; filename=aeo-export-run-\u003cid\u003e.csv or aeo-export-\u003cdays\u003ed-\u003cYYYY-MM-DD\u003e.csv, where the date is the last day of the window (UTC). Columns, in this order: run_id, run_trigger, run_status, run_started_at, answer_id, answer_created_at, prompt_id, prompt_text, provider, model, brand_mentioned, first_mention_pos, latency_ms, error, competitor_mentions, citation_id, citation_url, citation_domain, citation_is_owned, citation_competitor_name. One row per citation, and one row with empty citation cells per answer without citations; the answer text is not in the CSV. Timestamps are RFC 3339 UTC, booleans true/false, competitor_mentions is name=count pairs sorted by name and joined by ';'. A text cell starting with =, @, a tab, a carriage return, a line feed, a full-width ＝ ＋ － ＠, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula.\nJSON: Content-Type application/json; charset=utf-8, the same file names with .json; the body is models.AEOExport (format_version 1, generated_at, selection, runs, answers with answer_text, competitor_mentions as an object and citations as an array). The run-ownership columns are never exported. An empty selection is a 200 with the header row only, or empty arrays.\nAt most 10,000 answers are exported; a larger selection is refused with 422 before any citation is read. Every row is read before the first byte is written, so a failure is a JSON error, never a truncated file. Errors use the JSON envelope and carry no Content-Disposition header.\nRoles: admin, sales, support.",
+                "produces": [
+                    "text/csv",
+                    "application/json"
+                ],
+                "tags": [
+                    "aeo"
+                ],
+                "summary": "Export AEO results as CSV or JSON",
+                "parameters": [
+                    {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
+                        "type": "string",
+                        "default": "csv",
+                        "description": "File format",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Export this run (a positive integer); cannot be combined with days",
+                        "name": "run_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            7,
+                            30,
+                            90
+                        ],
+                        "type": "integer",
+                        "description": "Export this window in days; cannot be combined with run_id; 30 when neither is given",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The export file (raw body, not the envelope): CSV text, or this JSON document",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExport"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - invalid format, run_id or days, or run_id together with days; error.details is keyed by the parameter name (format, run_id, days) and never echoes the value",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND - run_id names no run (message 'AEO run not found')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "422": {
+                        "description": "EXPORT_TOO_LARGE - the selection holds more than 10,000 answers; error.details.max_answers is 10000; choose a shorter window or a single run",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - the export could not be read; the cause is never echoed",
                         "schema": {
                             "allOf": [
                                 {
@@ -25216,6 +25402,245 @@
                     "maximum": 100,
                     "minimum": 0,
                     "example": 45.7
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.AEOExport": {
+            "description": "AEO export: the selected runs and their answers with citations.",
+            "type": "object",
+            "properties": {
+                "answers": {
+                    "description": "Answers ordered by created_at, then id, ascending. Always an array.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportAnswer"
+                    }
+                },
+                "format_version": {
+                    "description": "Version of this format; always 1.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "generated_at": {
+                    "description": "When the export was assembled (service clock, UTC, RFC 3339).",
+                    "type": "string",
+                    "example": "2026-11-14T10:15:00Z"
+                },
+                "runs": {
+                    "description": "Runs referenced by the answers (and the selected run), id ascending.\nAlways an array.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportRun"
+                    }
+                },
+                "selection": {
+                    "description": "What the export covers.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportSelection"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.AEOExportAnswer": {
+            "description": "One stored answer with its prompt text and citations.",
+            "type": "object",
+            "properties": {
+                "answer_text": {
+                    "description": "Full answer text; empty when the call failed. JSON export only.",
+                    "type": "string",
+                    "example": "For a small team, Acme CRM and Globex CRM are popular self-hosted options..."
+                },
+                "brand_mentioned": {
+                    "description": "Whether the brand is mentioned.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "citations": {
+                    "description": "Live citations in id order; always an array.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.AEOExportCitation"
+                    }
+                },
+                "competitor_mentions": {
+                    "description": "Occurrences per competitor name; always an object.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "created_at": {
+                    "description": "When the answer was stored (UTC, RFC 3339); the window predicate and the\nfirst order key.",
+                    "type": "string",
+                    "example": "2026-11-14T06:00:12Z"
+                },
+                "error": {
+                    "description": "Sanitised failure description; empty when the call succeeded.",
+                    "type": "string",
+                    "example": "openai: request timed out"
+                },
+                "first_mention_pos": {
+                    "description": "Code point offset of the first brand mention; -1 when absent.",
+                    "type": "integer",
+                    "minimum": -1,
+                    "example": 23
+                },
+                "id": {
+                    "description": "Answer ID.",
+                    "type": "integer",
+                    "example": 88
+                },
+                "latency_ms": {
+                    "description": "Duration of the provider call in milliseconds.",
+                    "type": "integer",
+                    "example": 2350
+                },
+                "model": {
+                    "description": "Model id the engine was called with.",
+                    "type": "string",
+                    "example": "claude-opus-5"
+                },
+                "prompt_id": {
+                    "description": "Prompt that was asked.",
+                    "type": "integer",
+                    "example": 3
+                },
+                "prompt_text": {
+                    "description": "Text of the prompt, also when the prompt has since been deleted.",
+                    "type": "string",
+                    "example": "What is the best self-hosted CRM for a small sales team?"
+                },
+                "provider": {
+                    "description": "Engine that answered (not a closed set).",
+                    "type": "string",
+                    "example": "anthropic"
+                },
+                "run_id": {
+                    "description": "Run the answer belongs to.",
+                    "type": "integer",
+                    "example": 12
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.AEOExportCitation": {
+            "description": "A URL cited by an exported answer.",
+            "type": "object",
+            "properties": {
+                "competitor_name": {
+                    "description": "Competitor whose domain was cited; empty when none matched.",
+                    "type": "string",
+                    "example": "Globex CRM"
+                },
+                "domain": {
+                    "description": "Host of the URL, lower-cased, without a leading \"www.\".",
+                    "type": "string",
+                    "example": "docs.acme.example"
+                },
+                "id": {
+                    "description": "Citation ID.",
+                    "type": "integer",
+                    "example": 301
+                },
+                "is_owned": {
+                    "description": "Whether the host is an owned domain (as configured when the answer was\nanalysed).",
+                    "type": "boolean",
+                    "example": true
+                },
+                "url": {
+                    "description": "Cited URL.",
+                    "type": "string",
+                    "example": "https://docs.acme.example/self-hosting"
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.AEOExportRun": {
+            "description": "A run referenced by the exported answers, or the selected run.",
+            "type": "object",
+            "properties": {
+                "completed_at": {
+                    "description": "When the run reached a terminal status (UTC, RFC 3339); null while it is\nrunning.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "2026-11-14T06:03:41Z"
+                },
+                "failed_queries": {
+                    "description": "Provider calls that failed or could not be stored.",
+                    "type": "integer",
+                    "example": 0
+                },
+                "id": {
+                    "description": "Run ID.",
+                    "type": "integer",
+                    "example": 12
+                },
+                "started_at": {
+                    "description": "When the run started (UTC, RFC 3339).",
+                    "type": "string",
+                    "example": "2026-11-14T06:00:00Z"
+                },
+                "status": {
+                    "description": "Run state when the export was read; a running run may be exported.",
+                    "type": "string",
+                    "enum": [
+                        "running",
+                        "completed",
+                        "failed",
+                        "partial"
+                    ],
+                    "example": "completed"
+                },
+                "total_queries": {
+                    "description": "Provider calls in the run.",
+                    "type": "integer",
+                    "example": 24
+                },
+                "trigger": {
+                    "description": "What started the run.",
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "scheduled"
+                    ],
+                    "example": "scheduled"
+                },
+                "triggered_by_id": {
+                    "description": "ID of the user who started a manual run; null for scheduled runs.",
+                    "type": "integer",
+                    "x-nullable": true,
+                    "example": 1
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.AEOExportSelection": {
+            "description": "What the export covers: run_id for one run, or days with from and to for a window.",
+            "type": "object",
+            "properties": {
+                "days": {
+                    "description": "Window length in days (7, 30 or 90); omitted for a run export.",
+                    "type": "integer",
+                    "enum": [
+                        7,
+                        30,
+                        90
+                    ],
+                    "example": 30
+                },
+                "from": {
+                    "description": "Inclusive start of the window (UTC, RFC 3339): the start of tomorrow\nminus days. Omitted for a run export.",
+                    "type": "string",
+                    "example": "2026-10-16T00:00:00Z"
+                },
+                "run_id": {
+                    "description": "The run exported; omitted for a window export.",
+                    "type": "integer",
+                    "example": 12
+                },
+                "to": {
+                    "description": "Exclusive end of the window (UTC, RFC 3339): the start of tomorrow, so\ntoday's answers are included. Omitted for a run export.",
+                    "type": "string",
+                    "example": "2026-11-15T00:00:00Z"
                 }
             }
         },

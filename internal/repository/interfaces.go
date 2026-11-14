@@ -722,6 +722,44 @@ type AEORepository interface {
 	WithContext(ctx context.Context) AEORepository
 }
 
+// AEOExportFilter selects the answers of an AEO export (#244): RunID non-nil
+// selects run_id equality and ignores From/To; otherwise the answers with
+// created_at >= From AND created_at < To.
+type AEOExportFilter struct {
+	RunID *uint
+	From  time.Time
+	To    time.Time
+}
+
+// AEOExportChunkSize is the largest number of ids a single IN list of the
+// export reads carries.
+const AEOExportChunkSize = 500
+
+// AEOExportReader holds the bulk reads of GET /aeo/export. The AEO repository
+// returned by NewAEORepository implements it; it is a separate interface, which
+// the service reaches through a type assertion on its AEORepository, so the
+// hand-written AEORepository doubles in other packages keep compiling (the same
+// pattern as TicketLockingReader). Every method binds its statements to ctx and
+// never filters on a JSON or date function, so SQLite and MySQL agree.
+type AEOExportReader interface {
+	// ListAnswersForExport returns at most limit live answers of the filter,
+	// ordered by created_at then id ascending, WITHOUT their citations (the
+	// Citations slice is empty). The caller passes its cap plus one to detect
+	// an oversized selection.
+	ListAnswersForExport(ctx context.Context, filter AEOExportFilter, limit int) ([]models.AEOAnswer, error)
+	// ListCitationsByAnswerIDs returns the live citations of the given answers
+	// ordered by answer_id then id ascending. The ids are de-duplicated, sorted
+	// and read in chunks of at most AEOExportChunkSize per statement, so the
+	// concatenated result keeps that order. An empty list issues no statement.
+	ListCitationsByAnswerIDs(ctx context.Context, answerIDs []uint) ([]models.AEOCitation, error)
+	// ListRunsByIDs returns the live runs with the given ids, id ascending
+	// (chunked like ListCitationsByAnswerIDs; an empty list issues no statement).
+	ListRunsByIDs(ctx context.Context, ids []uint) ([]models.AEORun, error)
+	// ListPromptTextsByIDs returns the text of each prompt id, soft-deleted
+	// prompts included (chunked; an empty list issues no statement).
+	ListPromptTextsByIDs(ctx context.Context, ids []uint) (map[uint]string, error)
+}
+
 // AutomationRuleListFilter narrows AutomationRepository.ListRules. SortBy is
 // checked against utils.AllowedSortColumns["automation_rules"]; an empty one
 // means newest first.

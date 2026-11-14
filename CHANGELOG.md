@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AEO results export (#244).** `GET /aeo/export` (admin, sales, support; customers 403) downloads
+  the answers and citations of one run (`run_id`) or of a 7, 30 or 90-day window (`days`, default
+  30, any other value 400 rather than clamped; with `run_id` also 400) ending at the start of
+  tomorrow UTC, as CSV (`format=csv`, default: pinned columns, one row per citation and one row per
+  answer without citations, no answer text, every free-text cell guarded against formulas
+  including a leading line feed and the full-width ＝ ＋ － ＠) or JSON (`format=json`:
+  `models.AEOExport` with runs, answers, answer text and citations). Attachments are named
+  `aeo-export-run-<id>.<ext>` or `aeo-export-<days>d-<YYYY-MM-DD>.<ext>`. At most 10,000 answers:
+  a larger selection is 422 `EXPORT_TOO_LARGE` (`error.details.max_answers`), detected before any
+  citation is read; an unknown run is 404. Every row is read before the first byte is written; the
+  run-ownership columns of #229 are never exported; log lines carry ids, counts and error codes
+  only. No schema change. Still open: the download control in the web UI, threshold alerts and
+  scheduled client reports.
 - **AEO run ownership and the daily slot across API replicas (#229).** `aeo_runs` gains the
   nullable `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` columns (none is
   serialised) with the unique indexes `idx_aeo_runs_running_lock` and `idx_aeo_runs_schedule_slot`
