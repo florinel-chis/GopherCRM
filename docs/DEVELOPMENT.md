@@ -1933,7 +1933,11 @@ The pieces, and why each is shaped the way it is:
     more. Any other failure is logged and retried at the next interval. The goroutine is joined
     before `executeRun` returns, so once `AutomationRuntime.Stop` returns nil nothing renews.
   - *Fenced writes.* `AdvanceRun` and `ReleaseRun` also require `owner_instance = owner` and clear
-    `owner_instance` and `heartbeat_at` when the run leaves `running`. The first `send_email`
+    `owner_instance` and `heartbeat_at` when the run leaves `running`. The writes that end the
+    executor's hold outside a step (complete, fail after the last attempt, release, cancel on a rule
+    change) each run in their own short transaction replayed on a deadlock, a lock wait or SQLite
+    busy (`runWrite`); one that still fails is logged with `run_id` and `operation` only, and the
+    run stays `running` under the expired lease until the sweep recovers it. The first `send_email`
     transaction refuses a run row (read `FOR UPDATE`) that is not running at its position under its
     own owner; a plain read of the run just before `Mailer.Send` (the pre-send check) does the same,
     so an executor paused there neither sends nor stamps; the second transaction advances (fenced)

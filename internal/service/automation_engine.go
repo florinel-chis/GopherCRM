@@ -665,9 +665,11 @@ func (e *AutomationEngine) runSteps(ctx context.Context, run models.AutomationRu
 	for guard := 0; guard <= models.AutomationMaxSteps; guard++ {
 		if run.NextPosition > len(rule.Steps) {
 			now := e.now().UTC()
-			_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
-				Status: models.AutomationRunCompleted, NextPosition: run.NextPosition, FinishedAt: &now,
-			}, now)
+			e.runWrite(run.ID, "complete", func(r repository.AutomationRepository) (int64, error) {
+				return r.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
+					Status: models.AutomationRunCompleted, NextPosition: run.NextPosition, FinishedAt: &now,
+				}, now)
+			})
 			logger.WithField("status", models.AutomationRunCompleted).Info("Automation run finished")
 			return
 		}
@@ -714,7 +716,10 @@ func (e *AutomationEngine) runSteps(ctx context.Context, run models.AutomationRu
 // tick (on any engine) continues it. Fenced on the owner: a run this engine
 // no longer owns is left as it is.
 func (e *AutomationEngine) releaseRun(run models.AutomationRun) {
-	_, _ = e.repo.ReleaseRun(run.ID, run.NextPosition, e.instanceID, e.now())
+	now := e.now()
+	e.runWrite(run.ID, "release", func(r repository.AutomationRepository) (int64, error) {
+		return r.ReleaseRun(run.ID, run.NextPosition, e.instanceID, now)
+	})
 }
 
 // releaseOrFail releases a run whose step attempt failed, or fails it once
@@ -722,9 +727,11 @@ func (e *AutomationEngine) releaseRun(run models.AutomationRun) {
 func (e *AutomationEngine) releaseOrFail(run models.AutomationRun, logger *logrus.Entry) {
 	if run.Attempts+1 >= automationMaxAttempts {
 		now := e.now().UTC()
-		_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
-			Status: models.AutomationRunFailed, NextPosition: run.NextPosition, FinishedAt: &now, ErrorCode: models.AutomationErrorStepFailed,
-		}, now)
+		e.runWrite(run.ID, "fail", func(r repository.AutomationRepository) (int64, error) {
+			return r.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
+				Status: models.AutomationRunFailed, NextPosition: run.NextPosition, FinishedAt: &now, ErrorCode: models.AutomationErrorStepFailed,
+			}, now)
+		})
 		logger.WithField("error_code", models.AutomationErrorStepFailed).Warn("Automation run failed after repeated attempts")
 		return
 	}
@@ -734,9 +741,42 @@ func (e *AutomationEngine) releaseOrFail(run models.AutomationRun, logger *logru
 // cancelRunning cancels a run the executor holds, conditionally.
 func (e *AutomationEngine) cancelRunning(run models.AutomationRun, reason string) {
 	now := e.now().UTC()
-	_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
-		Status: models.AutomationRunCancelled, NextPosition: run.NextPosition, FinishedAt: &now, CancelReason: reason,
-	}, now)
+	e.runWrite(run.ID, "cancel", func(r repository.AutomationRepository) (int64, error) {
+		return r.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
+			Status: models.AutomationRunCancelled, NextPosition: run.NextPosition, FinishedAt: &now, CancelReason: reason,
+		}, now)
+	})
+}
+
+// runWrite performs one owner-fenced write that ends the executor's hold on a
+// run (complete, fail, release, cancel) in its own short transaction, replayed
+// like a step on a deadlock, a lock wait or SQLite busy. Its first statement
+// is the write, so on SQLite it waits for the write lock under busy_timeout
+// instead of failing on a stale read snapshot. A write that still fails, or
+// matches nothing because the run moved, leaves the run as it is: a run still
+// running under this engine's lease is recovered by the stale sweep once the
+// lease expires. It runs on a background context so a release after Stop
+// still lands.
+func (e *AutomationEngine) runWrite(runID uint, operation string, write func(r repository.AutomationRepository) (int64, error)) {
+	if e.txManager == nil {
+		if _, err := write(e.repo); err != nil {
+			e.logger().WithFields(logrus.Fields{"run_id": runID, "operation": operation}).
+				WithError(utils.LogError(err)).Warn("Automation run write failed; the stale sweep will recover the run")
+		}
+		return
+	}
+	err := e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		_, err := write(e.repo.WithTx(tx))
+		return err
+	}, automationTxRetries)
+	if err != nil {
+		e.logger().WithFields(logrus.Fields{"run_id": runID, "operation": operation}).
+			WithError(utils.LogError(err)).Warn("Automation run write failed; the stale sweep will recover the run")
+	}
 }
 
 // nextAdvance continues the run at next, or completes it when next lies

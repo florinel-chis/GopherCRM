@@ -347,10 +347,16 @@ func goAsync(fn func() error) chan error {
 
 func waitDone(t *testing.T, done chan error) error {
 	t.Helper()
+	return waitDoneWithin(t, done, automationTestTimeout)
+}
+
+// waitDoneWithin waits for done at most bound.
+func waitDoneWithin(t *testing.T, done chan error, bound time.Duration) error {
+	t.Helper()
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(automationTestTimeout):
+	case <-time.After(bound):
 		t.Fatal("the call did not return")
 		return nil
 	}

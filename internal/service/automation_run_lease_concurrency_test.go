@@ -109,9 +109,10 @@ func runAutomationRunLeaseConcurrentWorkers(t *testing.T, dbA, dbB *gorm.DB, lea
 		}
 		return active == 0 && unprocessed == 0 && rule.ScheduleCompletedOn != nil && *rule.ScheduleCompletedOn == today
 	}
+	workerBound := 3 * automationTestTimeout
 	worker := func(e *AutomationEngine, db *gorm.DB) func() error {
 		return func() error {
-			deadline := time.Now().Add(3 * automationTestTimeout)
+			deadline := time.Now().Add(workerBound)
 			for time.Now().Before(deadline) {
 				// Tick errors (SQLite busy, a deadlock victim on MySQL) are
 				// what concurrent workers meet; the outcome is asserted below.
@@ -119,6 +120,9 @@ func runAutomationRunLeaseConcurrentWorkers(t *testing.T, dbA, dbB *gorm.DB, lea
 				if quiet(db) {
 					return nil
 				}
+				// A short pause between passes, as a polling worker has,
+				// so the two engines do not starve each other's writes.
+				time.Sleep(5 * time.Millisecond)
 			}
 			return errors.New("the workers did not finish")
 		}
@@ -126,8 +130,10 @@ func runAutomationRunLeaseConcurrentWorkers(t *testing.T, dbA, dbB *gorm.DB, lea
 	doneA := goAsync(worker(p.a, dbA))
 	doneB := goAsync(worker(p.b, dbB))
 	require.NoError(t, waitDone(t, changeDone), "the rule change committed")
-	require.NoError(t, waitDone(t, doneA))
-	require.NoError(t, waitDone(t, doneB))
+	// The workers bound themselves; wait a little longer than that bound so
+	// their own error, not this wait, reports a stall.
+	require.NoError(t, waitDoneWithin(t, doneA, workerBound+automationTestTimeout))
+	require.NoError(t, waitDoneWithin(t, doneB, workerBound+automationTestTimeout))
 	p.a.afterEffect = nil
 	p.b.afterEffect = nil
 
@@ -394,6 +400,7 @@ var leaseLogMessages = stringSet(
 	"Automation run spared by the sweep: it moved since it was read",
 	"Automation stale run recovery failed",
 	"Automation runs recovered from stale leases",
+	"Automation run write failed; the stale sweep will recover the run",
 )
 
 // leaseLogFields are the only fields those lines may carry (error is the
