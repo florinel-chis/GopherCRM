@@ -61,17 +61,35 @@ func runAutomationRunLeaseConcurrentWorkers(t *testing.T, dbA, dbB *gorm.DB, lea
 
 	// The rule change runs on its own goroutine once the first step of any
 	// run has committed, so the workers are mid-flight when it cancels the
-	// changing rule's active runs.
+	// changing rule's active runs. Until it commits, each executor holds
+	// before its next step (outside any transaction, so the change is not
+	// blocked): the workers cannot finish every run of the changing rule
+	// first, which would leave nothing to cancel.
 	started := make(chan struct{})
+	committed := make(chan struct{})
 	var startOnce sync.Once
 	signal := func(uint, int) error {
 		startOnce.Do(func() { close(started) })
 		return nil
 	}
+	hold := func(uint, int) {
+		select {
+		case <-started:
+		default:
+			return
+		}
+		select {
+		case <-committed:
+		case <-time.After(automationTestTimeout):
+		}
+	}
 	p.a.afterEffect = signal
 	p.b.afterEffect = signal
+	p.a.beforeStep = hold
+	p.b.beforeStep = hold
 	var changed atomic.Bool
 	changeDone := goAsync(func() error {
+		defer close(committed)
 		select {
 		case <-started:
 		case <-time.After(automationTestTimeout):
@@ -136,6 +154,8 @@ func runAutomationRunLeaseConcurrentWorkers(t *testing.T, dbA, dbB *gorm.DB, lea
 	require.NoError(t, waitDoneWithin(t, doneB, workerBound+automationTestTimeout))
 	p.a.afterEffect = nil
 	p.b.afterEffect = nil
+	p.a.beforeStep = nil
+	p.b.beforeStep = nil
 
 	runs := p.allRuns()
 	require.NotEmpty(t, runs)
@@ -438,19 +458,17 @@ func TestAutomationRunLeaseLogsOmitPersonalData(t *testing.T) {
 	}
 	p.recA.failRenewals(1)
 	p.a.heartbeatInterval = 20 * time.Millisecond
+	waitLost := awaitLeaseLost(p.a, run.ID)
 	done := goAsync(func() error { return p.a.ExecuteDue(context.Background()) })
 	gate.await(t)
 	waitUntil(t, "a failed and a successful renewal", func() bool { return p.recA.renewCount() >= 2 })
 	_, err := p.repo.CancelRun(run.ID, models.AutomationCancelManual, p.clock.Now())
 	require.NoError(t, err)
-	select {
-	case <-p.recA.notOwned:
-	case <-time.After(automationTestTimeout):
-		t.Fatal("the heartbeat never saw the cancel")
-	}
+	waitLost(t)
 	gate.open()
 	require.NoError(t, waitDone(t, done))
 	p.a.beforeStep = nil
+	p.a.afterLeaseLost = nil
 	p.a.heartbeatInterval = time.Hour
 
 	email := p.leadRule(models.AutomationEventLeadCreated, emailStep(models.AutomationRecipientOwner, 0))

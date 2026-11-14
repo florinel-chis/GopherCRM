@@ -210,6 +210,12 @@ type AutomationEngine struct {
 	// last step row and before the recovery transaction begins.
 	beforeStaleRecover func(runID uint)
 
+	// afterLeaseLost fires in the heartbeat goroutine once a renewal refused
+	// with ErrAutomationRunNotOwned has marked the lease lost and cancelled
+	// the run's context, so a root can resume a parked executor knowing it
+	// will see the loss.
+	afterLeaseLost func(runID uint)
+
 	// instanceID (#237) names this engine in automation_runs.owner_instance:
 	// 32 lowercase hex characters from crypto/rand. Never logged.
 	instanceID string
@@ -643,6 +649,9 @@ func (e *AutomationEngine) renewLease(ctx context.Context, runID uint, lost *ato
 			cancel()
 			logger.WithFields(logrus.Fields{"operation": "heartbeat", "error_code": "run_not_owned"}).
 				Warn("Automation run lease lost; the executor stops")
+			if e.afterLeaseLost != nil {
+				e.afterLeaseLost(runID)
+			}
 			return
 		case ctx.Err() != nil:
 			return

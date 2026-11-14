@@ -338,6 +338,30 @@ func (g *leaseGate) open() {
 	g.openOnce.Do(func() { close(g.release) })
 }
 
+// awaitLeaseLost arms e's afterLeaseLost seam for runID and returns a wait
+// function. The seam fires only after the heartbeat goroutine has marked the
+// lease lost and cancelled the run, so an executor resumed after the wait
+// observes the loss (the recorder's notOwned channel closes earlier, before
+// the engine has handled the refusal). Clear the seam after the executor
+// returns.
+func awaitLeaseLost(e *AutomationEngine, runID uint) func(t *testing.T) {
+	lost := make(chan struct{})
+	var once sync.Once
+	e.afterLeaseLost = func(id uint) {
+		if id == runID {
+			once.Do(func() { close(lost) })
+		}
+	}
+	return func(t *testing.T) {
+		t.Helper()
+		select {
+		case <-lost:
+		case <-time.After(automationTestTimeout):
+			t.Fatal("the heartbeat never saw the cancel")
+		}
+	}
+}
+
 // goAsync runs fn on its own goroutine and returns its result channel.
 func goAsync(fn func() error) chan error {
 	done := make(chan error, 1)

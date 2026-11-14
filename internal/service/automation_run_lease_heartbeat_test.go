@@ -92,17 +92,16 @@ func TestAutomationRunLeaseHeartbeatLifecycle(t *testing.T) {
 			}
 		}
 		gate := parkAtSecondStep(t, e, run.ID)
+		waitLost := awaitLeaseLost(e, run.ID)
 		done := goAsync(func() error { return e.ExecuteDue(context.Background()) })
 		gate.await(t)
 
 		rows, err := env.repo.CancelRun(run.ID, models.AutomationCancelManual, env.clock.Now())
 		require.NoError(t, err)
 		require.EqualValues(t, 1, rows)
-		select {
-		case <-rec.notOwned:
-		case <-time.After(automationTestTimeout):
-			t.Fatal("the heartbeat never saw the cancel")
-		}
+		// Wait for the engine to have handled the refusal (lease marked lost,
+		// run context cancelled), not merely for the refusal itself.
+		waitLost(t)
 		rec.mark()
 		notificationsBefore := env.count(&models.Notification{})
 
